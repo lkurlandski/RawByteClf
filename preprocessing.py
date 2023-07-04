@@ -5,7 +5,7 @@
 from transformers import PreTrainedTokenizer
 
 
-def get_group_texts_fn(block_size=2**14):
+def get_group_texts_fn(block_size=2**12):
     """
                                    block_size
                               1024 | 4096 | 16384
