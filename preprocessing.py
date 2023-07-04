@@ -12,7 +12,7 @@ def get_group_texts_fn(block_size=2**14):
                             -------------------
                       256  |   6             5
     vocab_size       4096  |
-                    65536  |
+                    65536  |  23
     """
     
     def fn(examples):
