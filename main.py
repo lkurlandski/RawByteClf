@@ -141,7 +141,7 @@ split_dataset = dataset.train_test_split(dataset_args.train_test_split)
 
 if not training_args.do_train:
     sys.exit(0)
-
+sys.exit(0)  # FIXME: REMOVE
 if model_args.model == "longformer":
     config = LongformerConfig(
         attention_window=512 // model_args.downscale,
