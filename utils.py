@@ -3,8 +3,23 @@
 
 from collections import namedtuple
 from pathlib import Path
+import psutil
+import os
 
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
+
+
+def process_mem(fmt: "G") -> str:
+    if fmt == "B":
+        d = 1
+    elif fmt == "M":
+        d = 2
+    elif fmt == "G":
+        d = 3
+    else:
+        raise ValueError()
+    m = psutil.Process(os.getpid()).memory_info().rss / 1024**d
+    return f"{round(m, 2)}{fmt}"
 
 
 def output_root(vocab_size: int, n_sorel: int, n_windows: int) -> Path:

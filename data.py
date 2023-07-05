@@ -37,16 +37,17 @@ def microsoft_byte_file_to_str(p: Path) -> str:
 
 
 class MicrosoftDatasetGen:
-    
     def __init__(
         self,
         n: int = None,
         min_size: int = 0,
         max_size: int = sys.maxsize,
         split: Literal["train", "test"] = "train",
+        separator: str = "",
     ) -> None:
         self.min_size = min_size
         self.max_size = max_size
+        self.separator = separator
         files = (p for p in (MICROSOFT_ROOT / split).iterdir() if p.suffix == ".txt")
         self.files = sorted(list(files))[0:n]
         self.keys = pd.read_csv("data/trainLabels.csv", index_col=0).to_dict()["Class"]
@@ -64,19 +65,22 @@ class MicrosoftDatasetGen:
     def __next__(self):
         if self.iteration >= len(self):
             raise StopIteration
-        
+
         f = self.files[self.iteration]
-        s = f.read_text()
+        with open(f, encoding="utf-8") as handle:
+            s = handle.read()
+        if self.separator != "":
+            s = s.replace("", self.separator)[len(self.separator) : -1 * len(self.separator)]
+
         l = self.keys.get(f.stem, None)
         self.iteration += 1
-        
+
         if self.min_size <= len(s) <= self.max_size:
             return {"text": s, "label": l, "file": f.as_posix()}
         return next(self)
 
 
 class DatasetGen:
-    
     def __init__(
         self,
         n_sorel: int = 1,
@@ -98,7 +102,7 @@ class DatasetGen:
         if len(f_windows) > n_windows:
             f_windows = f_windows[:n_windows]
         l_windows = [0] * len(f_windows)
-        
+
         self.files = f_sorel + f_windows
         self.labels = l_sorel + l_windows
         idx = np.flip(np.argsort([f.stat().st_size for f in self.files], kind="stable"))
@@ -144,15 +148,16 @@ def info(dataset: Dataset) -> list[dict[str, float]]:
 
 
 def process_info(stats: list[dict[str, float]]) -> dict[str, float]:
-    
     if not stats:
         return {}
-    
+
     Stat = namedtuple("Stat", ["mean", "median", "std", "max", "min"])
-    
+
     def fn(nums):
-        return Stat(round(np.mean(nums)), round(np.median(nums)), round(np.std(nums)), max(nums), min(nums))
-        
+        return Stat(
+            round(np.mean(nums)), round(np.median(nums)), round(np.std(nums)), max(nums), min(nums)
+        )
+
     keys = tuple(stats[0].keys())
     summary = {}
     if "text" in keys:
@@ -189,7 +194,7 @@ def convert_microsoft_to_utf_bytes(split: Literal["train", "test"]):
 if __name__ == "__main__":
     ...
     # convert_microsoft_to_utf_bytes("train")
-    
+
     # files = [
     #     "58kxhXouHzFd4g3rmInB.bytes",
     #     "6tfw0xSL2FNHOCJBdlaA.bytes",
@@ -212,5 +217,3 @@ if __name__ == "__main__":
     #         print(f)
     #         continue
     #     f.unlink()
-
-        

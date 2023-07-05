@@ -14,7 +14,7 @@ def get_group_texts_fn(block_size=2**12):
     vocab_size       4096  |
                     65536  |
     """
-    
+
     def fn(examples):
         concatenated = "".join(examples["text"])
         total_length = len(concatenated)
@@ -23,12 +23,11 @@ def get_group_texts_fn(block_size=2**12):
         chopped = [concatenated[i : i + block_size] for i in range(0, total_length, block_size)]
         examples["text"] = chopped
         return examples
-    
+
     return fn
 
 
 def get_tokenize_fn(tokenizer: PreTrainedTokenizer, max_length: int, truncation=True):
-    
     def fn(examples):
         return tokenizer(examples["text"], max_length=max_length, truncation=truncation)
 
