@@ -14,8 +14,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-
-MICROSOFT_ROOT = Path("/home/lk3591/Documents/code/RawByteClf/data")
+from cfg import *
 
 
 byte_to_utf8 = {i: chr(i + 10752) for i in range(256)}
@@ -40,7 +39,7 @@ class MicrosoftDatasetGen:
     def __init__(
         self,
         n: int = None,
-        min_size: int = 0,
+        min_size: int = 1,
         max_size: int = sys.maxsize,
         split: Literal["train", "test"] = "train",
         separator: str = "",
@@ -75,62 +74,9 @@ class MicrosoftDatasetGen:
         l = self.keys.get(f.stem, None)
         self.iteration += 1
 
-        if self.min_size <= len(s) <= self.max_size:
+        if self.min_size <= len(s) < self.max_size:
             return {"text": s, "label": l, "file": f.as_posix()}
         return next(self)
-
-
-class DatasetGen:
-    def __init__(
-        self,
-        n_sorel: int = 1,
-        n_windows: int = 1,
-        min_size: int = 0,
-        max_size: int = sys.maxsize,
-    ) -> None:
-        self.min_size = min_size
-        self.max_size = max_size
-
-        p_sorel = Path("/home/lk3591/Documents/datasets/Sorel/processed/")
-        f_sorel = self.get_files(p_sorel)
-        if len(f_sorel) > n_sorel:
-            f_sorel = f_sorel[:n_sorel]
-        l_sorel = [1] * len(f_sorel)
-
-        p_windows = Path("/home/lk3591/Documents/datasets/Windows/processed/")
-        f_windows = self.get_files(p_windows)
-        if len(f_windows) > n_windows:
-            f_windows = f_windows[:n_windows]
-        l_windows = [0] * len(f_windows)
-
-        self.files = f_sorel + f_windows
-        self.labels = l_sorel + l_windows
-        idx = np.flip(np.argsort([f.stat().st_size for f in self.files], kind="stable"))
-        self.files = [self.files[i] for i in idx]
-        self.labels = [self.labels[i] for i in idx]
-        self.iteration = 0
-
-    def get_files(self, p: Path):
-        files = chain((p / "train").iterdir(), (p / "test").iterdir())
-        files = [f for f in files if self.min_size <= f.stat().st_size <= self.max_size]
-        return sorted(files)
-
-    def __call__(self):
-        return iter(self)
-
-    def __iter__(self):
-        return self
-
-    def __len__(self):
-        return len(self.files)
-
-    def __next__(self):
-        if self.iteration >= len(self):
-            raise StopIteration
-        f = self.files[self.iteration]
-        l = self.labels[self.iteration]
-        self.iteration += 1
-        return {"text": byte_string(f), "label": l, "file": f.as_posix()}
 
 
 def info(dataset: Dataset) -> list[dict[str, float]]:

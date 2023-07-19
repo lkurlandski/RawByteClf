@@ -7,6 +7,7 @@ import psutil
 import os
 
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
+from torch import nn
 
 
 def process_mem(fmt: "G") -> str:
@@ -20,6 +21,14 @@ def process_mem(fmt: "G") -> str:
         raise ValueError()
     m = psutil.Process(os.getpid()).memory_info().rss / 1024**d
     return f"{round(m, 2)}{fmt}"
+
+
+def gig(b: int) -> str:
+    return  f"{round(b / (1024 ** 3), 2)}G"
+
+
+def mem() -> int:
+    return psutil.Process(os.getpid()).memory_info().rss
 
 
 def output_root(vocab_size: int, n_sorel: int, n_windows: int) -> Path:
@@ -37,3 +46,7 @@ def print_summary(result):
     print(f"Time: {result.metrics['train_runtime']:.2f}")
     print(f"Samples/second: {result.metrics['train_samples_per_second']:.2f}")
     print_gpu_utilization()
+
+
+def count_parameters(model: nn.Module, requires_grad: bool = False) -> int:
+    return sum(p.numel() for p in model.parameters() if (not requires_grad or p.requires_grad))
