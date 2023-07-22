@@ -148,7 +148,8 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
-    trainer.train()
+    if training_args.do_train:
+        trainer.train()
 
 
 def cli():

@@ -24,7 +24,7 @@ def process_mem(fmt: "G") -> str:
 
 
 def gig(b: int) -> str:
-    return  f"{round(b / (1024 ** 3), 2)}G"
+    return f"{round(b / (1024 ** 3), 2)}G"
 
 
 def mem() -> int:

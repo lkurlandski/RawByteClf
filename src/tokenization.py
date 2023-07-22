@@ -13,6 +13,8 @@ Notes
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
+import math
 from pathlib import Path
 from pprint import pformat, pprint
 from typing import Optional, Union
@@ -28,7 +30,7 @@ from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
 
 from cfg import *
-from data import MicrosoftDatasetGen
+from data import microsoft_dataset_callable
 from utils import process_mem
 
 
@@ -89,11 +91,10 @@ class SentencePieceBPETokenizer(_SentencePieceBPETokenizer):
         vocab_size: int = 30000,
         min_frequency: int = 2,
         special_tokens=None,
-        limit_alphabet: int = 1000,
+        limit_alphabet: int = 256 + len(SPECIALS),
         initial_alphabet: list[str] = None,
         show_progress: bool = True,
         length: Optional[int] = None,
-        max_token_length: int = None,
     ):
         if special_tokens is None:
             special_tokens = []
@@ -108,7 +109,6 @@ class SentencePieceBPETokenizer(_SentencePieceBPETokenizer):
             limit_alphabet=limit_alphabet,
             initial_alphabet=initial_alphabet,
             show_progress=show_progress,
-            max_token_length=max_token_length,
         )
         self._tokenizer.train_from_iterator(
             iterator,
@@ -124,8 +124,22 @@ def tokenization_gen(dataset: Dataset, batch_size: int = 512):
         yield batch["text"]
 
 
-def tokenizer_path(algorithm: str, vocab_size: int) -> Path:
-    return TOKENIZERS / algorithm / str(vocab_size) / "vocab.json"
+def get_group_texts_fn(block_size: int = 2**12):
+    def fn(examples):
+        concatenated = "".join(examples["text"])
+        total_length = len(concatenated)
+        if total_length >= block_size:
+            total_length = (total_length // block_size) * block_size
+        chopped = [concatenated[i : i + block_size] for i in range(0, total_length, block_size)]
+        examples["text"] = chopped
+        return examples
+
+    return fn
+
+
+def tokenizer_path(algorithm: str, vocab_size: int, num_files: int = None) -> Path:
+    num_files = "full" if num_files is None else num_files
+    return TOKENIZERS / algorithm / str(vocab_size) / str(num_files) / "vocab.json"
 
 
 def get_fast_tokenizer(
@@ -148,19 +162,32 @@ def main(
     vocab_size: int,
     algorithm: str,
     batch_size: int,
+    block_size: int,
     num_files: int = None,
     max_token_length: int = None,
 ) -> BaseTokenizer:
-
     if max_token_length:
         assert 256**max_token_length >= vocab_size
 
-    dataset = Dataset.from_generator(MicrosoftDatasetGen(num_files))
+    print("Retrieving raw dataset...", flush=True)
+    dataset = Dataset.from_generator(
+        microsoft_dataset_callable(splits=["tr", "vl"])
+    ).remove_columns(["file", "label"])
+    if num_files:
+        dataset = dataset.select(range(num_files))
+    print(f"{dataset=}")
+    print("Grouping dataset...", flush=True)
+    dataset = dataset.map(get_group_texts_fn(block_size), batched=True)
+    print(f"{dataset=}")
+    print(BR, flush=True)
     iterator = tokenization_gen(dataset, batch_size)
     length = len(dataset) // batch_size
     unk_token = SPECIALS["unk_token"]
     special_tokens = list(SPECIALS.values())
 
+    print(f"{dataset=}")
+    print("Tokenizing...")
+    print(BR, flush=True)
     if algorithm == "SentencePieceBPE":
         tokenizer = SentencePieceBPETokenizer()
         tokenizer.train_from_iterator(
@@ -168,7 +195,6 @@ def main(
             vocab_size=vocab_size,
             special_tokens=special_tokens,
             length=length,
-            max_token_length=max_token_length,
         )
     elif algorithm == "SentencePieceUnigram":
         tokenizer = SentencePieceUnigramTokenizer()
@@ -215,7 +241,8 @@ def main(
         tokenizer = Tokenizer(model)
         tokenizer.train_from_iterator(iterator, trainer, length=length)
 
-    path = tokenizer_path(algorithm, vocab_size)
+    print("Training complete!", flush=True)
+    path = tokenizer_path(algorithm, vocab_size, num_files)
     path.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(path.as_posix())
 
@@ -231,10 +258,15 @@ def cli():
         args.vocab_size,
         args.algorithm,
         args.batch_size,
+        args.block_size,
         args.num_files,
         args.max_token_length,
     )
 
 
 if __name__ == "__main__":
+    print(f"START @{datetime.now()}")
+    print(BR, flush=True)
     cli()
+    print(f"FINISH @{datetime.now()}")
+    print(BR, flush=True)

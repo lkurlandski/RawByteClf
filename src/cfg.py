@@ -32,7 +32,7 @@ from pathlib import Path
 
 MICROSOFT_ROOT = Path("./data")
 OUTPUT = Path("./output")
-TOKENIZERS = OUTPUT / "tokenziers"
+TOKENIZERS = OUTPUT / "tokenizers"
 DATASETS = OUTPUT / "datasets"
 MODELS = OUTPUT / "models"
 

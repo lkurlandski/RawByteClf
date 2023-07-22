@@ -5,16 +5,21 @@ from collections import namedtuple
 from itertools import chain, islice
 from pathlib import Path
 from pprint import pprint
+import random
 import subprocess
 import sys
-from typing import Literal
+from typing import Callable, Literal, Optional
 
 from datasets import Dataset
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 from cfg import *
+
+
+random.seed(0)
 
 
 byte_to_utf8 = {i: chr(i + 10752) for i in range(256)}
@@ -38,19 +43,34 @@ def microsoft_byte_file_to_str(p: Path) -> str:
 class MicrosoftDatasetGen:
     def __init__(
         self,
-        n: int = None,
         min_size: int = 1,
         max_size: int = sys.maxsize,
-        split: Literal["train", "test"] = "train",
-        separator: str = "",
+        tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
+        split: Optional[Literal["tr", "ts", "vl"]] = None,
     ) -> None:
         self.min_size = min_size
         self.max_size = max_size
-        self.separator = separator
-        files = (p for p in (MICROSOFT_ROOT / split).iterdir() if p.suffix == ".txt")
-        self.files = sorted(list(files))[0:n]
         self.keys = pd.read_csv("data/trainLabels.csv", index_col=0).to_dict()["Class"]
         self.iteration = 0
+
+        files = (p for p in (MICROSOFT_ROOT / "train").iterdir() if p.suffix == ".txt")
+        files = filter(lambda p: min_size <= p.stat().st_size < max_size, files)
+        self.files = sorted(list(files))
+        sizes = [int(s * len(self.files)) for s in tr_vl_ts]
+        while sum(sizes) != len(self.files):
+            sizes[0] += 1
+        idx = list(range(len(self.files)))
+        tr_idx, self.ts_idx = train_test_split(idx, test_size=tr_vl_ts[2], random_state=42)
+        self.tr_idx, self.vl_idx = train_test_split(tr_idx, test_size=tr_vl_ts[1], random_state=42)
+
+        if split == "tr":
+            self.idx = self.tr_idx
+        elif split == "vl":
+            self.idx = self.vl_idx
+        elif split == "ts":
+            self.idx = self.ts_idx
+        else:
+            self.idx = idx
 
     def __call__(self):
         return iter(self)
@@ -59,24 +79,17 @@ class MicrosoftDatasetGen:
         return self
 
     def __len__(self):
-        return len(self.files)
+        return len(self.idx)
 
     def __next__(self):
         if self.iteration >= len(self):
             raise StopIteration
 
-        f = self.files[self.iteration]
-        with open(f, encoding="utf-8") as handle:
-            s = handle.read()
-        if self.separator != "":
-            s = s.replace("", self.separator)[len(self.separator) : -1 * len(self.separator)]
-
+        f = self.files[self.idx[self.iteration]]
+        s = f.read_text(encoding="utf-8")
         l = self.keys.get(f.stem, None)
         self.iteration += 1
-
-        if self.min_size <= len(s) < self.max_size:
-            return {"text": s, "label": l, "file": f.as_posix()}
-        return next(self)
+        return {"text": s, "label": l, "file": f.as_posix()}
 
 
 def info(dataset: Dataset) -> list[dict[str, float]]:
@@ -115,6 +128,20 @@ def process_info(stats: list[dict[str, float]]) -> dict[str, float]:
     return summary
 
 
+def microsoft_dataset_callable(
+    min_size: int = 1,
+    max_size: int = sys.maxsize,
+    tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
+    splits: Optional[list[Literal["tr", "ts", "vl"]]] = None,
+) -> Callable:
+    if not splits:
+        return MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, None)
+
+    datasets = [MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, s) for s in splits]
+    assert all(d.tr_idx == datasets[0].tr_idx for d in datasets), "Dumb piece of shit."
+    return lambda: chain(*[d() for d in datasets])
+
+
 def convert_microsoft_to_utf_bytes(split: Literal["train", "test"]):
     files = set(p for p in (MICROSOFT_ROOT / split).iterdir())
     for f in tqdm(files):
@@ -138,7 +165,16 @@ def convert_microsoft_to_utf_bytes(split: Literal["train", "test"]):
 
 
 if __name__ == "__main__":
-    ...
+    gen = microsoft_dataset_callable(10, splits=["tr", "vl"])
+    for i, d in enumerate(gen()):
+        print(i, d["file"])
+
+    from datasets import Dataset
+
+    num_files = 10
+    dataset = Dataset.from_generator(microsoft_dataset_callable(num_files, splits=["tr", "vl"]))
+    print(dataset)
+
     # convert_microsoft_to_utf_bytes("train")
 
     # files = [

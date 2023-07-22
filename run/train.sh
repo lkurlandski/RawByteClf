@@ -2,14 +2,14 @@
 
 #SBATCH --job-name=train
 #SBATCH --account=admalware
-#SBATCH --partition=tier3
-#SBATCH --output=./slurm/%x_%j.out
-#SBATCH --time=2-00:00:00
+#SBATCH --partition=debug
+#SBATCH --output=./logs/%x_%j.out
+#SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
-#SBATCH --mem=64G
+#SBATCH --mem=16G
 
 
 export ntasks=1
