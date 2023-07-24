@@ -14,9 +14,11 @@ Notes
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import product
 import math
 from pathlib import Path
 from pprint import pformat, pprint
+import sys
 from typing import Optional, Union
 
 from datasets import Dataset
@@ -30,7 +32,7 @@ from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
 
 from cfg import *
-from data import microsoft_dataset_callable
+from data import byte_to_utf8, microsoft_dataset_callable
 from helpers import OutputHelper
 from utils import process_mem
 
@@ -165,6 +167,7 @@ def main(
     if max_token_length:
         assert 256**max_token_length >= vocab_size
 
+    # Some of this is unnecessary, for doing straight-up raw tokenization.
     print("Retrieving raw dataset...", flush=True)
     dataset = Dataset.from_generator(
         microsoft_dataset_callable(splits=["tr", "vl"])
@@ -184,7 +187,24 @@ def main(
     print(f"{dataset=}")
     print("Tokenizing...")
     print(BR, flush=True)
-    if algorithm == "SentencePieceBPE":
+
+    if algorithm == "Raw":
+        num_bits = math.log(vocab_size - len(special_tokens), 2) / 8
+        if not num_bits.is_integer():
+            raise ValueError(
+                f"{vocab_size=} is invalid for {algorithm=}. Requires power of 2 divisible by 8."
+            )
+        num_bits = int(num_bits)
+        alphabet = list(byte_to_utf8.values())
+        alphabet = ("".join(i) for i in product(alphabet, repeat=num_bits))
+        vocab = {v: i for i, v in enumerate(special_tokens)}
+        vocab.update({v: i for i, v in enumerate(alphabet, start=len(special_tokens))})
+        model = models.WordLevel(
+            vocab=vocab,
+            unk_token=unk_token,
+        )
+        tokenizer = Tokenizer(model)
+    elif algorithm == "SentencePieceBPE":
         tokenizer = SentencePieceBPETokenizer()
         tokenizer.train_from_iterator(
             iterator,
@@ -242,7 +262,6 @@ def main(
     path = oh.tokenizer_file
     path.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(path.as_posix())
-
     return tokenizer
 
 

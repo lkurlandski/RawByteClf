@@ -13,7 +13,7 @@
 
 
 export ntasks=1
-export algorithm="SentencePieceBPE"
+export algorithm="Raw"
 export vocab_size=$((2**$1))
 
 source ~/anaconda3/etc/profile.d/conda.sh

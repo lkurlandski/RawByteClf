@@ -70,15 +70,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     print(f"{dataset=}")
     print(BR, flush=True)
 
-    # for i, d in tqdm(enumerate(dataset["tr"]), total=int(dataset["tr"].num_rows)):
-    #     x = d["input_ids"]
-    #     if max(x) >= model_args.vocab_size:
-    #         raise ValueError(f"{i=} {max(x)=}")
-    #     if min(x) < 0:
-    #         raise ValueError(f"{i=} {min(x)=}")
-    #     if len(x) > 10**6:
-    #         raise ValueError(f"{i=} {len(x)=}")
-
     if model_args.model == "longformer":
         attention_window = 64  # int(512 // model_args.scale)
         config = LongformerConfig(
