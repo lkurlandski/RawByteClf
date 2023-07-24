@@ -21,39 +21,35 @@ from tokenization import get_fast_tokenizer, tokenizer_path
 @dataclass
 class DatasetArgs:
     algorithm: str = field(metadata={"help": ""})
+    max_length: int = field(default=None, metadata={"help": ""})
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     num_tok: int = field(default=1000, metadata={"help": ""})
     num: float = field(default=None, metadata={"help": ""})
     num_proc: int = field(default=1, metadata={"help": ""})
     batch_size: int = field(default=1000, metadata={"help": ""})
     writer_batch_size: int = field(default=1000, metadata={"help": ""})
-    datasets_root_path: str = field(default=None, metadata={"help": ""})
-
-    def __post_init__(self) -> None:
-        if self.datasets_root_path is None:
-            self.datasets_root_path = DATASETS / self.algorithm / str(self.vocab_size)
 
 
 def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
     def fn(examples):
-        return tokenizer(examples["text"], truncation=False, padding=False)
+        return tokenizer(examples["text"], truncation=True)
 
     return fn
 
 
-def datasets_path(root: Path = DATASETS, num: int = None) -> Path:
-    return root / (str(num) if num is not None else "full")
+def datasets_path(algorithm: str, vocab_size: int, num: float = None) -> Path:
+    return DATASETS / algorithm / str(vocab_size) / (str(num) if num is not None else "full")
 
 
 def main(
     algorithm: str = "SentencePieceBPE",
+    max_length: int = 10**6,
     vocab_size: int = 256,
     num_tok: int = 1000,
     num: float = None,
     num_proc: int = 1,
     batch_size: int = 1000,
     writer_batch_size: int = 1000,
-    datasets_root_path: str = None,
 ) -> Dataset:
     print("Fetching raw datasets...")
 
@@ -69,7 +65,7 @@ def main(
     print(BR, flush=True)
 
     tokenizer_file = tokenizer_path(algorithm, vocab_size, num_tok)
-    tokenizer = get_fast_tokenizer(tokenizer_file, None)
+    tokenizer = get_fast_tokenizer(tokenizer_file, max_length)
     print(f"{tokenizer=}")
     print("Tokenizing...")
     print(BR, flush=True)
@@ -80,7 +76,7 @@ def main(
         batch_size=batch_size,
         writer_batch_size=writer_batch_size,
     )
-    path = datasets_path(datasets_root_path, num)
+    path = datasets_path(algorithm, vocab_size, num)
     shutil.rmtree(path, ignore_errors=True)
     path.mkdir(exist_ok=True, parents=True)
     dataset.save_to_disk(path.as_posix())
@@ -94,13 +90,13 @@ def cli():
     print(BR, flush=True)
     main(
         args.algorithm,
+        args.max_length,
         args.vocab_size,
         args.num_tok,
         args.num,
         args.num_proc,
         args.batch_size,
         args.writer_batch_size,
-        args.datasets_root_path,
     )
 
 

@@ -2,7 +2,7 @@
 
 #SBATCH --job-name=preprocessing
 #SBATCH --account=admalware
-#SBATCH --partition=debug
+#SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
 #SBATCH --time=1-00:00:00
 #SBATCH --nodes=1
@@ -21,6 +21,8 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
 python src/preprocessing.py \
+--num=.1 \
+--max_length=1000000 \
 --algorithm=$algorithm \
 --vocab_size=$vocab_size \
 --num_proc=1 \

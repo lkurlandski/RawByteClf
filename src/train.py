@@ -13,7 +13,8 @@ from typing import Optional
 import os
 import sys
 
-from datasets import Dataset
+from datasets import Dataset, DatasetDict
+import torch
 from transformers import (
     PreTrainedTokenizerFast,
     HfArgumentParser,
@@ -28,17 +29,20 @@ from transformers import (
 from tqdm import tqdm
 
 from cfg import *
-from tokenization import get_fast_tokenizer
+from preprocessing import datasets_path
+from tokenization import get_fast_tokenizer, tokenizer_path
 from utils import count_parameters
 
 
 @dataclass
 class ModelArgs:
-    dataset_path: str = field(metadata={"help": ""})
-    tokenizer_file: str = field(metadata={"help": ""})
     max_length: int = field(metadata={"help": ""})
     model: str = field(metadata={"help": "One of `longformer`, `reformer`, ..., "})
+    algorithm: str = field(metadata={"help": ""})
+    vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     scale: int = field(default=1, metadata={"help": ""})
+    num_tok: int = field(default=1000, metadata={"help": ""})
+    num: float = field(default=None, metadata={"help": ""})
 
 
 @dataclass
@@ -47,26 +51,35 @@ class CallbackArgs:
     early_stopping_threshold: Optional[float] = 0.0
 
 
+def model_path(model: str, algorithm: str, vocab_size: int, num: Optional[float]) -> Path:
+    return MODELS / model / algorithm / str(vocab_size) / (str(num) if num is not None else "full")
+
+
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
-    tokenizer = get_fast_tokenizer(model_args.tokenizer_file, model_args.max_length)
+    training_args.output_dir = model_path(
+        model_args.model, model_args.algorithm, model_args.vocab_size, model_args.num
+    )
+    tokenizer = get_fast_tokenizer(
+        tokenizer_path(model_args.algorithm, model_args.vocab_size, model_args.num_tok),
+        model_args.max_length,
+    )
     print(f"{tokenizer=}")
     print(BR, flush=True)
 
-    dataset = Dataset.load_from_disk(model_args.dataset_path)
+    dataset = DatasetDict.load_from_disk(
+        datasets_path(model_args.algorithm, model_args.vocab_size, model_args.num)
+    )
     print(f"{dataset=}")
-    dataset = dataset.filter(lambda ex: len(ex["input_ids"]) < model_args.max_length)
-    print(f"{dataset=}")
-    dataset = dataset.train_test_split()
-    tr_dataset = dataset["train"].train_test_split()
-    vl_dataset = tr_dataset["test"]
-    tr_dataset = tr_dataset["train"]
-    ts_dataset = dataset["test"]
-    del dataset
-
-    print(f"{tr_dataset=}")
-    print(f"{vl_dataset=}")
-    print(f"{ts_dataset=}")
     print(BR, flush=True)
+
+    for i, d in tqdm(enumerate(dataset["tr"]), total=int(dataset["tr"].num_rows)):
+        x = d["input_ids"]
+        if max(x) >= model_args.vocab_size:
+            raise ValueError(f"{i=} {max(x)=}")
+        if min(x) < 0:
+            raise ValueError(f"{i=} {min(x)=}")
+        if len(x) > 10**6:
+            raise ValueError(f"{i=} {len(x)=}")
 
     if model_args.model == "longformer":
         config = LongformerConfig(
@@ -122,7 +135,12 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         )
 
     model = AutoModelForSequenceClassification.from_config(config)
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    data_collator = DataCollatorWithPadding(
+        tokenizer=tokenizer,
+        padding=True,
+        pad_to_multiple_of=8,
+        max_length=model_args.max_length,
+    )
     callbacks = [
         EarlyStoppingCallback(
             callback_args.early_stopping_patience, callback_args.early_stopping_threshold
@@ -131,8 +149,8 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=tr_dataset,
-        eval_dataset=vl_dataset,
+        train_dataset=dataset["tr"],
+        eval_dataset=dataset["vl"],
         data_collator=data_collator,
         tokenizer=tokenizer,
         callbacks=callbacks,
@@ -149,7 +167,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
     if training_args.do_train:
-        trainer.train()
+        trainer.train(training_args.resume_from_checkpoint)
 
 
 def cli():
