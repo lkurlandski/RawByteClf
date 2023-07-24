@@ -29,8 +29,8 @@ from transformers import (
 from tqdm import tqdm
 
 from cfg import *
-from preprocessing import datasets_path
-from tokenization import get_fast_tokenizer, tokenizer_path
+from helpers import OutputHelper
+from tokenization import get_fast_tokenizer
 from utils import count_parameters
 
 
@@ -42,7 +42,7 @@ class ModelArgs:
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     scale: int = field(default=1, metadata={"help": ""})
     num_tok: int = field(default=1000, metadata={"help": ""})
-    num: float = field(default=None, metadata={"help": ""})
+    num: float = field(default=1.0, metadata={"help": ""})
 
 
 @dataclass
@@ -51,40 +51,39 @@ class CallbackArgs:
     early_stopping_threshold: Optional[float] = 0.0
 
 
-def model_path(model: str, algorithm: str, vocab_size: int, num: Optional[float]) -> Path:
-    return MODELS / model / algorithm / str(vocab_size) / (str(num) if num is not None else "full")
-
-
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
-    training_args.output_dir = model_path(
-        model_args.model, model_args.algorithm, model_args.vocab_size, model_args.num
+    oh = OutputHelper(
+        algorithm=model_args.algorithm,
+        vocab_size=model_args.vocab_size,
+        num_tok=model_args.num_tok,
+        max_length=model_args.max_length,
+        num=model_args.num,
+        model=model_args.model,
     )
-    tokenizer = get_fast_tokenizer(
-        tokenizer_path(model_args.algorithm, model_args.vocab_size, model_args.num_tok),
-        model_args.max_length,
-    )
+    oh.model_dir.mkdir(parents=True, exist_ok=True)
+    training_args.output_dir = oh.model_dir
+    tokenizer = get_fast_tokenizer(oh.tokenizer_file, model_args.max_length)
     print(f"{tokenizer=}")
     print(BR, flush=True)
 
-    dataset = DatasetDict.load_from_disk(
-        datasets_path(model_args.algorithm, model_args.vocab_size, model_args.num)
-    )
+    dataset = DatasetDict.load_from_disk(oh.dataset_dir)
     print(f"{dataset=}")
     print(BR, flush=True)
 
-    for i, d in tqdm(enumerate(dataset["tr"]), total=int(dataset["tr"].num_rows)):
-        x = d["input_ids"]
-        if max(x) >= model_args.vocab_size:
-            raise ValueError(f"{i=} {max(x)=}")
-        if min(x) < 0:
-            raise ValueError(f"{i=} {min(x)=}")
-        if len(x) > 10**6:
-            raise ValueError(f"{i=} {len(x)=}")
+    # for i, d in tqdm(enumerate(dataset["tr"]), total=int(dataset["tr"].num_rows)):
+    #     x = d["input_ids"]
+    #     if max(x) >= model_args.vocab_size:
+    #         raise ValueError(f"{i=} {max(x)=}")
+    #     if min(x) < 0:
+    #         raise ValueError(f"{i=} {min(x)=}")
+    #     if len(x) > 10**6:
+    #         raise ValueError(f"{i=} {len(x)=}")
 
     if model_args.model == "longformer":
+        attention_window = 64  # int(512 // model_args.scale)
         config = LongformerConfig(
-            attention_window=int(512 // model_args.scale),
-            sep_token_id=tokenizer.sep_token_id,
+            attention_window=attention_window,
+            sep_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -93,7 +92,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
             num_hidden_layers=int(12 // model_args.scale),
             num_attention_heads=int(12 // model_args.scale),
             intermediate_size=int(3072 // model_args.scale),
-            max_position_embeddings=model_args.max_length,
+            max_position_embeddings=attention_window + model_args.max_length,
             num_labels=10,
         )
     elif model_args.model == "reformer":
@@ -138,8 +137,8 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     data_collator = DataCollatorWithPadding(
         tokenizer=tokenizer,
         padding=True,
-        pad_to_multiple_of=8,
-        max_length=model_args.max_length,
+        # pad_to_multiple_of=8,
+        # max_length=model_args.max_length,
     )
     callbacks = [
         EarlyStoppingCallback(
@@ -170,8 +169,34 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         trainer.train(training_args.resume_from_checkpoint)
 
 
+def debug():
+
+    model_args = ModelArgs(
+        vocab_size=1030,
+        num=0.1,
+        algorithm="SentencePieceBPE",
+        model="longformer",
+        max_length=1000000,
+        scale=4,
+    )
+    callback_args = CallbackArgs()
+    training_args = TrainingArguments(
+        output_dir="tmp",
+        overwrite_output_dir=True,
+        load_best_model_at_end=True,
+        save_strategy="epoch",
+        evaluation_strategy="epoch",
+        dataloader_num_workers=1,
+        num_train_epochs=2,
+        per_device_eval_batch_size=8,
+        per_device_train_batch_size=8,
+        no_cuda=True,
+        do_train=True,
+    )
+    main(model_args, callback_args, training_args)
+
+
 def cli():
-    print(f"STARTING @{datetime.now()}\n{BR}", flush=True)
     parser = HfArgumentParser((ModelArgs, CallbackArgs, TrainingArguments))
     model_args, callback_args, training_args = parser.parse_args_into_dataclasses()
     print(f"model_args={pformat(model_args)}")
@@ -183,4 +208,9 @@ def cli():
 
 
 if __name__ == "__main__":
-    cli()
+    print(f"STARTING @{datetime.now()}\n{BR}", flush=True)
+    if len(sys.argv) == 1 or sys.argv[1] == "--debug":
+        debug()
+    else:
+        cli()
+    print(f"ENDING @{datetime.now()}\n{BR}", flush=True)

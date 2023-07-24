@@ -15,7 +15,8 @@ from transformers import HfArgumentParser, PreTrainedTokenizer
 
 from cfg import *
 from data import microsoft_dataset_callable
-from tokenization import get_fast_tokenizer, tokenizer_path
+from helpers import OutputHelper
+from tokenization import get_fast_tokenizer
 
 
 @dataclass
@@ -24,7 +25,7 @@ class DatasetArgs:
     max_length: int = field(default=None, metadata={"help": ""})
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     num_tok: int = field(default=1000, metadata={"help": ""})
-    num: float = field(default=None, metadata={"help": ""})
+    num: float = field(default=1.0, metadata={"help": ""})
     num_proc: int = field(default=1, metadata={"help": ""})
     batch_size: int = field(default=1000, metadata={"help": ""})
     writer_batch_size: int = field(default=1000, metadata={"help": ""})
@@ -35,10 +36,6 @@ def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
         return tokenizer(examples["text"], truncation=True)
 
     return fn
-
-
-def datasets_path(algorithm: str, vocab_size: int, num: float = None) -> Path:
-    return DATASETS / algorithm / str(vocab_size) / (str(num) if num is not None else "full")
 
 
 def main(
@@ -64,8 +61,14 @@ def main(
     print(f"{dataset=}")
     print(BR, flush=True)
 
-    tokenizer_file = tokenizer_path(algorithm, vocab_size, num_tok)
-    tokenizer = get_fast_tokenizer(tokenizer_file, max_length)
+    oh = OutputHelper(
+        algorithm=algorithm,
+        vocab_size=vocab_size,
+        num_tok=num_tok,
+        max_length=max_length,
+        num=num,
+    )
+    tokenizer = get_fast_tokenizer(oh.tokenizer_file, max_length)
     print(f"{tokenizer=}")
     print("Tokenizing...")
     print(BR, flush=True)
@@ -76,7 +79,7 @@ def main(
         batch_size=batch_size,
         writer_batch_size=writer_batch_size,
     )
-    path = datasets_path(algorithm, vocab_size, num)
+    path = oh.dataset_dir
     shutil.rmtree(path, ignore_errors=True)
     path.mkdir(exist_ok=True, parents=True)
     dataset.save_to_disk(path.as_posix())

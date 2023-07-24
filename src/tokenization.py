@@ -31,6 +31,7 @@ from tqdm import tqdm
 
 from cfg import *
 from data import microsoft_dataset_callable
+from helpers import OutputHelper
 from utils import process_mem
 
 
@@ -137,11 +138,6 @@ def get_group_texts_fn(block_size: int = 2**12):
     return fn
 
 
-def tokenizer_path(algorithm: str, vocab_size: int, num_files: int = None) -> Path:
-    num_files = "full" if num_files is None else num_files
-    return TOKENIZERS / algorithm / str(vocab_size) / str(num_files) / "vocab.json"
-
-
 def get_fast_tokenizer(
     tokenizer: Tokenizer | Path | str,
     model_max_length: int,
@@ -242,7 +238,8 @@ def main(
         tokenizer.train_from_iterator(iterator, trainer, length=length)
 
     print("Training complete!", flush=True)
-    path = tokenizer_path(algorithm, vocab_size, num_files)
+    oh = OutputHelper(algorithm=algorithm, vocab_size=vocab_size, num_tok=num_files)
+    path = oh.tokenizer_file
     path.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(path.as_posix())
 
