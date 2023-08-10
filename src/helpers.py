@@ -20,10 +20,11 @@ class OutputHelper:
                         |-- {max_length}
                             | -- {num}
                                 | -- dataset
-                                | -- {model}
-                                    | -- model
-                                        | -- config.json
-                                        | ...
+                                | -- model
+                                    | -- checkpoints
+                                        | -- checkpoint-{epoch}
+                                            | -- config.json
+                                            | ...
     """
 
     def __init__(
@@ -49,7 +50,7 @@ class OutputHelper:
         return f"{self.__class__.__name__}({vars(self)}) = {str(self)}"
 
     def __str__(self) -> str:
-        if (p := self.model_dir) is not None:
+        if (p := self.checkpoints_dir) is not None:
             return p.as_posix()
         if (p := self.dataset_dir) is not None:
             return p.as_posix()
@@ -111,13 +112,25 @@ class OutputHelper:
         ]
         if any(a is None for a in parts):
             return None
-        return self.root.joinpath(*parts) / "model"
+        return self.root.joinpath(*parts)
 
-    def exists(self, tokenizer: bool = True, dataset: bool = True, models: bool = True) -> bool:
+    @property
+    def best_model_dir(self) -> Path:
+        if not self.model_dir:
+            return None
+        return self.model_dir / "best"
+
+    @property
+    def checkpoints_dir(self) -> Path:
+        if not self.model_dir:
+            return None
+        return self.model_dir / "checkpoints"
+
+    def exists(self, tokenizer: bool = True, dataset: bool = True, model: bool = True) -> bool:
         return (
             (not tokenizer or (self.tokenizer_file and self.tokenizer_file.exists()))
             and (not dataset or (self.dataset_dir and self.dataset_dir.exists()))
-            and (not models or (self.model_dir and self.model_dir.exists()))
+            and (not model or (self.model_dir and self.model_dir.exists()))
         )
 
 

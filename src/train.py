@@ -213,12 +213,19 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
+    oh.model_dir.mkdir(exist_ok=True)
+    oh.checkpoints_dir.mkdir(exist_ok=True)
+    oh.best_model_dir.mkdir(exist_ok=True)
+
     if training_args.do_train:
-        oh.model_dir.mkdir(parents=True, exist_ok=True)
-        training_args.output_dir = oh.model_dir.as_posix()
+        training_args.output_dir = oh.checkpoints_dir.as_posix()
         trainer.train(training_args.resume_from_checkpoint)
+        if training_args.load_best_model_at_end:
+            model.save_pretrained(oh.best_model_dir.as_posix())
 
     if training_args.do_eval:
+        model = AutoModelForSequenceClassification.from_pretrained(oh.best_model_dir.as_posix())
+        trainer.model = model
         trainer.evaluate(dataset["ts"])
 
 
@@ -256,6 +263,8 @@ def cli():
         training_args.dataloader_num_workers = int(
             os.sched_getaffinity(0) // abs(training_args.dataloader_num_workers)
         )
+    assert training_args.load_best_model_at_end
+
 
     print(f"model_args={pformat(model_args)}")
     print(f"callback_args={pformat(callback_args)}")

@@ -22,10 +22,9 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
 python src/preprocessing.py \
---num=.1 \
 --max_length=10000 \
 --algorithm="Raw" \
 --vocab_size=$vocab_size \
 --num_proc=1 \
---writer_batch_size=64 \
---batch_size=64
+--writer_batch_size=512 \
+--batch_size=512
