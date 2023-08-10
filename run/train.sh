@@ -31,6 +31,7 @@ python src/train.py \
 --model="malconv" \
 --max_length=10000 \
 --scale=.25 \
+--early_stopping=false \
 --do_train \
 --do_eval \
 --output_dir=tmp \
@@ -48,5 +49,6 @@ python src/train.py \
 --optim="adamw_torch" \
 --learning_rate="5e-5" \
 --group_by_length=true \
---early_stopping=false
+--save_total_limit=5 \
+--fp16=true
 # --tf32=false
