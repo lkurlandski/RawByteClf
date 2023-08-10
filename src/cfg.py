@@ -48,8 +48,8 @@ DATASETS = OUTPUT / "datasets"
 MODELS = OUTPUT / "models"
 
 SPECIALS = {
-    "unk_token": "<unk>",
     "pad_token": "<pad>",
+    "unk_token": "<unk>",
     "mask_token": "<mask>",
     "bos_token": "<bos>",
     "eos_token": "<eos>",
