@@ -22,11 +22,12 @@ import sys
 from typing import Optional, Union
 
 from datasets import Dataset
-from tokenizers import Tokenizer
+from tokenizers import Regex, Tokenizer
 from tokenizers import SentencePieceBPETokenizer as _SentencePieceBPETokenizer
 from tokenizers import SentencePieceUnigramTokenizer as _SentencePieceUnigramTokenizer
 from tokenizers.implementations.base_tokenizer import BaseTokenizer
 from tokenizers import models
+from tokenizers import pre_tokenizers
 from tokenizers import trainers
 from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
@@ -144,10 +145,11 @@ def get_fast_tokenizer(
     tokenizer: Tokenizer | Path | str,
     model_max_length: int,
 ) -> PreTrainedTokenizerFast:
-    if isinstance(tokenizer, Path):
-        tokenizer = tokenizer.as_posix()
-    if isinstance(tokenizer, str):
-        tokenizer = Tokenizer.from_file(tokenizer)
+    if isinstance(tokenizer, (Path, str)):
+        tokenizer = Path(tokenizer)
+        if not tokenizer.exists():
+            raise FileNotFoundError(f"{tokenizer=}")
+        tokenizer = Tokenizer.from_file(tokenizer.as_posix())
     fast_tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=tokenizer,
         model_max_length=model_max_length,
@@ -204,6 +206,11 @@ def main(
             unk_token=unk_token,
         )
         tokenizer = Tokenizer(model)
+        tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
+            [
+                pre_tokenizers.Split(Regex("."), behavior="isolated"),
+            ]
+        )
     elif algorithm == "SentencePieceBPE":
         tokenizer = SentencePieceBPETokenizer()
         tokenizer.train_from_iterator(
