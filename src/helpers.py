@@ -2,7 +2,9 @@
 Helper classes.
 """
 
+from __future__ import annotations
 from pathlib import Path
+from typing import Generator, Literal, Optional
 
 
 class OutputHelper:
@@ -35,13 +37,53 @@ class OutputHelper:
         num: float = None,
         model: str = None,
     ) -> None:
-        self.root = Path(root)
-        self.algorithm = algorithm
-        self.vocab_size = str(vocab_size) if vocab_size is not None else None
-        self.num_tok = str(num_tok) if num_tok is not None else None
-        self.max_length = str(max_length) if max_length is not None else None
-        self.num = str(num) if num is not None else None
-        self.model = model
+        self._root = root
+        self._algorithm = algorithm
+        self._vocab_size = vocab_size
+        self._num_tok = num_tok
+        self._max_length = max_length
+        self._num = num
+        self._model = model
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({vars(self)}) = {str(self)}"
+
+    def __str__(self) -> str:
+        if (p := self.model_dir) is not None:
+            return p.as_posix()
+        if (p := self.dataset_dir) is not None:
+            return p.as_posix()
+        if (p := self.tokenizer_file) is not None:
+            return p.as_posix()
+        return self.root
+
+    @property
+    def root(self) -> Path:
+        return Path(self._root)
+
+    @property
+    def algorithm(self) -> str:
+        return str(self._algorithm)
+
+    @property
+    def vocab_size(self) -> str:
+        return str(self._vocab_size) if self._vocab_size is not None else None
+
+    @property
+    def num_tok(self) -> str:
+        return str(self._num_tok) if self._num_tok is not None else None
+
+    @property
+    def max_length(self) -> str:
+        return str(self._max_length) if self._max_length is not None else None
+
+    @property
+    def num(self) -> str:
+        return str(self._num) if self._num is not None else None
+
+    @property
+    def model(self) -> str:
+        return str(self._model)
 
     @property
     def tokenizer_file(self) -> Path:
@@ -70,3 +112,45 @@ class OutputHelper:
         if any(a is None for a in parts):
             return None
         return self.root.joinpath(*parts) / "model"
+
+    def exists(self, tokenizer: bool = True, dataset: bool = True, models: bool = True) -> bool:
+        return (
+            (not tokenizer or (self.tokenizer_file and self.tokenizer_file.exists()))
+            and (not dataset or (self.dataset_dir and self.dataset_dir.exists()))
+            and (not models or (self.model_dir and self.model_dir.exists()))
+        )
+
+
+def iter_over_root(
+    root: Path,
+    *,
+    algorithms: Optional[list[str]] = None,
+    vocab_sizes: Optional[list[int]] = None,
+    num_toks: Optional[list[int]] = None,
+    max_lengths: Optional[list[int]] = None,
+    nums: Optional[list[float]] = None,
+    models: Optional[list[str]] = None,
+) -> Generator[OutputHelper, None, None]:
+    def iterdir(path: Path):
+        for p in path.iterdir():
+            if p.is_dir():
+                yield p
+
+    def func(x: Path, xs: Optional[list[Literal]]) -> list[Path]:
+        return [x / str(i) for i in xs] if xs else list(iterdir(x))
+
+    for algorithm in func(root, algorithms):
+        for vocab_size in func(algorithm, vocab_sizes):
+            for num_tok in func(vocab_size, num_toks):
+                for max_length in func(num_tok, max_lengths):
+                    for num in func(max_length, nums):
+                        for model in func(num, models):
+                            yield OutputHelper(
+                                root=root,
+                                algorithm=algorithm.name,
+                                vocab_size=int(vocab_size.name),
+                                num_tok=int(num_tok.name),
+                                max_length=int(max_length.name),
+                                num=float(num.name),
+                                model=model.name,
+                            )
