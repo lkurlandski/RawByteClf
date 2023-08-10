@@ -12,15 +12,18 @@
 #SBATCH --mem=64G
 
 
-export ntasks=1
-export algorithm="Raw"
-export vocab_size=$((2**$1))
+if [ $# -eq 0 ]; then
+  echo "Please provide the log2 of the vocab size as an argument."
+  exit 1
+fi
+
+export vocab_size=$((2**$1 + 6))
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
 python src/tokenization.py \
---algorithm=$algorithm \
+--algorithm="Raw" \
 --vocab_size=$vocab_size \
 --num_files=1000 \
 --block_size=2048 \

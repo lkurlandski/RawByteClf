@@ -252,6 +252,11 @@ def debug():
 def cli():
     parser = HfArgumentParser((ModelArgs, CallbackArgs, TrainingArguments))
     model_args, callback_args, training_args = parser.parse_args_into_dataclasses()
+    if training_args.dataloader_num_workers and training_args.dataloader_num_workers < 0:
+        training_args.dataloader_num_workers = int(
+            os.sched_getaffinity(0) // abs(training_args.dataloader_num_workers)
+        )
+
     print(f"model_args={pformat(model_args)}")
     print(f"callback_args={pformat(callback_args)}")
     print(f"training_args={pformat(training_args)}")

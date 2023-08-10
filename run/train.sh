@@ -11,29 +11,42 @@
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:a100:1
 
+if [ $# -eq 0 ]; then
+  echo "Please provide the log2 of the vocab size as an argument."
+  exit 1
+fi
 
-export ntasks=4
-export algorithm="SentencePieceBPE"
-export vocab_size=$((2**$1+6))
+export vocab_size=$((2**$1 + 6))
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
-CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=1 python src/train.py \
+# export CUDA_VISIBLE_DEVICES=0
+# export CUDA_LAUNCH_BLOCKING=1 
+
+python src/train.py \
 --vocab_size=$vocab_size \
 --num=0.1 \
---algorithm="SentencePieceBPE" \
---model=longformer \
---max_length=1000000 \
---scale=12 \
+--algorithm="Raw" \
+--model="malconv" \
+--max_length=10000 \
+--scale=.25 \
 --do_train \
+--do_eval \
 --output_dir=tmp \
 --overwrite_output_dir=true \
 --load_best_model_at_end=true \
---save_strategy="epoch" \
---evaluation_strategy="epoch" \
---dataloader_num_workers=$ntasks \
---num_train_epochs=2 \
---per_device_train_batch_size=1 \
---per_device_eval_batch_size=1 \
---tf32=false
+--save_strategy="steps" \
+--save_steps=10 \
+--evaluation_strategy="steps" \
+--eval_steps=10 \
+--logging_steps=10 \
+--dataloader_num_workers=-1 \
+--num_train_epochs=1000 \
+--per_device_train_batch_size=64 \
+--per_device_eval_batch_size=64 \
+--optim="adamw_torch" \
+--learning_rate="5e-5" \
+--group_by_length=true \
+--early_stopping=false
+# --tf32=false

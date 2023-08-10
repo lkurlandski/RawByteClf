@@ -11,10 +11,11 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=64G
 
+if [ $# -eq 0 ]; then
+  echo "Please provide the log2 of the vocab size as an argument."
+  exit 1
+fi
 
-export ntasks=1
-export ncpus=16
-export algorithm="SentencePieceBPE"
 export vocab_size=$((2**$1 + 6))
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -22,8 +23,8 @@ conda activate RawByteClf
 
 python src/preprocessing.py \
 --num=.1 \
---max_length=1000000 \
---algorithm=$algorithm \
+--max_length=10000 \
+--algorithm="Raw" \
 --vocab_size=$vocab_size \
 --num_proc=1 \
 --writer_batch_size=64 \
