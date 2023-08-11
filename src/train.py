@@ -1,19 +1,16 @@
 """
-Main.
+Train and evaluate the models for malware family classification.
 """
 
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
-import gc
-from itertools import chain
-from pathlib import Path
+import json
 from pprint import pformat, pprint
-import random
-import time
 from typing import Optional
 import os
 import sys
+import warnings
 
 from datasets import concatenate_datasets, Dataset, DatasetDict
 import evaluate
@@ -21,18 +18,16 @@ import numpy as np
 import torch
 from transformers import (
     BertConfig,
-    PreTrainedTokenizerFast,
     HfArgumentParser,
     Trainer,
     TrainingArguments,
     LongformerConfig,
-    ReformerConfig,
     AutoModelForSequenceClassification,
     DataCollatorWithPadding,
     EarlyStoppingCallback,
     PretrainedConfig,
+    PreTrainedModel,
 )
-from tqdm import tqdm
 
 from cfg import *
 from helpers import OutputHelper
@@ -101,34 +96,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     dataset["vl"].info.features["label"].num_classes = 10
     print(f"{dataset=}")
     print(BR, flush=True)
-
-    ############################################################
-    # c = Counter()
-    # for s in dataset:
-    #     for i in tqdm(range(dataset[s].num_rows)):
-    #         c.update([dataset[s][i]["label"]])
-    # print(f"{c=}")
-
-    # def fn(example: dict):
-    #     example = dict(example)
-    #     example["label"] = example["label"] % 2
-    #     return example
-    # dataset = dataset.map(fn, batched=False)
-    # dataset["tr"].info.features["label"].num_classes = 2
-    # dataset["ts"].info.features["label"].num_classes = 2
-    # dataset["vl"].info.features["label"].num_classes = 2
-    # l = -1
-    # for s in dataset:
-    #     for i in tqdm(range(dataset[s].num_rows)):
-    #         l = max(l, len(dataset[s][i]["input_ids"]))
-    # print(f"{l=}")
-
-    # c = Counter()
-    # for s in dataset:
-    #     for i in tqdm(range(dataset[s].num_rows)):
-    #         c.update([dataset[s][i]["label"]])
-    # print(f"{c=}")
-    ############################################################
 
     if model_args.model == "longformer":
         attention_window = scale_fn(512)
@@ -221,39 +188,19 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         training_args.output_dir = oh.checkpoints_dir.as_posix()
         trainer.train(training_args.resume_from_checkpoint)
         if training_args.load_best_model_at_end:
+            if isinstance(model, MalConvModel):
+                warnings.warn("MalConvModel does not support load_best_model_at_end.")
             model.save_pretrained(oh.best_model_dir.as_posix())
+        with open(oh.log_history_path, "w") as fp:
+            json.dump(trainer.state.log_history, fp, indent=4)
 
     if training_args.do_eval:
-        model = AutoModelForSequenceClassification.from_pretrained(oh.best_model_dir.as_posix())
+        if isinstance(model, PreTrainedModel):
+            model = AutoModelForSequenceClassification.from_pretrained(oh.best_model_dir.as_posix())
+        else:
+            model.load_state_dict(MalConvModel.get_state_dict(oh.best_model_dir))
         trainer.model = model
         trainer.evaluate(dataset["ts"])
-
-
-def debug():
-
-    model_args = ModelArgs(
-        vocab_size=1030,
-        num=0.1,
-        algorithm="SentencePieceBPE",
-        model="longformer",
-        max_length=1000000,
-        scale=4,
-    )
-    callback_args = CallbackArgs()
-    training_args = TrainingArguments(
-        output_dir="tmp",
-        overwrite_output_dir=True,
-        load_best_model_at_end=True,
-        save_strategy="epoch",
-        evaluation_strategy="epoch",
-        dataloader_num_workers=1,
-        num_train_epochs=2,
-        per_device_eval_batch_size=8,
-        per_device_train_batch_size=8,
-        no_cuda=True,
-        do_train=True,
-    )
-    main(model_args, callback_args, training_args)
 
 
 def cli():
@@ -261,7 +208,7 @@ def cli():
     model_args, callback_args, training_args = parser.parse_args_into_dataclasses()
     if training_args.dataloader_num_workers and training_args.dataloader_num_workers < 0:
         training_args.dataloader_num_workers = int(
-            os.sched_getaffinity(0) // abs(training_args.dataloader_num_workers)
+            len(os.sched_getaffinity(0)) // abs(training_args.dataloader_num_workers)
         )
     assert training_args.load_best_model_at_end
 
@@ -271,6 +218,10 @@ def cli():
     print(BR, flush=True)
     main(model_args, callback_args, training_args)
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
+
+
+def debug() -> None:
+    pass
 
 
 if __name__ == "__main__":

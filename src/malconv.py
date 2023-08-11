@@ -5,6 +5,8 @@ Adapted from:
 https://github.com/Alexander-H-Liu/MalConv-Pytorch/tree/master
 """
 
+from __future__ import annotations
+from pathlib import Path
 from pprint import pformat, pprint
 import sys
 from typing import Any, Optional
@@ -21,6 +23,7 @@ from transformers import (
     TrainerCallback,
     TrainingArguments,
 )
+from transformers.trainer_callback import TrainerState
 from tqdm import tqdm
 
 
@@ -70,27 +73,27 @@ class MalConvModel(nn.Module):
         )
 
     def forward(self, x: Tensor, softmax: bool = False) -> Tensor:
-        # print(f"{x.shape=}")
         x = self.embed(x)
-        # print(f"{x.shape=}")
         x = torch.transpose(x, -1, -2)
-        # print(f"{x.shape=}")
         cnn_value = self.conv_1(x.narrow(-2, 0, 4))
-        # print(f"{cnn_value.shape=}")
         gating_weight = F.sigmoid(self.conv_2(x.narrow(-2, 4, 4)))
-        # print(f"{gating_weight.shape=}")
         x = cnn_value * gating_weight
-        # print(f"{x.shape=}")
         x = self.pooling(x)
-        # print(f"{x.shape=}")
         x = x.view(-1, 128)
-        # print(f"{x.shape=}")
         x = self.mlp(x)
-        # print(f"{x.shape=}")
         if softmax:
             x = F.softmax(x)
-            # print(f"{x.shape=}")
         return x
+
+    def save_pretrained(self, save_directory: str | Path) -> None:
+        save_directory = Path(save_directory)
+        save_directory.mkdir(exist_ok=True)
+        torch.save(self.state_dict(), save_directory / "model.pt")
+
+    @staticmethod
+    def get_state_dict(save_directory: str | Path) -> Tensor:
+        save_directory = Path(save_directory)
+        return torch.load(save_directory / "model.pt")
 
 
 class MalConvTrainer:
@@ -117,6 +120,7 @@ class MalConvTrainer:
             "cuda" if (torch.cuda.is_available() and not self.args.no_cuda) else "cpu"
         )
         self.loss_fn = nn.CrossEntropyLoss()
+        self.state = TrainerState(epoch=0, log_history=[])
 
     def train(self, _) -> None:
         self.model = self.model.to(self.device)
@@ -138,7 +142,9 @@ class MalConvTrainer:
             metrics["vl_accuracy"] = metrics.pop("accuracy")
             metrics["tr_loss"] = sum(tr_losses) / len(tr_losses)
             metrics = {k: round(v, 3) for k, v in metrics.items()}
-            print(f"{epoch}: {metrics}")
+            # FIXME: ensure the keys match the keys from the log_history of transformers.Trainer
+            self.state.log_history.append(metrics)
+            self.state.epoch = epoch
 
     def evaluate(self, test_dataset) -> dict[str, float]:
         loader = self.get_dataloader(test_dataset, self.args.per_device_eval_batch_size)

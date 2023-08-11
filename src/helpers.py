@@ -25,6 +25,10 @@ class OutputHelper:
                                         | -- checkpoint-{epoch}
                                             | -- config.json
                                             | ...
+                                        | -- best
+                                            | -- config.json
+                                            | ...
+                                        | -- log_history.json
     """
 
     def __init__(
@@ -125,6 +129,12 @@ class OutputHelper:
         if not self.model_dir:
             return None
         return self.model_dir / "checkpoints"
+
+    @property
+    def log_history_path(self) -> Path:
+        if not self.model_dir:
+            return None
+        return self.model_dir / "log_history.json"
 
     def exists(self, tokenizer: bool = True, dataset: bool = True, model: bool = True) -> bool:
         return (
