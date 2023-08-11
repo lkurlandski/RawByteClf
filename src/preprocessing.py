@@ -10,13 +10,15 @@ import shutil
 import sys
 from typing import Optional
 
-from datasets import Dataset, DatasetDict
+from datasets import concatenate_datasets, Dataset, DatasetDict
 from transformers import HfArgumentParser, PreTrainedTokenizer
+from tqdm import tqdm
 
 from cfg import *
 from data import microsoft_dataset_callable
 from helpers import OutputHelper
 from tokenization import get_fast_tokenizer
+from utils import get_highest_path
 
 
 @dataclass
@@ -29,6 +31,7 @@ class DatasetArgs:
     num_proc: int = field(default=1, metadata={"help": ""})
     batch_size: int = field(default=1000, metadata={"help": ""})
     writer_batch_size: int = field(default=1000, metadata={"help": ""})
+    shardsize: Optional[int] = field(default=None, metadata={"help": ""})
 
 
 def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
@@ -36,6 +39,31 @@ def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
         return tokenizer(examples["text"], truncation=True)
 
     return fn
+
+
+def is_dataset_path(path: Path) -> bool:
+    REQUIRED = ("dataset_info.json", "state.json")
+    ALLOWED = (".arrow",)
+
+    paths = [p.name for p in path.iterdir()]
+    if not all(p in paths for p in REQUIRED):
+        return False
+
+    for p in paths:
+        if p in REQUIRED:
+            continue
+        if Path(p).suffix not in ALLOWED:
+            return False
+    return True
+
+
+def completed(path: Path) -> bool:
+    tr_path = path / "tr"
+    vl_path = path / "vl"
+    ts_path = path / "ts"
+    return all(p.exists() for p in (tr_path, vl_path, ts_path)) and all(
+        is_dataset_path(p) for p in (tr_path, vl_path, ts_path)
+    )
 
 
 def main(
@@ -47,7 +75,8 @@ def main(
     num_proc: int = 1,
     batch_size: int = 1000,
     writer_batch_size: int = 1000,
-) -> Dataset:
+    shardsize: Optional[int] = None,
+) -> DatasetDict:
     print("Fetching raw datasets...")
 
     tr = Dataset.from_generator(microsoft_dataset_callable(splits=["tr"]))
@@ -72,13 +101,52 @@ def main(
     print(f"{tokenizer=}")
     print("Tokenizing...")
     print(BR, flush=True)
-    dataset = dataset.map(
-        get_tokenize_fn(tokenizer),
-        batched=True,
-        num_proc=num_proc,
-        batch_size=batch_size,
-        writer_batch_size=writer_batch_size,
-    )
+
+    if completed(oh.dataset_dir):
+        raise FileExistsError(oh.dataset_dir)
+
+    if shardsize is None:
+        dataset = dataset.map(
+            get_tokenize_fn(tokenizer),
+            batched=True,
+            num_proc=num_proc,
+            batch_size=batch_size,
+            writer_batch_size=writer_batch_size,
+        )
+    else:
+        # Assumes a continuation from an OOMd processing run.
+        # Will initially save shards of dataset into a temporary directory
+        # with the number of examples in the dataset. Then, if all shards are
+        # present, will merge them, deleting the temporary directories, and
+        # finally saving the entire dataset as would be done normally.
+        for split in reversed(list(dataset.keys())):
+            oh.dataset_dir.mkdir(exist_ok=True, parents=True)
+            path: Path = oh.dataset_dir / split
+            if path.exists():
+                start = int(get_highest_path(path).stem) + shardsize
+            else:
+                start = 0
+
+            starts = list(range(start, dataset[split].num_rows, shardsize))
+            for i in tqdm(starts, initial=(start // shardsize), total=len(starts)):
+                idx = list(range(i, min(i + shardsize, dataset[split].num_rows)))
+                d = dataset[split].select(idx)
+                d = d.map(
+                    get_tokenize_fn(tokenizer),
+                    batched=True,
+                    num_proc=num_proc,
+                    batch_size=batch_size,
+                    writer_batch_size=writer_batch_size,
+                )
+                path.mkdir(exist_ok=True)
+                p = path / f"{idx[-1] + 1}"
+                p.mkdir()
+                d.save_to_disk(p.as_posix())
+            ds = [
+                Dataset.load_from_disk(p.as_posix(), keep_in_memory=False) for p in path.iterdir()
+            ]
+            dataset[split] = concatenate_datasets(ds)
+
     path = oh.dataset_dir
     shutil.rmtree(path, ignore_errors=True)
     path.mkdir(exist_ok=True, parents=True)
@@ -100,6 +168,7 @@ def cli():
         args.num_proc,
         args.batch_size,
         args.writer_batch_size,
+        args.shardsize,
     )
 
 

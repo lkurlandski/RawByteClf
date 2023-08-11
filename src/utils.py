@@ -1,7 +1,8 @@
 """
+Useful functions for the project.
 """
 
-from collections import namedtuple
+from collections.abc import Collection
 from pathlib import Path
 import psutil
 import os
@@ -50,3 +51,13 @@ def print_summary(result):
 
 def count_parameters(model: nn.Module, requires_grad: bool = False) -> int:
     return sum(p.numel() for p in model.parameters() if (not requires_grad or p.requires_grad))
+
+
+def get_highest_path(
+    path_or_files: Collection[Path] | Path, lstrip: str = "", rstrip: str = ""
+) -> Path:
+    if isinstance(path_or_files, (Path, str)):
+        files = Path(path_or_files).iterdir()
+    else:
+        files = path_or_files
+    return list(sorted(files, key=lambda p: int(p.stem.lstrip(lstrip).rstrip(rstrip))))[-1]

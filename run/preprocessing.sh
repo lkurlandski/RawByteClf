@@ -23,8 +23,9 @@ conda activate RawByteClf
 
 python src/preprocessing.py \
 --max_length=10000 \
---algorithm="Raw" \
+--algorithm="SentencePieceBPE" \
 --vocab_size=$vocab_size \
 --num_proc=1 \
 --writer_batch_size=512 \
---batch_size=512
+--batch_size=512 \
+--shardsize=512
