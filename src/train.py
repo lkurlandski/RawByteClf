@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+from pathlib import Path
 from pprint import pformat, pprint
 from typing import Optional
 import os
@@ -27,6 +28,7 @@ from transformers import (
     EarlyStoppingCallback,
     PretrainedConfig,
     PreTrainedModel,
+    PreTrainedTokenizerFast,
 )
 
 from cfg import *
@@ -42,7 +44,11 @@ accuracy = evaluate.load("accuracy")
 @dataclass
 class ModelArgs:
     max_length: int = field(metadata={"help": ""})
-    model: str = field(metadata={"help": "One of `longformer`, `reformer`, ..., "})
+    model: str = field(
+        metadata={
+            "help": "One of `longformer`, `bert`, `malconv`, OR a path to a pretrained model."
+        }
+    )
     algorithm: str = field(metadata={"help": ""})
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     scale: float = field(default=1.0, metadata={"help": ""})
@@ -73,15 +79,82 @@ def compute_metrics(eval_pred):
     return accuracy.compute(predictions=predictions, references=labels)
 
 
-def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
+def get_config_malconv(
+    _,
+    tokenizer: Optional[PreTrainedTokenizerFast],
+    max_length: Optional[int] = None,
+    scale: int = 1,
+    num_labels: Optional[int] = None,
+) -> MalConvConfig:
+    scale_fn = lambda x: int(round(x * scale))
 
-    scale_fn = lambda x: int(round(x * model_args.scale))
+    return MalConvConfig(
+        num_embd=len(tokenizer),
+        embed_size=scale_fn(8),
+        max_length=max_length,
+        window_size=scale_fn(512),
+        hidden_size=scale_fn(128),
+        num_classes=num_labels,
+        pad_idx=tokenizer.pad_token_id,
+    )
+
+
+def get_config_hf(
+    model_name_or_path: str,
+    tokenizer: Optional[PreTrainedTokenizerFast] = None,
+    max_length: Optional[int] = None,
+    scale: int = 1,
+    **kwds,
+) -> PretrainedConfig:
+    """
+    kwds
+    ----
+      num_labels (int): use for classification
+    """
+    if Path(model_name_or_path).exists():
+        return PretrainedConfig.from_pretrained(model_name_or_path)
+
+    scale_fn = lambda x: int(round(x * scale))
+
+    if model_name_or_path == "longformer":
+        attention_window = scale_fn(512)
+        return LongformerConfig(
+            attention_window=attention_window + attention_window % 2,
+            sep_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            vocab_size=len(tokenizer),
+            hidden_size=scale_fn(768),
+            num_hidden_layers=scale_fn(12),
+            num_attention_heads=scale_fn(12),
+            intermediate_size=scale_fn(3072),
+            max_position_embeddings=attention_window + max_length,
+            **kwds,
+        )
+    if model_name_or_path == "bert":
+        return BertConfig(
+            vocab_size=len(tokenizer),
+            hidden_size=scale_fn(768),
+            num_hidden_layers=scale_fn(12),
+            num_attention_heads=scale_fn(12),
+            intermediate_size=scale_fn(3072),
+            max_position_embeddings=max_length,
+            pad_token_id=tokenizer.pad_token_id,
+            classifier_dropout=None,
+            **kwds,
+        )
+    raise ValueError(f"Invalid model name or path: {model_name_or_path}")
+
+
+def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
 
     oh = OutputHelper(
         algorithm=model_args.algorithm,
         vocab_size=model_args.vocab_size,
         num_tok=model_args.num_tok,
         max_length=model_args.max_length,
+        task="clf",
         num=model_args.num,
         model=model_args.model,
     )
@@ -97,40 +170,23 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     print(f"{dataset=}")
     print(BR, flush=True)
 
-    if model_args.model == "longformer":
-        attention_window = scale_fn(512)
-        config = LongformerConfig(
-            attention_window=attention_window + attention_window % 2,
-            sep_token_id=tokenizer.eos_token_id,
-            pad_token_id=tokenizer.pad_token_id,
-            bos_token_id=tokenizer.bos_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-            vocab_size=len(tokenizer),
-            hidden_size=scale_fn(768),
-            num_hidden_layers=scale_fn(12),
-            num_attention_heads=scale_fn(12),
-            intermediate_size=scale_fn(3072),
-            max_position_embeddings=attention_window + model_args.max_length,
+    # TODO: can we specify the num_labels parameter later, ie, when initializing the
+    # classification head? This would simplify the code for get_config_malconv...
+    if model_args.model == "malconv":
+        config = get_config_malconv(
+            model_args.model,
+            tokenizer,
+            model_args.max_length,
+            model_args.scale,
             num_labels=dataset["tr"].info.features["label"].num_classes,
         )
-    elif model_args.model == "bert":
-        config = BertConfig(
-            vocab_size=len(tokenizer),
-            hidden_size=scale_fn(768),
-            num_hidden_layers=scale_fn(12),
-            num_attention_heads=scale_fn(12),
-            intermediate_size=scale_fn(3072),
-            max_position_embeddings=model_args.max_length,
-            pad_token_id=tokenizer.pad_token_id,
-            classifier_dropout=None,
+    else:
+        config = get_config_hf(
+            model_args.model,
+            tokenizer,
+            model_args.max_length,
+            model_args.scale,
             num_labels=dataset["tr"].info.features["label"].num_classes,
-        )
-    elif model_args.model == "malconv":
-        config = MalConvConfig(
-            num_embd=len(tokenizer),
-            num_classes=dataset["tr"].info.features["label"].num_classes,
-            pad_idx=tokenizer.pad_token_id,
-            max_length=model_args.max_length,
         )
 
     data_collator = DataCollatorWithPadding(
@@ -210,6 +266,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         results = trainer.evaluate(dataset["ts"])
         with open(oh.test_results_path, "w") as fp:
             json.dump(results, fp, indent=4)
+
 
 def cli():
     parser = HfArgumentParser((ModelArgs, CallbackArgs, TrainingArguments))

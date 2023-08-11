@@ -47,13 +47,17 @@ class MicrosoftDatasetGen:
         max_size: int = sys.maxsize,
         tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
         split: Optional[Literal["tr", "ts", "vl"]] = None,
+        microsoft_subset: Optional[Literal["train", "test"]] = "train",
     ) -> None:
         self.min_size = min_size
         self.max_size = max_size
+        self.microsoft_subset = microsoft_subset
         self.keys = pd.read_csv("data/trainLabels.csv", index_col=0).to_dict()["Class"]
         self.iteration = 0
 
-        files = (p for p in (MICROSOFT_ROOT / "train").iterdir() if p.suffix == ".txt")
+        files = (
+            p for p in (MICROSOFT_ROOT / self.microsoft_subset).iterdir() if p.suffix == ".txt"
+        )
         files = filter(lambda p: min_size <= p.stat().st_size < max_size, files)
         self.files = sorted(list(files))
         sizes = [int(s * len(self.files)) for s in tr_vl_ts]
@@ -133,17 +137,20 @@ def microsoft_dataset_callable(
     max_size: int = sys.maxsize,
     tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
     splits: Optional[list[Literal["tr", "ts", "vl"]]] = None,
+    microsoft_subset: Optional[Literal["train", "test"]] = "train",
 ) -> Callable:
     if not splits:
         return MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, None)
 
-    datasets = [MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, s) for s in splits]
+    datasets = [
+        MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, s, microsoft_subset) for s in splits
+    ]
     assert all(d.tr_idx == datasets[0].tr_idx for d in datasets), "Dumb piece of shit."
     return lambda: chain(*[d() for d in datasets])
 
 
-def convert_microsoft_to_utf_bytes(split: Literal["train", "test"]):
-    files = set(p for p in (MICROSOFT_ROOT / split).iterdir())
+def convert_microsoft_to_utf_bytes(microsoft_subset: Literal["train", "test"]):
+    files = set(p for p in (MICROSOFT_ROOT / microsoft_subset).iterdir())
     for f in tqdm(files):
         if f.stat().st_size == 0:
             print(f"{f.name}.stat().st_size == 0")

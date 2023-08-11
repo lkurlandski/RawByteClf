@@ -19,16 +19,39 @@ class OutputHelper:
                         |-- vocab.json
                         |-- {max_length}
                             | -- {num}
-                                | -- dataset
-                                | -- model
-                                    | -- checkpoints
-                                        | -- checkpoint-{epoch}
-                                            | -- config.json
-                                            | ...
-                                        | -- best
-                                            | -- config.json
-                                            | ...
-                                        | -- log_history.json
+                                | -- clf
+                                    | -- dataset
+                                    | -- model
+                                        | -- checkpoints
+                                            | -- checkpoint-{epoch}
+                                                | -- config.json
+                                                | ...
+                                            | -- best
+                                                | -- config.json
+                                                | ...
+                                            | -- log_history.json
+                                | -- mlm
+                                    | -- dataset
+                                    | -- model
+                                        | -- checkpoints
+                                            | -- checkpoint-{epoch}
+                                                | -- config.json
+                                                | ...
+                                            | -- best
+                                                | -- config.json
+                                                | ...
+                                            | -- log_history.json
+                                | -- clm
+                                    | -- dataset
+                                    | -- model
+                                        | -- checkpoints
+                                            | -- checkpoint-{epoch}
+                                                | -- config.json
+                                                | ...
+                                            | -- best
+                                                | -- config.json
+                                                | ...
+                                            | -- log_history.json
     """
 
     def __init__(
@@ -39,6 +62,7 @@ class OutputHelper:
         vocab_size: int = None,
         num_tok: int = None,
         max_length: int = None,
+        task: Literal["clf", "mlm", "clm"] = None,
         num: float = None,
         model: str = None,
     ) -> None:
@@ -47,6 +71,7 @@ class OutputHelper:
         self._vocab_size = vocab_size
         self._num_tok = num_tok
         self._max_length = max_length
+        self._task = task
         self._num = num
         self._model = model
 
@@ -83,6 +108,10 @@ class OutputHelper:
         return str(self._max_length) if self._max_length is not None else None
 
     @property
+    def task(self) -> str:
+        return str(self._task) if self._task is not None else None
+
+    @property
     def num(self) -> str:
         return str(self._num) if self._num is not None else None
 
@@ -99,7 +128,14 @@ class OutputHelper:
 
     @property
     def dataset_dir(self) -> Path:
-        parts = [self.algorithm, self.vocab_size, self.num_tok, self.max_length, self.num]
+        parts = [
+            self.algorithm,
+            self.vocab_size,
+            self.num_tok,
+            self.max_length,
+            self.task,
+            self.num,
+        ]
         if any(a is None for a in parts):
             return None
         return self.root.joinpath(*parts) / "dataset"
@@ -111,6 +147,7 @@ class OutputHelper:
             self.vocab_size,
             self.num_tok,
             self.max_length,
+            self.task,
             self.num,
             self.model,
         ]
@@ -157,6 +194,7 @@ def iter_over_root(
     vocab_sizes: Optional[list[int]] = None,
     num_toks: Optional[list[int]] = None,
     max_lengths: Optional[list[int]] = None,
+    tasks: Optional[list[Literal["clf", "clm", "mlm"]]] = None,
     nums: Optional[list[float]] = None,
     models: Optional[list[str]] = None,
 ) -> Generator[OutputHelper, None, None]:
@@ -172,14 +210,16 @@ def iter_over_root(
         for vocab_size in func(algorithm, vocab_sizes):
             for num_tok in func(vocab_size, num_toks):
                 for max_length in func(num_tok, max_lengths):
-                    for num in func(max_length, nums):
-                        for model in func(num, models):
-                            yield OutputHelper(
-                                root=root,
-                                algorithm=algorithm.name,
-                                vocab_size=int(vocab_size.name),
-                                num_tok=int(num_tok.name),
-                                max_length=int(max_length.name),
-                                num=float(num.name),
-                                model=model.name,
-                            )
+                    for task in func(max_length, tasks):
+                        for num in func(max_length, nums):
+                            for model in func(num, models):
+                                yield OutputHelper(
+                                    root=root,
+                                    algorithm=algorithm.name,
+                                    vocab_size=int(vocab_size.name),
+                                    num_tok=int(num_tok.name),
+                                    max_length=int(max_length.name),
+                                    task=task.name,
+                                    num=float(num.name),
+                                    model=model.name,
+                                )

@@ -8,7 +8,7 @@ from pathlib import Path
 from pprint import pformat, pprint
 import shutil
 import sys
-from typing import Optional
+from typing import Literal, Optional
 
 from datasets import concatenate_datasets, Dataset, DatasetDict
 from transformers import HfArgumentParser, PreTrainedTokenizer
@@ -32,6 +32,7 @@ class DatasetArgs:
     batch_size: int = field(default=1000, metadata={"help": ""})
     writer_batch_size: int = field(default=1000, metadata={"help": ""})
     shardsize: Optional[int] = field(default=None, metadata={"help": ""})
+    task: str = field(default="clf", metadata={"help": "`clf`, `clm`, or `mlm`"})
 
 
 def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
@@ -76,12 +77,21 @@ def main(
     batch_size: int = 1000,
     writer_batch_size: int = 1000,
     shardsize: Optional[int] = None,
+    task: Optional[Literal["clf", "clm", "mlm"]] = "clf",
 ) -> DatasetDict:
     print("Fetching raw datasets...")
 
-    tr = Dataset.from_generator(microsoft_dataset_callable(splits=["tr"]))
-    vl = Dataset.from_generator(microsoft_dataset_callable(splits=["vl"]))
-    ts = Dataset.from_generator(microsoft_dataset_callable(splits=["ts"]))
+    microsoft_subset = "train" if task == "clf" else "test"
+
+    tr = Dataset.from_generator(
+        microsoft_dataset_callable(splits=["tr"], microsoft_subset=microsoft_subset)
+    )
+    vl = Dataset.from_generator(
+        microsoft_dataset_callable(splits=["vl"], microsoft_subset=microsoft_subset)
+    )
+    ts = Dataset.from_generator(
+        microsoft_dataset_callable(splits=["ts"], microsoft_subset=microsoft_subset)
+    )
     if num:
         tr = tr.select(range(int(num * tr.num_rows)))
         vl = vl.select(range(int(num * vl.num_rows)))
@@ -95,6 +105,7 @@ def main(
         vocab_size=vocab_size,
         num_tok=num_tok,
         max_length=max_length,
+        task=task,
         num=num,
     )
     tokenizer = get_fast_tokenizer(oh.tokenizer_file, max_length)
@@ -169,6 +180,7 @@ def cli():
         args.batch_size,
         args.writer_batch_size,
         args.shardsize,
+        args.task,
     )
 
 
