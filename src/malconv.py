@@ -138,13 +138,12 @@ class MalConvTrainer:
                 optimizer.step()
                 tr_losses.append(loss.detach().cpu().numpy().tolist())
             metrics = self.evaluate(self.eval_dataset)
-            metrics["vl_loss"] = metrics.pop("loss")
-            metrics["vl_accuracy"] = metrics.pop("accuracy")
-            metrics["tr_loss"] = sum(tr_losses) / len(tr_losses)
-            metrics = {k: round(v, 3) for k, v in metrics.items()}
-            # FIXME: ensure the keys match the keys from the log_history of transformers.Trainer
+            metrics["eval_loss"] = metrics.pop("loss")
+            metrics["eval_accuracy"] = metrics.pop("accuracy")
+            metrics["loss"] = sum(tr_losses) / len(tr_losses)
+            metrics["epoch"] = float(epoch)
             self.state.log_history.append(metrics)
-            self.state.epoch = epoch
+            self.state.epoch = float(epoch)
 
     def evaluate(self, test_dataset) -> dict[str, float]:
         loader = self.get_dataloader(test_dataset, self.args.per_device_eval_batch_size)

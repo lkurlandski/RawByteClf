@@ -59,17 +59,17 @@ class CallbackArgs:
 
 def compute_metrics(eval_pred):
     probas, labels = eval_pred
-    probas = torch.softmax(torch.tensor(probas), dim=1).numpy()
+    probas: np.ndarray = probas.astype(np.float32)
+    labels: np.ndarray = labels.astype(np.int64)
+    probas = torch.softmax(torch.tensor(probas, dtype=torch.float32), dim=1).numpy()
     predictions = np.argmax(probas, axis=1)
-    print(
-        "\n",
-        {
+    if False:
+        d = {
             "confs": np.mean(np.max(probas, axis=1)),
             "preds": Counter(predictions),
             "labels": Counter(labels),
-        },
-        sep="",
-    )
+        }
+        print(f"\n{d}")
     return accuracy.compute(predictions=predictions, references=labels)
 
 
@@ -199,9 +199,17 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
             model = AutoModelForSequenceClassification.from_pretrained(oh.best_model_dir.as_posix())
         else:
             model.load_state_dict(MalConvModel.get_state_dict(oh.best_model_dir))
-        trainer.model = model
-        trainer.evaluate(dataset["ts"])
-
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            data_collator=data_collator,
+            tokenizer=tokenizer,
+            callbacks=callbacks,
+            compute_metrics=compute_metrics,
+        )
+        results = trainer.evaluate(dataset["ts"])
+        with open(oh.test_results_path, "w") as fp:
+            json.dump(results, fp, indent=4)
 
 def cli():
     parser = HfArgumentParser((ModelArgs, CallbackArgs, TrainingArguments))

@@ -136,6 +136,12 @@ class OutputHelper:
             return None
         return self.model_dir / "log_history.json"
 
+    @property
+    def test_results_path(self) -> Path:
+        if not self.model_dir:
+            return None
+        return self.model_dir / "test_results.json"
+
     def exists(self, tokenizer: bool = True, dataset: bool = True, model: bool = True) -> bool:
         return (
             (not tokenizer or (self.tokenizer_file and self.tokenizer_file.exists()))
