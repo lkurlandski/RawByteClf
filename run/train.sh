@@ -21,14 +21,14 @@ export vocab_size=$((2**$1 + 6))
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
-# export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0
 # export CUDA_LAUNCH_BLOCKING=1 
 
 python src/train.py \
 --vocab_size=$vocab_size \
---num=0.1 \
+--num=1 \
 --algorithm="Raw" \
---model="malconv" \
+--model="longformer" \
 --max_length=10000 \
 --scale=.25 \
 --early_stopping=false \
@@ -38,14 +38,14 @@ python src/train.py \
 --overwrite_output_dir=true \
 --load_best_model_at_end=true \
 --save_strategy="steps" \
---save_steps=10 \
+--save_steps=100 \
 --evaluation_strategy="steps" \
---eval_steps=10 \
---logging_steps=10 \
+--eval_steps=100 \
+--logging_steps=100 \
 --dataloader_num_workers=-1 \
---num_train_epochs=1000 \
---per_device_train_batch_size=64 \
---per_device_eval_batch_size=64 \
+--num_train_epochs=25 \
+--per_device_train_batch_size=32 \
+--per_device_eval_batch_size=32 \
 --optim="adamw_torch" \
 --learning_rate="5e-5" \
 --group_by_length=true \
