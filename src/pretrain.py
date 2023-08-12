@@ -127,7 +127,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
             data_collator=data_collator,
             tokenizer=tokenizer,
             callbacks=callbacks,
-            compute_metrics=compute_metrics,
+            #compute_metrics=compute_metrics,
         )
         results = trainer.evaluate(dataset["ts"])
         with open(oh.test_results_path, "w") as fp:
