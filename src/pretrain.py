@@ -35,13 +35,29 @@ from transformers import (
 from cfg import *
 from helpers import OutputHelper
 from malconv import MalConvModel, MalConvConfig, MalConvTrainer
-from train import compute_metrics, get_config_hf, ModelArgs, CallbackArgs
+from train import accuracy, compute_metrics, get_config_hf, ModelArgs, CallbackArgs
 from tokenization import get_fast_tokenizer
 from utils import count_parameters
 
 
 MLM: bool = True
 AutoModelForLM: type = AutoModelForMaskedLM if MLM else AutoModelForCausalLM
+
+
+# TODO: verify this is correct...
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    logits: np.ndarray = logits.astype(np.float32)
+    labels: np.ndarray = labels.astype(np.int64)
+    # print("logits", logits.shape, logits.dtype)
+    # print("labels", labels.shape, labels.dtype)
+    probas = torch.softmax(torch.tensor(logits, dtype=torch.float32), dim=2).numpy()
+    predictions = np.argmax(probas, axis=2)
+    # print("probas", probas.shape, probas.dtype)
+    # print("predictions", predictions.shape, predictions.dtype)
+    m = accuracy.compute(predictions=predictions.flatten(), references=labels.flatten())
+    # print(f"{m=}")
+    return m
 
 
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
@@ -92,7 +108,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         data_collator=data_collator,
         tokenizer=tokenizer,
         callbacks=callbacks,
-        # compute_metrics=compute_metrics,
+        compute_metrics=compute_metrics,
     )
 
     print(f"{config=}")
@@ -127,7 +143,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
             data_collator=data_collator,
             tokenizer=tokenizer,
             callbacks=callbacks,
-            #compute_metrics=compute_metrics,
+            compute_metrics=compute_metrics,
         )
         results = trainer.evaluate(dataset["ts"])
         with open(oh.test_results_path, "w") as fp:
