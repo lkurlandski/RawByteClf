@@ -11,4 +11,7 @@ unzip raw.7z
 ## TODO
 
 - adjust preprocessing script to elegantly handle OOM issues
+- add 12-bit byte capabaility
+  - decompose 8-bit bytes into bits; then reform into bytes
+  - perform entirely in memory
 
