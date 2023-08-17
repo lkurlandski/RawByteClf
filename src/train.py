@@ -18,6 +18,7 @@ import evaluate
 import numpy as np
 import torch
 from transformers import (
+    AutoConfig,
     BertConfig,
     HfArgumentParser,
     Trainer,
@@ -44,16 +45,25 @@ accuracy = evaluate.load("accuracy")
 @dataclass
 class ModelArgs:
     max_length: int = field(metadata={"help": ""})
-    model: str = field(
-        metadata={
-            "help": "One of `longformer`, `bert`, `malconv`, OR a path to a pretrained model."
-        }
-    )
+    model: str = field(metadata={"help": "One of `longformer`, `bert`, `malconv`."})
     algorithm: str = field(metadata={"help": ""})
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     scale: float = field(default=1.0, metadata={"help": ""})
     num_tok: int = field(default=1000, metadata={"help": ""})
     num: float = field(default=1.0, metadata={"help": ""})
+    task: Optional[str] = field(
+        default="None",
+        metadata={"help": ("One of `clm` or `mlm`. " "Not used if training for classification.")},
+    )
+    pretrain_task: str = field(
+        default="clf",
+        metadata={
+            "help": (
+                "One of `clf`, `clm`, or `mlm`. "
+                "If not `clf`, will be used to search for pretrained model."
+            )
+        },
+    )
 
 
 @dataclass
@@ -69,13 +79,6 @@ def compute_metrics(eval_pred):
     labels: np.ndarray = labels.astype(np.int64)
     probas = torch.softmax(torch.tensor(probas, dtype=torch.float32), dim=1).numpy()
     predictions = np.argmax(probas, axis=1)
-    if False:
-        d = {
-            "confs": np.mean(np.max(probas, axis=1)),
-            "preds": Counter(predictions),
-            "labels": Counter(labels),
-        }
-        print(f"\n{d}")
     return accuracy.compute(predictions=predictions, references=labels)
 
 
@@ -112,7 +115,7 @@ def get_config_hf(
       num_labels (int): use for classification
     """
     if Path(model_name_or_path).exists():
-        return PretrainedConfig.from_pretrained(model_name_or_path)
+        return AutoConfig.from_pretrained(model_name_or_path, **kwds)
 
     scale_fn = lambda x: int(round(x * scale))
 
@@ -148,7 +151,6 @@ def get_config_hf(
 
 
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
-
     oh = OutputHelper(
         algorithm=model_args.algorithm,
         vocab_size=model_args.vocab_size,
@@ -157,7 +159,24 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         task="clf",
         num=model_args.num,
         model=model_args.model,
+        pretrain_task=model_args.pretrain_task,
     )
+
+    if model_args.pretrain_task is not None and model_args.pretrain_task != "clf":
+        model_name_or_path = OutputHelper(
+            algorithm=model_args.algorithm,
+            vocab_size=model_args.vocab_size,
+            num_tok=model_args.num_tok,
+            max_length=model_args.max_length,
+            task=model_args.pretrain_task,
+            num=model_args.num,
+            model=model_args.model,
+            pretrain_task=model_args.pretrain_task,
+        ).best_model_dir
+        if not Path(model_name_or_path).exists():
+            raise FileNotFoundError(model_name_or_path)
+    else:
+        model_name_or_path = model_args.model
 
     tokenizer = get_fast_tokenizer(oh.tokenizer_file, model_args.max_length)
     print(f"{tokenizer=}")
@@ -182,7 +201,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         )
     else:
         config = get_config_hf(
-            model_args.model,
+            model_name_or_path,
             tokenizer,
             model_args.max_length,
             model_args.scale,

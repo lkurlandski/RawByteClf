@@ -40,12 +40,11 @@ from tokenization import get_fast_tokenizer
 from utils import count_parameters
 
 
-MLM: bool = True
+MLM: bool = True  # FIXME: add support for clm
 AutoModelForLM: type = AutoModelForMaskedLM if MLM else AutoModelForCausalLM
 
 
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
-
     oh = OutputHelper(
         algorithm=model_args.algorithm,
         vocab_size=model_args.vocab_size,
@@ -54,6 +53,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         num=model_args.num,
         task="mlm" if MLM else "clm",
         model=model_args.model,
+        pretrain_task=model_args.pretrain_task,
     )
     print(f"{oh=}")
 
