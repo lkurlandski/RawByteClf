@@ -35,23 +35,32 @@ from transformers import (
 from cfg import *
 from helpers import OutputHelper
 from malconv import MalConvModel, MalConvConfig, MalConvTrainer
-from train import compute_metrics, get_config_hf, ModelArgs, CallbackArgs
+from train import get_config_hf, ModelArgs, CallbackArgs
 from tokenization import get_fast_tokenizer
 from utils import count_parameters
 
 
-MLM: bool = True  # FIXME: add support for clm
-AutoModelForLM: type = AutoModelForMaskedLM if MLM else AutoModelForCausalLM
+# TODO: implement perplexity and F1 for CLM and MLM
+compute_metrics = None
 
 
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
+    if model_args.task == "mlm":
+        MLM = True
+        AutoModelForLM: type = AutoModelForMaskedLM
+    elif model_args.task == "clm":
+        MLM = False
+        AutoModelForLM: type = AutoModelForCausalLM
+    else:
+        raise ValueError(f"{model_args.task=} not supported.")
+
     oh = OutputHelper(
         algorithm=model_args.algorithm,
         vocab_size=model_args.vocab_size,
         num_tok=model_args.num_tok,
         max_length=model_args.max_length,
         num=model_args.num,
-        task="mlm" if MLM else "clm",
+        task=model_args.task,
         model=model_args.model,
         pretrain_task=model_args.pretrain_task,
     )
@@ -92,7 +101,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         data_collator=data_collator,
         tokenizer=tokenizer,
         callbacks=callbacks,
-        # compute_metrics=compute_metrics,
+        compute_metrics=compute_metrics,
     )
 
     print(f"{config=}")

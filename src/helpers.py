@@ -6,6 +6,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Generator, Literal, Optional
 
+from utils import is_dataset_path_completed
+
 
 class OutputHelper:
     """
@@ -127,19 +129,30 @@ class OutputHelper:
             return None
         return self.root.joinpath(*parts) / "vocab.json"
 
+    # TODO: replace this hack with something a bit more stable
     @property
     def dataset_dir(self) -> Path:
-        parts = [
-            self.algorithm,
-            self.vocab_size,
-            self.num_tok,
-            self.max_length,
-            self.task,
-            self.num,
-        ]
-        if any(a is None for a in parts):
+        def parts(task: str) -> list:
+            return [
+                self.algorithm,
+                self.vocab_size,
+                self.num_tok,
+                self.max_length,
+                task,
+                self.num,
+            ]
+
+        if any(a is None for a in parts(self.task)):
             return None
-        return self.root.joinpath(*parts) / "dataset"
+        if self.task == "clf":
+            return self.root.joinpath(*parts) / "dataset"
+
+        for task in ("mlm", "clm"):
+            path = self.root.joinpath(*parts(task)) / "dataset"
+            if is_dataset_path_completed(path):
+                return path
+
+        return self.root.joinpath(*parts(self.task)) / "dataset"
 
     @property
     def clf_model_dir(self) -> Path:

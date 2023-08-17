@@ -18,7 +18,7 @@ from cfg import *
 from data import microsoft_dataset_callable
 from helpers import OutputHelper
 from tokenization import get_fast_tokenizer
-from utils import get_highest_path
+from utils import get_highest_path, is_dataset_path_completed
 
 
 @dataclass
@@ -40,31 +40,6 @@ def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
         return tokenizer(examples["text"], truncation=True)
 
     return fn
-
-
-def is_dataset_path(path: Path) -> bool:
-    REQUIRED = ("dataset_info.json", "state.json")
-    ALLOWED = (".arrow",)
-
-    paths = [p.name for p in path.iterdir()]
-    if not all(p in paths for p in REQUIRED):
-        return False
-
-    for p in paths:
-        if p in REQUIRED:
-            continue
-        if Path(p).suffix not in ALLOWED:
-            return False
-    return True
-
-
-def completed(path: Path) -> bool:
-    tr_path = path / "tr"
-    vl_path = path / "vl"
-    ts_path = path / "ts"
-    return all(p.exists() for p in (tr_path, vl_path, ts_path)) and all(
-        is_dataset_path(p) for p in (tr_path, vl_path, ts_path)
-    )
 
 
 def main(
@@ -113,7 +88,7 @@ def main(
     print("Tokenizing...")
     print(BR, flush=True)
 
-    if completed(oh.dataset_dir):
+    if is_dataset_path_completed(oh.dataset_dir):
         raise FileExistsError(oh.dataset_dir)
 
     if shardsize is None:
