@@ -189,8 +189,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     print(f"{dataset=}")
     print(BR, flush=True)
 
-    # TODO: can we specify the num_labels parameter later, ie, when initializing the
-    # classification head? This would simplify the code for get_config_malconv...
     if model_args.model == "malconv":
         config = get_config_malconv(
             model_args.model,
@@ -255,6 +253,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
+    oh.clf_model_dir.mkdir(exist_ok=True)
     oh.model_dir.mkdir(exist_ok=True)
     oh.checkpoints_dir.mkdir(exist_ok=True)
     oh.best_model_dir.mkdir(exist_ok=True)
@@ -263,8 +262,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         training_args.output_dir = oh.checkpoints_dir.as_posix()
         trainer.train(training_args.resume_from_checkpoint)
         if training_args.load_best_model_at_end:
-            if isinstance(model, MalConvModel):
-                warnings.warn("MalConvModel does not support load_best_model_at_end.")
             model.save_pretrained(oh.best_model_dir.as_posix())
         with open(oh.log_history_path, "w") as fp:
             json.dump(trainer.state.log_history, fp, indent=4)
@@ -272,16 +269,25 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     if training_args.do_eval:
         if isinstance(model, PreTrainedModel):
             model = AutoModelForSequenceClassification.from_pretrained(oh.best_model_dir.as_posix())
-        else:
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                data_collator=data_collator,
+                tokenizer=tokenizer,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+        else:  # TODO: match design pattern as from_pretrained(), ie, return new model
             model.load_state_dict(MalConvModel.get_state_dict(oh.best_model_dir))
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            data_collator=data_collator,
-            tokenizer=tokenizer,
-            callbacks=callbacks,
-            compute_metrics=compute_metrics,
-        )
+            trainer = MalConvTrainer(
+                model=model,
+                args=training_args,
+                data_collator=data_collator,
+                tokenizer=tokenizer,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+
         results = trainer.evaluate(dataset["ts"])
         with open(oh.test_results_path, "w") as fp:
             json.dump(results, fp, indent=4)

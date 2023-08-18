@@ -6,6 +6,7 @@ https://github.com/Alexander-H-Liu/MalConv-Pytorch/tree/master
 """
 
 from __future__ import annotations
+from copy import deepcopy
 from pathlib import Path
 from pprint import pformat, pprint
 import sys
@@ -101,10 +102,10 @@ class MalConvTrainer:
         self,
         model: PreTrainedModel,
         args: TrainingArguments,
-        train_dataset: Dataset,
-        eval_dataset: Dataset,
-        data_collator: DataCollatorWithPadding,
-        tokenizer: PreTrainedTokenizer,
+        train_dataset: Optional[Dataset] = None,
+        eval_dataset: Optional[Dataset] = None,
+        data_collator: Optional[DataCollatorWithPadding] = None,
+        tokenizer: Optional[PreTrainedTokenizer] = None,
         callbacks: Optional[list[TrainerCallback]] = None,
         compute_metrics: Optional[Any] = None,
     ) -> None:
@@ -123,11 +124,15 @@ class MalConvTrainer:
         self.state = TrainerState(epoch=0, log_history=[])
 
     def train(self, _) -> None:
+        best_model = deepcopy(self.model.to("cpu"))
+        best_accuracy = 0.0
         self.model = self.model.to(self.device)
         optimizer = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         for epoch in tqdm(range(int(self.args.num_train_epochs)), total=self.args.num_train_epochs):
             loader = self.get_dataloader(self.train_dataset, self.args.per_device_train_batch_size)
             tr_losses = []
+            self.model = self.model.train()
+            self.model = self.model.to(self.device)
             for batch in enumerate(loader):
                 X = batch[1]["input_ids"].to(self.device)
                 Y = batch[1]["labels"].to(self.device)
@@ -144,8 +149,16 @@ class MalConvTrainer:
             metrics["epoch"] = float(epoch)
             self.state.log_history.append(metrics)
             self.state.epoch = float(epoch)
+            if self.args.load_best_model_at_end and metrics["eval_accuracy"] > best_accuracy:
+                best_model = deepcopy(self.model.to("cpu"))
+                self.model = self.model.to(self.device)
+                best_accuracy = metrics["eval_accuracy"]
+        if self.args.load_best_model_at_end:
+            self.model = best_model.to(self.device)
 
     def evaluate(self, test_dataset) -> dict[str, float]:
+        self.model = self.model.eval()
+        self.model = self.model.to(self.device)
         loader = self.get_dataloader(test_dataset, self.args.per_device_eval_batch_size)
         losses = []
         accuracies = []
@@ -154,10 +167,10 @@ class MalConvTrainer:
             Y = batch[1]["labels"].to(self.device)
             pred = self.model(X)
             loss = self.loss_fn(pred, Y)
-            losses.append(loss.detach().cpu().numpy().tolist())
+            losses.append(loss.item())
             pred = F.softmax(pred, dim=1).argmax(dim=1)
             accuracy = (pred == Y).sum() / len(Y)
-            accuracies.append(accuracy.detach().cpu().numpy())
+            accuracies.append(accuracy.item())
         return {"loss": sum(losses) / len(losses), "accuracy": sum(accuracies) / len(accuracies)}
 
     def get_dataloader(self, dataset: Dataset, batch_size: int) -> DataLoader:
