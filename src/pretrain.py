@@ -2,39 +2,25 @@
 Train and evaluate the models for malware family classification.
 """
 
-from collections import Counter
-from dataclasses import dataclass, field
 from datetime import datetime
 import json
-from pathlib import Path
 from pprint import pformat, pprint
-from typing import Optional
 import os
 import sys
-import warnings
 
-from datasets import concatenate_datasets, Dataset, DatasetDict
-import evaluate
-import numpy as np
-import torch
+from datasets import DatasetDict
 from transformers import (
-    BertConfig,
-    HfArgumentParser,
-    Trainer,
-    TrainingArguments,
-    LongformerConfig,
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
     DataCollatorForLanguageModeling,
     EarlyStoppingCallback,
-    PretrainedConfig,
-    PreTrainedModel,
-    PreTrainedTokenizerFast,
+    HfArgumentParser,
+    Trainer,
+    TrainingArguments,
 )
 
-from cfg import *
+from cfg import BR
 from helpers import OutputHelper
-from malconv import MalConvModel, MalConvConfig, MalConvTrainer
 from train import get_config_hf, ModelArgs, CallbackArgs
 from tokenization import get_fast_tokenizer
 from utils import count_parameters
@@ -122,8 +108,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         training_args.output_dir = oh.checkpoints_dir.as_posix()
         trainer.train(training_args.resume_from_checkpoint)
         if training_args.load_best_model_at_end:
-            if isinstance(model, MalConvModel):
-                warnings.warn("MalConvModel does not support load_best_model_at_end.")
             model.save_pretrained(oh.best_model_dir.as_posix())
         with open(oh.log_history_path, "w") as fp:
             json.dump(trainer.state.log_history, fp, indent=4)

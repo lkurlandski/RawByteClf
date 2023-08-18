@@ -47,6 +47,9 @@ class MalConvConfig:
         self.num_classes = num_classes
         self.pad_idx = pad_idx
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(\n{pformat(vars(self))}\n)"
+
 
 class MalConvModel(nn.Module):
     def __init__(self, config: MalConvConfig):

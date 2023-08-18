@@ -2,37 +2,35 @@
 Train and evaluate the models for malware family classification.
 """
 
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from pathlib import Path
 from pprint import pformat, pprint
-from typing import Optional
+from typing import Callable, Optional
 import os
 import sys
-import warnings
 
-from datasets import concatenate_datasets, Dataset, DatasetDict
+from datasets import DatasetDict
 import evaluate
 import numpy as np
 import torch
 from transformers import (
     AutoConfig,
-    BertConfig,
-    HfArgumentParser,
-    Trainer,
-    TrainingArguments,
-    LongformerConfig,
     AutoModelForSequenceClassification,
+    BertConfig,
     DataCollatorWithPadding,
     EarlyStoppingCallback,
+    HfArgumentParser,
+    LongformerConfig,
     PretrainedConfig,
     PreTrainedModel,
     PreTrainedTokenizerFast,
+    Trainer,
+    TrainingArguments,
 )
 
-from cfg import *
+from cfg import BR
 from helpers import OutputHelper
 from malconv import MalConvModel, MalConvConfig, MalConvTrainer
 from tokenization import get_fast_tokenizer
@@ -82,6 +80,10 @@ def compute_metrics(eval_pred):
     return accuracy.compute(predictions=predictions, references=labels)
 
 
+def get_scale_fn(scale: float) -> Callable[[int], float]:
+    return lambda x: int(round(x * scale))
+
+
 def get_config_malconv(
     _,
     tokenizer: Optional[PreTrainedTokenizerFast],
@@ -89,7 +91,7 @@ def get_config_malconv(
     scale: int = 1,
     num_labels: Optional[int] = None,
 ) -> MalConvConfig:
-    scale_fn = lambda x: int(round(x * scale))
+    scale_fn = get_scale_fn(scale)
 
     return MalConvConfig(
         num_embd=len(tokenizer),
@@ -117,7 +119,7 @@ def get_config_hf(
     if Path(model_name_or_path).exists():
         return AutoConfig.from_pretrained(model_name_or_path, **kwds)
 
-    scale_fn = lambda x: int(round(x * scale))
+    scale_fn = get_scale_fn(scale)
 
     if model_name_or_path == "longformer":
         attention_window = scale_fn(512)

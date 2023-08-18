@@ -14,7 +14,7 @@ from datasets import concatenate_datasets, Dataset, DatasetDict
 from transformers import HfArgumentParser, PreTrainedTokenizer
 from tqdm import tqdm
 
-from cfg import *
+from cfg import BR
 from data import microsoft_dataset_callable
 from helpers import OutputHelper
 from tokenization import get_fast_tokenizer
@@ -56,17 +56,11 @@ def main(
 ) -> DatasetDict:
     print("Fetching raw datasets...")
 
-    microsoft_subset = "train" if task == "clf" else "test"
+    subset = "train" if task == "clf" else "test"
 
-    tr = Dataset.from_generator(
-        microsoft_dataset_callable(splits=["tr"], microsoft_subset=microsoft_subset)
-    )
-    vl = Dataset.from_generator(
-        microsoft_dataset_callable(splits=["vl"], microsoft_subset=microsoft_subset)
-    )
-    ts = Dataset.from_generator(
-        microsoft_dataset_callable(splits=["ts"], microsoft_subset=microsoft_subset)
-    )
+    tr = Dataset.from_generator(microsoft_dataset_callable(splits=["tr"], microsoft_subset=subset))
+    vl = Dataset.from_generator(microsoft_dataset_callable(splits=["vl"], microsoft_subset=subset))
+    ts = Dataset.from_generator(microsoft_dataset_callable(splits=["ts"], microsoft_subset=subset))
     if num:
         tr = tr.select(range(int(num * tr.num_rows)))
         vl = vl.select(range(int(num * vl.num_rows)))

@@ -1,5 +1,5 @@
 """
-Helper classes.
+Helper classes and their associated functions.
 """
 
 from __future__ import annotations

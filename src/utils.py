@@ -3,10 +3,10 @@ Useful functions for the project.
 """
 
 from collections.abc import Collection
-from pathlib import Path
-import psutil
 import os
+from pathlib import Path
 
+import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 from torch import nn
 
