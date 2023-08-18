@@ -1,10 +1,12 @@
 """
-Helper classes.
+Helper classes and their associated functions.
 """
 
 from __future__ import annotations
 from pathlib import Path
 from typing import Generator, Literal, Optional
+
+from utils import is_dataset_path_completed
 
 
 class OutputHelper:
@@ -22,49 +24,41 @@ class OutputHelper:
                                 | -- clf
                                     | -- dataset
                                     | -- model
-                                        | -- checkpoints
-                                            | -- checkpoint-{epoch}
-                                                | -- config.json
-                                                | ...
+                                        | -- clf
                                             | -- best
                                                 | -- config.json
-                                                | ...
+                                                  -- ...
+                                            | -- checkpoints
+                                                | -- checkpoint-{epoch}
+                                                    | -- config.json
+                                                      -- ...
                                             | -- log_history.json
-                                | -- mlm
-                                    | -- dataset
-                                    | -- model
-                                        | -- checkpoints
-                                            | -- checkpoint-{epoch}
-                                                | -- config.json
-                                                | ...
-                                            | -- best
-                                                | -- config.json
-                                                | ...
-                                            | -- log_history.json
+                                        | -- clm
+                                          -- ...
+                                        | -- mlm
+                                          -- ...
                                 | -- clm
                                     | -- dataset
                                     | -- model
-                                        | -- checkpoints
-                                            | -- checkpoint-{epoch}
-                                                | -- config.json
-                                                | ...
-                                            | -- best
-                                                | -- config.json
-                                                | ...
-                                            | -- log_history.json
+                                      -- ...
+                                | -- mlm
+                                    | -- dataset
+                                    | -- model
+                                        ...
     """
 
     def __init__(
         self,
         root: Path = "./output",
         *,
-        algorithm: str = None,
-        vocab_size: int = None,
-        num_tok: int = None,
-        max_length: int = None,
-        task: Literal["clf", "mlm", "clm"] = None,
-        num: float = None,
-        model: str = None,
+        algorithm: Optional[str] = None,
+        vocab_size: Optional[int] = None,
+        num_tok: Optional[int] = None,
+        max_length: Optional[int] = None,
+        task: Optional[Literal["clf", "mlm", "clm"]] = None,
+        num: Optional[float] = None,
+        model: Optional[str] = None,
+        pretrain_task: Optional[Literal["clf", "mlm", "clm"]] = None,
     ) -> None:
         self._root = root
         self._algorithm = algorithm
@@ -74,6 +68,7 @@ class OutputHelper:
         self._task = task
         self._num = num
         self._model = model
+        self._pretrain_task = pretrain_task
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({vars(self)}) = {str(self)}"
@@ -117,7 +112,15 @@ class OutputHelper:
 
     @property
     def model(self) -> str:
-        return str(self._model)
+        return str(self._model) if self._model is not None else None
+
+    @property
+    def pretrain_task(self) -> str:
+        if self._pretrain_task is not None:
+            return self._pretrain_task
+        if self.model is None:
+            return None
+        return self.model
 
     @property
     def tokenizer_file(self) -> Path:
@@ -126,22 +129,33 @@ class OutputHelper:
             return None
         return self.root.joinpath(*parts) / "vocab.json"
 
+    # TODO: replace this hack with something a bit more stable
     @property
     def dataset_dir(self) -> Path:
-        parts = [
-            self.algorithm,
-            self.vocab_size,
-            self.num_tok,
-            self.max_length,
-            self.task,
-            self.num,
-        ]
-        if any(a is None for a in parts):
+        def parts(task: str) -> list:
+            return [
+                self.algorithm,
+                self.vocab_size,
+                self.num_tok,
+                self.max_length,
+                task,
+                self.num,
+            ]
+
+        if any(a is None for a in parts(self.task)):
             return None
-        return self.root.joinpath(*parts) / "dataset"
+        if self.task == "clf":
+            return self.root.joinpath(*(parts(self.task))) / "dataset"
+
+        for task in ("mlm", "clm"):
+            path = self.root.joinpath(*(parts(task))) / "dataset"
+            if is_dataset_path_completed(path):
+                return path
+
+        return self.root.joinpath(*parts(self.task)) / "dataset"
 
     @property
-    def model_dir(self) -> Path:
+    def clf_model_dir(self) -> Path:
         parts = [
             self.algorithm,
             self.vocab_size,
@@ -154,6 +168,12 @@ class OutputHelper:
         if any(a is None for a in parts):
             return None
         return self.root.joinpath(*parts)
+
+    @property
+    def model_dir(self) -> Path:
+        if not (self.clf_model_dir and self.pretrain_task):
+            return None
+        return self.clf_model_dir / self.pretrain_task
 
     @property
     def best_model_dir(self) -> Path:
@@ -197,6 +217,7 @@ def iter_over_root(
     tasks: Optional[list[Literal["clf", "clm", "mlm"]]] = None,
     nums: Optional[list[float]] = None,
     models: Optional[list[str]] = None,
+    pretrain_tasks: Optional[list[Literal["clf", "clm", "mlm"]]],
 ) -> Generator[OutputHelper, None, None]:
     def iterdir(path: Path):
         for p in path.iterdir():
@@ -213,13 +234,15 @@ def iter_over_root(
                     for task in func(max_length, tasks):
                         for num in func(max_length, nums):
                             for model in func(num, models):
-                                yield OutputHelper(
-                                    root=root,
-                                    algorithm=algorithm.name,
-                                    vocab_size=int(vocab_size.name),
-                                    num_tok=int(num_tok.name),
-                                    max_length=int(max_length.name),
-                                    task=task.name,
-                                    num=float(num.name),
-                                    model=model.name,
-                                )
+                                for pretrain_task in func(model, pretrain_tasks):
+                                    yield OutputHelper(
+                                        root=root,
+                                        algorithm=algorithm.name,
+                                        vocab_size=int(vocab_size.name),
+                                        num_tok=int(num_tok.name),
+                                        max_length=int(max_length.name),
+                                        task=task.name,
+                                        num=float(num.name),
+                                        model=model.name,
+                                        pretrain_task=pretrain_task.name,
+                                    )

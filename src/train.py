@@ -2,36 +2,35 @@
 Train and evaluate the models for malware family classification.
 """
 
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from pathlib import Path
 from pprint import pformat, pprint
-from typing import Optional
+from typing import Callable, Optional
 import os
 import sys
-import warnings
 
-from datasets import concatenate_datasets, Dataset, DatasetDict
+from datasets import DatasetDict
 import evaluate
 import numpy as np
 import torch
 from transformers import (
-    BertConfig,
-    HfArgumentParser,
-    Trainer,
-    TrainingArguments,
-    LongformerConfig,
+    AutoConfig,
     AutoModelForSequenceClassification,
+    BertConfig,
     DataCollatorWithPadding,
     EarlyStoppingCallback,
+    HfArgumentParser,
+    LongformerConfig,
     PretrainedConfig,
     PreTrainedModel,
     PreTrainedTokenizerFast,
+    Trainer,
+    TrainingArguments,
 )
 
-from cfg import *
+from cfg import BR
 from helpers import OutputHelper
 from malconv import MalConvModel, MalConvConfig, MalConvTrainer
 from tokenization import get_fast_tokenizer
@@ -44,16 +43,25 @@ accuracy = evaluate.load("accuracy")
 @dataclass
 class ModelArgs:
     max_length: int = field(metadata={"help": ""})
-    model: str = field(
-        metadata={
-            "help": "One of `longformer`, `bert`, `malconv`, OR a path to a pretrained model."
-        }
-    )
+    model: str = field(metadata={"help": "One of `longformer`, `bert`, `malconv`."})
     algorithm: str = field(metadata={"help": ""})
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     scale: float = field(default=1.0, metadata={"help": ""})
     num_tok: int = field(default=1000, metadata={"help": ""})
     num: float = field(default=1.0, metadata={"help": ""})
+    task: Optional[str] = field(
+        default="None",
+        metadata={"help": ("One of `clm` or `mlm`. " "Not used if training for classification.")},
+    )
+    pretrain_task: str = field(
+        default="clf",
+        metadata={
+            "help": (
+                "One of `clf`, `clm`, or `mlm`. "
+                "If not `clf`, will be used to search for pretrained model."
+            )
+        },
+    )
 
 
 @dataclass
@@ -69,14 +77,11 @@ def compute_metrics(eval_pred):
     labels: np.ndarray = labels.astype(np.int64)
     probas = torch.softmax(torch.tensor(probas, dtype=torch.float32), dim=1).numpy()
     predictions = np.argmax(probas, axis=1)
-    if False:
-        d = {
-            "confs": np.mean(np.max(probas, axis=1)),
-            "preds": Counter(predictions),
-            "labels": Counter(labels),
-        }
-        print(f"\n{d}")
     return accuracy.compute(predictions=predictions, references=labels)
+
+
+def get_scale_fn(scale: float) -> Callable[[int], float]:
+    return lambda x: int(round(x * scale))
 
 
 def get_config_malconv(
@@ -86,7 +91,7 @@ def get_config_malconv(
     scale: int = 1,
     num_labels: Optional[int] = None,
 ) -> MalConvConfig:
-    scale_fn = lambda x: int(round(x * scale))
+    scale_fn = get_scale_fn(scale)
 
     return MalConvConfig(
         num_embd=len(tokenizer),
@@ -112,9 +117,9 @@ def get_config_hf(
       num_labels (int): use for classification
     """
     if Path(model_name_or_path).exists():
-        return PretrainedConfig.from_pretrained(model_name_or_path)
+        return AutoConfig.from_pretrained(model_name_or_path, **kwds)
 
-    scale_fn = lambda x: int(round(x * scale))
+    scale_fn = get_scale_fn(scale)
 
     if model_name_or_path == "longformer":
         attention_window = scale_fn(512)
@@ -148,7 +153,6 @@ def get_config_hf(
 
 
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
-
     oh = OutputHelper(
         algorithm=model_args.algorithm,
         vocab_size=model_args.vocab_size,
@@ -157,7 +161,24 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         task="clf",
         num=model_args.num,
         model=model_args.model,
+        pretrain_task=model_args.pretrain_task,
     )
+
+    if model_args.pretrain_task is not None and model_args.pretrain_task != "clf":
+        model_name_or_path = OutputHelper(
+            algorithm=model_args.algorithm,
+            vocab_size=model_args.vocab_size,
+            num_tok=model_args.num_tok,
+            max_length=model_args.max_length,
+            task=model_args.pretrain_task,
+            num=model_args.num,
+            model=model_args.model,
+            pretrain_task=model_args.pretrain_task,
+        ).best_model_dir
+        if not Path(model_name_or_path).exists():
+            raise FileNotFoundError(model_name_or_path)
+    else:
+        model_name_or_path = model_args.model
 
     tokenizer = get_fast_tokenizer(oh.tokenizer_file, model_args.max_length)
     print(f"{tokenizer=}")
@@ -170,8 +191,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     print(f"{dataset=}")
     print(BR, flush=True)
 
-    # TODO: can we specify the num_labels parameter later, ie, when initializing the
-    # classification head? This would simplify the code for get_config_malconv...
     if model_args.model == "malconv":
         config = get_config_malconv(
             model_args.model,
@@ -182,7 +201,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         )
     else:
         config = get_config_hf(
-            model_args.model,
+            model_name_or_path,
             tokenizer,
             model_args.max_length,
             model_args.scale,
@@ -236,6 +255,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
+    oh.clf_model_dir.mkdir(exist_ok=True)
     oh.model_dir.mkdir(exist_ok=True)
     oh.checkpoints_dir.mkdir(exist_ok=True)
     oh.best_model_dir.mkdir(exist_ok=True)
@@ -244,8 +264,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         training_args.output_dir = oh.checkpoints_dir.as_posix()
         trainer.train(training_args.resume_from_checkpoint)
         if training_args.load_best_model_at_end:
-            if isinstance(model, MalConvModel):
-                warnings.warn("MalConvModel does not support load_best_model_at_end.")
             model.save_pretrained(oh.best_model_dir.as_posix())
         with open(oh.log_history_path, "w") as fp:
             json.dump(trainer.state.log_history, fp, indent=4)
@@ -253,16 +271,25 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     if training_args.do_eval:
         if isinstance(model, PreTrainedModel):
             model = AutoModelForSequenceClassification.from_pretrained(oh.best_model_dir.as_posix())
-        else:
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                data_collator=data_collator,
+                tokenizer=tokenizer,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+        else:  # TODO: match design pattern as from_pretrained(), ie, return new model
             model.load_state_dict(MalConvModel.get_state_dict(oh.best_model_dir))
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            data_collator=data_collator,
-            tokenizer=tokenizer,
-            callbacks=callbacks,
-            compute_metrics=compute_metrics,
-        )
+            trainer = MalConvTrainer(
+                model=model,
+                args=training_args,
+                data_collator=data_collator,
+                tokenizer=tokenizer,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+
         results = trainer.evaluate(dataset["ts"])
         with open(oh.test_results_path, "w") as fp:
             json.dump(results, fp, indent=4)

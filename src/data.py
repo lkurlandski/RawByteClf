@@ -1,12 +1,12 @@
 """
+Lowest level of dataprocessing utilities.
 """
 
 from collections import namedtuple
-from itertools import chain, islice
+from itertools import chain
 from pathlib import Path
 from pprint import pprint
 import random
-import subprocess
 import sys
 from typing import Callable, Literal, Optional
 
@@ -16,7 +16,15 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from cfg import *
+from cfg import MICROSOFT_ROOT
+
+
+__all__ = [
+    "microsoft_dataset_callable",
+    "byte_string",
+    "microsoft_byte_file_to_str",
+    "MicrosoftDatasetGen",
+]
 
 
 random.seed(0)
@@ -33,11 +41,11 @@ def microsoft_byte_file_to_str(p: Path) -> str:
     ignore = {"??", "NaN", "nan"}
     df = pd.read_csv(p, header=None, sep=" ", dtype=str, index_col=0)
     try:
-        data = [int(str(s), 16) for _, row in df.iterrows() for s in row if str(s) not in ignore]
+        data_ = [int(str(s), 16) for _, row in df.iterrows() for s in row if str(s) not in ignore]
     except TypeError as e:
         print(df)
         raise e
-    return "".join([byte_to_utf8[d] for d in data])
+    return "".join([byte_to_utf8[d] for d in data_])
 
 
 class MicrosoftDatasetGen:
@@ -171,12 +179,10 @@ def convert_microsoft_to_utf_bytes(microsoft_subset: Literal["train", "test"]):
         f.unlink()
 
 
-if __name__ == "__main__":
+def main() -> None:
     gen = microsoft_dataset_callable(10, splits=["tr", "vl"])
     for i, d in enumerate(gen()):
         print(i, d["file"])
-
-    from datasets import Dataset
 
     num_files = 10
     dataset = Dataset.from_generator(microsoft_dataset_callable(num_files, splits=["tr", "vl"]))
@@ -206,3 +212,7 @@ if __name__ == "__main__":
     #         print(f)
     #         continue
     #     f.unlink()
+
+
+if __name__ == "__main__":
+    main()

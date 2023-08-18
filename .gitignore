@@ -160,8 +160,9 @@ cython_debug/
 #.idea/
 
 
-data
+data_
 output
 backup
 .vscode
 tmp
+logs

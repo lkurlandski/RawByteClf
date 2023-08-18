@@ -32,7 +32,7 @@ from tokenizers import trainers
 from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
 
-from cfg import *
+from cfg import BR, SPECIALS
 from data import byte_to_utf8, microsoft_dataset_callable
 from helpers import OutputHelper
 from utils import process_mem

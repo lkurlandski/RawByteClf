@@ -3,10 +3,10 @@ Useful functions for the project.
 """
 
 from collections.abc import Collection
-from pathlib import Path
-import psutil
 import os
+from pathlib import Path
 
+import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 from torch import nn
 
@@ -61,3 +61,28 @@ def get_highest_path(
     else:
         files = path_or_files
     return list(sorted(files, key=lambda p: int(p.stem.lstrip(lstrip).rstrip(rstrip))))[-1]
+
+
+def is_dataset_path(path: Path) -> bool:
+    REQUIRED = ("dataset_info.json", "state.json")
+    ALLOWED = (".arrow",)
+
+    paths = [p.name for p in path.iterdir()]
+    if not all(p in paths for p in REQUIRED):
+        return False
+
+    for p in paths:
+        if p in REQUIRED:
+            continue
+        if Path(p).suffix not in ALLOWED:
+            return False
+    return True
+
+
+def is_dataset_path_completed(path: Path) -> bool:
+    tr_path = path / "tr"
+    vl_path = path / "vl"
+    ts_path = path / "ts"
+    return all(p.exists() for p in (tr_path, vl_path, ts_path)) and all(
+        is_dataset_path(p) for p in (tr_path, vl_path, ts_path)
+    )

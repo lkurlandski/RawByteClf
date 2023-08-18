@@ -33,19 +33,11 @@ from pathlib import Path
 
 __all__ = [
     "MICROSOFT_ROOT",
-    "OUTPUT",
-    "TOKENIZERS",
-    "DATASETS",
-    "MODELS",
     "SPECIALS",
     "BR",
 ]
 
-MICROSOFT_ROOT = Path("./data")
-OUTPUT = Path("./output")
-TOKENIZERS = OUTPUT / "tokenizers"
-DATASETS = OUTPUT / "datasets"
-MODELS = OUTPUT / "models"
+MICROSOFT_ROOT = Path("./data_")
 
 SPECIALS = {
     "pad_token": "<pad>",

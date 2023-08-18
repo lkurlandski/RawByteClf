@@ -2,46 +2,32 @@
 Train and evaluate the models for malware family classification.
 """
 
-from collections import Counter
-from dataclasses import dataclass, field
 from datetime import datetime
 import json
-from pathlib import Path
 from pprint import pformat, pprint
-from typing import Optional
 import os
 import sys
-import warnings
 
-from datasets import concatenate_datasets, Dataset, DatasetDict
-import evaluate
-import numpy as np
-import torch
+from datasets import DatasetDict
 from transformers import (
-    BertConfig,
-    HfArgumentParser,
-    Trainer,
-    TrainingArguments,
-    LongformerConfig,
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
     DataCollatorForLanguageModeling,
     EarlyStoppingCallback,
-    PretrainedConfig,
-    PreTrainedModel,
-    PreTrainedTokenizerFast,
+    HfArgumentParser,
+    Trainer,
+    TrainingArguments,
 )
 
-from cfg import *
+from cfg import BR
 from helpers import OutputHelper
-from malconv import MalConvModel, MalConvConfig, MalConvTrainer
-from train import accuracy, compute_metrics, get_config_hf, ModelArgs, CallbackArgs
+from train import get_config_hf, ModelArgs, CallbackArgs
 from tokenization import get_fast_tokenizer
 from utils import count_parameters
 
 
-MLM: bool = True
-AutoModelForLM: type = AutoModelForMaskedLM if MLM else AutoModelForCausalLM
+# TODO: implement perplexity and F1 for CLM and MLM
+compute_metrics = None
 
 
 # TODO: verify this is correct...
@@ -61,6 +47,14 @@ def compute_metrics(eval_pred):
 
 
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
+    if model_args.task == "mlm":
+        MLM = True
+        AutoModelForLM: type = AutoModelForMaskedLM
+    elif model_args.task == "clm":
+        MLM = False
+        AutoModelForLM: type = AutoModelForCausalLM
+    else:
+        raise ValueError(f"{model_args.task=} not supported.")
 
     oh = OutputHelper(
         algorithm=model_args.algorithm,
@@ -68,8 +62,9 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         num_tok=model_args.num_tok,
         max_length=model_args.max_length,
         num=model_args.num,
-        task="mlm" if MLM else "clm",
+        task=model_args.task,
         model=model_args.model,
+        pretrain_task=model_args.pretrain_task,
     )
     print(f"{oh=}")
 
@@ -129,8 +124,6 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         training_args.output_dir = oh.checkpoints_dir.as_posix()
         trainer.train(training_args.resume_from_checkpoint)
         if training_args.load_best_model_at_end:
-            if isinstance(model, MalConvModel):
-                warnings.warn("MalConvModel does not support load_best_model_at_end.")
             model.save_pretrained(oh.best_model_dir.as_posix())
         with open(oh.log_history_path, "w") as fp:
             json.dump(trainer.state.log_history, fp, indent=4)

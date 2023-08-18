@@ -14,11 +14,11 @@ from datasets import concatenate_datasets, Dataset, DatasetDict
 from transformers import HfArgumentParser, PreTrainedTokenizer
 from tqdm import tqdm
 
-from cfg import *
+from cfg import BR
 from data import microsoft_dataset_callable
 from helpers import OutputHelper
 from tokenization import get_fast_tokenizer
-from utils import get_highest_path
+from utils import get_highest_path, is_dataset_path_completed
 
 
 @dataclass
@@ -42,31 +42,6 @@ def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
     return fn
 
 
-def is_dataset_path(path: Path) -> bool:
-    REQUIRED = ("dataset_info.json", "state.json")
-    ALLOWED = (".arrow",)
-
-    paths = [p.name for p in path.iterdir()]
-    if not all(p in paths for p in REQUIRED):
-        return False
-
-    for p in paths:
-        if p in REQUIRED:
-            continue
-        if Path(p).suffix not in ALLOWED:
-            return False
-    return True
-
-
-def completed(path: Path) -> bool:
-    tr_path = path / "tr"
-    vl_path = path / "vl"
-    ts_path = path / "ts"
-    return all(p.exists() for p in (tr_path, vl_path, ts_path)) and all(
-        is_dataset_path(p) for p in (tr_path, vl_path, ts_path)
-    )
-
-
 def main(
     algorithm: str = "SentencePieceBPE",
     max_length: int = 10**6,
@@ -81,17 +56,11 @@ def main(
 ) -> DatasetDict:
     print("Fetching raw datasets...")
 
-    microsoft_subset = "train" if task == "clf" else "test"
+    subset = "train" if task == "clf" else "test"
 
-    tr = Dataset.from_generator(
-        microsoft_dataset_callable(splits=["tr"], microsoft_subset=microsoft_subset)
-    )
-    vl = Dataset.from_generator(
-        microsoft_dataset_callable(splits=["vl"], microsoft_subset=microsoft_subset)
-    )
-    ts = Dataset.from_generator(
-        microsoft_dataset_callable(splits=["ts"], microsoft_subset=microsoft_subset)
-    )
+    tr = Dataset.from_generator(microsoft_dataset_callable(splits=["tr"], microsoft_subset=subset))
+    vl = Dataset.from_generator(microsoft_dataset_callable(splits=["vl"], microsoft_subset=subset))
+    ts = Dataset.from_generator(microsoft_dataset_callable(splits=["ts"], microsoft_subset=subset))
     if num:
         tr = tr.select(range(int(num * tr.num_rows)))
         vl = vl.select(range(int(num * vl.num_rows)))
@@ -113,7 +82,7 @@ def main(
     print("Tokenizing...")
     print(BR, flush=True)
 
-    if completed(oh.dataset_dir):
+    if is_dataset_path_completed(oh.dataset_dir):
         raise FileExistsError(oh.dataset_dir)
 
     if shardsize is None:
