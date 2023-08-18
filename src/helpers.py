@@ -145,10 +145,10 @@ class OutputHelper:
         if any(a is None for a in parts(self.task)):
             return None
         if self.task == "clf":
-            return self.root.joinpath(*parts) / "dataset"
+            return self.root.joinpath(*(parts(self.task))) / "dataset"
 
         for task in ("mlm", "clm"):
-            path = self.root.joinpath(*parts(task)) / "dataset"
+            path = self.root.joinpath(*(parts(task))) / "dataset"
             if is_dataset_path_completed(path):
                 return path
 
