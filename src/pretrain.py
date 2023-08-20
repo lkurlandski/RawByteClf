@@ -48,6 +48,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         num=model_args.num,
         task=model_args.task,
         model=model_args.model,
+        scale=model_args.scale,
         pretrain_task=model_args.pretrain_task,
     )
     print(f"{oh=}")
@@ -100,9 +101,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
-    oh.model_dir.mkdir(exist_ok=True)
-    oh.checkpoints_dir.mkdir(exist_ok=True)
-    oh.best_model_dir.mkdir(exist_ok=True)
+    oh.mkdir(exist_ok=True)
 
     if training_args.do_train:
         training_args.output_dir = oh.checkpoints_dir.as_posix()

@@ -23,27 +23,30 @@ class OutputHelper:
                             | -- {num}
                                 | -- clf
                                     | -- dataset
-                                    | -- model
-                                        | -- clf
-                                            | -- best
-                                                | -- config.json
-                                                  -- ...
-                                            | -- checkpoints
-                                                | -- checkpoint-{epoch}
+                                    | -- {model}
+                                        | -- {scale}
+                                            | -- clf
+                                                | -- best
                                                     | -- config.json
-                                                      -- ...
-                                            | -- log_history.json
-                                        | -- clm
-                                          -- ...
-                                        | -- mlm
-                                          -- ...
+                                                        ...
+                                                | -- checkpoints
+                                                    | -- checkpoint-{epoch}
+                                                        | -- config.json
+                                                            ...
+                                                | -- log_history.json
+                                            | -- clm
+                                                ...
+                                            | -- mlm
+                                                ...
                                 | -- clm
                                     | -- dataset
-                                    | -- model
-                                      -- ...
+                                    | -- {model}
+                                        | -- {scale}
+                                            ...
                                 | -- mlm
                                     | -- dataset
-                                    | -- model
+                                    | -- {model}
+                                    | -- {scale}
                                         ...
     """
 
@@ -58,6 +61,7 @@ class OutputHelper:
         task: Optional[Literal["clf", "mlm", "clm"]] = None,
         num: Optional[float] = None,
         model: Optional[str] = None,
+        scale: Optional[float] = None,
         pretrain_task: Optional[Literal["clf", "mlm", "clm"]] = None,
     ) -> None:
         self._root = root
@@ -68,6 +72,7 @@ class OutputHelper:
         self._task = task
         self._num = num
         self._model = model
+        self._scale = scale
         self._pretrain_task = pretrain_task
 
     def __repr__(self) -> str:
@@ -87,35 +92,39 @@ class OutputHelper:
         return Path(self._root)
 
     @property
-    def algorithm(self) -> str:
-        return str(self._algorithm)
+    def algorithm(self) -> Optional[str]:
+        return str(self._algorithm) if self._algorithm is not None else None
 
     @property
-    def vocab_size(self) -> str:
+    def vocab_size(self) -> Optional[str]:
         return str(self._vocab_size) if self._vocab_size is not None else None
 
     @property
-    def num_tok(self) -> str:
+    def num_tok(self) -> Optional[str]:
         return str(self._num_tok) if self._num_tok is not None else None
 
     @property
-    def max_length(self) -> str:
+    def max_length(self) -> Optional[str]:
         return str(self._max_length) if self._max_length is not None else None
 
     @property
-    def task(self) -> str:
+    def task(self) -> Optional[str]:
         return str(self._task) if self._task is not None else None
 
     @property
-    def num(self) -> str:
+    def num(self) -> Optional[str]:
         return str(self._num) if self._num is not None else None
 
     @property
-    def model(self) -> str:
+    def model(self) -> Optional[str]:
         return str(self._model) if self._model is not None else None
 
     @property
-    def pretrain_task(self) -> str:
+    def scale(self) -> Optional[str]:
+        return str(self._scale) if self._scale is not None else None
+
+    @property
+    def pretrain_task(self) -> Optional[str]:
         if self._pretrain_task is not None:
             return self._pretrain_task
         if self.model is None:
@@ -123,15 +132,18 @@ class OutputHelper:
         return self.model
 
     @property
-    def tokenizer_file(self) -> Path:
+    def tokenizer_file(self) -> Optional[Path]:
         parts = [self.algorithm, self.vocab_size, self.num_tok]
         if any(a is None for a in parts):
             return None
         return self.root.joinpath(*parts) / "vocab.json"
 
-    # TODO: replace this hack with something a bit more stable
     @property
-    def dataset_dir(self) -> Path:
+    def dataset_dir(self) -> Optional[Path]:
+        """
+        Lets all pretraining tasks share the same dataset without duplicating.
+        """
+
         def parts(task: str) -> list:
             return [
                 self.algorithm,
@@ -155,7 +167,7 @@ class OutputHelper:
         return self.root.joinpath(*parts(self.task)) / "dataset"
 
     @property
-    def clf_model_dir(self) -> Path:
+    def clf_model_dir(self) -> Optional[Path]:
         parts = [
             self.algorithm,
             self.vocab_size,
@@ -170,31 +182,37 @@ class OutputHelper:
         return self.root.joinpath(*parts)
 
     @property
-    def model_dir(self) -> Path:
-        if not (self.clf_model_dir and self.pretrain_task):
+    def scale_model_dir(self) -> Optional[Path]:
+        if not (self.clf_model_dir and self.scale):
             return None
-        return self.clf_model_dir / self.pretrain_task
+        return self.clf_model_dir / self.scale
 
     @property
-    def best_model_dir(self) -> Path:
+    def model_dir(self) -> Optional[Path]:
+        if not (self.scale_model_dir and self.pretrain_task):
+            return None
+        return self.scale_model_dir / self.pretrain_task
+
+    @property
+    def best_model_dir(self) -> Optional[Path]:
         if not self.model_dir:
             return None
         return self.model_dir / "best"
 
     @property
-    def checkpoints_dir(self) -> Path:
+    def checkpoints_dir(self) -> Optional[Path]:
         if not self.model_dir:
             return None
         return self.model_dir / "checkpoints"
 
     @property
-    def log_history_path(self) -> Path:
+    def log_history_path(self) -> Optional[Path]:
         if not self.model_dir:
             return None
         return self.model_dir / "log_history.json"
 
     @property
-    def test_results_path(self) -> Path:
+    def test_results_path(self) -> Optional[Path]:
         if not self.model_dir:
             return None
         return self.model_dir / "test_results.json"
@@ -205,6 +223,20 @@ class OutputHelper:
             and (not dataset or (self.dataset_dir and self.dataset_dir.exists()))
             and (not model or (self.model_dir and self.model_dir.exists()))
         )
+
+    def mkdir(self, exist_ok: bool = False) -> None:
+        dirs = [
+            self.tokenizer_file.parent,
+            self.dataset_dir,
+            self.clf_model_dir,
+            self.scale_model_dir,
+            self.model_dir,
+            self.best_model_dir,
+            self.checkpoints_dir,
+        ]
+        for p in dirs:
+            if p is not None:
+                p.mkdir(exist_ok=exist_ok, parents=True)
 
 
 def iter_over_root(
@@ -217,6 +249,7 @@ def iter_over_root(
     tasks: Optional[list[Literal["clf", "clm", "mlm"]]] = None,
     nums: Optional[list[float]] = None,
     models: Optional[list[str]] = None,
+    scales: Optional[list[float]] = None,
     pretrain_tasks: Optional[list[Literal["clf", "clm", "mlm"]]],
 ) -> Generator[OutputHelper, None, None]:
     def iterdir(path: Path):
@@ -234,15 +267,17 @@ def iter_over_root(
                     for task in func(max_length, tasks):
                         for num in func(max_length, nums):
                             for model in func(num, models):
-                                for pretrain_task in func(model, pretrain_tasks):
-                                    yield OutputHelper(
-                                        root=root,
-                                        algorithm=algorithm.name,
-                                        vocab_size=int(vocab_size.name),
-                                        num_tok=int(num_tok.name),
-                                        max_length=int(max_length.name),
-                                        task=task.name,
-                                        num=float(num.name),
-                                        model=model.name,
-                                        pretrain_task=pretrain_task.name,
-                                    )
+                                for scale in func(model, scales):
+                                    for pretrain_task in func(scale, pretrain_tasks):
+                                        yield OutputHelper(
+                                            root=root,
+                                            algorithm=algorithm.name,
+                                            vocab_size=int(vocab_size.name),
+                                            num_tok=int(num_tok.name),
+                                            max_length=int(max_length.name),
+                                            task=task.name,
+                                            num=float(num.name),
+                                            model=model.name,
+                                            scale=float(scale.name),
+                                            pretrain_task=pretrain_task.name,
+                                        )

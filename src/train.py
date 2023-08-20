@@ -5,11 +5,13 @@ Train and evaluate the models for malware family classification.
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 from pprint import pformat, pprint
 from typing import Callable, Optional
 import os
 import sys
+import warnings
 
 from datasets import DatasetDict
 import evaluate
@@ -47,6 +49,8 @@ class ModelArgs:
     algorithm: str = field(metadata={"help": ""})
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     scale: float = field(default=1.0, metadata={"help": ""})
+    scale_numerator: Optional[float] = field(default=None, metadata={"help": ""})
+    scale_denominator: Optional[float] = field(default=None, metadata={"help": ""})
     num_tok: int = field(default=1000, metadata={"help": ""})
     num: float = field(default=1.0, metadata={"help": ""})
     task: Optional[str] = field(
@@ -62,6 +66,14 @@ class ModelArgs:
             )
         },
     )
+
+    def __post_init__(self) -> None:
+        if self.scale_numerator and self.scale_denominator:
+            if self.scale is not None and self.scale != 1.0:
+                warnings.warn(
+                    f"{self.scale_numerator=} and {self.scale_denominator=} overriding {self.scale=}"
+                )
+            self.scale = self.scale_numerator / self.scale_denominator
 
 
 @dataclass
@@ -122,9 +134,9 @@ def get_config_hf(
     scale_fn = get_scale_fn(scale)
 
     if model_name_or_path == "longformer":
-        attention_window = scale_fn(512)
+        attention_window = math.ceil(scale_fn(512) / 2.0) * 2
         return LongformerConfig(
-            attention_window=attention_window + attention_window % 2,
+            attention_window=attention_window,
             sep_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
@@ -161,6 +173,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         task="clf",
         num=model_args.num,
         model=model_args.model,
+        scale=model_args.scale,
         pretrain_task=model_args.pretrain_task,
     )
 
@@ -173,6 +186,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
             task=model_args.pretrain_task,
             num=model_args.num,
             model=model_args.model,
+            scale=model_args.scale,
             pretrain_task=model_args.pretrain_task,
         ).best_model_dir
         if not Path(model_name_or_path).exists():
@@ -255,10 +269,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
-    oh.clf_model_dir.mkdir(exist_ok=True)
-    oh.model_dir.mkdir(exist_ok=True)
-    oh.checkpoints_dir.mkdir(exist_ok=True)
-    oh.best_model_dir.mkdir(exist_ok=True)
+    oh.mkdir(exist_ok=True)
 
     if training_args.do_train:
         training_args.output_dir = oh.checkpoints_dir.as_posix()
