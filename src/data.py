@@ -60,7 +60,7 @@ class MicrosoftDatasetGen:
         self.min_size = min_size
         self.max_size = max_size
         self.microsoft_subset = microsoft_subset
-        self.keys = pd.read_csv("data/trainLabels.csv", index_col=0).to_dict()["Class"]
+        self.keys = pd.read_csv(MICROSOFT_ROOT / "trainLabels.csv", index_col=0).to_dict()["Class"]
         self.iteration = 0
 
         files = (
