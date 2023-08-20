@@ -178,7 +178,7 @@ class MalConvTrainer:
                 loss: Tensor = self.loss_fn(logits, Y)
                 losses.append(loss.item())
                 pred = F.softmax(logits, dim=1).argmax(dim=1)
-                accuracy = (pred == Y)
+                accuracy = pred == Y
                 accuracies.extend(accuracy.detach().cpu().tolist())
                 # print(  # FIXME: remove
                 #     f"{i=}\n"
@@ -191,7 +191,10 @@ class MalConvTrainer:
                 #     f"{'-' * 88}",
                 #     flush=True,
                 # )
-        return {"eval_loss": sum(losses) / len(losses), "eval_accuracy": sum(accuracies) / len(accuracies)}
+        return {
+            "eval_loss": sum(losses) / len(losses),
+            "eval_accuracy": sum(accuracies) / len(accuracies),
+        }
 
     def get_dataloader(self, dataset: Dataset, batch_size: int) -> DataLoader:
         return DataLoader(
