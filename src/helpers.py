@@ -125,11 +125,9 @@ class OutputHelper:
 
     @property
     def pretrain_task(self) -> Optional[str]:
-        if self._pretrain_task is not None:
-            return self._pretrain_task
-        if self.model is None:
-            return None
-        return self.model
+        if self.task in ("clf", "mlm"):
+            return self.task
+        return str(self._pretrain_task) if self._pretrain_task is not None else None
 
     @property
     def tokenizer_file(self) -> Optional[Path]:
