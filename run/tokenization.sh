@@ -25,6 +25,6 @@ conda activate RawByteClf
 python src/tokenization.py \
 --algorithm="SentencePieceBPE" \
 --vocab_size=$vocab_size \
---num_files=4000 \
+--num_files=5000 \
 --block_size=10000 \
 --batch_size=250
