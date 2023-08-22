@@ -4,6 +4,7 @@ Preprocess data by strictly tokenizing it, i.e., no padding or tokenization.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import chain
 from pathlib import Path
 from pprint import pformat, pprint
 import shutil
@@ -56,11 +57,16 @@ def main(
 ) -> DatasetDict:
     print("Fetching raw datasets...")
 
-    subset = "train" if task == "clf" else "test"
+    if task == "clf":
+        subsets = ("train",)
+    elif task in ("clm", "mlm"):
+        subsets = ("train", "test")
 
-    tr = Dataset.from_generator(microsoft_dataset_callable(splits=["tr"], microsoft_subset=subset))
-    vl = Dataset.from_generator(microsoft_dataset_callable(splits=["vl"], microsoft_subset=subset))
-    ts = Dataset.from_generator(microsoft_dataset_callable(splits=["ts"], microsoft_subset=subset))
+    tr = Dataset.from_generator(microsoft_dataset_callable(splits=["tr"], microsoft_subset=subsets))
+    vl = Dataset.from_generator(microsoft_dataset_callable(splits=["vl"], microsoft_subset=subsets))
+    ts = Dataset.from_generator(microsoft_dataset_callable(splits=["ts"], microsoft_subset=subsets))
+
+    # TODO: shuffle before subsetting?
     if num:
         tr = tr.select(range(int(num * tr.num_rows)))
         vl = vl.select(range(int(num * vl.num_rows)))
