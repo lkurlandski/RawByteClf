@@ -18,6 +18,8 @@ fi
 
 export vocab_size=$((2**$1 + 6))
 
+export vocab_size=4108
+
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 

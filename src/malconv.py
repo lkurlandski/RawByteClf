@@ -38,6 +38,7 @@ class MalConvConfig:
         hidden_size: int = 128,
         num_classes: int = 2,
         pad_idx: int = 0,
+        dropout_p: float = 0.5,
     ) -> None:
         self.num_embd = num_embd
         self.embed_size = embed_size
@@ -46,6 +47,7 @@ class MalConvConfig:
         self.hidden_size = hidden_size
         self.num_classes = num_classes
         self.pad_idx = pad_idx
+        self.dropout_p = dropout_p
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(\n{pformat(vars(self))}\n)"
@@ -72,6 +74,7 @@ class MalConvModel(nn.Module):
         self.pooling = nn.MaxPool1d(int(config.max_length / config.window_size))
         self.mlp = nn.Sequential(
             nn.Linear(config.hidden_size, config.hidden_size),
+            nn.Dropout(config.dropout_p),
             nn.ReLU(),
             nn.Linear(config.hidden_size, config.num_classes),
         )
@@ -120,9 +123,10 @@ class MalConvTrainer:
         self.tokenizer = tokenizer
         self.callbacks = callbacks
         self.compute_metrics = compute_metrics
-        self.device = torch.device(
-            "cuda" if (torch.cuda.is_available() and not self.args.no_cuda) else "cpu"
-        )
+        if torch.cuda.is_available() and not self.args.no_cuda:
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         self.loss_fn = nn.CrossEntropyLoss()
         self.state = TrainerState(epoch=0, log_history=[])
 
@@ -131,24 +135,23 @@ class MalConvTrainer:
         best_accuracy = 0.0
         self.model = self.model.to(self.device)
         optimizer = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
-        for epoch in tqdm(range(int(self.args.num_train_epochs)), total=self.args.num_train_epochs):
+        epochs = list(range(1, int(self.args.num_train_epochs) + 1))
+        for epoch in tqdm(epochs, total=self.args.num_train_epochs):
             loader = self.get_dataloader(self.train_dataset, self.args.per_device_train_batch_size)
-            tr_losses = []
+            cum_loss = 0
             self.model = self.model.train()
             self.model = self.model.to(self.device)
             for batch in enumerate(loader):
                 X = batch[1]["input_ids"].to(self.device)
                 Y = batch[1]["labels"].to(self.device)
                 optimizer.zero_grad()
-                pred = self.model(X)
-                loss: Tensor = self.loss_fn(pred, Y)
+                logits = self.model(X)
+                loss: Tensor = self.loss_fn(logits, Y)
                 loss.backward()
                 optimizer.step()
-                tr_losses.append(loss.detach().cpu().numpy().tolist())
+                cum_loss += loss.item()
             metrics = self.evaluate(self.eval_dataset)
-            metrics["eval_loss"] = metrics.pop("loss")
-            metrics["eval_accuracy"] = metrics.pop("accuracy")
-            metrics["loss"] = sum(tr_losses) / len(tr_losses)
+            metrics["loss"] = cum_loss / len(loader)
             metrics["epoch"] = float(epoch)
             self.state.log_history.append(metrics)
             self.state.epoch = float(epoch)
@@ -156,6 +159,8 @@ class MalConvTrainer:
                 best_model = deepcopy(self.model.to("cpu"))
                 self.model = self.model.to(self.device)
                 best_accuracy = metrics["eval_accuracy"]
+            path = Path(self.args.output_dir) / f"checkpoint-{epoch}"
+            self.model.save_pretrained(path.as_posix())
         if self.args.load_best_model_at_end:
             self.model = best_model.to(self.device)
 
@@ -165,16 +170,31 @@ class MalConvTrainer:
         loader = self.get_dataloader(test_dataset, self.args.per_device_eval_batch_size)
         losses = []
         accuracies = []
-        for batch in enumerate(loader):
-            X = batch[1]["input_ids"].to(self.device)
-            Y = batch[1]["labels"].to(self.device)
-            pred = self.model(X)
-            loss = self.loss_fn(pred, Y)
-            losses.append(loss.item())
-            pred = F.softmax(pred, dim=1).argmax(dim=1)
-            accuracy = (pred == Y).sum() / len(Y)
-            accuracies.append(accuracy.item())
-        return {"loss": sum(losses) / len(losses), "accuracy": sum(accuracies) / len(accuracies)}
+        with torch.no_grad():
+            for i, batch in enumerate(loader):
+                X = batch["input_ids"].to(self.device)
+                Y = batch["labels"].to(self.device)
+                logits = self.model(X)
+                loss: Tensor = self.loss_fn(logits, Y)
+                losses.append(loss.item())
+                pred = F.softmax(logits, dim=1).argmax(dim=1)
+                accuracy = pred == Y
+                accuracies.extend(accuracy.detach().cpu().tolist())
+                # print(  # FIXME: remove
+                #     f"{i=}\n"
+                #     f"{X.shape=}, {X=}\n"
+                #     f"{Y.shape=}, {Y=}\n"
+                #     f"{logits.shape=}, {logits=}"
+                #     f"{loss.shape=}, {loss=}\n"
+                #     f"{pred.shape=}, {pred=}\n"
+                #     f"{accuracy.shape}, {accuracy=}\n"
+                #     f"{'-' * 88}",
+                #     flush=True,
+                # )
+        return {
+            "eval_loss": sum(losses) / len(losses),
+            "eval_accuracy": sum(accuracies) / len(accuracies),
+        }
 
     def get_dataloader(self, dataset: Dataset, batch_size: int) -> DataLoader:
         return DataLoader(

@@ -167,7 +167,12 @@ def main(
     max_token_length: int = None,
 ) -> BaseTokenizer:
     if max_token_length:
-        assert 256**max_token_length >= vocab_size
+        assert (
+            256**max_token_length >= vocab_size
+        ), f"{vocab_size=} too big for {max_token_length=}"
+    assert (
+        math.log2(vocab_size - len(SPECIALS)).is_integer()
+        ), f"{vocab_size=} is not a power of two."
 
     # Some of this is unnecessary, for doing straight-up raw tokenization.
     print("Retrieving raw dataset...", flush=True)
@@ -191,7 +196,7 @@ def main(
     print(BR, flush=True)
 
     if algorithm == "Raw":
-        num_bits = math.log(vocab_size - len(special_tokens), 2) / 8
+        num_bits = math.log2(vocab_size - len(special_tokens)) / 8
         if not num_bits.is_integer():
             raise ValueError(
                 f"{vocab_size=} is invalid for {algorithm=}. Requires power of 2 divisible by 8."

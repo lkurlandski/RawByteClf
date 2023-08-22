@@ -60,7 +60,7 @@ class MicrosoftDatasetGen:
         self.min_size = min_size
         self.max_size = max_size
         self.microsoft_subset = microsoft_subset
-        self.keys = pd.read_csv("data/trainLabels.csv", index_col=0).to_dict()["Class"]
+        self.keys = pd.read_csv(MICROSOFT_ROOT / "trainLabels.csv", index_col=0).to_dict()["Class"]
         self.iteration = 0
 
         files = (
@@ -144,15 +144,17 @@ def microsoft_dataset_callable(
     min_size: int = 1,
     max_size: int = sys.maxsize,
     tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
-    splits: Optional[list[Literal["tr", "ts", "vl"]]] = None,
-    microsoft_subset: Optional[Literal["train", "test"]] = "train",
+    splits: tuple[Literal["tr", "ts", "vl"]] = ("tr", "ts", "vl"),
+    microsoft_subset: Literal["train", "test"] | tuple[Literal["train", "test"]] = "train",
 ) -> Callable:
-    if not splits:
-        return MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, None)
+    subsets = (microsoft_subset,) if isinstance(microsoft_subset, str) else microsoft_subset
 
-    datasets = [
-        MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, s, microsoft_subset) for s in splits
-    ]
+    datasets = []
+    for _subset in subsets:
+        for _split in splits:
+            d = MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, _split, _subset)
+            datasets.append(d)
+
     assert all(d.tr_idx == datasets[0].tr_idx for d in datasets), "Dumb piece of shit."
     return lambda: chain(*[d() for d in datasets])
 
