@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=16
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:p4:1
 
 if [ $# -eq 0 ]; then
   echo "Please provide the log2 of the vocab size as an argument."
@@ -29,9 +29,9 @@ python src/train.py \
 --vocab_size=$vocab_size \
 --num=1.0 \
 --algorithm="SentencePieceBPE" \
---model="longformer" \
+--model="malconv" \
 --max_length=10000 \
---scale=.25 \
+--scale=1.0 \
 --early_stopping=false \
 --pretrain_task="clf" \
 --task="clf" \
@@ -53,5 +53,4 @@ python src/train.py \
 --learning_rate="5e-5" \
 --group_by_length=true \
 --save_total_limit=5 \
---fp16=true \
---tf32=true
+--fp16=true # --tf32=true
