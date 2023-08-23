@@ -54,13 +54,20 @@ def count_parameters(model: nn.Module, requires_grad: bool = False) -> int:
 
 
 def get_highest_path(
-    path_or_files: Collection[Path] | Path, lstrip: str = "", rstrip: str = ""
+    path: Collection[Path] | Path,
+    lstrip: str = "",
+    rstrip: str = "",
+    lowest: bool = False,
 ) -> Path:
-    if isinstance(path_or_files, (Path, str)):
-        files = Path(path_or_files).iterdir()
-    else:
-        files = path_or_files
-    return list(sorted(files, key=lambda p: int(p.stem.lstrip(lstrip).rstrip(rstrip))))[-1]
+    """
+    Get the highest/lowest numerically indexed path from a directory or a collection of paths.
+    """
+    def key(p: Path) -> int:
+        return int(p.stem.lstrip(lstrip).rstrip(rstrip))
+
+    files = Path(path).iterdir() if isinstance(path, (Path, str)) else path
+    idx = 0 if lowest else -1
+    return list(sorted(files, key=key))[idx]
 
 
 def is_dataset_path(path: Path) -> bool:
