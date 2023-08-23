@@ -176,6 +176,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         scale=model_args.scale,
         pretrain_task=model_args.pretrain_task,
     )
+    print(f"{oh=}", flush=True)
 
     if model_args.pretrain_task is not None and model_args.pretrain_task != "clf":
         model_name_or_path = OutputHelper(

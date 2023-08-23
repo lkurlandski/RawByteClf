@@ -125,7 +125,7 @@ class OutputHelper:
 
     @property
     def pretrain_task(self) -> Optional[str]:
-        if self.task in ("clf", "mlm"):
+        if self.task in ("clm", "mlm"):
             return self.task
         return str(self._pretrain_task) if self._pretrain_task is not None else None
 
