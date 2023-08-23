@@ -62,6 +62,7 @@ def get_highest_path(
     """
     Get the highest/lowest numerically indexed path from a directory or a collection of paths.
     """
+
     def key(p: Path) -> int:
         return int(p.stem.lstrip(lstrip).rstrip(rstrip))
 
