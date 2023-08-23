@@ -170,9 +170,9 @@ def main(
         assert (
             256**max_token_length >= vocab_size
         ), f"{vocab_size=} too big for {max_token_length=}"
-    assert (
-        math.log2(vocab_size - len(SPECIALS)).is_integer()
-        ), f"{vocab_size=} is not a power of two."
+    assert math.log2(
+        vocab_size - len(SPECIALS)
+    ).is_integer(), f"{vocab_size=} is not a power of two."
 
     # Some of this is unnecessary, for doing straight-up raw tokenization.
     print("Retrieving raw dataset...", flush=True)
