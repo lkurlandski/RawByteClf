@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 from pprint import pformat, pprint
+import shutil
 import sys
 from typing import Any, Optional
 
@@ -26,6 +27,8 @@ from transformers import (
 )
 from transformers.trainer_callback import TrainerState
 from tqdm import tqdm
+
+from utils import get_highest_path
 
 
 class MalConvConfig:
@@ -161,6 +164,7 @@ class MalConvTrainer:
                 best_accuracy = metrics["eval_accuracy"]
             path = Path(self.args.output_dir) / f"checkpoint-{epoch}"
             self.model.save_pretrained(path.as_posix())
+            self.prune_checkpoints()
         if self.args.load_best_model_at_end:
             self.model = best_model.to(self.device)
 
@@ -180,17 +184,6 @@ class MalConvTrainer:
                 pred = F.softmax(logits, dim=1).argmax(dim=1)
                 accuracy = pred == Y
                 accuracies.extend(accuracy.detach().cpu().tolist())
-                # print(  # FIXME: remove
-                #     f"{i=}\n"
-                #     f"{X.shape=}, {X=}\n"
-                #     f"{Y.shape=}, {Y=}\n"
-                #     f"{logits.shape=}, {logits=}"
-                #     f"{loss.shape=}, {loss=}\n"
-                #     f"{pred.shape=}, {pred=}\n"
-                #     f"{accuracy.shape}, {accuracy=}\n"
-                #     f"{'-' * 88}",
-                #     flush=True,
-                # )
         return {
             "eval_loss": sum(losses) / len(losses),
             "eval_accuracy": sum(accuracies) / len(accuracies),
@@ -204,3 +197,11 @@ class MalConvTrainer:
             collate_fn=self.data_collator,
             num_workers=self.args.dataloader_num_workers,
         )
+
+    def prune_checkpoints(self) -> None:
+        if self.args.save_total_limit is None:
+            return
+        checkpoints = list(Path(self.args.output_dir).glob("checkpoint-*"))
+        if len(checkpoints) >= self.args.save_total_limit:
+            checkpoint = get_highest_path(checkpoints, lstrip="checkpoint-", lowest=True)
+            shutil.rmtree(checkpoint)
