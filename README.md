@@ -9,7 +9,7 @@ unzip raw.7z
 
 ## TODO
 
-- add a `save_total_limit` flag for malconv
+- instead of saving both microsoft train and microsoft test for mlm, adjust the scripts to combine the clf and mlm datasets when doing mlm
 - pretrain mlm on all 10000 byte chunks?
 - pad vocabulary to a multiple of 8
 - save logfile in the correct output directory
