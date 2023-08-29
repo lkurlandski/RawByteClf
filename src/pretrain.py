@@ -8,7 +8,7 @@ from pprint import pformat, pprint
 import os
 import sys
 
-from datasets import DatasetDict
+from datasets import concatenate_datasets, DatasetDict
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
@@ -36,25 +36,36 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     else:
         raise ValueError(f"{model_args.task=} not supported.")
 
-    oh = OutputHelper(
-        algorithm=model_args.algorithm,
-        vocab_size=model_args.vocab_size,
-        num_tok=model_args.num_tok,
-        max_length=model_args.max_length,
-        num=model_args.num,
-        task=model_args.task,
-        model=model_args.model,
-        scale=model_args.scale,
-        pretrain_task=model_args.pretrain_task,
-    )
+    # We want to get both the labeled and unlabeled datasets and concatenate them for pretraining.
+    # So we need to create two OutputHelper objects, one for the pretraining task and one for the
+    # classification task. We can use the same model arguments for both, except for the task
+    oh, oh_clf = [
+        OutputHelper(
+            algorithm=model_args.algorithm,
+            vocab_size=model_args.vocab_size,
+            num_tok=model_args.num_tok,
+            max_length=model_args.max_length,
+            num=model_args.num,
+            task=task,
+            model=model_args.model,
+            scale=model_args.scale,
+            pretrain_task=model_args.pretrain_task,
+        )
+        for task in (model_args.task, "clf")
+    ]
     print(f"{oh=}")
 
     tokenizer = get_fast_tokenizer(oh.tokenizer_file, model_args.max_length)
     print(f"{tokenizer=}")
     print(BR, flush=True)
 
-    dataset = DatasetDict.load_from_disk(oh.dataset_dir)
-    dataset = dataset.remove_columns("label")
+    d_1 = DatasetDict.load_from_disk(oh.dataset_dir)
+    d_2 = DatasetDict.load_from_disk(oh_clf.dataset_dir)
+    dataset = DatasetDict({
+        "tr": concatenate_datasets([d_1["tr"], d_2["tr"]]),
+        "vl": concatenate_datasets([d_1["vl"], d_2["vl"]]),
+        "ts": concatenate_datasets([d_1["ts"], d_2["ts"]]),
+    }).remove_columns("label")
     print(f"{dataset=}")
     print(BR, flush=True)
 
@@ -99,7 +110,8 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     oh.mkdir(exist_ok=True)
 
     if training_args.do_train:
-        training_args.output_dir = oh.checkpoints_dir.as_posix()
+        # TrainingArguments are immutable in newest transformers version
+        object.__setattr__(training_args, "output_dir", oh.checkpoints_dir.as_posix())
         trainer.train(training_args.resume_from_checkpoint)
         if training_args.load_best_model_at_end:
             model.save_pretrained(oh.best_model_dir.as_posix())
