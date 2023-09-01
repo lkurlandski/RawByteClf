@@ -36,10 +36,11 @@ from cfg import BR
 from helpers import OutputHelper
 from malconv import MalConvModel, MalConvConfig, MalConvTrainer
 from tokenization import get_fast_tokenizer
-from utils import count_parameters
+from utils import count_parameters, pad_to_multiple_of_fn
 
 
-accuracy = evaluate.load("accuracy")
+PAD_TO_MULTIPLE_OF = 8
+ACCURACY = evaluate.load("accuracy")
 
 
 @dataclass
@@ -89,7 +90,7 @@ def compute_metrics(eval_pred):
     labels: np.ndarray = labels.astype(np.int64)
     probas = torch.softmax(torch.tensor(probas, dtype=torch.float32), dim=1).numpy()
     predictions = np.argmax(probas, axis=1)
-    return accuracy.compute(predictions=predictions, references=labels)
+    return ACCURACY.compute(predictions=predictions, references=labels)
 
 
 def get_scale_fn(scale: float) -> Callable[[int], float]:
@@ -106,7 +107,7 @@ def get_config_malconv(
     scale_fn = get_scale_fn(scale)
 
     return MalConvConfig(
-        num_embd=len(tokenizer),
+        num_embd=pad_to_multiple_of_fn(len(tokenizer), PAD_TO_MULTIPLE_OF),
         embed_size=scale_fn(8),
         max_length=max_length,
         window_size=scale_fn(512),
@@ -141,7 +142,7 @@ def get_config_hf(
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            vocab_size=len(tokenizer),
+            vocab_size=pad_to_multiple_of_fn(len(tokenizer), PAD_TO_MULTIPLE_OF),
             hidden_size=scale_fn(768),
             num_hidden_layers=scale_fn(12),
             num_attention_heads=scale_fn(12),
@@ -151,7 +152,7 @@ def get_config_hf(
         )
     if model_name_or_path == "bert":
         return BertConfig(
-            vocab_size=len(tokenizer),
+            vocab_size=pad_to_multiple_of_fn(len(tokenizer), PAD_TO_MULTIPLE_OF),
             hidden_size=scale_fn(768),
             num_hidden_layers=scale_fn(12),
             num_attention_heads=scale_fn(12),

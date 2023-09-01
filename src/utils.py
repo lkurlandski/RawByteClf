@@ -94,3 +94,7 @@ def is_dataset_path_completed(path: Path) -> bool:
     return all(p.exists() for p in (tr_path, vl_path, ts_path)) and all(
         is_dataset_path(p) for p in (tr_path, vl_path, ts_path)
     )
+
+
+def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
+    return val + (val % pad_to_multiple_of)
