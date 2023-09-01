@@ -61,11 +61,13 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
 
     d_1 = DatasetDict.load_from_disk(oh.dataset_dir)
     d_2 = DatasetDict.load_from_disk(oh_clf.dataset_dir)
-    dataset = DatasetDict({
-        "tr": concatenate_datasets([d_1["tr"], d_2["tr"]]),
-        "vl": concatenate_datasets([d_1["vl"], d_2["vl"]]),
-        "ts": concatenate_datasets([d_1["ts"], d_2["ts"]]),
-    }).remove_columns("label")
+    dataset = DatasetDict(
+        {
+            "tr": concatenate_datasets([d_1["tr"], d_2["tr"]]),
+            "vl": concatenate_datasets([d_1["vl"], d_2["vl"]]),
+            "ts": concatenate_datasets([d_1["ts"], d_2["ts"]]),
+        }
+    ).remove_columns("label")
     print(f"{dataset=}")
     print(BR, flush=True)
 
