@@ -20,10 +20,39 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from cfg import MICROSOFT_ROOT, ANDROZOO_ROOT
-
 
 random.seed(0)
+
+
+MICROSOFT_ROOT = Path("./data_/microsoft/")
+ANDROZOO_ROOT = Path("./data_/androzoo/")
+
+MICROSOFT_CLASSES = (
+    "Ramnit",
+    "Lollipop",
+    "Kelihos_ver3",
+    "Vundo",
+    "Simda",
+    "Tracur",
+    "Kelihos_ver1",
+    "Obfuscator.ACY",
+    "Gatak",
+)
+ANDROZOO_CLASSES = (
+    "addisplay",
+    "adware",
+    "downloader",
+    "exploit",
+    "malware",
+    "riskware",
+    "spr",
+    "spyware",
+    "trojan",
+)
+
+# Map class names to integers and vice-versa.
+CLASS_MAP = {c: i for i, c in enumerate(chain(MICROSOFT_CLASSES, ANDROZOO_CLASSES))}
+CLASS_MAP_INV = {i: c for i, c in enumerate(chain(MICROSOFT_CLASSES, ANDROZOO_CLASSES))}
 
 
 BYTE_TO_UTF8 = {i: chr(i + 10752) for i in range(256)}
@@ -64,10 +93,14 @@ class DatasetGen:
         else:
             self.idx = idx
 
-        # Determine the labels, if the dataset is labeled.
+        # Determine the integer labels, if the dataset is labeled.
         self.keys = lambda _: None
         if labels is not None:
             self.keys = pd.read_csv(labels, index_col=0).to_dict()["Class"]
+            self.keys = {
+                f: CLASS_MAP[c_or_i] if c_or_i in CLASS_MAP else int(c_or_i)
+                for f, c_or_i in self.keys.items()
+            }
 
         # Iterable starts at iteration 0.
         self.iteration = 0
@@ -88,6 +121,7 @@ class DatasetGen:
         f: Path = self.files[self.idx[self.iteration]]
         s: Optional[str] = f.read_text(encoding="utf-8")
         l: Optional[str] = self.keys.get(f.stem, None)
+
         self.iteration += 1
         return {"text": s, "label": l, "file": f.as_posix()}
 
@@ -198,7 +232,8 @@ def process_info(stats: list[dict[str, float]]) -> dict[str, float]:
 
 
 def prep_microsoft():
-    for f in tqdm(MICROSOFT_ROOT / "train"):
+    files = set((MICROSOFT_ROOT / "train").iterdir())
+    for f in tqdm(files):
         if f.stat().st_size == 0:
             print(f"{f.name}.stat().st_size == 0")
             continue
@@ -234,7 +269,9 @@ def prep_androzoo() -> None:
         with open(selected, "r") as fp:
             d = list(json.load(fp).items())
         files, labels = list(zip(*d))
-        pd.DataFrame({"Id": files, "Class": labels}).to_csv(ANDROZOO_ROOT / "trainLabels.csv")
+        pd.DataFrame({"Id": files, "Class": labels}).to_csv(
+            ANDROZOO_ROOT / "trainLabels.csv", index=False
+        )
         selected.unlink()
 
     files = list((ANDROZOO_ROOT / "data").iterdir())
@@ -242,5 +279,29 @@ def prep_androzoo() -> None:
         pool.map(_process_androzoo_file, files)
 
 
+def tests():
+    print("androzoo_dataset_callable")
+    iterable = androzoo_dataset_callable()()
+    total = sum(1 for _ in (ANDROZOO_ROOT / "data").iterdir())
+    for i, x in enumerate(tqdm(iterable, total=total)):
+        if i == 10:
+            print("...")
+        if i >= 10:
+            continue
+        f, s, l = Path(x["file"]).name, x["text"], x["label"]
+        print(f"{l=}, {len(s)=}, {f=}")
+
+    print("microsoft_dataset_callable")
+    iterable = microsoft_dataset_callable()()
+    total = sum(1 for _ in (MICROSOFT_ROOT / "train").iterdir())
+    for i, x in enumerate(tqdm(iterable, total=total)):
+        if i == 10:
+            print("...")
+        if i >= 10:
+            continue
+        f, s, l = Path(x["file"]).name, x["text"], x["label"]
+        print(f"{l=}, {len(s)=}, {f=}")
+
+
 if __name__ == "__main__":
-    prep_androzoo()
+    tests()
