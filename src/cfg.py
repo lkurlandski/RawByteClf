@@ -33,11 +33,13 @@ from pathlib import Path
 
 __all__ = [
     "MICROSOFT_ROOT",
+    "ANDROZOO_ROOT",
     "SPECIALS",
     "BR",
 ]
 
-MICROSOFT_ROOT = Path("./data_")
+MICROSOFT_ROOT = Path("./data_/microsoft/")
+ANDROZOO_ROOT = Path("./data_/androzoo/")
 
 SPECIALS = {
     "pad_token": "<pad>",

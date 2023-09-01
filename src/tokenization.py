@@ -33,7 +33,7 @@ from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
 
 from cfg import BR, SPECIALS
-from data import byte_to_utf8, microsoft_dataset_callable
+from data import BYTE_TO_UTF8, microsoft_dataset_callable
 from helpers import OutputHelper
 from utils import process_mem
 
@@ -202,7 +202,7 @@ def main(
                 f"{vocab_size=} is invalid for {algorithm=}. Requires power of 2 divisible by 8."
             )
         num_bits = int(num_bits)
-        alphabet = list(byte_to_utf8.values())
+        alphabet = list(BYTE_TO_UTF8.values())
         alphabet = ("".join(i) for i in product(alphabet, repeat=num_bits))
         vocab = {v: i for i, v in enumerate(special_tokens)}
         vocab.update({v: i for i, v in enumerate(alphabet, start=len(special_tokens))})

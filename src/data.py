@@ -2,13 +2,17 @@
 Lowest level of dataprocessing utilities.
 """
 
+from __future__ import annotations
 from collections import namedtuple
+from collections.abc import Callable, Iterable
 from itertools import chain
+import json
+import multiprocessing as mp
 from pathlib import Path
 from pprint import pprint
 import random
 import sys
-from typing import Callable, Literal, Optional
+from typing import Any, Literal, Optional
 
 from datasets import Dataset
 import numpy as np
@@ -16,58 +20,33 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from cfg import MICROSOFT_ROOT
-
-
-__all__ = [
-    "microsoft_dataset_callable",
-    "byte_string",
-    "microsoft_byte_file_to_str",
-    "MicrosoftDatasetGen",
-]
+from cfg import MICROSOFT_ROOT, ANDROZOO_ROOT
 
 
 random.seed(0)
 
 
-byte_to_utf8 = {i: chr(i + 10752) for i in range(256)}
+BYTE_TO_UTF8 = {i: chr(i + 10752) for i in range(256)}
 
 
-def byte_string(p: Path) -> str:
-    return "".join([byte_to_utf8[b] for b in p.read_bytes()])
-
-
-def microsoft_byte_file_to_str(p: Path) -> str:
-    ignore = {"??", "NaN", "nan"}
-    df = pd.read_csv(p, header=None, sep=" ", dtype=str, index_col=0)
-    try:
-        data_ = [int(str(s), 16) for _, row in df.iterrows() for s in row if str(s) not in ignore]
-    except TypeError as e:
-        print(df)
-        raise e
-    return "".join([byte_to_utf8[d] for d in data_])
-
-
-class MicrosoftDatasetGen:
+class DatasetGen:
     def __init__(
         self,
+        files: Path | Iterable[Path],
+        labels: Optional[Path] = None,
         min_size: int = 1,
         max_size: int = sys.maxsize,
         tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
         split: Optional[Literal["tr", "ts", "vl"]] = None,
-        microsoft_subset: Optional[Literal["train", "test"]] = "train",
     ) -> None:
-        self.min_size = min_size
-        self.max_size = max_size
-        self.microsoft_subset = microsoft_subset
-        self.keys = pd.read_csv(MICROSOFT_ROOT / "trainLabels.csv", index_col=0).to_dict()["Class"]
-        self.iteration = 0
 
-        files = (
-            p for p in (MICROSOFT_ROOT / self.microsoft_subset).iterdir() if p.suffix == ".txt"
-        )
+        # Acquire, filter, then randomize the files.
+        if isinstance(files, Path):
+            files = (p for p in files.iterdir() if p.suffix == ".txt")
         files = filter(lambda p: min_size <= p.stat().st_size < max_size, files)
         self.files = sorted(list(files))
+
+        # Determine the train, test, and validation indices.
         sizes = [int(s * len(self.files)) for s in tr_vl_ts]
         while sum(sizes) != len(self.files):
             sizes[0] += 1
@@ -75,6 +54,7 @@ class MicrosoftDatasetGen:
         tr_idx, self.ts_idx = train_test_split(idx, test_size=tr_vl_ts[2], random_state=42)
         self.tr_idx, self.vl_idx = train_test_split(tr_idx, test_size=tr_vl_ts[1], random_state=42)
 
+        # Determine which split to use based on user preference.
         if split == "tr":
             self.idx = self.tr_idx
         elif split == "vl":
@@ -84,27 +64,103 @@ class MicrosoftDatasetGen:
         else:
             self.idx = idx
 
-    def __call__(self):
+        # Determine the labels, if the dataset is labeled.
+        self.keys = lambda _: None
+        if labels is not None:
+            self.keys = pd.read_csv(labels, index_col=0).to_dict()["Class"]
+
+        # Iterable starts at iteration 0.
+        self.iteration = 0
+
+    def __call__(self) -> Iterable:
         return iter(self)
 
-    def __iter__(self):
+    def __iter__(self) -> DatasetGen:
         return self
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.idx)
 
-    def __next__(self):
+    def __next__(self) -> dict[str, Optional[str]]:
         if self.iteration >= len(self):
             raise StopIteration
 
-        f = self.files[self.idx[self.iteration]]
-        s = f.read_text(encoding="utf-8")
-        l = self.keys.get(f.stem, None)
+        f: Path = self.files[self.idx[self.iteration]]
+        s: Optional[str] = f.read_text(encoding="utf-8")
+        l: Optional[str] = self.keys.get(f.stem, None)
         self.iteration += 1
         return {"text": s, "label": l, "file": f.as_posix()}
 
 
+def microsoft_dataset_callable(
+    min_size: int = 1,
+    max_size: int = sys.maxsize,
+    tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
+    splits: tuple[Literal["tr", "ts", "vl"]] = ("tr", "ts", "vl"),
+    microsoft_subset: Literal["train", "test"] | tuple[Literal["train", "test"]] = "train",
+) -> Callable:
+    subsets = (microsoft_subset,) if isinstance(microsoft_subset, str) else microsoft_subset
+
+    datasets = []
+    for _subset in subsets:
+        for _split in splits:
+            d = DatasetGen(
+                MICROSOFT_ROOT / _subset,
+                MICROSOFT_ROOT / "trainLabels.csv" if _subset == "train" else None,
+                min_size,
+                max_size,
+                tr_vl_ts,
+                _split,
+            )
+            datasets.append(d)
+
+    assert all(d.tr_idx == datasets[0].tr_idx for d in datasets), "Dumb piece of shit."
+    return lambda: chain(*[d() for d in datasets])
+
+
+def androzoo_dataset_callable(
+    min_size: int = 1,
+    max_size: int = sys.maxsize,
+    tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
+    splits: tuple[Literal["tr", "ts", "vl"]] = ("tr", "ts", "vl"),
+    _: Any = None,
+) -> Callable:
+
+    datasets = []
+    for _split in splits:
+        d = DatasetGen(
+            ANDROZOO_ROOT / "data",
+            ANDROZOO_ROOT / "trainLabels.csv",
+            min_size,
+            max_size,
+            tr_vl_ts,
+            _split,
+        )
+        datasets.append(d)
+
+    assert all(d.tr_idx == datasets[0].tr_idx for d in datasets), "Dumb piece of shit."
+    return lambda: chain(*[d() for d in datasets])
+
+
+def raw_byte_file_to_str(p: Path) -> str:
+    """Converts a raw byte file to a string of utf-8 characters."""
+    return "".join([BYTE_TO_UTF8[b] for b in p.read_bytes()])
+
+
+def microsoft_byte_file_to_str(p: Path) -> str:
+    """Converts the microsoft hex dump file to a string of utf-8 characters."""
+    ignore = {"??", "NaN", "nan"}
+    df = pd.read_csv(p, header=None, sep=" ", dtype=str, index_col=0)
+    try:
+        data_ = [int(str(s), 16) for _, row in df.iterrows() for s in row if str(s) not in ignore]
+    except TypeError as e:
+        print(df)
+        raise e
+    return "".join([BYTE_TO_UTF8[d] for d in data_])
+
+
 def info(dataset: Dataset) -> list[dict[str, float]]:
+    """Analysis."""
     stats = []
     for d in dataset:
         stat = {}
@@ -119,6 +175,7 @@ def info(dataset: Dataset) -> list[dict[str, float]]:
 
 
 def process_info(stats: list[dict[str, float]]) -> dict[str, float]:
+    """Analysis."""
     if not stats:
         return {}
 
@@ -140,28 +197,8 @@ def process_info(stats: list[dict[str, float]]) -> dict[str, float]:
     return summary
 
 
-def microsoft_dataset_callable(
-    min_size: int = 1,
-    max_size: int = sys.maxsize,
-    tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
-    splits: tuple[Literal["tr", "ts", "vl"]] = ("tr", "ts", "vl"),
-    microsoft_subset: Literal["train", "test"] | tuple[Literal["train", "test"]] = "train",
-) -> Callable:
-    subsets = (microsoft_subset,) if isinstance(microsoft_subset, str) else microsoft_subset
-
-    datasets = []
-    for _subset in subsets:
-        for _split in splits:
-            d = MicrosoftDatasetGen(min_size, max_size, tr_vl_ts, _split, _subset)
-            datasets.append(d)
-
-    assert all(d.tr_idx == datasets[0].tr_idx for d in datasets), "Dumb piece of shit."
-    return lambda: chain(*[d() for d in datasets])
-
-
-def convert_microsoft_to_utf_bytes(microsoft_subset: Literal["train", "test"]):
-    files = set(p for p in (MICROSOFT_ROOT / microsoft_subset).iterdir())
-    for f in tqdm(files):
+def prep_microsoft():
+    for f in tqdm(MICROSOFT_ROOT / "train"):
         if f.stat().st_size == 0:
             print(f"{f.name}.stat().st_size == 0")
             continue
@@ -181,40 +218,29 @@ def convert_microsoft_to_utf_bytes(microsoft_subset: Literal["train", "test"]):
         f.unlink()
 
 
-def main() -> None:
-    gen = microsoft_dataset_callable(10, splits=["tr", "vl"])
-    for i, d in enumerate(gen()):
-        print(i, d["file"])
+def _process_androzoo_file(f: Path) -> None:
+    if f.suffix == ".txt":
+        return
+    s = raw_byte_file_to_str(f)
+    with open(f.with_suffix(".txt"), "w") as fp:
+        fp.write(s)
+    f.unlink()
 
-    num_files = 10
-    dataset = Dataset.from_generator(microsoft_dataset_callable(num_files, splits=["tr", "vl"]))
-    print(dataset)
 
-    # convert_microsoft_to_utf_bytes("train")
+def prep_androzoo() -> None:
 
-    # files = [
-    #     "58kxhXouHzFd4g3rmInB.bytes",
-    #     "6tfw0xSL2FNHOCJBdlaA.bytes",
-    #     "a9oIzfw03ED4lTBCt52Y.bytes",
-    #     "cf4nzsoCmudt1kwleOTI.bytes",
-    #     "d0iHC6ANYGon7myPFzBe.bytes",
-    #     "da3XhOZzQEbKVtLgMYWv.bytes",
-    #     "fRLS3aKkijp4GH0Ds6Pv.bytes",
-    #     "IidxQvXrlBkWPZAfcqKT.bytes",
-    # ]
-    # for f in files:
-    #     f = MICROSOFT_ROOT / "train" / f
-    #     s = microsoft_byte_file_to_str(f)
-    #     if s == "":
-    #         print(f)
-    #         continue
-    #     with open(f.with_suffix(".txt"), "w", encoding="utf-8") as handle:
-    #         handle.write(s)
-    #     if f.with_suffix(".txt").stat().st_size == 0:
-    #         print(f)
-    #         continue
-    #     f.unlink()
+    selected = ANDROZOO_ROOT / "selected.json"
+    if selected.exists():
+        with open(selected, "r") as fp:
+            d = list(json.load(fp).items())
+        files, labels = list(zip(*d))
+        pd.DataFrame({"Id": files, "Class": labels}).to_csv(ANDROZOO_ROOT / "trainLabels.csv")
+        selected.unlink()
+
+    files = list((ANDROZOO_ROOT / "data").iterdir())
+    with mp.Pool(16) as pool:
+        pool.map(_process_androzoo_file, files)
 
 
 if __name__ == "__main__":
-    main()
+    prep_androzoo()
