@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=pretrain
+#SBATCH --job-name=pretrain_2_3
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -17,8 +17,8 @@ if [ $# -eq 0 ]; then
 fi
 
 export vocab_size=$((2**$1 + 6))
-export steps=500
-export strategy="steps"
+export steps=100
+export strategy="epoch"
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
@@ -26,35 +26,40 @@ conda activate RawByteClf
 # export CUDA_VISIBLE_DEVICES=0
 # export CUDA_LAUNCH_BLOCKING=1 
 
+# torchrun --standalone --nnodes=1 --nproc_per_node=2 \
 python \
 src/pretrain.py \
 --vocab_size=$vocab_size \
+--num_tok=1000 \
 --num=1 \
 --algorithm="Raw" \
 --model="longformer" \
 --max_length=10000 \
---scale_numerator=1 \
---scale_denominator=2 \
+--scale_numerator=2 \
+--scale_denominator=3 \
 --early_stopping=false \
 --task="mlm" \
+--pretrain_task="mlm" \
 --do_train \
 --do_eval \
 --output_dir=tmp \
---overwrite_output_dir=true \
---load_best_model_at_end=true \
+--overwrite_output_dir \
+--load_best_model_at_end \
 --save_strategy=$strategy \
 --save_steps=$steps \
 --evaluation_strategy=$strategy \
 --eval_steps=$steps \
 --logging_steps=$steps \
 --dataloader_num_workers=14 \
---num_train_epochs=50 \
---per_device_train_batch_size=16 \
---per_device_eval_batch_size=64 \
+--num_train_epochs=25 \
+--per_device_train_batch_size=8 \
+--per_device_eval_batch_size=16 \
+--gradient_accumulation_steps=16 \
 --optim="adamw_torch" \
 --learning_rate="5e-5" \
 --weight_decay=0.01 \
---group_by_length=true \
+--group_by_length \
 --save_total_limit=5 \
---fp16=true \
---tf32=true
+--fp16 \
+--auto_find_batch_size \
+--tf32=true  # REQUIRES =true
