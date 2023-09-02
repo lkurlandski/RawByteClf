@@ -16,12 +16,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import product
 import math
+import random
 from pathlib import Path
 from pprint import pformat, pprint
 import sys
 from typing import Optional, Union
 
-from datasets import Dataset
+from datasets import concatenate_datasets, Dataset
 from tokenizers import Regex, Tokenizer
 from tokenizers import SentencePieceBPETokenizer as _SentencePieceBPETokenizer
 from tokenizers import SentencePieceUnigramTokenizer as _SentencePieceUnigramTokenizer
@@ -33,14 +34,22 @@ from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
 
 from cfg import BR, SPECIALS
-from data import byte_to_utf8, microsoft_dataset_callable
+from data import get_hf_dataset, BYTE_TO_UTF8
 from helpers import OutputHelper
 from utils import process_mem
 
 
+random.seed(0)
+
+
 @dataclass
 class TokenizationArgs:
-    algorithm: str = field(metadata={"help": ""})
+    dataset_name: str = field(metadata={"help": "One of `microsoft`, `androzoo`, or `all`"})
+    algorithm: str = field(
+        metadata={
+            "help": "One of `Raw`, `BPE`, `Unigram`, `WordPiece`, `WordLevel`, `SentencePieceBPE`, or `SentencePieceUnigram`"
+        }
+    )
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
     num_files: Optional[int] = field(default=None, metadata={"help": ""})
     block_size: int = field(default=2**12, metadata={"help": ""})
@@ -159,29 +168,31 @@ def get_fast_tokenizer(
 
 
 def main(
-    vocab_size: int,
+    dataset_name: str,
     algorithm: str,
+    vocab_size: int,
     batch_size: int,
     block_size: int,
     num_files: int = None,
     max_token_length: int = None,
 ) -> BaseTokenizer:
-    if max_token_length:
-        assert (
-            256**max_token_length >= vocab_size
-        ), f"{vocab_size=} too big for {max_token_length=}"
-    assert math.log2(
-        vocab_size - len(SPECIALS)
-    ).is_integer(), f"{vocab_size=} is not a power of two."
+
+    if max_token_length and (256**max_token_length < vocab_size):
+        raise ValueError(f"{vocab_size=} too big for {max_token_length=}")
+    if not math.log2(vocab_size - len(SPECIALS)).is_integer():
+        raise ValueError(f"{vocab_size=} is not a power of two.")
 
     # Some of this is unnecessary, for doing straight-up raw tokenization.
     print("Retrieving raw dataset...", flush=True)
-    dataset = Dataset.from_generator(
-        microsoft_dataset_callable(splits=["tr", "vl"])
-    ).remove_columns(["file", "label"])
-    if num_files:
-        dataset = dataset.select(range(num_files))
+    dataset = get_hf_dataset(
+        dataset_name,
+        num=num_files,
+        remove=["file", "label"],
+        splits=["tr", "vl"],
+        microsoft_subset=["train", "test"],
+    )
     print(f"{dataset=}")
+
     print("Grouping dataset...", flush=True)
     dataset = dataset.map(get_group_texts_fn(block_size), batched=True)
     print(f"{dataset=}")
@@ -202,7 +213,7 @@ def main(
                 f"{vocab_size=} is invalid for {algorithm=}. Requires power of 2 divisible by 8."
             )
         num_bits = int(num_bits)
-        alphabet = list(byte_to_utf8.values())
+        alphabet = list(BYTE_TO_UTF8.values())
         alphabet = ("".join(i) for i in product(alphabet, repeat=num_bits))
         vocab = {v: i for i, v in enumerate(special_tokens)}
         vocab.update({v: i for i, v in enumerate(alphabet, start=len(special_tokens))})
@@ -270,7 +281,9 @@ def main(
         tokenizer.train_from_iterator(iterator, trainer, length=length)
 
     print("Training complete!", flush=True)
-    oh = OutputHelper(algorithm=algorithm, vocab_size=vocab_size, num_tok=num_files)
+    oh = OutputHelper(
+        dataset_name=dataset_name, algorithm=algorithm, vocab_size=vocab_size, num_tok=num_files
+    )
     path = oh.tokenizer_file
     path.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(path.as_posix())
@@ -283,8 +296,9 @@ def cli():
     print(f"args={pformat(args)}")
     print(BR, flush=True)
     main(
-        args.vocab_size,
+        args.dataset_name,
         args.algorithm,
+        args.vocab_size,
         args.batch_size,
         args.block_size,
         args.num_files,

@@ -18,14 +18,14 @@ fi
 
 export vocab_size=$((2**$1 + 6))
 
-export vocab_size=4108
-
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
 python src/preprocessing.py \
 --max_length=10000 \
 --algorithm="SentencePieceBPE" \
+--task="mlm" \
+--num_tok=2500 \
 --vocab_size=$vocab_size \
 --num_proc=1 \
 --writer_batch_size=512 \

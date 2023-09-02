@@ -33,6 +33,7 @@ from transformers import (
 )
 
 from cfg import BR
+from data import NUM_CLASSES
 from helpers import OutputHelper
 from malconv import MalConvModel, MalConvConfig, MalConvTrainer
 from tokenization import get_fast_tokenizer
@@ -45,6 +46,7 @@ ACCURACY = evaluate.load("accuracy")
 
 @dataclass
 class ModelArgs:
+    dataset_name: str = field(metadata={"help": ""})
     max_length: int = field(metadata={"help": ""})
     model: str = field(metadata={"help": "One of `longformer`, `bert`, `malconv`."})
     algorithm: str = field(metadata={"help": ""})
@@ -79,7 +81,7 @@ class ModelArgs:
 
 @dataclass
 class CallbackArgs:
-    early_stopping: bool = field(default=True, metadata={"help": ""})
+    early_stopping: bool = field(default=False, metadata={"help": ""})
     early_stopping_patience: Optional[int] = 5
     early_stopping_threshold: Optional[float] = 0.0
 
@@ -167,6 +169,7 @@ def get_config_hf(
 
 def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: TrainingArguments):
     oh = OutputHelper(
+        dataset_name=model_args.dataset_name,
         algorithm=model_args.algorithm,
         vocab_size=model_args.vocab_size,
         num_tok=model_args.num_tok,
@@ -181,6 +184,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
 
     if model_args.pretrain_task is not None and model_args.pretrain_task != "clf":
         model_name_or_path = OutputHelper(
+            dataset_name=model_args.dataset_name,
             algorithm=model_args.algorithm,
             vocab_size=model_args.vocab_size,
             num_tok=model_args.num_tok,
@@ -201,9 +205,9 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     print(BR, flush=True)
 
     dataset = DatasetDict.load_from_disk(oh.dataset_dir)
-    dataset["tr"].info.features["label"].num_classes = 10
-    dataset["ts"].info.features["label"].num_classes = 10
-    dataset["vl"].info.features["label"].num_classes = 10
+    dataset["tr"].info.features["label"].num_classes = NUM_CLASSES[model_args.dataset_name]
+    dataset["ts"].info.features["label"].num_classes = NUM_CLASSES[model_args.dataset_name]
+    dataset["vl"].info.features["label"].num_classes = NUM_CLASSES[model_args.dataset_name]
     print(f"{dataset=}")
     print(BR, flush=True)
 
@@ -225,8 +229,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         )
 
     data_collator = DataCollatorWithPadding(
-        tokenizer=tokenizer,
-        padding=True,
+        tokenizer=tokenizer, padding=True, pad_to_multiple_of=PAD_TO_MULTIPLE_OF
     )
     callbacks = []
     if callback_args.early_stopping:
@@ -274,7 +277,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     oh.mkdir(exist_ok=True)
 
     if training_args.do_train:
-        training_args.output_dir = oh.checkpoints_dir.as_posix()
+        object.__setattr__(training_args, "output_dir", oh.checkpoints_dir.as_posix())
         trainer.train(training_args.resume_from_checkpoint)
         if training_args.load_best_model_at_end:
             model.save_pretrained(oh.best_model_dir.as_posix())
@@ -331,6 +334,7 @@ def debug() -> None:
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{BR}", flush=True)
+    print(f"{torch.backends.cudnn.enabled=}")
     if len(sys.argv) == 1 or sys.argv[1] == "--debug":
         debug()
     else:

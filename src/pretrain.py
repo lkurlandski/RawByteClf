@@ -21,7 +21,7 @@ from transformers import (
 
 from cfg import BR
 from helpers import OutputHelper
-from train import get_config_hf, ModelArgs, CallbackArgs
+from train import get_config_hf, ModelArgs, CallbackArgs, PAD_TO_MULTIPLE_OF
 from tokenization import get_fast_tokenizer
 from utils import count_parameters
 
@@ -41,6 +41,7 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     # classification task. We can use the same model arguments for both, except for the task
     oh, oh_clf = [
         OutputHelper(
+            dataset_name=model_args.dataset_name,
             algorithm=model_args.algorithm,
             vocab_size=model_args.vocab_size,
             num_tok=model_args.num_tok,
@@ -59,15 +60,21 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
     print(f"{tokenizer=}")
     print(BR, flush=True)
 
-    d_1 = DatasetDict.load_from_disk(oh.dataset_dir)
-    d_2 = DatasetDict.load_from_disk(oh_clf.dataset_dir)
-    dataset = DatasetDict(
-        {
-            "tr": concatenate_datasets([d_1["tr"], d_2["tr"]]),
-            "vl": concatenate_datasets([d_1["vl"], d_2["vl"]]),
-            "ts": concatenate_datasets([d_1["ts"], d_2["ts"]]),
-        }
-    ).remove_columns("label")
+    # TODO: during refactor, should handle this more elegantly.
+    if model_args.dataset_name == "androzoo":
+        dataset = DatasetDict.load_from_disk(oh.dataset_dir)
+    else:
+        _d_1 = DatasetDict.load_from_disk(oh.dataset_dir)
+        _d_2 = DatasetDict.load_from_disk(oh_clf.dataset_dir)
+        dataset = DatasetDict(
+            {
+                "tr": concatenate_datasets([_d_1["tr"], _d_2["tr"]]),
+                "vl": concatenate_datasets([_d_1["vl"], _d_2["vl"]]),
+                "ts": concatenate_datasets([_d_1["ts"], _d_2["ts"]]),
+            }
+        )
+
+    dataset = dataset.remove_columns("label")
     print(f"{dataset=}")
     print(BR, flush=True)
 
@@ -78,7 +85,9 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         model_args.scale,
     )
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=MLM)
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=MLM, pad_to_multiple_of=PAD_TO_MULTIPLE_OF
+    )
     callbacks = []
     if callback_args.early_stopping:
         early_stopping_callback = EarlyStoppingCallback(

@@ -4,7 +4,6 @@ Preprocess data by strictly tokenizing it, i.e., no padding or tokenization.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from itertools import chain
 from pathlib import Path
 from pprint import pformat, pprint
 import shutil
@@ -16,7 +15,7 @@ from transformers import HfArgumentParser, PreTrainedTokenizer
 from tqdm import tqdm
 
 from cfg import BR
-from data import microsoft_dataset_callable
+from data import get_hf_dataset
 from helpers import OutputHelper
 from tokenization import get_fast_tokenizer
 from utils import get_highest_path, is_dataset_path_completed
@@ -24,9 +23,10 @@ from utils import get_highest_path, is_dataset_path_completed
 
 @dataclass
 class DatasetArgs:
+    dataset_name: str = field(metadata={"help": ""})
     algorithm: str = field(metadata={"help": ""})
-    max_length: int = field(default=None, metadata={"help": ""})
     vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
+    max_length: int = field(default=None, metadata={"help": ""})
     num_tok: int = field(default=1000, metadata={"help": ""})
     num: float = field(default=1.0, metadata={"help": ""})
     num_proc: int = field(default=1, metadata={"help": ""})
@@ -44,9 +44,10 @@ def get_tokenize_fn(tokenizer: PreTrainedTokenizer):
 
 
 def main(
+    dataset_name: str,
     algorithm: str = "SentencePieceBPE",
-    max_length: int = 10**6,
     vocab_size: int = 256,
+    max_length: int = 10**6,
     num_tok: int = 1000,
     num: float = None,
     num_proc: int = 1,
@@ -61,20 +62,18 @@ def main(
         subsets = ("train",)
     elif task in ("clm", "mlm"):
         subsets = ("test",)
+    else:
+        raise ValueError(f"Invalid task: {task}")
 
-    tr = Dataset.from_generator(microsoft_dataset_callable(splits=["tr"], microsoft_subset=subsets))
-    vl = Dataset.from_generator(microsoft_dataset_callable(splits=["vl"], microsoft_subset=subsets))
-    ts = Dataset.from_generator(microsoft_dataset_callable(splits=["ts"], microsoft_subset=subsets))
-
-    if num:
-        tr = tr.select(range(int(num * tr.num_rows)))
-        vl = vl.select(range(int(num * vl.num_rows)))
-        ts = tr.select(range(int(num * ts.num_rows)))
-    dataset = DatasetDict({"tr": tr, "ts": ts, "vl": vl}).remove_columns(["file"])
+    tr = get_hf_dataset(dataset_name, num=num, splits=["tr"], microsoft_subset=subsets)
+    ts = get_hf_dataset(dataset_name, num=num, splits=["ts"], microsoft_subset=subsets)
+    vl = get_hf_dataset(dataset_name, num=num, splits=["vl"], microsoft_subset=subsets)
+    dataset = DatasetDict({"tr": tr, "ts": ts, "vl": vl})
     print(f"{dataset=}")
     print(BR, flush=True)
 
     oh = OutputHelper(
+        dataset_name=dataset_name,
         algorithm=algorithm,
         vocab_size=vocab_size,
         num_tok=num_tok,
@@ -88,7 +87,9 @@ def main(
     print(BR, flush=True)
 
     if is_dataset_path_completed(oh.dataset_dir):
-        raise FileExistsError(oh.dataset_dir)
+        print(f"Dataset already exists: {oh.dataset_dir}")
+        sys.exit(0)  # lets the _preprocessing.sh script know that this dataset is done
+        # raise FileExistsError(oh.dataset_dir)
 
     if shardsize is None:
         dataset = dataset.map(
@@ -145,9 +146,10 @@ def cli():
     print(f"args={pformat(args)}")
     print(BR, flush=True)
     main(
+        args.dataset_name,
         args.algorithm,
-        args.max_length,
         args.vocab_size,
+        args.max_length,
         args.num_tok,
         args.num,
         args.num_proc,

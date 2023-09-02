@@ -28,16 +28,6 @@ Globals.
 2 ** 32 == 4294967296
 """
 
-from pathlib import Path
-
-
-__all__ = [
-    "MICROSOFT_ROOT",
-    "SPECIALS",
-    "BR",
-]
-
-MICROSOFT_ROOT = Path("./data_")
 
 SPECIALS = {
     "pad_token": "<pad>",
