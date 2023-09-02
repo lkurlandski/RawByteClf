@@ -81,7 +81,7 @@ class ModelArgs:
 
 @dataclass
 class CallbackArgs:
-    early_stopping: bool = field(default=True, metadata={"help": ""})
+    early_stopping: bool = field(default=False, metadata={"help": ""})
     early_stopping_patience: Optional[int] = 5
     early_stopping_threshold: Optional[float] = 0.0
 
