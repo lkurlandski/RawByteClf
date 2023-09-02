@@ -4,7 +4,9 @@ Helper classes and their associated functions.
 
 from __future__ import annotations
 from pathlib import Path
+import sys
 from typing import Generator, Literal, Optional
+import warnings
 
 from utils import is_dataset_path_completed
 
@@ -15,45 +17,50 @@ class OutputHelper:
 
     Structure:
         |-- {root}
-            |-- {algorithm}
-                |-- {vocab_size}
-                    |-- {num_tok}
-                        |-- vocab.json
-                        |-- {max_length}
-                            | -- {num}
-                                | -- clf
-                                    | -- dataset
-                                    | -- {model}
-                                        | -- {scale}
-                                            | -- clf
-                                                | -- best
-                                                    | -- config.json
-                                                        ...
-                                                | -- checkpoints
-                                                    | -- checkpoint-{epoch}
+            | -- {dataset_name}
+                | -- {algorithm}
+                    | -- {vocab_size}
+                        | -- {num_tok}
+                            | -- vocab.json
+                            | -- {max_length}
+                                | -- {num}
+                                    | -- {task}
+                                        | -- dataset
+                                            | -- tr
+                                                | -- data-{xxxxx}-of-{yyyyy}.arrow
+                                                | -- dataset_info.json
+                                                | -- state.json
+                                            | -- ts
+                                                ...
+                                            | -- vl
+                                                ...
+                                        | -- {model}
+                                            | -- {scale}
+                                                | -- {pretrain_task}
+                                                    | -- best
                                                         | -- config.json
-                                                            ...
-                                                | -- log_history.json
-                                            | -- clm
-                                                ...
-                                            | -- mlm
-                                                ...
-                                | -- clm
-                                    | -- dataset
-                                    | -- {model}
-                                        | -- {scale}
-                                            ...
-                                | -- mlm
-                                    | -- dataset
-                                    | -- {model}
-                                    | -- {scale}
-                                        ...
+                                                        | -- pytorch_model.bin
+                                                    | -- checkpoints
+                                                        | -- checkpoint-{epoch}
+                                                            | -- config.json
+                                                            | -- optimizer.pt
+                                                            | -- pytorch_model.bin
+                                                            | -- rng_state.pth
+                                                            | -- scheduler.pt
+                                                            | -- special_tokens_map.json
+                                                            | -- tokenizer_config.json
+                                                            | -- tokenizer.json
+                                                            | -- trainer_state.json
+                                                            | -- training_args.bin
+                                                    | -- log_history.json
+                                                    | -- test_results.json
     """
 
     def __init__(
         self,
         root: Path = "./output",
         *,
+        dataset_name: Optional[str] = None,
         algorithm: Optional[str] = None,
         vocab_size: Optional[int] = None,
         num_tok: Optional[int] = None,
@@ -65,6 +72,7 @@ class OutputHelper:
         pretrain_task: Optional[Literal["clf", "mlm", "clm"]] = None,
     ) -> None:
         self._root = root
+        self._dataset_name = dataset_name
         self._algorithm = algorithm
         self._vocab_size = vocab_size
         self._num_tok = num_tok
@@ -90,6 +98,10 @@ class OutputHelper:
     @property
     def root(self) -> Path:
         return Path(self._root)
+
+    @property
+    def dataset_name(self) -> Optional[str]:
+        return str(self._dataset_name) if self._dataset_name is not None else None
 
     @property
     def algorithm(self) -> Optional[str]:
@@ -131,10 +143,33 @@ class OutputHelper:
 
     @property
     def tokenizer_file(self) -> Optional[Path]:
-        parts = [self.algorithm, self.vocab_size, self.num_tok]
-        if any(a is None for a in parts):
-            return None
-        return self.root.joinpath(*parts) / "vocab.json"
+        """
+        Lets all raw tokenization tasks share the same tokenizer without duplicating.
+        """
+
+        NAME = "vocab.json"
+
+        def parts(dataset_name: str, num_tok: int | str) -> list:
+            return [dataset_name, self.algorithm, self.vocab_size, str(num_tok)]
+
+        if self.algorithm != "Raw":
+            if any(a is None for a in parts(self.dataset_name, self.vocab_size)):
+                return None
+            return self.root.joinpath(*(parts(self.dataset_name, self.vocab_size))) / NAME
+
+        for dataset_name in ("microsoft", "androzoo", "all"):
+            for num_tok in range(0, 10000, 500):
+                if all(a is not None for a in parts(self.dataset_name, num_tok)):
+                    f = self.root.joinpath(*(parts(dataset_name, num_tok))) / NAME
+                    if f.exists():
+                        return f
+
+        warnings.warn(
+            "Algorithm only searches along a select subset of possible directories, "
+            "so it is possible that I just couldn't locate an appropriate tokenizer file."
+        )
+
+        return self.root.joinpath(*(parts(self.dataset_name, self.vocab_size))) / NAME
 
     @property
     def dataset_dir(self) -> Optional[Path]:
@@ -142,8 +177,11 @@ class OutputHelper:
         Lets all pretraining tasks share the same dataset without duplicating.
         """
 
+        NAME = "dataset"
+
         def parts(task: str) -> list:
             return [
+                self.dataset_name,
                 self.algorithm,
                 self.vocab_size,
                 self.num_tok,
@@ -155,18 +193,19 @@ class OutputHelper:
         if any(a is None for a in parts(self.task)):
             return None
         if self.task == "clf":
-            return self.root.joinpath(*(parts(self.task))) / "dataset"
+            return self.root.joinpath(*(parts(self.task))) / NAME
 
         for task in ("mlm", "clm"):
-            path = self.root.joinpath(*(parts(task))) / "dataset"
+            path = self.root.joinpath(*(parts(task))) / NAME
             if is_dataset_path_completed(path):
                 return path
 
-        return self.root.joinpath(*parts(self.task)) / "dataset"
+        return self.root.joinpath(*parts(self.task)) / NAME
 
     @property
     def clf_model_dir(self) -> Optional[Path]:
         parts = [
+            self.dataset_name,
             self.algorithm,
             self.vocab_size,
             self.num_tok,
@@ -240,6 +279,7 @@ class OutputHelper:
 def iter_over_root(
     root: Path,
     *,
+    dataset_names: Optional[list[str]] = None,
     algorithms: Optional[list[str]] = None,
     vocab_sizes: Optional[list[int]] = None,
     num_toks: Optional[list[int]] = None,
@@ -258,24 +298,26 @@ def iter_over_root(
     def func(x: Path, xs: Optional[list[Literal]]) -> list[Path]:
         return [x / str(i) for i in xs] if xs else list(iterdir(x))
 
-    for algorithm in func(root, algorithms):
-        for vocab_size in func(algorithm, vocab_sizes):
-            for num_tok in func(vocab_size, num_toks):
-                for max_length in func(num_tok, max_lengths):
-                    for task in func(max_length, tasks):
-                        for num in func(max_length, nums):
-                            for model in func(num, models):
-                                for scale in func(model, scales):
-                                    for pretrain_task in func(scale, pretrain_tasks):
-                                        yield OutputHelper(
-                                            root=root,
-                                            algorithm=algorithm.name,
-                                            vocab_size=int(vocab_size.name),
-                                            num_tok=int(num_tok.name),
-                                            max_length=int(max_length.name),
-                                            task=task.name,
-                                            num=float(num.name),
-                                            model=model.name,
-                                            scale=float(scale.name),
-                                            pretrain_task=pretrain_task.name,
-                                        )
+    for dataset_name in func(root, dataset_names):
+        for algorithm in func(dataset_name, algorithms):
+            for vocab_size in func(algorithm, vocab_sizes):
+                for num_tok in func(vocab_size, num_toks):
+                    for max_length in func(num_tok, max_lengths):
+                        for task in func(max_length, tasks):
+                            for num in func(max_length, nums):
+                                for model in func(num, models):
+                                    for scale in func(model, scales):
+                                        for pretrain_task in func(scale, pretrain_tasks):
+                                            yield OutputHelper(
+                                                root=root,
+                                                dataset_name=dataset_name.name,
+                                                algorithm=algorithm.name,
+                                                vocab_size=int(vocab_size.name),
+                                                num_tok=int(num_tok.name),
+                                                max_length=int(max_length.name),
+                                                task=task.name,
+                                                num=float(num.name),
+                                                model=model.name,
+                                                scale=float(scale.name),
+                                                pretrain_task=pretrain_task.name,
+                                            )

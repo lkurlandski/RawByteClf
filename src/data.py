@@ -14,7 +14,7 @@ import random
 import sys
 from typing import Any, Literal, Optional
 
-from datasets import Dataset
+from datasets import concatenate_datasets, Dataset
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -52,8 +52,13 @@ ANDROZOO_CLASSES = (
 
 # Map class names to integers and vice-versa.
 CLASS_MAP = {c: i for i, c in enumerate(chain(MICROSOFT_CLASSES, ANDROZOO_CLASSES))}
-CLASS_MAP_INV = {i: c for i, c in enumerate(chain(MICROSOFT_CLASSES, ANDROZOO_CLASSES))}
+CLASS_MAP_INV = {i: c for c, i in CLASS_MAP.items()}
 
+NUM_CLASSES = {
+    "microsoft": len(MICROSOFT_CLASSES),
+    "androzoo": len(ANDROZOO_CLASSES),
+    "all": len(MICROSOFT_CLASSES) + len(ANDROZOO_CLASSES),
+}
 
 BYTE_TO_UTF8 = {i: chr(i + 10752) for i in range(256)}
 
@@ -67,7 +72,9 @@ class DatasetGen:
         max_size: int = sys.maxsize,
         tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
         split: Optional[Literal["tr", "ts", "vl"]] = None,
+        trim_to_length: Optional[int] = 1000000,
     ) -> None:
+        self.trim_to_length = trim_to_length
 
         # Acquire, filter, then randomize the files.
         if isinstance(files, Path):
@@ -94,7 +101,7 @@ class DatasetGen:
             self.idx = idx
 
         # Determine the integer labels, if the dataset is labeled.
-        self.keys = lambda _: None
+        self.keys = None
         if labels is not None:
             self.keys = pd.read_csv(labels, index_col=0).to_dict()["Class"]
             self.keys = {
@@ -115,13 +122,18 @@ class DatasetGen:
         return len(self.idx)
 
     def __next__(self) -> dict[str, Optional[str]]:
+        """
+        Returns:
+            dict[str, Optional[str]]: the `text`, `file`, and `label`
+             iff the labels were passed into the constructor else `None`.
+        """
         if self.iteration >= len(self):
             raise StopIteration
 
         f: Path = self.files[self.idx[self.iteration]]
-        s: Optional[str] = f.read_text(encoding="utf-8")
-        l: Optional[str] = self.keys.get(f.stem, None)
-
+        s: str = f.read_text(encoding="utf-8")
+        s = s[0 : min(self.trim_to_length, len(s))]
+        l: Optional[str] = self.keys[f.stem] if self.keys is not None else None
         self.iteration += 1
         return {"text": s, "label": l, "file": f.as_posix()}
 
@@ -157,7 +169,7 @@ def androzoo_dataset_callable(
     max_size: int = sys.maxsize,
     tr_vl_ts: tuple[float] = (0.90, 0.05, 0.05),
     splits: tuple[Literal["tr", "ts", "vl"]] = ("tr", "ts", "vl"),
-    _: Any = None,
+    microsoft_subset: Any = None,  # pylint: disable=unused-argument
 ) -> Callable:
 
     datasets = []
@@ -174,6 +186,37 @@ def androzoo_dataset_callable(
 
     assert all(d.tr_idx == datasets[0].tr_idx for d in datasets), "Dumb piece of shit."
     return lambda: chain(*[d() for d in datasets])
+
+
+def get_hf_dataset(
+    dataset_name: Literal["microsoft", "androzoo", "all"],
+    num: Optional[int | float] = None,
+    remove: tuple[str] = tuple(),
+    **kwds,
+) -> Dataset:
+    androzoo_generator = androzoo_dataset_callable(**kwds)
+    microsoft_generator = microsoft_dataset_callable(**kwds)
+
+    if dataset_name == "androzoo":
+        generators = [androzoo_generator]
+    elif dataset_name == "microsoft":
+        generators = [microsoft_generator]
+    elif dataset_name == "all":
+        generators = [androzoo_generator, microsoft_generator]
+    else:
+        raise ValueError(f"{dataset_name=} is invalid.")
+
+    dataset: Dataset = concatenate_datasets([Dataset.from_generator(g) for g in generators])
+    dataset = dataset.remove_columns(remove)
+    dataset.info.features["label"].num_classes = NUM_CLASSES[dataset_name]
+
+    num = len(dataset) * num if isinstance(num, float) else num
+    if isinstance(num, int) and len(dataset) > num:
+        _idx = list(range(len(dataset)))
+        random.shuffle(_idx)
+        dataset = dataset.select(_idx[:num])
+
+    return dataset
 
 
 def raw_byte_file_to_str(p: Path) -> str:
@@ -280,27 +323,54 @@ def prep_androzoo() -> None:
 
 
 def tests():
+
     print("androzoo_dataset_callable")
     iterable = androzoo_dataset_callable()()
     total = sum(1 for _ in (ANDROZOO_ROOT / "data").iterdir())
     for i, x in enumerate(tqdm(iterable, total=total)):
-        if i == 10:
-            print("...")
-        if i >= 10:
-            continue
         f, s, l = Path(x["file"]).name, x["text"], x["label"]
-        print(f"{l=}, {len(s)=}, {f=}")
+        msg = f"{l=}, {len(s)=}, {f=}"
+        if not isinstance(f, str):
+            print("f is not str")
+            print(msg)
+        if not isinstance(s, str):
+            print("s is not str")
+            print(msg)
+        if not isinstance(l, (str, int)):
+            print("l is not str or int")
+            print(msg)
 
     print("microsoft_dataset_callable")
     iterable = microsoft_dataset_callable()()
     total = sum(1 for _ in (MICROSOFT_ROOT / "train").iterdir())
     for i, x in enumerate(tqdm(iterable, total=total)):
-        if i == 10:
-            print("...")
-        if i >= 10:
-            continue
         f, s, l = Path(x["file"]).name, x["text"], x["label"]
-        print(f"{l=}, {len(s)=}, {f=}")
+        msg = f"{l=}, {len(s)=}, {f=}"
+        if not isinstance(f, str):
+            print("f is not str")
+            print(msg)
+        if not isinstance(s, str):
+            print("s is not str")
+            print(msg)
+        if not isinstance(l, (str, int)):
+            print("l is not str or int")
+            print(msg)
+
+    print("microsoft_dataset_callable")
+    iterable = microsoft_dataset_callable()()
+    total = sum(1 for _ in (MICROSOFT_ROOT / "test").iterdir())
+    for i, x in enumerate(tqdm(iterable, total=total)):
+        f, s, l = Path(x["file"]).name, x["text"], x["label"]
+        msg = f"{l=}, {len(s)=}, {f=}"
+        if not isinstance(f, str):
+            print("f is not str")
+            print(msg)
+        if not isinstance(s, str):
+            print("s is not str")
+            print(msg)
+        if l is not None:
+            print("l is not str or int")
+            print(msg)
 
 
 if __name__ == "__main__":

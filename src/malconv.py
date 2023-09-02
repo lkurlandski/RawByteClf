@@ -175,7 +175,7 @@ class MalConvTrainer:
         losses = []
         accuracies = []
         with torch.no_grad():
-            for i, batch in enumerate(loader):
+            for _, batch in enumerate(loader):
                 X = batch["input_ids"].to(self.device)
                 Y = batch["labels"].to(self.device)
                 logits = self.model(X)
