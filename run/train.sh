@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=train_2_3
+#SBATCH --job-name=train
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -29,6 +29,7 @@ conda activate RawByteClf
 #torchrun --standalone --nnodes=1 --nproc_per_node=1 \
 python \
 src/train.py \
+--dataset_name="all" \
 --vocab_size=$vocab_size \
 --num_tok=1000 \
 --num=1 \
@@ -37,9 +38,9 @@ src/train.py \
 --max_length=10000 \
 --scale_numerator=2 \
 --scale_denominator=3 \
---early_stopping=false \
 --task="clf" \
 --pretrain_task="clf" \
+--early_stopping \
 --do_train \
 --do_eval \
 --output_dir=tmp \
@@ -55,6 +56,7 @@ src/train.py \
 --per_device_train_batch_size=8 \
 --per_device_eval_batch_size=16 \
 --gradient_accumulation_steps=16 \
+--optim="adamw_torch" \
 --learning_rate="5e-5" \
 --weight_decay=0.01 \
 --group_by_length \

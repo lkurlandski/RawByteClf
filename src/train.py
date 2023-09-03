@@ -42,6 +42,7 @@ from utils import count_parameters, pad_to_multiple_of_fn
 
 PAD_TO_MULTIPLE_OF = 8
 ACCURACY = evaluate.load("accuracy")
+F1 = evaluate.load("f1")
 
 
 @dataclass
@@ -92,7 +93,14 @@ def compute_metrics(eval_pred):
     labels: np.ndarray = labels.astype(np.int64)
     probas = torch.softmax(torch.tensor(probas, dtype=torch.float32), dim=1).numpy()
     predictions = np.argmax(probas, axis=1)
-    return ACCURACY.compute(predictions=predictions, references=labels)
+
+    metrics = []
+    metrics.append(ACCURACY.compute(predictions=predictions, references=labels))
+    metrics.append(F1.compute(predictions=predictions, references=labels, average="weighted"))
+    metric = {}
+    for m in metrics:
+        metric.update(m)
+    return metric
 
 
 def get_scale_fn(scale: float) -> Callable[[int], float]:
