@@ -15,7 +15,9 @@ import warnings
 
 from datasets import DatasetDict
 import evaluate
+import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import torch
 from transformers import (
     AutoConfig,
@@ -306,7 +308,11 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
                 compute_metrics=compute_metrics,
             )
 
-        results = trainer.evaluate(dataset["ts"])
+        probas, labels, results = trainer.predict(dataset["ts"])
+        predictions = probas.argmax(axis=1)
+        matrix = confusion_matrix(labels, predictions)
+        ConfusionMatrixDisplay(matrix).plot()
+        plt.savefig(oh.test_results_path.with_suffix(".png").as_posix())
         with open(oh.test_results_path, "w") as fp:
             json.dump(results, fp, indent=4)
 
