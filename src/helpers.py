@@ -53,7 +53,10 @@ class OutputHelper:
                                                             | -- trainer_state.json
                                                             | -- training_args.bin
                                                     | -- log_history.json
-                                                    | -- test_results.json
+                                                    | -- test
+                                                        | -- results.json
+                                                        | -- predictions.txt
+                                                        | -- labels.txt
     """
 
     def __init__(
@@ -249,10 +252,28 @@ class OutputHelper:
         return self.model_dir / "log_history.json"
 
     @property
-    def test_results_path(self) -> Optional[Path]:
+    def test_dir(self) -> Optional[Path]:
         if not self.model_dir:
             return None
-        return self.model_dir / "test_results.json"
+        return self.model_dir / "test"
+
+    @property
+    def test_results_path(self) -> Optional[Path]:
+        if not self.test_dir:
+            return None
+        return self.test_dir / "results.json"
+
+    @property
+    def test_predictions_file(self) -> Optional[Path]:
+        if not self.test_dir:
+            return None
+        return self.test_dir / "predictions.txt"
+
+    @property
+    def test_labels_file(self) -> Optional[Path]:
+        if not self.test_dir:
+            return None
+        return self.test_dir / "labels.txt"
 
     def exists(self, tokenizer: bool = True, dataset: bool = True, model: bool = True) -> bool:
         return (
@@ -270,6 +291,7 @@ class OutputHelper:
             self.model_dir,
             self.best_model_dir,
             self.checkpoints_dir,
+            self.test_dir,
         ]
         for p in dirs:
             if p is not None:

@@ -324,6 +324,9 @@ def main(model_args: ModelArgs, callback_args: CallbackArgs, training_args: Trai
         with open(oh.test_results_path, "w") as fp:
             json.dump(results, fp, indent=4)
 
+        np.savetxt(oh.test_predictions_file, predictions, "%i")
+        np.savetxt(oh.test_labels_file, labels, "%i")
+
 
 def cli():
     parser = HfArgumentParser((ModelArgs, CallbackArgs, TrainingArguments))
