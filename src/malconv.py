@@ -20,6 +20,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from transformers import (
     DataCollatorWithPadding,
+    PretrainedConfig,
     PreTrainedTokenizer,
     PreTrainedModel,
     TrainerCallback,
@@ -31,7 +32,7 @@ from tqdm import tqdm
 from utils import get_highest_path
 
 
-class MalConvConfig:
+class MalConvConfig(PretrainedConfig):
     def __init__(
         self,
         num_embd: int = 257,
@@ -39,7 +40,7 @@ class MalConvConfig:
         max_length: int = 2000000,
         window_size: int = 512,
         hidden_size: int = 128,
-        num_classes: int = 2,
+        num_labels: int = 2,
         pad_idx: int = 0,
         dropout_p: float = 0.5,
     ) -> None:
@@ -48,7 +49,7 @@ class MalConvConfig:
         self.max_length = max_length
         self.window_size = window_size
         self.hidden_size = hidden_size
-        self.num_classes = num_classes
+        self.num_labels = num_labels
         self.pad_idx = pad_idx
         self.dropout_p = dropout_p
 
@@ -79,7 +80,7 @@ class MalConvModel(nn.Module):
             nn.Linear(config.hidden_size, config.hidden_size),
             nn.Dropout(config.dropout_p),
             nn.ReLU(),
-            nn.Linear(config.hidden_size, config.num_classes),
+            nn.Linear(config.hidden_size, config.num_labels),
         )
 
     def forward(self, x: Tensor, softmax: bool = False) -> Tensor:
