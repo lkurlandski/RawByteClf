@@ -1,5 +1,8 @@
 """
 Download and save datasets.
+
+TODO:
+    - Add fundamental metadata, such as `file_type`, etc.
 """
 
 from collections.abc import Callable, Generator, Iterable
@@ -35,26 +38,20 @@ from src.data.cfg import (
 from src.data.utils import stream_sorel_meta, decompress, PerDatasetArgumentParser
 
 
-INCLUDE = ("name", "bytes", "text", "label")
-
-
-def _filtered_dict(
-    n: str,
-    b: bytes,
-    t: str,
-    l: Literal,
-    include: tuple[str] = INCLUDE,
+def sample(
+    name: str,
+    bytes_: bytes,
+    labels: Optional[tuple[str]] = None,
+    max_length: Optional[int] = None,
 ) -> dict[str, str | bytes | int]:
-    r = {}
-    if "name" in include:
-        r["name"] = n
-    if "bytes" in include:
-        r["bytes"] = b
-    if "text" in include:
-        r["text"] = t
-    if "label" in include:
-        r["label"] = l
-    return r
+    max_length = sys.maxsize if max_length is None else max_length
+    return {
+        "name": name,
+        "bytes": bytes_[0:max_length],
+        "size": len(bytes_),
+        "labels": labels,
+        "length": min(len(bytes_), max_length),
+    }
 
 
 class DatasetGenerator(Protocol):
@@ -64,21 +61,20 @@ class DatasetGenerator(Protocol):
 
 def disk_dataset_generator(
     files: Iterable[Path],
-    labels: Optional[Iterable[Optional[str]]] = repeat(None),
-    include: tuple[str] = INCLUDE,
+    labels: Iterable[Optional[str]] = repeat(None),
+    max_length: Optional[int] = None,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     for f, l in zip(files, labels):
         b: bytes = decompress(f)
-        t: str = "".join(BYTE_TO_UTF8[i] for i in b)
-        yield _filtered_dict(f.stem, b, t, l, include)
+        yield sample(f.stem, b, l, max_length)
 
 
 def s3_dataset_generator(
     files: Iterable[str],
     labels: Optional[Iterable[Optional[str]]] = repeat(None),
+    max_length: Optional[int] = None,
     bucket: str = SOREL_BUCKET,
     prefix: str = SOREL_PREFIX,
-    include: tuple[str] = INCLUDE,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     """
     files and labels must be pickle-able.
@@ -89,14 +85,13 @@ def s3_dataset_generator(
         buffer = BytesIO()
         s3.download_fileobj(bucket, prefix + h, buffer)
         b: bytes = decompress(buffer)
-        t: str = "".join(BYTE_TO_UTF8[i] for i in b)
-        yield _filtered_dict(h, b, t, l, include)
+        yield sample(h, b, l, max_length)
 
 
 def malware_bazaar_dataset_generator(
     files: Iterable[str],
     labels: Optional[Iterable[Optional[str]]] = repeat(None),
-    include: tuple[str] = INCLUDE,
+    max_length: Optional[int] = None,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     def data(h: str) -> dict[str, str]:
         return {"query": "get_file", "sha256_hash": h}
@@ -110,8 +105,7 @@ def malware_bazaar_dataset_generator(
 
         b = response.content
         b = decompress(BytesIO(b))
-        t: str = "".join(BYTE_TO_UTF8[i] for i in b)
-        yield _filtered_dict(h, b, t, l, include)
+        yield sample(h, b, l, max_length)
 
 
 class CallableDatasetGenerator(Protocol):
@@ -128,19 +122,16 @@ def main() -> None:
     parser.add_argument("--num", type=int, default=sys.maxsize)
     parser.add_argument("--keep_cache", action="store_true")
     parser.add_argument("--output_root", type=Path, default=INPUT_PATH)
-    parser.add_argument("--features", nargs="+", choices=INCLUDE, default=["name", "bytes"])
+    parser.add_argument("--max_length", type=int, default=sys.maxsize)
     args = parser.parse_args()
 
     features = Features(
         {
-            k: v
-            for k, v in {
-                "name": Value("string"),
-                "bytes": Value("binary"),
-                "text": Value("string"),
-                "label": Value("string"),
-            }.items()
-            if k in args.features
+            "name": Value("string"),
+            "bytes": Value("binary"),
+            "labels": Value("string"),
+            "size": Value("int64"),
+            "length": Value("int64"),
         }
     )
 
@@ -151,9 +142,9 @@ def main() -> None:
             generator = callable_generator(
                 s3_dataset_generator,
                 files=files,
+                max_length=args.max_length,
                 bucket=SOREL_BUCKET,
                 prefix=SOREL_PREFIX,
-                include=features.keys(),
             )
         elif "malware_bazaar" in d:
             with open(MALWARE_BAZAAR_FILE_LISTS[d]) as fp:
@@ -161,14 +152,14 @@ def main() -> None:
             generator = callable_generator(
                 malware_bazaar_dataset_generator,
                 files=files,
-                include=features.keys(),
+                max_length=args.max_length,
             )
         else:
             files = list(islice(DATASET_TO_FILES["binaries"][d](), args.num))
             generator = callable_generator(
                 disk_dataset_generator,
                 files=files,
-                include=features.keys(),
+                max_length=args.max_length,
             )
 
         dataset = Dataset.from_generator(generator=generator, features=features)
