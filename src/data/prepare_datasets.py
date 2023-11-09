@@ -23,19 +23,28 @@ import boto3
 from botocore import UNSIGNED
 from botocore.config import Config as BotocoreConfig
 from datasets import Dataset, Features, Value
-import requests
 
 from src.cfg import INPUT_PATH
 from src.data.cfg import (
-    BYTE_TO_UTF8,
     MAX_SHARD_SIZE,
     DATASET_TO_FILES,
-    MALWARE_BAZAAR_FILE_LISTS,
-    MALWARE_BAZAAR_URL,
     SOREL_BUCKET,
     SOREL_PREFIX,
 )
 from src.data.utils import stream_sorel_meta, decompress, PerDatasetArgumentParser
+
+
+class ErrorStream:
+    def __init__(self, file: Path) -> None:
+        self.file = Path(file)
+        self.file.write_text("")
+
+    def write(self, message: str):
+        with open(self.file, "a") as log_file:
+            log_file.write(message)
+
+
+ERRORS = ErrorStream("err.log")
 
 
 def sample(
@@ -63,9 +72,18 @@ def disk_dataset_generator(
     files: Iterable[Path],
     labels: Iterable[Optional[str]] = repeat(None),
     max_length: Optional[int] = None,
+    ignore_errors: bool = False,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     for f, l in zip(files, labels):
-        b: bytes = decompress(f)
+        try:
+            b: bytes = decompress(f)
+        except Exception as err:
+            if ignore_errors:
+                print(f"{f.as_posix()} {str(err)}", file=ERRORS)
+                b = bytes()
+            else:
+                raise type(err)(f"{f} {str(err)}")
+
         yield sample(f.stem, b, l, max_length)
 
 
@@ -75,6 +93,7 @@ def s3_dataset_generator(
     max_length: Optional[int] = None,
     bucket: str = SOREL_BUCKET,
     prefix: str = SOREL_PREFIX,
+    ignore_errors: bool = False,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     """
     files and labels must be pickle-able.
@@ -84,27 +103,16 @@ def s3_dataset_generator(
         h: str = f.stem if isinstance(f, Path) else f
         buffer = BytesIO()
         s3.download_fileobj(bucket, prefix + h, buffer)
-        b: bytes = decompress(buffer)
-        yield sample(h, b, l, max_length)
 
+        try:
+            b: bytes = decompress(buffer)
+        except Exception as err:
+            if ignore_errors:
+                print(f"{f} {str(err)}")
+                b = bytes()
+            else:
+                raise type(err)(f"{f} {str(err)}")
 
-def malware_bazaar_dataset_generator(
-    files: Iterable[str],
-    labels: Optional[Iterable[Optional[str]]] = repeat(None),
-    max_length: Optional[int] = None,
-) -> Generator[dict[str, str | bytes | int], None, None]:
-    def data(h: str) -> dict[str, str]:
-        return {"query": "get_file", "sha256_hash": h}
-
-    for h, l in zip(files, labels):
-        response = requests.post(MALWARE_BAZAAR_URL, data=data(h), timeout=60)
-
-        if response.status_code != 200:
-            print(f"HTTPErrpr: {response.status_code} for {h}")
-            continue
-
-        b = response.content
-        b = decompress(BytesIO(b))
         yield sample(h, b, l, max_length)
 
 
@@ -123,6 +131,7 @@ def main() -> None:
     parser.add_argument("--keep_cache", action="store_true")
     parser.add_argument("--output_root", type=Path, default=INPUT_PATH)
     parser.add_argument("--max_length", type=int, default=sys.maxsize)
+    parser.add_argument("--ignore_errors", action="store_true")
     args = parser.parse_args()
 
     features = Features(
@@ -141,25 +150,19 @@ def main() -> None:
             files = list(islice((s.sha256 for s in stream_sorel_meta() if s.is_malware), args.num))
             generator = callable_generator(
                 s3_dataset_generator,
-                files=files,
+                files=sorted(files),
                 max_length=args.max_length,
                 bucket=SOREL_BUCKET,
                 prefix=SOREL_PREFIX,
-            )
-        elif "malware_bazaar" in d:
-            with open(MALWARE_BAZAAR_FILE_LISTS[d]) as fp:
-                files = list(islice((l.strip() for l in fp), args.num))
-            generator = callable_generator(
-                malware_bazaar_dataset_generator,
-                files=files,
-                max_length=args.max_length,
+                ignore_errors=args.ignore_errors,
             )
         else:
             files = list(islice(DATASET_TO_FILES["binaries"][d](), args.num))
             generator = callable_generator(
                 disk_dataset_generator,
-                files=files,
+                files=sorted(files),
                 max_length=args.max_length,
+                ignore_errors=args.ignore_errors,
             )
 
         dataset = Dataset.from_generator(generator=generator, features=features)

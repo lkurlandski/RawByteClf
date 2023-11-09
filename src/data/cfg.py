@@ -24,16 +24,16 @@ WINDOWS_PATH = DATASETS_PATH / "Windows"
 
 BODMAS_LABELS_FILE = BODMAS_PATH / "bodmas_metadata.csv"
 MALWARE_BAZAAR_FILE_LISTS = {
-    "malware_bazaar_dll": MALWARE_BAZAAR_PATH / "dll.txt",
-    "malware_bazaar_elf": MALWARE_BAZAAR_PATH / "elf.txt",
-    "malware_bazaar_exe": MALWARE_BAZAAR_PATH / "exe.txt",
-    "malware_bazaar_macho": MALWARE_BAZAAR_PATH / "macho.txt",
+   "malware_bazaar_dll": MALWARE_BAZAAR_PATH / "dll.txt",
+   "malware_bazaar_elf": MALWARE_BAZAAR_PATH / "elf.txt",
+   "malware_bazaar_exe": MALWARE_BAZAAR_PATH / "exe.txt",
+   "malware_bazaar_macho": MALWARE_BAZAAR_PATH / "macho.txt",
 }
 VIRUS_SHARE_ELF_COLLECTION_PATHS = {
     "VirusShare_ELF_20140617": VIRUS_SHARE_PATH / "VirusShare_ELF_20140617",
     "VirusShare_ELF_20200405": VIRUS_SHARE_PATH / "VirusShare_ELF_20200405",
     "VirusShare_ELF_20190212": VIRUS_SHARE_PATH / "VirusShare_ELF_20190212",
-    "VirusShare_Linux_20160715": VIRUS_SHARE_PATH / "VirusShare_Linux_20160715",
+    # "VirusShare_Linux_20160715": VIRUS_SHARE_PATH / "VirusShare_Linux_20160715",  # THIS IS NOT ELF-only malware
 }
 
 DATASET_NAMES = [
@@ -41,9 +41,7 @@ DATASET_NAMES = [
     "local_pe",
     "local_elf",
     "local_macho",
-    "malware_bazaar_dll",
     "malware_bazaar_elf",
-    "malware_bazaar_exe",
     "malware_bazaar_macho",
     "sorel_pe",
     "virus_share_dll",
@@ -74,9 +72,7 @@ def _dataset_to_report_files_and_binaries(
         "local_pe": lambda: (WINDOWS_PATH / s).iterdir(),
         "local_elf": lambda: (LINUX_PATH / s).iterdir(),
         "local_macho": lambda: (DARWIN_PATH / s).iterdir(),
-        "malware_bazaar_dll": lambda: (MALWARE_BAZAAR_PATH / "dll" / s).iterdir(),
         "malware_bazaar_elf": lambda: (MALWARE_BAZAAR_PATH / "elf" / s).iterdir(),
-        "malware_bazaar_exe": lambda: (MALWARE_BAZAAR_PATH / "exe" / s).iterdir(),
         "malware_bazaar_macho": lambda: (MALWARE_BAZAAR_PATH / "macho" / s).iterdir(),
         "sorel_pe": lambda: (SOREL_PATH / s).iterdir(),
         "virus_share_dll": lambda: [],
