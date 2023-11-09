@@ -122,6 +122,7 @@ def decompress_fp(fp: BufferedReader) -> bytes:
 
     fp.seek(0)
     signature = fp.read(10)
+    fp.seek(0)
 
     if signature.startswith(SIG_GZIP):
         with gzip.open(fp, "rb") as compressed_file:
