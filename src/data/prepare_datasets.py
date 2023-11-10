@@ -20,6 +20,7 @@ if __name__ == "__main__":
 # pylint: disable=wrong-import-position
 
 import boto3
+import botocore
 from botocore import UNSIGNED
 from botocore.config import Config as BotocoreConfig
 from datasets import Dataset, Features, Value
@@ -72,17 +73,23 @@ def disk_dataset_generator(
     files: Iterable[Path],
     labels: Iterable[Optional[str]] = repeat(None),
     max_length: Optional[int] = None,
-    ignore_errors: bool = False,
+    errors: int = 0,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     for f, l in zip(files, labels):
         try:
             b: bytes = decompress(f)
         except Exception as err:
-            if ignore_errors:
-                print(f"{f.as_posix()} {str(err)}", file=ERRORS)
-                b = bytes()
-            else:
-                raise type(err)(f"{f} {str(err)}")
+            msg = f"{f} {str(err)}"
+            if errors == 0:
+                raise type(err)(msg)
+            if errors == 1:
+                print(msg, file=ERRORS)
+                yield sample(f.stem, bytes(), l, max_length)
+                continue
+            if errors == 2:
+                print(msg, file=ERRORS)
+                continue
+            raise RuntimeError() from err
 
         yield sample(f.stem, b, l, max_length)
 
@@ -93,7 +100,7 @@ def s3_dataset_generator(
     max_length: Optional[int] = None,
     bucket: str = SOREL_BUCKET,
     prefix: str = SOREL_PREFIX,
-    ignore_errors: bool = False,
+    errors: int = 0,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     """
     files and labels must be pickle-able.
@@ -102,16 +109,38 @@ def s3_dataset_generator(
     for f, l in zip(files, labels):
         h: str = f.stem if isinstance(f, Path) else f
         buffer = BytesIO()
-        s3.download_fileobj(bucket, prefix + h, buffer)
+
+        try:
+            s3.download_fileobj(bucket, prefix + h, buffer)
+        except botocore.exceptions.ClientError as err:
+            msg = f"{h} {str(err)}"
+            if errors == 0:
+                print(msg)
+                raise err
+            if errors == 1:
+                print(msg, file=ERRORS)
+                yield sample(h, bytes(), l, max_length)
+                continue
+            if errors == 2:
+                print(msg, file=ERRORS)
+                continue
+            raise RuntimeError() from err
 
         try:
             b: bytes = decompress(buffer)
         except Exception as err:
-            if ignore_errors:
-                print(f"{f} {str(err)}")
-                b = bytes()
-            else:
-                raise type(err)(f"{f} {str(err)}")
+            msg = f"{h} {str(err)}"
+            if errors == 0:
+                print(msg)
+                raise err
+            if errors == 1:
+                print(msg, file=ERRORS)
+                yield sample(h, bytes(), l, max_length)
+                continue
+            if errors == 2:
+                print(msg, file=ERRORS)
+                continue
+            raise RuntimeError() from err
 
         yield sample(h, b, l, max_length)
 
@@ -131,7 +160,7 @@ def main() -> None:
     parser.add_argument("--keep_cache", action="store_true")
     parser.add_argument("--output_root", type=Path, default=INPUT_PATH)
     parser.add_argument("--max_length", type=int, default=sys.maxsize)
-    parser.add_argument("--ignore_errors", action="store_true")
+    parser.add_argument("--errors", type=int, default=0, choices=[0, 1, 2])
     args = parser.parse_args()
 
     features = Features(
@@ -154,7 +183,7 @@ def main() -> None:
                 max_length=args.max_length,
                 bucket=SOREL_BUCKET,
                 prefix=SOREL_PREFIX,
-                ignore_errors=args.ignore_errors,
+                errors=args.errors,
             )
         else:
             files = list(islice(DATASET_TO_FILES["binaries"][d](), args.num))
@@ -162,7 +191,7 @@ def main() -> None:
                 disk_dataset_generator,
                 files=sorted(files),
                 max_length=args.max_length,
-                ignore_errors=args.ignore_errors,
+                errors=args.errors,
             )
 
         dataset = Dataset.from_generator(generator=generator, features=features)
