@@ -194,8 +194,19 @@ def label_dataset(
 
 def main() -> None:
     parser = PerDatasetArgumentParser()
-    parser.add_argument("--extractor", choices=["name", "category", "label"], required=True)
-    parser.add_argument("--refiner", choices=["top", "vote"])
+    parser.add_argument(
+        "--extractor",
+        choices=["name", "category", "label"],
+        required=True,
+        help="`name` refers to family labels, `category` to threat type, and `label` to the name.",
+    )
+    parser.add_argument(
+        "--refiner",
+        choices=["top", "vote"],
+        required=True,
+        help="""`top` select the top `k` most popular decisions,
+             `vote` selects decisions with at least `k` votes.""",
+    )
     parser.add_argument("--k", type=int)
     parser.add_argument("--override", action="store_true", help="Override existing labels.")
     parser.add_argument("--save", action="store_true", help="Save the labeled dataset.")
