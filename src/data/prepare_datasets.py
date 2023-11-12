@@ -23,7 +23,7 @@ import boto3
 import botocore
 from botocore import UNSIGNED
 from botocore.config import Config as BotocoreConfig
-from datasets import Dataset, Features, Value
+from datasets import Dataset, Features, Value, concatenate_datasets
 
 from src.cfg import INPUT_PATH
 from src.data.cfg import (
@@ -156,12 +156,39 @@ def callable_generator(func: Callable, **kwargs) -> Callable:
 
 def main() -> None:
     parser = PerDatasetArgumentParser()
-    parser.add_argument("--num", type=int, default=sys.maxsize)
-    parser.add_argument("--keep_cache", action="store_true")
-    parser.add_argument("--output_root", type=Path, default=INPUT_PATH)
-    parser.add_argument("--max_length", type=int, default=sys.maxsize)
-    parser.add_argument("--errors", type=int, default=0, choices=[0, 1, 2])
+    parser.add_argument("--num", type=int, default=sys.maxsize, help="Number of samples to use.")
+    parser.add_argument("--keep_cache", action="store_true", help="Do not delete cache files.")
+    parser.add_argument(
+        "--output_root", type=Path, default=INPUT_PATH, help="Where to save the datasets."
+    )
+    parser.add_argument(
+        "--max_length",
+        type=int,
+        default=sys.maxsize,
+        help="Keep the first `max_length` bytes; discard the rest.",
+    )
+    parser.add_argument(
+        "--errors",
+        type=int,
+        default=0,
+        choices=[0, 1, 2],
+        help="""How to handle specific errors. 0 raises exceptions.
+                1 returns empty samples when errors are encountered.
+                2 skips errd samples entirely.""",
+    )
+    parser.add_argument(
+        "--shard",
+        type=int,
+        default=None,
+        help="If sharding, refers to the shard idx. Use -1 to merge shards.",
+    )
+    parser.add_argument(
+        "--n_shards", type=int, default=None, help="Number of shards when sharding."
+    )
     args = parser.parse_args()
+
+    if bool(args.shard) != bool(args.n_shards):
+        raise ValueError("Both a shard idx and the number of shards required.")
 
     features = Features(
         {
@@ -175,17 +202,21 @@ def main() -> None:
 
     for d in args.datasets:
         print(f"Processing {d} ...")
-        if "sorel" in d:
+        if "sorel" in d and args.shard != -1:
             files = list(islice((s.sha256 for s in stream_sorel_meta() if s.is_malware), args.num))
+            files = sorted(files)
+            if args.shard:
+                shard_size = (len(files) // args.n_shards) + 1
+                files = files[args.shard * shard_size : (args.shard + 1) * shard_size]
             generator = callable_generator(
                 s3_dataset_generator,
-                files=sorted(files),
+                files=files,
                 max_length=args.max_length,
                 bucket=SOREL_BUCKET,
                 prefix=SOREL_PREFIX,
                 errors=args.errors,
             )
-        else:
+        elif args.shard != -1:
             files = list(islice(DATASET_TO_FILES["binaries"][d](), args.num))
             generator = callable_generator(
                 disk_dataset_generator,
@@ -194,12 +225,21 @@ def main() -> None:
                 errors=args.errors,
             )
 
-        dataset = Dataset.from_generator(generator=generator, features=features)
+        if args.shard == -1:
+            dsets = [args.output_root / f"{d}_{i}" for i in range(args.n_shards)]
+            print(f"Merging {d} {len(dsets)} shards...")
+            dsets = [Dataset.load_from_disk(p.as_posix()) for p in dsets]
+            dataset = concatenate_datasets(dsets)
+        else:
+            dataset = Dataset.from_generator(generator=generator, features=features)
+
         if dataset.num_rows == 0:
             print(f"Empty dataset for {d}. Skipping.")
             continue
 
         outpath = args.output_root / d
+        if args.shard and args.shard != -1:
+            outpath = args.output_root / f"{d}_{args.shard}"
         dataset.save_to_disk(outpath.as_posix(), max_shard_size=MAX_SHARD_SIZE)
         if not args.keep_cache:
             shutil.rmtree(Path(dataset.cache_files[0]["filename"]).parent)
