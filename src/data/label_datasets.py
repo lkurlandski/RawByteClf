@@ -180,14 +180,19 @@ def label_dataset(
         print(f"Unlabeled: {dataset}")
 
     dataset = apply_labels_fn(dataset)
+
+    if verbose:
+        print(f"Labeled: {dataset}")
+        for i, d in enumerate(dataset):
+            print(d["name"], d["labels"])
+            if i == 16:
+                break
+
     if save:
         temp_dir = Path(tempfile.mkdtemp(dir=TMP_DIR))
         dataset.save_to_disk(temp_dir.as_posix(), max_shard_size=MAX_SHARD_SIZE)
         shutil.rmtree(path)
         temp_dir.rename(path)
-
-    if verbose:
-        print(f"Labeled: {dataset}")
 
     return dataset
 
@@ -197,13 +202,13 @@ def main() -> None:
     parser.add_argument(
         "--extractor",
         choices=["name", "category", "label"],
-        required=True,
+        required=False,
         help="`name` refers to family labels, `category` to threat type, and `label` to the name.",
     )
     parser.add_argument(
         "--refiner",
         choices=["top", "vote"],
-        required=True,
+        required=False,
         help="""`top` select the top `k` most popular decisions,
              `vote` selects decisions with at least `k` votes.""",
     )
@@ -213,8 +218,20 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    extractor = ThreatLabelExtractor.build(args.extractor)
-    refiner = ThreatLabelRefiner.build(args.refiner, k=args.k)
+    if args.extractor:
+        extractor = ThreatLabelExtractor.build(args.extractor)
+    if args.refiner:
+        refiner = ThreatLabelRefiner.build(args.refiner, k=args.k)
+
+    if "bodmas_pe" in args.datasets:
+        path = INPUT_PATH / "bodmas_pe"
+        label_dataset(
+            path,
+            apply_labels_bodmas,
+            args.override,
+            args.save,
+            verbose=args.verbose,
+        )
 
     for d in [d for d in args.datasets if all(s not in d for s in ["bodmas", "local"])]:
         try:
