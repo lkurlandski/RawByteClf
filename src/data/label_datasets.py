@@ -145,7 +145,7 @@ def apply_labels_bodmas(dataset: Dataset) -> Dataset:
             if family:
                 labels[sha] = family
 
-    labels = [[labels[d["name"]]] for d in dataset]
+    labels = [labels[d["name"]] for d in dataset]
     return dataset.add_column("labels", labels)
 
 
