@@ -30,7 +30,9 @@ import transformers
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
+    AutoModelForSequenceClassification,
     DataCollatorForLanguageModeling,
+    DataCollatorWithPadding,
     TrainingArguments,
 )
 
@@ -42,18 +44,27 @@ from src.learn.utils import (
     tokenize_fn,
     get_tokenizer_object,
     find_two_largest_factors,
+    pad_to_multiple_of_fn,
+    SPECIALS,
 )
 
 
 parser = ArgumentParser()
+parser.add_argument("--outfile", type=Path, required=True)
 parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--pad_to_multiple", type=int, default=2**10)
-parser.add_argument("--clm", action="store_true")
 parser.add_argument("--low", type=int, default=2**10)
 parser.add_argument("--high", type=int, default=2**20)
+parser.add_argument("--vocab_size", type=int, default=256)
+parser.add_argument("--hidden_size", type=int, default=512)
+parser.add_argument("--intermediate_size", type=int, default=1024)
+parser.add_argument("--num_hidden_layers", type=int, default=1)
+parser.add_argument("--num_attention_heads", type=int, default=8)
+parser.add_argument("--task", required=True, type=str, choices=["clm", "mlm", "clf"])
 parser.add_argument(
     "--configs",
     nargs="+",
+    required=True,
     default=None,
     choices=[
         "Longformer",
@@ -98,24 +109,24 @@ training_arguments = TrainingArguments(
 configs = {
     "Longformer": (
         lambda max_length: transformers.LongformerConfig(
-            vocab_size=264,
+            vocab_size=pad_to_multiple_of_fn(args.vocab_size + len(SPECIALS), 8),
             max_position_embeddings=512 + max_length,
-            num_hidden_layers=1,
-            num_attention_heads=12,
-            hidden_size=768,
-            intermediate_size=3072,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            hidden_size=args.hidden_size,
+            intermediate_size=args.intermediate_size,
             attention_window=512,
         ),
         None,
     ),
     "BigBird": (
         lambda max_length: transformers.BigBirdConfig(
-            vocab_size=264,
+            vocab_size=pad_to_multiple_of_fn(args.vocab_size + len(SPECIALS), 8),
             max_position_embeddings=max_length,
-            num_hidden_layers=1,
-            num_attention_heads=12,
-            hidden_size=768,
-            intermediate_size=3072,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            hidden_size=args.hidden_size,
+            intermediate_size=args.intermediate_size,
             attention_type="original_full" if max_length <= 1024 else "block_sparse",
             block_size=128,
             num_random_blocks=4,
@@ -124,11 +135,11 @@ configs = {
     ),
     "FNet": (
         lambda max_length: transformers.FNetConfig(
-            vocab_size=264,
+            vocab_size=pad_to_multiple_of_fn(args.vocab_size + len(SPECIALS), 8),
             max_position_embeddings=max_length,
-            num_hidden_layers=1,
-            hidden_size=768,
-            intermediate_size=3072,
+            num_hidden_layers=args.num_hidden_layers,
+            hidden_size=args.hidden_size,
+            intermediate_size=args.intermediate_size,
             hidden_act="gelu_new",
             hidden_dropout_prob=0.1,
         ),
@@ -136,12 +147,12 @@ configs = {
     ),
     "Nystromformer": (
         lambda max_length: transformers.NystromformerConfig(
-            vocab_size=264,
+            vocab_size=pad_to_multiple_of_fn(args.vocab_size + len(SPECIALS), 8),
             max_position_embeddings=max_length,
-            num_hidden_layers=1,
-            num_attention_heads=12,
-            hidden_size=768,
-            intermediate_size=3072,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            hidden_size=args.hidden_size,
+            intermediate_size=args.intermediate_size,
             segment_means_seq_len=64,
             num_landmarks=64,
             conv_kernel_size=65,
@@ -151,11 +162,11 @@ configs = {
     ),
     "Reformer": (
         lambda max_length: transformers.ReformerConfig(
-            vocab_size=264,
+            vocab_size=pad_to_multiple_of_fn(args.vocab_size + len(SPECIALS), 8),
             max_position_embeddings=max_length,
-            num_attention_heads=12,
-            hidden_size=768,
-            feed_forward_size=3072,
+            num_attention_heads=args.num_attention_heads,
+            hidden_size=args.hidden_size,
+            feed_forward_size=args.intermediate_size,
             attention_head_size=64,
             attn_layers=[
                 "local",
@@ -164,7 +175,7 @@ configs = {
             axial_norm_std=1.0,
             axial_pos_embds=True,
             axial_pos_shape=list(find_two_largest_factors(max_length)),
-            axial_pos_embds_dim=[768 // 2, 768 // 2],
+            axial_pos_embds_dim=[args.hidden_size // 2, args.hidden_size // 2],
             chunk_size_lm_head=0,
             hash_seed=None,
             local_num_chunks_before=1,
@@ -183,12 +194,12 @@ configs = {
     ),
     "SqueezeBert": (
         lambda max_length: transformers.SqueezeBertConfig(
-            vocab_size=264,
+            vocab_size=pad_to_multiple_of_fn(args.vocab_size + len(SPECIALS), 8),
             max_position_embeddings=max_length,
-            hidden_size=768,
-            num_hidden_layers=1,
-            num_attention_heads=12,
-            intermediate_size=3072,
+            hidden_size=args.hidden_size,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            intermediate_size=args.intermediate_size,
             q_groups=4,
             k_groups=4,
             v_groups=4,
@@ -200,12 +211,12 @@ configs = {
     ),
     "Yoso": (
         lambda max_length: transformers.YosoConfig(
-            vocab_size=264,
+            vocab_size=pad_to_multiple_of_fn(args.vocab_size + len(SPECIALS), 8),
             max_position_embeddings=max_length,
-            hidden_size=768,
-            num_hidden_layers=1,
-            num_attention_heads=12,
-            intermediate_size=3072,
+            hidden_size=args.hidden_size,
+            num_hidden_layers=args.num_hidden_layers,
+            num_attention_heads=args.num_attention_heads,
+            intermediate_size=args.intermediate_size,
             use_expectation=True,
             hash_code_len=9,
             num_hash=64,
@@ -217,9 +228,9 @@ configs = {
     ),
     "Rwkv": (
         lambda max_length: transformers.RwkvConfig(
-            vocab_size=264,
+            vocab_size=args.vocab_size + len(tokenizer_object),
             context_length=max_length,
-            hidden_size=768,
+            hidden_size=args.hidden_size,
             num_hidden_layers=32,
         ),
         None,
@@ -234,24 +245,24 @@ os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
 
 def test(config: tuple, max_length: int) -> tuple[str, float, int]:
-    c = config[0](max_length)
-    if args.clm:
-        model = AutoModelForCausalLM.from_config(c)
-    else:
-        model = AutoModelForMaskedLM.from_config(c)
-    print(
-        f"{type(model).__name__} {round(count_parameters(model) / 1e6, 2)}M parameters. @{max_length=}"
-    )
-
     kwds = {}
     if config[1]:
         kwds["model_input_names"] = config[1]
     tokenizer = get_fast_tokenizer(tokenizer_object, max_length=max_length, **kwds)
 
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=not args.clm,
-        pad_to_multiple_of=8,
+    c = config[0](max_length)
+    if args.task == "clm":
+        model = AutoModelForCausalLM.from_config(c)
+        data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8,)
+    elif args.task == "mlm":
+        model = AutoModelForMaskedLM.from_config(c)
+        data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, pad_to_multiple_of=8,)
+    elif args.task == "clf":
+        model = AutoModelForSequenceClassification.from_config(c)
+        data_collator = DataCollatorWithPadding(tokenizer=tokenizer, pad_to_multiple_of=8,)
+
+    print(
+        f"{type(model).__name__} {round(count_parameters(model) / 1e6, 2)}M parameters. @{max_length=}"
     )
 
     _dataset = dataset.map(preprocess_a, batched=True, remove_columns=["bytes"]).map(
@@ -277,6 +288,7 @@ log = []
 for name, config in configs.items():
     low, high = args.low, args.high
 
+    params, max_length = 0, 0
     while low < high - args.pad_to_multiple:
         mid = ((low + high) // (2 * args.pad_to_multiple)) * args.pad_to_multiple
         try:
@@ -289,3 +301,6 @@ for name, config in configs.items():
             break
 
     log.append((name, params, max_length))
+
+
+pd.DataFrame(log, columns=["name", "params", "max_length"]).to_csv(args.outfile, index=False)
