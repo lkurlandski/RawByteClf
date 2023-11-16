@@ -33,23 +33,22 @@ from src.cfg import INPUT_PATH, OUTPUT_PATH
 from src.utils import count_parameters
 
 
-SPECIALS = OrderedDict({
-    "pad_token": "<pad>",
-    "unk_token": "<unk>",
-    "mask_token": "<msk>",
-    "bos_token": "<bos>",
-    "eos_token": "<eos>",
-    "cls_token": "<cls>",
-    "sep_token": "<sep>",
-})
+SPECIALS = OrderedDict(
+    {
+        "pad_token": "<pad>",
+        "unk_token": "<unk>",
+        "mask_token": "<msk>",
+        "bos_token": "<bos>",
+        "eos_token": "<eos>",
+        "cls_token": "<cls>",
+        "sep_token": "<sep>",
+    }
+)
 
 
 def get_tokenizer_object() -> Tokenizer:
-
-    alphabet = [bytes([i]).decode('latin1') for i in range(256)]
-    vocab = {
-        v: i for i, v in enumerate(SPECIALS.values())
-    } | {
+    alphabet = [bytes([i]).decode("latin1") for i in range(256)]
+    vocab = {v: i for i, v in enumerate(SPECIALS.values())} | {
         v: i for i, v in enumerate(alphabet, start=len(SPECIALS))
     }
 
