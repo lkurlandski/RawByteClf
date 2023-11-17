@@ -17,11 +17,11 @@ if __name__ == "__main__":
 # pylint: disable=wrong-import-position
 
 from datasets import DatasetDict, Dataset, concatenate_datasets
-import evaluate
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 import torch
+from torch import tensor
 import transformers
 from transformers import (
     AutoConfig,
@@ -37,10 +37,12 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+from transformers.trainer_utils import EvalPrediction, PredictionOutput
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
 
 # from src.malconv import MalConvModel, MalConvConfig, MalConvTrainer
+from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.learn.utils import (
     count_parameters,
     pad_to_multiple_of_fn,
@@ -55,7 +57,7 @@ from src.learn.utils import (
 PAD_TO = 8
 HIDDEN_SIZE = 512
 INTERMEDIATE_SIZE = 1024
-NUM_HIDDEN_LAYERS = 2
+NUM_HIDDEN_LAYERS = 1
 NUM_ATTENTION_HEADS = 8
 SUBSET = 64
 
@@ -119,32 +121,61 @@ class OutputHelper:
         self.path.mkdir(exist_ok=True, parents=True)
 
 
-class ClfComputeMetrics:
-    def __init__(self, multiclass: bool) -> None:
-        self.accuracy = evaluate.load("accuracy")
-        self.f1 = evaluate.load("f1")
-        self.precision = evaluate.load("precision")
-        self.recall = evaluate.load("recall")
-        self.roc_auc_score = evaluate.load("roc_auc", "multiclass" if multiclass else None)
+class CLFComputeMetrics:
+    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float]:
+        # predictions (B, M)
+        # label_ids (B,)
+        y_true, y_pred = self.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
+        return classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
 
-    def __call__(self, eval_pred) -> dict[str, float]:
-        probas, labels = eval_pred
-        probas: np.ndarray = probas.astype(np.float32)
-        labels: np.ndarray = labels.astype(np.int64)
-        probas = torch.softmax(torch.tensor(probas, dtype=torch.float32), dim=1).numpy()
-        predictions = np.argmax(probas, axis=1)
-        # fmt: off
-        return {
-            "accuracy": self.accuracy.compute(predictions=predictions, references=labels),
-            "precision": self.precision.compute(predictions=predictions, references=labels),
-            "recall": self.recall.compute(predictions=predictions, references=labels),
-            "f1-weighted": self.f1.compute(predictions=predictions, references=labels, average="weighted"),
-            "f1-macro": self.f1.compute(predictions=predictions, references=labels, average="macro"),
-            "f1-micro": self.f1.compute(predictions=predictions, references=labels, average="micro"),
-            "roc-auc-ovr": self.roc_auc_score.compute(prediction_scores=probas, references=labels, multi_class='ovr'),
-            "roc-auc-ovo": self.roc_auc_score.compute(prediction_scores=probas, references=labels, multi_class='ovo'),
-        }
-        # fmt: on
+    @staticmethod
+    def get_y_true_y_pred(
+        predictions: np.ndarray, label_ids: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return CLFComputeMetrics.get_y_true(label_ids), CLFComputeMetrics.get_y_pred(predictions)
+
+    @staticmethod
+    def get_y_pred(predictions: np.ndarray) -> np.ndarray:
+        predictions = tensor(predictions, dtype=torch.float32)
+        probas = torch.softmax(predictions, dim=1).numpy()
+        y_pred = np.argmax(probas, axis=1)
+        return y_pred
+
+    @staticmethod
+    def get_y_true(label_ids: np.ndarray) -> np.ndarray:
+        return label_ids.astype(np.int64)
+
+
+class MLMComputeMetrics:
+    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float]:
+        # predictions (B, L, M)
+        # label_ids (B, M)
+        y_true, y_pred = self.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
+        return classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
+
+    @staticmethod
+    def get_y_true_y_pred(
+        predictions: np.ndarray, label_ids: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        y_pred = MLMComputeMetrics.get_y_pred(predictions)
+        y_true = MLMComputeMetrics.get_y_true(label_ids)
+        mask = y_true == -100
+        y_pred = y_pred[~mask]
+        y_true = y_true[~mask]
+        return y_true, y_pred
+
+    @staticmethod
+    def get_y_pred(predictions: np.ndarray) -> np.ndarray:
+        predictions = tensor(predictions, dtype=torch.float32)
+        predictions = predictions.view(-1, predictions.shape[2])  # (B * L, M)
+        probas = torch.softmax(predictions, dim=1).numpy()
+        y_pred = np.argmax(probas, axis=1)
+        return y_pred
+
+    @staticmethod
+    def get_y_true(label_ids: np.ndarray) -> np.ndarray:
+        y_true = tensor(label_ids, dtype=torch.float32).view(-1)  # (B * L,)
+        return y_true.numpy().astype(np.int64)
 
 
 def get_model_type(model: str) -> str:
@@ -247,24 +278,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     tokenizer = get_tokenizer_object()
-    tokenizer = get_fast_tokenizer(tokenizer, max_length=args.max_length, truncate=True)
+    tokenizer = get_fast_tokenizer(tokenizer, model_max_length=args.max_length)
     print(f"{tokenizer=}")
     print(BR, flush=True)
 
-    dataset = concatenate_datasets([Dataset.load_from_disk(p) for p in INPUT_PATH.glob("sorel_*")])
-    if SUBSET:
-        dataset = dataset.select(range(SUBSET))
+    if args.task in ("mlm", "clm"):
+        dataset: DatasetDict = get_sorel_dataset(subset=SUBSET)
+    elif args.task == "clf":
+        dataset: DatasetDict = get_bodmas_dataset(subset=SUBSET)
 
-    dataset = dataset.train_test_split()
-    dataset["ts"] = dataset.pop("test")
-    _dataset = dataset.pop("train").train_test_split()
-    dataset["tr"] = _dataset.pop("train")
-    dataset["vl"] = _dataset.pop("test")
-    del _dataset
-    try:
-        num_classes = dataset["tr"].info.features["label"].num_classes
-    except KeyError:
-        num_classes = 0
+    # CLM/MLM heads ignore classification-specific arugments.
+    if args.task in ("mlm", "clm"):
+        num_classes, id2label, label2id = None, {}, {}
+        dataset = dataset.remove_columns("labels")
+    elif args.task == "clf":
+        num_classes = dataset["tr"].info.features["labels"].num_classes
+        id2label = {i: l for i, l in enumerate(dataset["tr"].info.features["labels"].names)}
+        label2id = {l: i for i, l in enumerate(id2label.values())}
+        dataset = dataset.rename_column("labels", "label")
 
     if not SUBSET:
         for k in dataset:
@@ -273,7 +304,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dataset = dataset.map(preprocess_a, batched=True, remove_columns=["bytes"]).map(
         partial(tokenize_fn, tokenizer, truncation=True, max_length=args.max_length),
         batched=True,
-        remove_columns=["text", "labels"],
+        remove_columns=["text"],
     )
     print(f"{dataset=}")
     print(BR, flush=True)
@@ -283,6 +314,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         tokenizer,
         args.max_length,
         num_labels=num_classes,
+        id2label=id2label,
+        label2id=label2id,
     )
     print(f"{config=}")
     print(BR, flush=True)
@@ -291,14 +324,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         data_collator = DataCollatorWithPadding(
             tokenizer=tokenizer, padding=True, pad_to_multiple_of=PAD_TO
         )
-        compute_metrics = ClfComputeMetrics(num_classes > 2)
+        compute_metrics = CLFComputeMetrics()
     elif args.task == "mlm":
         if TYPE != "HF":
             raise ValueError("Langauge modeling not supported for this model.")
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, pad_to_multiple_of=PAD_TO
         )
-        compute_metrics = None
+        compute_metrics = MLMComputeMetrics()
     elif args.task == "clm":
         if TYPE != "HF":
             raise ValueError("Langauge modeling not supported for this model.")
@@ -380,23 +413,19 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         oh.test_results_dir.mkdir(exist_ok=True, parents=False)
         print("Evaluating...")
-        probas, labels, results = trainer.predict(dataset["ts"])
-        predictions = probas.argmax(axis=1)
+        output: PredictionOutput = trainer.predict(dataset["ts"])
 
-        # FIXME: remove
-        print(f"{probas.shape=} {probas=}")
-        print(f"{labels.shape=} {labels=}")
-        print(f"{results=}")
-        sys.exit(0)
-        np.savetxt(oh.test_probas_file, probas, "%f")
-        np.savetxt(oh.test_predictions_file, predictions, "%i")
-        np.savetxt(oh.test_labels_file, labels, "%i")
-
-        cf_matrix = confusion_matrix(labels, predictions)
-        ConfusionMatrixDisplay(cf_matrix).plot()
-        plt.savefig(oh.test_confusion_matrix_file)
+        results = output.metrics
         with open(oh.test_results_file, "w") as fp:
             json.dump(results, fp, indent=4)
+
+        y_true, y_pred = compute_metrics.get_y_true_y_pred(output.predictions, output.label_ids)
+        np.savetxt(oh.test_predictions_file, y_pred, "%i")
+        np.savetxt(oh.test_labels_file, y_true, "%i")
+        if args.task == "clf":
+            cf_matrix = confusion_matrix(y_true, y_pred)
+            ConfusionMatrixDisplay(cf_matrix).plot()
+            plt.savefig(oh.test_confusion_matrix_file)
 
 
 def cli():
