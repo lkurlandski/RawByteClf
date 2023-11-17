@@ -4,30 +4,13 @@ Utility functions for training and evaluation.
 
 from collections import OrderedDict
 import math
-from typing import Any
+from typing import Any, Optional
 
 from datasets import Dataset, IterableDataset, IterableDatasetDict, concatenate_datasets
 from datasets.formatting.formatting import LazyBatch, LazyRow
 import numpy as np
 from tokenizers import models, pre_tokenizers, Tokenizer, Regex
-import torch
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    AutoModelForMaskedLM,
-    AutoModelForSequenceClassification,
-    BertConfig,
-    DataCollatorForLanguageModeling,
-    DataCollatorWithPadding,
-    EarlyStoppingCallback,
-    HfArgumentParser,
-    LongformerConfig,
-    PretrainedConfig,
-    PreTrainedTokenizerBase,
-    PreTrainedTokenizerFast,
-    Trainer,
-    TrainingArguments,
-)
+from transformers import PreTrainedTokenizerFast
 
 from src.cfg import INPUT_PATH, OUTPUT_PATH
 from src.utils import count_parameters
@@ -72,10 +55,10 @@ def get_fast_tokenizer(tokenizer_object: Tokenizer, **kwds) -> PreTrainedTokeniz
     return tokenizer
 
 
-def preprocess_a(examples: Any) -> dict:
+def preprocess_a(examples: Any, max_length: Optional[int] = None) -> dict:
     """This is about half the speed of preprocess_b, but lets us use the vast HF ecosystem."""
     return {
-        "text": [b.decode("latin1") for b in examples["bytes"]],
+        "text": [b[0:max_length].decode("latin1") for b in examples["bytes"]],
     }
 
 
