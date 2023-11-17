@@ -256,6 +256,7 @@ def get_config(
             axial_pos_embds_dim=[HIDDEN_SIZE // 2, HIDDEN_SIZE // 2],
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            **kwds,
         )
     if model_name_or_path.lower() == "nystromformer":
         transformers.NystromformerConfig(
@@ -268,8 +269,9 @@ def get_config(
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            **kwds,
         )
-    if model_name_or_path == "malconv":
+    if model_name_or_path.lower() == "malconv":
         return MalConvConfig(
             num_embd=pad_to_multiple_of_fn(len(tokenizer), PAD_TO),
             embed_size=8,
@@ -279,9 +281,9 @@ def get_config(
             pad_idx=tokenizer.pad_token_id,
             **kwds,
         )
-    if model_name_or_path == "malconv2":
+    if model_name_or_path.lower() == "malconv2":
         raise NotImplementedError()
-    if model_name_or_path == "malconvGCG":
+    if model_name_or_path.lower() == "malconvgcg":
         raise NotImplementedError()
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
