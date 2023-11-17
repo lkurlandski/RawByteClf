@@ -16,7 +16,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: disable=wrong-import-position
 
-from datasets import DatasetDict, Dataset, concatenate_datasets
+from datasets import DatasetDict, Dataset, IterableDataset, IterableDatasetDict, concatenate_datasets
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
@@ -65,6 +65,7 @@ INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 1
 NUM_ATTENTION_HEADS = 8
 SUBSET = 1000
+NUM_SHARDS = 1
 
 
 @dataclass
@@ -354,6 +355,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset: DatasetDict = get_sorel_dataset(subset=SUBSET)
     elif args.task == "clf":
         dataset: DatasetDict = get_bodmas_dataset(subset=SUBSET)
+    dataset = IterableDatasetDict(dataset)
 
     # CLM/MLM heads ignore classification-specific arugments.
     if args.task in ("mlm", "clm"):
@@ -364,10 +366,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         id2label = {i: l for i, l in enumerate(dataset["tr"].info.features["labels"].names)}
         label2id = {l: i for i, l in enumerate(id2label.values())}
         dataset = dataset.rename_column("labels", "label")
-
-    if not SUBSET:
-        for k in dataset:
-            dataset[k] = dataset[k].to_iterable_dataset()
 
     dataset = dataset.map(preprocess_a, batched=True, remove_columns=["bytes"]).map(
         partial(tokenize_fn, tokenizer, truncation=True, max_length=args.max_length),
