@@ -97,9 +97,5 @@ def is_dataset_path_completed(path: Path) -> bool:
     )
 
 
-def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
-    return val + (val % pad_to_multiple_of)
-
-
 def get_scale_fn(scale: float) -> Callable[[int], float]:
     return lambda x: int(round(x * scale))

@@ -97,17 +97,17 @@ def find_two_largest_factors(number: int) -> tuple[int, int]:
         return int(s), int(s)
 
     factors = []
-
-    # Iterate from the square root of the number to 1
     for i in range(int(s), 0, -1):
-        # Check if i is a factor of the number
         if number % i == 0:
             factors.append(i)
-
-            # If the corresponding factor is not the same (avoid duplicates)
             if number // i != i:
                 factors.append(number // i)
-
-            # Return the two factors if we have found at least two
             if len(factors) >= 2:
                 return factors
+
+
+def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
+    q, r = divmod(val, pad_to_multiple_of)
+    if r == 0:
+        return val
+    return (q + 1) * pad_to_multiple_of
