@@ -64,7 +64,7 @@ HIDDEN_SIZE = 512
 INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 1
 NUM_ATTENTION_HEADS = 8
-SUBSET = 100
+SUBSET = 1000
 
 
 @dataclass
@@ -126,12 +126,30 @@ class OutputHelper:
         self.path.mkdir(exist_ok=True, parents=True)
 
 
-class CLFComputeMetrics:
-    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float]:
+class ComputeMetrics:
+    def __init__(self, detailed: bool = False) -> None:
+        self.detailed = detailed
+
+    def set_detailed(self, detailed: bool) -> None:
+        self.detailed = detailed
+
+    def return_report(self, report: dict[str, float | dict]) -> dict[str, float | dict]:
+        if self.detailed:
+            return report
+        return {
+            "accuracy": report["accuracy"],
+            "f1_macro": report["macro avg"]["f1-score"],
+            "f1_weighted": report["weighted avg"]["f1-score"],
+        }
+
+
+class CLFComputeMetrics(ComputeMetrics):
+    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float | dict]:
         # predictions (B, M)
         # label_ids (B,)
         y_true, y_pred = self.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
-        return classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
+        report = classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
+        return super().return_report(report)
 
     @staticmethod
     def get_y_true_y_pred(
@@ -151,12 +169,13 @@ class CLFComputeMetrics:
         return label_ids.astype(np.int64)
 
 
-class MLMComputeMetrics:
-    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float]:
+class MLMComputeMetrics(ComputeMetrics):
+    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float | dict]:
         # predictions (B, L, M)
         # label_ids (B, M)
         y_true, y_pred = self.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
-        return classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
+        report = classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
+        return super().return_report(report)
 
     @staticmethod
     def get_y_true_y_pred(
@@ -457,6 +476,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         oh.test_results_dir.mkdir(exist_ok=True, parents=False)
         print("Evaluating...")
+        compute_metrics.set_detailed(True)
         output: PredictionOutput = trainer.predict(dataset["ts"])
 
         results = output.metrics
