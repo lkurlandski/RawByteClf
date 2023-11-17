@@ -8,7 +8,7 @@ from functools import partial
 import json
 from pathlib import Path
 from pprint import pformat, pprint
-from typing import Optional
+from typing import Literal, NewType, Optional
 import os
 import sys
 
@@ -33,6 +33,7 @@ from transformers import (
     EarlyStoppingCallback,
     HfArgumentParser,
     PretrainedConfig,
+    PreTrainedModel,
     PreTrainedTokenizerFast,
     Trainer,
     TrainingArguments,
@@ -41,7 +42,6 @@ from transformers.trainer_utils import EvalPrediction, PredictionOutput
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
 
-# from src.malconv import MalConvModel, MalConvConfig, MalConvTrainer
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.learn.utils import (
     count_parameters,
@@ -53,13 +53,18 @@ from src.learn.utils import (
     tokenize_fn,
 )
 
+# from src.malconv import MalConvModel, MalConvConfig, MalConvTrainer
+MalConvModel = NewType("MalConvModel", object)
+MalConvConfig = NewType("MalConvConfig", object)
+MalConvTrainer = NewType("MalConvTrainer", object)
+
 
 PAD_TO = 8
 HIDDEN_SIZE = 512
 INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 1
 NUM_ATTENTION_HEADS = 8
-SUBSET = 64
+SUBSET = 100
 
 
 @dataclass
@@ -178,7 +183,7 @@ class MLMComputeMetrics:
         return y_true.numpy().astype(np.int64)
 
 
-def get_model_type(model: str) -> str:
+def get_model_type(model: str) -> Literal["HF", "MC"]:
     if model in ("malconv", "malconv2", "malconvGCG"):
         return "MC"
     return "HF"
@@ -260,6 +265,50 @@ def get_config(
         raise NotImplementedError()
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
+
+
+def get_model_from_disk(
+    task: str,
+    model_name_or_path: str,
+    **kwds,
+) -> PreTrainedModel | MalConvModel:
+    if task == "clf":
+        if get_model_type(model_name_or_path) == "HF":
+            return AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+        if get_model_type(model_name_or_path) == "MC":
+            # TODO: match design pattern as from_pretrained()
+            raise NotImplementedError()
+            # model = MalConvModel(config)
+            # model.load_state_dict(MalConvModel.get_state_dict(model_name_or_path))
+            # return model
+    if task == "mlm":
+        return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
+    if task == "clm":
+        return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
+    raise RuntimeError()
+
+
+def get_model_from_config(
+    task: str, config: PretrainedConfig | MalConvConfig
+) -> PreTrainedModel | MalConvModel:
+    if task == "clf":
+        if isinstance(config, PretrainedConfig):
+            return AutoModelForSequenceClassification.from_config(config)
+        if isinstance(config, MalConvConfig):
+            return MalConvModel(config)
+    if task == "mlm":
+        return AutoModelForMaskedLM.from_config(config)
+    if task == "clm":
+        return AutoModelForCausalLM.from_config(config)
+    raise RuntimeError()
+
+
+def get_model(
+    task: str, model_name_or_path: str, config: PretrainedConfig | MalConvConfig, **kwds
+) -> PreTrainedModel | MalConvModel:
+    if Path(model_name_or_path).exists():
+        return get_model_from_disk(task, model_name_or_path, **kwds)
+    return get_model_from_config(task, config)
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
@@ -355,15 +404,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
     if training_arguments.do_train:
-        if args.task == "clf":
-            if TYPE == "HF":
-                model = AutoModelForSequenceClassification.from_config(config)
-            if TYPE == "MC":
-                model = MalConvModel(config)
-        elif args.task == "mlm":
-            model = AutoModelForMaskedLM.from_config(config)
-        elif args.task == "clm":
-            model = AutoModelForCausalLM.from_config(config)
+        model = get_model(
+            args.task,
+            args.model_name_or_path,
+            config,
+            num_labels=num_classes,
+            id2label=id2label,
+            label2id=label2id,
+        )
         print(f"{model=}")
         print(f"{count_parameters(model)=}")
 
@@ -387,18 +435,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             json.dump(trainer.state.log_history, fp, indent=4)
 
     if training_arguments.do_eval:
-        if args.task == "clf":
-            if TYPE == "HF":
-                model = AutoModelForSequenceClassification.from_pretrained(
-                    oh.best_model_dir.as_posix()
-                )
-            if TYPE == "MC":  # TODO: match design pattern as from_pretrained()
-                model = MalConvModel(config)
-                model.load_state_dict(MalConvModel.get_state_dict(oh.best_model_dir))
-        elif args.task == "mlm":
-            model = AutoModelForMaskedLM.from_pretrained(oh.best_model_dir.as_posix())
-        elif args.task == "clm":
-            model = AutoModelForCausalLM.from_pretrained(oh.best_model_dir.as_posix())
+        if training_arguments.do_train and training_arguments.load_best_model_at_end:
+            if TYPE == "MC":
+                raise NotImplementedError()
+            pass
+        elif training_arguments.do_train:
+            model = get_model(args.task, oh.best_model_dir, config)
+        else:
+            model = get_model(args.task, args.model_name_or_path, config)
         print(f"{model=}")
         print(f"{count_parameters(model)=}")
 
