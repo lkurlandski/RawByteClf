@@ -23,11 +23,12 @@ LINUX_PATH = DATASETS_PATH / "Linux"
 WINDOWS_PATH = DATASETS_PATH / "Windows"
 
 BODMAS_LABELS_FILE = BODMAS_PATH / "bodmas_metadata.csv"
+BODMAS_DIST_FILE = BODMAS_PATH / "distribution.json"
 MALWARE_BAZAAR_FILE_LISTS = {
-   "malware_bazaar_dll": MALWARE_BAZAAR_PATH / "dll.txt",
-   "malware_bazaar_elf": MALWARE_BAZAAR_PATH / "elf.txt",
-   "malware_bazaar_exe": MALWARE_BAZAAR_PATH / "exe.txt",
-   "malware_bazaar_macho": MALWARE_BAZAAR_PATH / "macho.txt",
+    "malware_bazaar_dll": MALWARE_BAZAAR_PATH / "dll.txt",
+    "malware_bazaar_elf": MALWARE_BAZAAR_PATH / "elf.txt",
+    "malware_bazaar_exe": MALWARE_BAZAAR_PATH / "exe.txt",
+    "malware_bazaar_macho": MALWARE_BAZAAR_PATH / "macho.txt",
 }
 VIRUS_SHARE_ELF_COLLECTION_PATHS = {
     "VirusShare_ELF_20140617": VIRUS_SHARE_PATH / "VirusShare_ELF_20140617",

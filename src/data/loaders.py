@@ -3,11 +3,12 @@ High-level loading API for the datasets.
 """
 
 from collections import Counter
+import json
 import os
 from pathlib import Path
 from pprint import pprint
 import sys
-from typing import Optional
+from typing import Optional, Protocol
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -16,7 +17,15 @@ if __name__ == "__main__":
 from datasets import concatenate_datasets, ClassLabel, Dataset, DatasetDict, Features, Value
 
 from src.cfg import INPUT_PATH, OUTPUT_PATH
-from src.data.cfg import BODMAS_LABELS_FILE
+from src.data.cfg import BODMAS_LABELS_FILE, BODMAS_DIST_FILE
+
+
+ITER_SIZE = 1024
+
+
+class GetDataset(Protocol):
+    def __call__(self, *args, **kwds) -> tuple[DatasetDict, Counter]:
+        ...
 
 
 def tr_vl_ts_split(dataset: Dataset, vl_size: float, ts_size: float) -> DatasetDict:
@@ -52,6 +61,10 @@ def get_bodmas_dataset(
 
     dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe")
     # dataset.cleanup_cache_files()  # TODO: remove this after testing...
+    with open(BODMAS_DIST_FILE, "r") as fp:
+        d: dict = json.load(fp)
+        d.pop("benign")
+        dist = Counter(d)
 
     if min_freq or top_k:
         id2label = {i: n for i, n in enumerate(dataset.info.features["labels"].names)}
@@ -65,9 +78,13 @@ def get_bodmas_dataset(
         dataset = dataset.filter(filter_fn, batched=True)
         dataset = dataset.cast_column("labels", Value("string"))
         dataset = dataset.map(map_fn, batched=True)
+
+        dist = Counter()
+        for d in dataset.select_columns("labels").iter(ITER_SIZE):
+            dist.update(d["labels"])
         dataset = dataset.class_encode_column("labels")
 
     if subset:
         dataset = dataset.select(range(subset))
     dataset = tr_vl_ts_split(dataset, vl_size=0.1, ts_size=0.1)
-    return dataset
+    return dataset, dist

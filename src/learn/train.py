@@ -1,11 +1,8 @@
 """
 Train and evaluate the models for malware family classification.
-
-TODO
-----
-  - Figure out streaming!
 """
 
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import partial
@@ -31,7 +28,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 import torch
-from torch import tensor
+from torch import tensor, Tensor
+from torch.nn import CrossEntropyLoss
 import transformers
 from transformers import (
     AutoConfig,
@@ -76,10 +74,27 @@ HIDDEN_SIZE = 512
 INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 4
 NUM_ATTENTION_HEADS = 8
-SUBSET = 1024
+SUBSET = None
 STREAMING = True
-BODMAS_TOP_K = 10
+BODMAS_TOP_K = 100
 BODMAS_MIN_FREQ = None
+
+
+class ImbalancedClassificationTrainer(Trainer):
+    def __init__(self, weight: Optional[Tensor] = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.loss_fn = CrossEntropyLoss(weight=weight)
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        if self.label_smoother is not None or self.args.past_index >= 0:
+            raise NotImplementedError()
+
+        labels = inputs["labels"]
+        outputs = model(**inputs)
+        logits = outputs.logits
+
+        loss = self.loss_fn(logits.to("cpu"), labels.to("cpu")).to(logits.device)
+        return (loss, outputs) if return_outputs else loss
 
 
 @dataclass
@@ -368,10 +383,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{tokenizer=}")
     print(BR, flush=True)
 
+    dataset: DatasetDict
+    dist: Counter = None
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(subset=SUBSET)
     elif args.task == "clf":
-        dataset: DatasetDict = get_bodmas_dataset(
+        dataset, dist = get_bodmas_dataset(
             subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
         )
     print(f"{dataset=}")
@@ -387,9 +404,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         training_arguments = replace(training_arguments, max_steps=max_steps)
         # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
         ds = IterableDatasetDict()
-        ds["tr"] = dataset["tr"].to_iterable_dataset()
-        ds["ts"] = dataset["ts"].to_iterable_dataset()
-        ds["vl"] = dataset["vl"].to_iterable_dataset()
+        ds["tr"] = dataset["tr"].to_iterable_dataset(
+            num_shards=training_arguments.dataloader_num_workers
+        )
+        ds["ts"] = dataset["ts"].to_iterable_dataset(
+            num_shards=training_arguments.dataloader_num_workers
+        )
+        ds["vl"] = dataset["vl"].to_iterable_dataset(
+            num_shards=training_arguments.dataloader_num_workers
+        )
         dataset = ds
         del ds
 
@@ -402,6 +425,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         id2label = {i: l for i, l in enumerate(dataset["tr"].info.features["labels"].names)}
         label2id = {l: i for i, l in enumerate(id2label.values())}
         dataset = dataset.rename_column("labels", "label")
+        weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
 
     dataset = dataset.map(  # Trim excess bytes before hitting tokenizer for performance.
         partial(preprocess_a, max_length=args.max_length),
@@ -452,11 +476,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{data_collator=}")
     print(BR, flush=True)
 
-    callbacks = [EarlyStoppingCallback(early_stopping_patience=5)]
+    callbacks = []  # [EarlyStoppingCallback(early_stopping_patience=5)]
     print(f"{callbacks=}")
 
     if TYPE == "HF":
-        ModelTrainer = Trainer
+        ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
     elif TYPE == "MC":
         ModelTrainer = MalConvTrainer
 
