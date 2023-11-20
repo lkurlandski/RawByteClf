@@ -1,5 +1,9 @@
 """
 Train and evaluate the models for malware family classification.
+
+TODO
+----
+  - Figure out streaming!
 """
 
 from dataclasses import dataclass, field, replace
@@ -16,7 +20,13 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: disable=wrong-import-position
 
-from datasets import DatasetDict, Dataset, IterableDataset, IterableDatasetDict, concatenate_datasets
+from datasets import (
+    DatasetDict,
+    Dataset,
+    IterableDataset,
+    IterableDatasetDict,
+    concatenate_datasets,
+)
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
@@ -39,6 +49,7 @@ from transformers import (
     TrainingArguments,
 )
 from transformers.trainer_utils import EvalPrediction, PredictionOutput
+from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
 
@@ -62,10 +73,11 @@ MalConvTrainer = NewType("MalConvTrainer", object)
 PAD_TO = 8
 HIDDEN_SIZE = 512
 INTERMEDIATE_SIZE = 1024
-NUM_HIDDEN_LAYERS = 1
+NUM_HIDDEN_LAYERS = 4
 NUM_ATTENTION_HEADS = 8
-SUBSET = 1000
+SUBSET = None
 NUM_SHARDS = 1
+STREAMING = False
 
 
 @dataclass
@@ -224,6 +236,7 @@ def get_config(
         return AutoConfig.from_pretrained(model_name_or_path, **kwds)
 
     vocab_size = pad_to_multiple_of_fn(len(tokenizer), PAD_TO)
+    max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
     if model_name_or_path.lower() == "longformer":
         attention_window = 512
@@ -261,7 +274,7 @@ def get_config(
     if model_name_or_path.lower() == "nystromformer":
         transformers.NystromformerConfig(
             vocab_size=vocab_size,
-            max_position_embeddings=max_length,
+            max_position_embeddings=max_posititional_embeddings,
             num_hidden_layers=NUM_HIDDEN_LAYERS,
             num_attention_heads=NUM_ATTENTION_HEADS,
             hidden_size=HIDDEN_SIZE,
@@ -273,9 +286,9 @@ def get_config(
         )
     if model_name_or_path.lower() == "malconv":
         return MalConvConfig(
-            num_embd=pad_to_multiple_of_fn(len(tokenizer), PAD_TO),
+            num_embd=vocab_size,
             embed_size=8,
-            max_length=max_length,
+            max_length=max_posititional_embeddings,
             window_size=512,
             hidden_size=512,
             pad_idx=tokenizer.pad_token_id,
@@ -356,8 +369,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(subset=SUBSET)
     elif args.task == "clf":
-        dataset: DatasetDict = get_bodmas_dataset(subset=SUBSET)
-    dataset = IterableDatasetDict(dataset)
+        dataset: DatasetDict = get_bodmas_dataset(subset=SUBSET, top_k=100)
+
+    if STREAMING:
+        max_steps = (
+            len(dataset)
+            * training_arguments.num_train_epochs
+            // training_arguments.per_device_train_batch_size
+            + 1
+        )
+        training_arguments = replace(training_arguments, max_steps=max_steps)
+        dataset = IterableDatasetDict(
+            {
+                s: d.to_iterable_dataset(training_arguments.dataloader_num_workers)
+                for s, d in dataset.items()
+            }
+        )
+    print(f"{dataset=}")
+    print(BR, flush=True)
 
     # CLM/MLM heads ignore classification-specific arugments.
     if args.task in ("mlm", "clm"):
@@ -388,23 +417,27 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{config=}")
     print(BR, flush=True)
 
+    pad_to_multiple_of = PAD_TO
+    if isinstance(config, transformers.ReformerConfig):
+        pad_to_multiple_of = _get_least_common_mult_chunk_len(config)
+
     if args.task == "clf":
         data_collator = DataCollatorWithPadding(
-            tokenizer=tokenizer, padding=True, pad_to_multiple_of=PAD_TO
+            tokenizer=tokenizer, padding=True, pad_to_multiple_of=pad_to_multiple_of
         )
         compute_metrics = CLFComputeMetrics()
     elif args.task == "mlm":
         if TYPE != "HF":
             raise ValueError("Langauge modeling not supported for this model.")
         data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer, mlm=True, pad_to_multiple_of=PAD_TO
+            tokenizer=tokenizer, mlm=True, pad_to_multiple_of=pad_to_multiple_of
         )
         compute_metrics = MLMComputeMetrics()
     elif args.task == "clm":
         if TYPE != "HF":
             raise ValueError("Langauge modeling not supported for this model.")
         data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer, mlm=False, pad_to_multiple_of=PAD_TO
+            tokenizer=tokenizer, mlm=False, pad_to_multiple_of=pad_to_multiple_of
         )
         compute_metrics = None
 
@@ -419,8 +452,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif TYPE == "MC":
         ModelTrainer = MalConvTrainer
 
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
+    if not STREAMING:  # dataset has already been processed
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
     if training_arguments.do_train:
         model = get_model(
