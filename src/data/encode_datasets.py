@@ -22,7 +22,7 @@ from src.data.cfg import MAX_SHARD_SIZE
 from src.data.utils import PerDatasetArgumentParser
 
 
-ITER_SIZE = 4
+ITER_SIZE = 1024
 PRE = "is_"
 
 

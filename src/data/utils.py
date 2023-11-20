@@ -22,7 +22,6 @@ def print_dataset(
     dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict,
     n: Optional[int] = None,
 ) -> None:
-
     def f(ds):
         print(f"{ds=}")
         print(f"{ds.info=}")

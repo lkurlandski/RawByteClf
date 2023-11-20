@@ -253,13 +253,24 @@ def test(config: tuple, max_length: int) -> tuple[str, float, int]:
     c = config[0](max_length)
     if args.task == "clm":
         model = AutoModelForCausalLM.from_config(c)
-        data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8,)
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=False,
+            pad_to_multiple_of=8,
+        )
     elif args.task == "mlm":
         model = AutoModelForMaskedLM.from_config(c)
-        data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, pad_to_multiple_of=8,)
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=True,
+            pad_to_multiple_of=8,
+        )
     elif args.task == "clf":
         model = AutoModelForSequenceClassification.from_config(c)
-        data_collator = DataCollatorWithPadding(tokenizer=tokenizer, pad_to_multiple_of=8,)
+        data_collator = DataCollatorWithPadding(
+            tokenizer=tokenizer,
+            pad_to_multiple_of=8,
+        )
 
     print(
         f"{type(model).__name__} {round(count_parameters(model) / 1e6, 2)}M parameters. @{max_length=}"
