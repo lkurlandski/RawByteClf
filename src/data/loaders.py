@@ -43,20 +43,28 @@ def get_bodmas_dataset(
 ) -> DatasetDict:
     """Expect additional computation if min_freq or top_k is not None."""
 
+    def filter_fn(examples: list) -> list[bool]:
+        return [e in keep for e in examples["labels"]]
+
+    def map_fn(examples: dict[str, list]) -> dict[str, list]:
+        examples["labels"] = [id2label[i] for i in examples["labels"]]
+        return examples
+
     dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe")
+    dataset.cleanup_cache_files()
+
     if min_freq or top_k:
         id2label = {i: n for i, n in enumerate(dataset.info.features["labels"].names)}
+        id2label.update({str(i): n for i, n in id2label.items()})
 
         dist = Counter((d["labels"] for d in dataset.select_columns(["labels"])))
         keep = [l for l, n in dist.most_common(top_k) if (min_freq is None or n >= min_freq)]
         keep = set(keep) if len(keep) > 50 else keep
 
-        dataset = dataset.filter(lambda exs: [e in keep for e in exs["labels"]], batched=True)
-        dataset = dataset.map(
-            lambda exs: exs.update({"labels": [id2label[i] for i in exs["labels"]]}),
-            batched=True,
-        )
+        # It is critical to cast the column to string before applying map function.
+        dataset = dataset.filter(filter_fn, batched=True)
         dataset = dataset.cast_column("labels", Value("string"))
+        dataset = dataset.map(map_fn, batched=True)
         dataset = dataset.class_encode_column("labels")
 
     if subset:
