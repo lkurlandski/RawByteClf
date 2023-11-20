@@ -54,6 +54,7 @@ from transformers.models.reformer.modeling_reformer import _get_least_common_mul
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
 
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
+from src.data.utils import print_dataset
 from src.learn.utils import (
     count_parameters,
     pad_to_multiple_of_fn,
@@ -75,9 +76,8 @@ HIDDEN_SIZE = 512
 INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 4
 NUM_ATTENTION_HEADS = 8
-SUBSET = None
-NUM_SHARDS = 1
-STREAMING = False
+SUBSET = 1024
+STREAMING = True
 BODMAS_TOP_K = 10
 BODMAS_MIN_FREQ = None
 
@@ -374,23 +374,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset: DatasetDict = get_bodmas_dataset(
             subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
         )
+    print(f"{dataset=}")
+    print(BR, flush=True)
 
     if STREAMING:
-        max_steps = (
-            len(dataset)
+        max_steps = (  # FIXME: ensure correct for multi-gpu setup
+            len(dataset["tr"])
             * training_arguments.num_train_epochs
             // training_arguments.per_device_train_batch_size
             + 1
         )
         training_arguments = replace(training_arguments, max_steps=max_steps)
-        dataset = IterableDatasetDict(
-            {
-                s: d.to_iterable_dataset(training_arguments.dataloader_num_workers)
-                for s, d in dataset.items()
-            }
-        )
-    print(f"{dataset=}")
-    print(BR, flush=True)
+        # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
+        ds = IterableDatasetDict()
+        ds["tr"] = dataset["tr"].to_iterable_dataset()
+        ds["ts"] = dataset["ts"].to_iterable_dataset()
+        ds["vl"] = dataset["vl"].to_iterable_dataset()
+        dataset = ds
+        del ds
 
     # CLM/MLM heads ignore classification-specific arugments.
     if args.task in ("mlm", "clm"):
@@ -402,13 +403,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         label2id = {l: i for i, l in enumerate(id2label.values())}
         dataset = dataset.rename_column("labels", "label")
 
-    dataset = dataset.map(preprocess_a, batched=True, remove_columns=["bytes"]).map(
+    dataset = dataset.map(  # Trim excess bytes before hitting tokenizer for performance.
+        partial(preprocess_a, max_length=args.max_length),
+        batched=True,
+        remove_columns=["bytes", "size", "length"],
+    )
+    dataset = dataset.map(  # The partial function here is picky (`tokenizer` must be arg not kwd).
         partial(tokenize_fn, tokenizer, truncation=True, max_length=args.max_length),
         batched=True,
         remove_columns=["text"],
     )
-    print(f"{dataset=}")
-    print(BR, flush=True)
 
     config = get_config(
         args.model_name_or_path,
@@ -456,9 +460,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif TYPE == "MC":
         ModelTrainer = MalConvTrainer
 
-    if not STREAMING:  # dataset has already been processed
+    os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
+    if not STREAMING:  # dataset has already been processed, so we disable thread-based parallelism
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 
     if training_arguments.do_train:
         model = get_model(
@@ -537,15 +541,8 @@ def cli():
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
 
 
-def debug() -> None:
-    pass
-
-
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{BR}", flush=True)
     print(f"{torch.backends.cudnn.enabled=}")
-    if len(sys.argv) == 1 or sys.argv[1] == "--debug":
-        debug()
-    else:
-        cli()
+    cli()
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
