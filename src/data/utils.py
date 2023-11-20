@@ -12,9 +12,21 @@ from pathlib import Path
 from typing import ClassVar, Generator, NamedTuple, Optional
 import zlib
 
+from datasets import Dataset
 import py7zr
 
 from src.data.cfg import SOREL_META_CSV, DATASET_NAMES
+
+
+def print_dataset(dataset: Dataset, n: Optional[int] = None) -> None:
+    print(f"{dataset=}")
+    print(f"{dataset.info=}")
+    if not n or n <= 0:
+        return
+    for i, d in enumerate(dataset):
+        if i >= n:
+            break
+        print(f"{d['name']=}|{d['size']=}|{d['length']}|{d['labels']=}")
 
 
 class PerDatasetArgumentParser(ArgumentParser):

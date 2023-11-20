@@ -41,20 +41,23 @@ def get_bodmas_dataset(
     min_freq: Optional[int] = None,
     top_k: Optional[int] = None,
 ) -> DatasetDict:
+    """Expect additional computation if min_freq or top_k is not None."""
+
     dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe")
     if min_freq or top_k:
-        distribution = Counter((d["labels"] for d in dataset.select_columns(["labels"])))
-        keep = [
-            l for l, n in distribution.most_common(top_k) if (min_freq is None or n >= min_freq)
-        ]
+        id2label = {i: n for i, n in enumerate(dataset.info.features["labels"].names)}
+
+        dist = Counter((d["labels"] for d in dataset.select_columns(["labels"])))
+        keep = [l for l, n in dist.most_common(top_k) if (min_freq is None or n >= min_freq)]
         keep = set(keep) if len(keep) > 50 else keep
-        dataset = dataset.filter(
-            lambda examples: [True if e in keep else False for e in examples["labels"]],
-            with_indices=False,
+
+        dataset = dataset.filter(lambda exs: [e in keep for e in exs["labels"]], batched=True)
+        dataset = dataset.map(
+            lambda exs: exs.update({"labels": [id2label[i] for i in exs["labels"]]}),
             batched=True,
         )
-        names = [n for i, n in enumerate(dataset.info.features["labels"].names) if i in keep]
-        dataset = dataset.cast_column("labels", ClassLabel(names=names))
+        dataset = dataset.cast_column("labels", Value("string"))
+        dataset = dataset.class_encode_column("labels")
 
     if subset:
         dataset = dataset.select(range(subset))
