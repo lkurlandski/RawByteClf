@@ -13,44 +13,10 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: disable=wrong-import-position
 
-from datasets import concatenate_datasets, Dataset, DatasetDict, Features, Value
+from datasets import concatenate_datasets, ClassLabel, Dataset, DatasetDict, Features, Value
 
 from src.cfg import INPUT_PATH, OUTPUT_PATH
-
-
-def apply_categorical_encoding(
-    dataset: Dataset, min_freq: Optional[int] = None, top_k: Optional[int] = None
-) -> Dataset:
-    raise NotImplementedError()
-    assert bool(min_freq) != bool(top_k), "Only one selection method can be used."
-    ITER_SIZE = 1024
-    PRE = "is_"
-
-    labels = Counter()
-    for d in dataset.iter(ITER_SIZE):
-        labels.update(d["labels"])
-
-    categories = {
-        f"{PRE}{l}": Value("bool")
-        for l, n in labels.most_common(top_k)
-        if (min_freq is None or n >= min_freq)
-    }
-
-    features = Features(
-        {
-            "name": Value("string"),
-            "bytes": Value("binary"),
-            "size": Value("int64"),
-            "length": Value("int64"),
-        }
-        | categories
-    )
-
-    dataset.add_column()
-
-    for d in dataset.iter(ITER_SIZE):
-        for c in categories:
-            d[c] = c[len(PRE) :] in d["labels"]
+from src.data.cfg import BODMAS_LABELS_FILE
 
 
 def tr_vl_ts_split(dataset: Dataset, vl_size: float, ts_size: float) -> DatasetDict:
@@ -70,8 +36,26 @@ def get_sorel_dataset(subset: Optional[int] = None) -> DatasetDict:
     return dataset
 
 
-def get_bodmas_dataset(subset: Optional[int] = None) -> DatasetDict:
-    dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe").class_encode_column("labels")
+def get_bodmas_dataset(
+    subset: Optional[int] = None,
+    min_freq: Optional[int] = None,
+    top_k: Optional[int] = None,
+) -> DatasetDict:
+    dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe")
+    if min_freq or top_k:
+        distribution = Counter((d["labels"] for d in dataset.select_columns(["labels"])))
+        keep = [
+            l for l, n in distribution.most_common(top_k) if (min_freq is None or n >= min_freq)
+        ]
+        keep = set(keep) if len(keep) > 50 else keep
+        dataset = dataset.filter(
+            lambda examples: [True if e in keep else False for e in examples["labels"]],
+            with_indices=False,
+            batched=True,
+        )
+        names = [n for i, n in enumerate(dataset.info.features["labels"].names) if i in keep]
+        dataset = dataset.cast_column("labels", ClassLabel(names=names))
+
     if subset:
         dataset = dataset.select(range(subset))
     dataset = tr_vl_ts_split(dataset, vl_size=0.1, ts_size=0.1)
