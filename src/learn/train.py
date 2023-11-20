@@ -78,6 +78,8 @@ NUM_ATTENTION_HEADS = 8
 SUBSET = None
 NUM_SHARDS = 1
 STREAMING = False
+BODMAS_TOP_K = 10
+BODMAS_MIN_FREQ = None
 
 
 @dataclass
@@ -369,7 +371,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(subset=SUBSET)
     elif args.task == "clf":
-        dataset: DatasetDict = get_bodmas_dataset(subset=SUBSET, top_k=100)
+        dataset: DatasetDict = get_bodmas_dataset(
+            subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
+        )
 
     if STREAMING:
         max_steps = (
