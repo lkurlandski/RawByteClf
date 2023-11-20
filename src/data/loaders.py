@@ -51,7 +51,7 @@ def get_bodmas_dataset(
         return examples
 
     dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe")
-    dataset.cleanup_cache_files()
+    # dataset.cleanup_cache_files()  # TODO: remove this after testing...
 
     if min_freq or top_k:
         id2label = {i: n for i, n in enumerate(dataset.info.features["labels"].names)}
