@@ -20,6 +20,7 @@ if __name__ == "__main__":
 # pylint: disable=wrong-import-position
 
 from datasets import Dataset, Features, Value
+from tqdm import tqdm
 
 from src.cfg import INPUT_PATH, TMP_DIR
 from src.data.cfg import MAX_SHARD_SIZE, BODMAS_LABELS_FILE, DATASET_TO_FILES
@@ -157,6 +158,7 @@ def apply_labels_virus_total_reports(
 ) -> Dataset:
     report_files = list(report_files)
     iterable = zip(report_files, get_labels(report_files, extractor, refiner))
+    iterable = tqdm(iterable, total=len(report_files))
     labels: dict[str, tuple[str]] = {file.stem: label for file, label in iterable}
     labels = [labels.get(d["name"], None) for d in dataset]
 
