@@ -45,6 +45,10 @@ from transformers import (
     PreTrainedTokenizerFast,
     Trainer,
     TrainingArguments,
+    LongformerConfig,
+    ReformerConfig,
+    NystromformerConfig,
+    FNetConfig,
 )
 from transformers.trainer_utils import EvalPrediction, PredictionOutput
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
@@ -79,6 +83,30 @@ STREAMING = True
 BODMAS_TOP_K = 100
 BODMAS_MIN_FREQ = None
 DEPTH = 4
+
+
+RETURN_ATTENTION_MASK = {
+    "longformer": True,
+    "reformer": True,
+    "nystromformer": True,
+    "fnet": False,
+}
+
+
+def object_to_model_name_or_path(obj) -> str:
+    if obj in ("longformer", "reformer", "nystromformer", "fnet"):
+        return obj
+    if isinstance(obj, (FNetConfig,)):
+        return "fnet"
+    if isinstance(obj, (NystromformerConfig,)):
+        return "nystromformer"
+    if isinstance(obj, (ReformerConfig,)):
+        return "reformer"
+    if isinstance(obj, (LongformerConfig,)):
+        return "longformer"
+    if isinstance(obj, (str | Path)) and Path(obj).exists():
+        return object_to_model_name_or_path(AutoConfig.from_pretrained(str(obj)))
+    raise RuntimeError()
 
 
 class ImbalancedClassificationTrainer(Trainer):
@@ -258,7 +286,7 @@ def get_config(
 
     if model_name_or_path.lower() == "longformer":
         attention_window = 512
-        return transformers.LongformerConfig(
+        return LongformerConfig(
             attention_window=attention_window,
             sep_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
@@ -273,7 +301,7 @@ def get_config(
             **kwds,
         )
     if model_name_or_path.lower() == "reformer":
-        return transformers.ReformerConfig(
+        return ReformerConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_length,
             num_attention_heads=NUM_ATTENTION_HEADS,
@@ -290,7 +318,20 @@ def get_config(
             **kwds,
         )
     if model_name_or_path.lower() == "nystromformer":
-        transformers.NystromformerConfig(
+        return NystromformerConfig(
+            vocab_size=vocab_size,
+            max_position_embeddings=max_posititional_embeddings,
+            num_hidden_layers=NUM_HIDDEN_LAYERS,
+            num_attention_heads=NUM_ATTENTION_HEADS,
+            hidden_size=HIDDEN_SIZE,
+            intermediate_size=INTERMEDIATE_SIZE,
+            pad_token_id=tokenizer.pad_token_id,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            **kwds,
+        )
+    if model_name_or_path.lower() == "fnet":
+        return FNetConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
             num_hidden_layers=NUM_HIDDEN_LAYERS,
@@ -408,7 +449,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     if STREAMING:
-        if training_arguments.max_steps is None:
+        if training_arguments.max_steps == -1:
             max_steps = compute_total_steps(
                 len(dataset["tr"]),
                 training_arguments.num_train_epochs,
@@ -441,6 +482,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset = dataset.rename_column("labels", "label")
         weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
 
+    config = get_config(
+        args.model_name_or_path,
+        tokenizer,
+        args.max_length,
+        num_labels=num_classes,
+        id2label=id2label,
+        label2id=label2id,
+    )
+    print(f"{config=}")
+    print(BR, flush=True)
+
+    if not RETURN_ATTENTION_MASK[object_to_model_name_or_path(config)]:
+        tokenizer.model_input_names.remove("attention_mask")
+
     # Converts the first `max_length` "bytes" into a UTF-8 "text" column.
     # We trim the bytes initially to reduce the memory footprint when tokenizing.
     # Additional bytes are left (more than `args.mask_length`) for language modeling.
@@ -462,19 +517,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         ),
         batched=True,
-        remove_columns=["name", "size", "length", "bytes", "text"]
+        remove_columns=["name", "size", "length", "bytes", "text"],
     )
-
-    config = get_config(
-        args.model_name_or_path,
-        tokenizer,
-        args.max_length,
-        num_labels=num_classes,
-        id2label=id2label,
-        label2id=label2id,
-    )
-    print(f"{config=}")
-    print(BR, flush=True)
 
     pad_to_multiple_of = PAD_TO
     if isinstance(config, transformers.ReformerConfig):
