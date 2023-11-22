@@ -3,13 +3,20 @@ Utility functions for training and evaluation.
 """
 
 from collections import OrderedDict
+import functools
+import gc
+import inspect
 import math
+import sys
 from typing import Any, Optional
 
+from accelerate.utils.memory import should_reduce_batch_size
+from accelerate.utils import is_xpu_available
 from datasets import Dataset, IterableDataset, IterableDatasetDict, concatenate_datasets
 from datasets.formatting.formatting import LazyBatch, LazyRow
 import numpy as np
 from tokenizers import models, pre_tokenizers, Tokenizer, Regex
+import torch
 from transformers import PreTrainedTokenizerFast
 
 from src.cfg import INPUT_PATH, OUTPUT_PATH
@@ -94,3 +101,58 @@ def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
     if r == 0:
         return val
     return (q + 1) * pad_to_multiple_of
+
+
+def find_executable_batch_size_sub(function: callable = None, starting_batch_size: int = 128, subtract: int = 8):
+    """
+    Monkey patch for accelerate.utils.memory.find_executable_batch_size to subtract from
+    the batch size rather than dividing by 2.
+
+    >>> from accelerate.utils.memory import find_executable_batch_size
+    >>> from src.learn.utils import find_executable_batch_size_sub
+    >>> find_executable_batch_size_sub_8 = functools.partial(f, subtract=8)
+    >>> accelerate.utils.memory.find_executable_batch_size = find_executable_batch_size_sub_8
+    """
+
+    if function is None:
+        return functools.partial(
+            find_executable_batch_size_sub,
+            starting_batch_size=starting_batch_size,
+            subtract=subtract,
+        )
+
+    batch_size = starting_batch_size
+
+    def decorator(*args, **kwargs):
+        nonlocal batch_size
+        gc.collect()
+        if not is_xpu_available():
+            torch.cuda.empty_cache()
+        else:
+            torch.xpu.empty_cache()
+        params = list(inspect.signature(function).parameters.keys())
+        # Guard against user error
+        if len(params) < (len(args) + 1):
+            arg_str = ", ".join([f"{arg}={value}" for arg, value in zip(params[1:], args[1:])])
+            raise TypeError(
+                f"Batch size was passed into `{function.__name__}` as the first argument when called."
+                f"Remove this as the decorator already does so: `{function.__name__}({arg_str})`"
+            )
+        while True:
+            if batch_size == 0:
+                raise RuntimeError("No executable batch size found, reached zero.")
+            try:
+                return function(batch_size, *args, **kwargs)
+            except Exception as e:
+                if should_reduce_batch_size(e):
+                    gc.collect()
+                    if not is_xpu_available():
+                        torch.cuda.empty_cache()
+                    else:
+                        torch.xpu.empty_cache()
+                    print(f"Failed with {batch_size=}. Trying batch_size={batch_size - subtract}.")
+                    batch_size -= subtract
+                else:
+                    raise
+
+    return decorator
