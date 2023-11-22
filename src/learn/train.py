@@ -78,6 +78,7 @@ SUBSET = None
 STREAMING = True
 BODMAS_TOP_K = 100
 BODMAS_MIN_FREQ = None
+DEPTH = 4
 
 
 class ImbalancedClassificationTrainer(Trainer):
@@ -439,15 +440,28 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset = dataset.rename_column("labels", "label")
         weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
 
-    dataset = dataset.map(  # Trim excess bytes before hitting tokenizer for performance.
-        partial(preprocess_a, max_length=args.max_length),
+    # Converts the first `max_length` "bytes" into a UTF-8 "text" column.
+    # We trim the bytes initially to reduce the memory footprint when tokenizing.
+    # Additional bytes are left (more than `args.mask_length`) for language modeling.
+    dataset = dataset.map(
+        partial(
+            preprocess_a,
+            max_length=args.max_length * DEPTH if args.task in ("mlm", "clm") else args.max_length,
+        ),
         batched=True,
-        remove_columns=["bytes", "size", "length"],
     )
-    dataset = dataset.map(  # The partial function here is picky (`tokenizer` must be arg not kwd).
-        partial(tokenize_fn, tokenizer, truncation=True, max_length=args.max_length),
+    # Converts the "text" column into a "input_ids" column.
+    # Additional rows are added for language modeling.
+    dataset = dataset.map(
+        partial(
+            tokenize_fn,  # The partial function here is picky (`tokenizer` must be arg not kwd).
+            tokenizer,
+            truncation=True,
+            max_length=args.max_length,
+            return_overflowing_tokens=args.task in ("mlm", "clm"),
+        ),
         batched=True,
-        remove_columns=["text"],
+        remove_columns=dataset["tr"].column_names,
     )
 
     config = get_config(
