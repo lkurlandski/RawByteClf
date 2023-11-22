@@ -62,22 +62,22 @@ def get_fast_tokenizer(tokenizer_object: Tokenizer, **kwds) -> PreTrainedTokeniz
     return tokenizer
 
 
-def preprocess_a(examples: Any, max_length: Optional[int] = None) -> dict:
+def preprocess_a(examples: dict[str, list], max_length: Optional[int] = None) -> dict[str, list]:
     """This is about half the speed of preprocess_b, but lets us use the vast HF ecosystem."""
     return {
         "text": [b[0:max_length].decode("latin1") for b in examples["bytes"]],
     }
 
 
-def preprocess_b(examples: Any) -> dict:
+def preprocess_b(examples: dict[str, list]) -> dict[str, list]:
     return {
         "input_ids": [np.frombuffer(b, dtype=np.uint8) for b in examples["bytes"]],
     }
 
 
-def tokenize_fn(tokenizer: PreTrainedTokenizerFast, examples: Any, **kwds) -> dict:
+def tokenize_fn(tokenizer: PreTrainedTokenizerFast, examples: Any, **kwds) -> dict[str, list]:
     """
-    Suggested kwds include truncation=True, max_length=max_length, etc.
+    Suggested kwds include truncation=True, max_length=max_length, return_overflowing_tokens=True...
     """
     return tokenizer(examples["text"], **kwds)
 
