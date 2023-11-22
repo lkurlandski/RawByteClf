@@ -363,6 +363,13 @@ def get_model(
     return get_model_from_config(task, config)
 
 
+def compute_total_steps(n_samples: int, n_epochs: int, batch_size: int, n_accumulation: int) -> int:
+    q, r = divmod(n_samples * n_epochs, batch_size * n_accumulation)
+    if r == 0:
+        return q
+    return q + 1
+
+
 def main(args: Args, training_arguments: TrainingArguments) -> None:
     TYPE = get_model_type(args.model_name_or_path)
 
@@ -395,11 +402,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     if STREAMING:
-        max_steps = (  # FIXME: ensure correct for multi-gpu setup
-            len(dataset["tr"])
-            * training_arguments.num_train_epochs
-            // training_arguments.per_device_train_batch_size
-            + 1
+        max_steps = compute_total_steps(
+            len(dataset["tr"]),
+            training_arguments.num_train_epochs,
+            training_arguments.per_device_train_batch_size,
+            training_arguments.gradient_accumulation_steps,
         )
         training_arguments = replace(training_arguments, max_steps=max_steps)
         # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
