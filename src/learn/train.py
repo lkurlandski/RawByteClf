@@ -408,13 +408,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     if STREAMING:
-        max_steps = compute_total_steps(
-            len(dataset["tr"]),
-            training_arguments.num_train_epochs,
-            training_arguments.per_device_train_batch_size,
-            training_arguments.gradient_accumulation_steps,
-        )
-        training_arguments = replace(training_arguments, max_steps=max_steps)
+        if training_arguments.max_steps is None:
+            max_steps = compute_total_steps(
+                len(dataset["tr"]),
+                training_arguments.num_train_epochs,
+                training_arguments.per_device_train_batch_size,
+                training_arguments.gradient_accumulation_steps,
+            )
+            training_arguments = replace(training_arguments, max_steps=max_steps)
         # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
         ds = IterableDatasetDict()
         ds["tr"] = dataset["tr"].to_iterable_dataset(
@@ -461,7 +462,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         ),
         batched=True,
-        remove_columns=dataset["tr"].column_names,
+        remove_columns=["name", "size", "length", "bytes", "text"]
     )
 
     config = get_config(
