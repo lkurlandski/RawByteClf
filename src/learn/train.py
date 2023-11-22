@@ -381,6 +381,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         training_arguments,
         output_dir=oh.checkpoints_dir.as_posix(),
         load_best_model_at_end=True,
+        resume_from_checkpoint=(
+            True
+            if training_arguments.resume_from_checkpoint == "last-checkpoint"
+            else training_arguments.resume_from_checkpoint
+        ),
     )
     print(f"{training_arguments=}")
     print(BR, flush=True)
@@ -487,7 +492,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{callbacks=}")
 
     if TYPE == "HF":
-        ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
+        if args.task == "clf":
+            ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
+        elif args.task in ("mlm", "clm"):
+            ModelTrainer = Trainer
     elif TYPE == "MC":
         ModelTrainer = MalConvTrainer
 
