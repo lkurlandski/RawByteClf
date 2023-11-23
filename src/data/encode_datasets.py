@@ -101,7 +101,7 @@ def encode_dataset(
         temp_dir = Path(tempfile.mkdtemp(dir=TMP_DIR))
         dataset.save_to_disk(temp_dir.as_posix(), max_shard_size=MAX_SHARD_SIZE)
         shutil.rmtree(path)
-        temp_dir.rename(path)
+        shutil.move(temp_dir.as_posix(), path.as_posix())
 
     return dataset
 
