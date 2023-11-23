@@ -17,6 +17,7 @@ if __name__ == "__main__":
 
 from datasets import concatenate_datasets, ClassLabel, Dataset, DatasetDict, Features, Value
 import numpy as np
+from tqdm import tqdm
 
 from src.cfg import INPUT_PATH, OUTPUT_PATH
 from src.data.cfg import BODMAS_LABELS_FILE, BODMAS_DIST_FILE
@@ -87,10 +88,13 @@ def tr_vl_ts_split(dataset: Dataset, vl_size: float, ts_size: float) -> DatasetD
 
 
 def get_sorel_dataset(subset: Optional[int] = None) -> DatasetDict:
-    dataset = concatenate_datasets([Dataset.load_from_disk(p) for p in INPUT_PATH.glob("sorel_*")])
+    # files = [INPUT_PATH / f"sorel_pe_{i}" for i in range(0, 32)]
+    # ds = [Dataset.load_from_disk(f) for f in tqdm(files, desc="Loading SOREL...")]
+    # dataset = concatenate_datasets(ds)
+    dataset = Dataset.load_from_disk(INPUT_PATH / "sorel_pe_0")
     if subset:
         dataset = dataset.select(range(subset))
-    dataset = tr_vl_ts_split(dataset, vl_size=0.1, ts_size=0.1)
+    dataset = tr_vl_ts_split(dataset, vl_size=0.05, ts_size=0.05)
     return dataset
 
 
