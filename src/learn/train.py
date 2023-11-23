@@ -80,7 +80,7 @@ NUM_HIDDEN_LAYERS = 4
 NUM_ATTENTION_HEADS = 8
 SUBSET = None
 STREAMING = True
-BODMAS_TOP_K = 100
+BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
 
@@ -459,15 +459,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             training_arguments = replace(training_arguments, max_steps=max_steps)
         # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
         ds = IterableDatasetDict()
-        ds["tr"] = dataset["tr"].to_iterable_dataset(
-            num_shards=training_arguments.dataloader_num_workers
-        )
-        ds["ts"] = dataset["ts"].to_iterable_dataset(
-            num_shards=training_arguments.dataloader_num_workers
-        )
-        ds["vl"] = dataset["vl"].to_iterable_dataset(
-            num_shards=training_arguments.dataloader_num_workers
-        )
+        num_shards = training_arguments.dataloader_num_workers
+        if not training_arguments.dataloader_num_workers:
+            num_shards = 1
+        ds["tr"] = dataset["tr"].to_iterable_dataset(num_shards)
+        ds["ts"] = dataset["ts"].to_iterable_dataset(num_shards)
+        ds["vl"] = dataset["vl"].to_iterable_dataset(num_shards)
         dataset = ds
         del ds
 
