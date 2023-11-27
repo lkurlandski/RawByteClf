@@ -17,7 +17,7 @@ from datasets.formatting.formatting import LazyBatch, LazyRow
 import numpy as np
 from tokenizers import models, pre_tokenizers, Tokenizer, Regex
 import torch
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from src.cfg import INPUT_PATH, OUTPUT_PATH
 from src.utils import count_parameters
@@ -58,6 +58,13 @@ def get_tokenizer_object() -> Tokenizer:
 def get_fast_tokenizer(tokenizer_object: Tokenizer, **kwds) -> PreTrainedTokenizerFast:
     """Suggested kwds are max_length."""
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer_object, **(kwds | SPECIALS))
+    tokenizer.add_special_tokens(SPECIALS)
+    return tokenizer
+
+
+def get_slow_tokenizer(tokenizer_object: Tokenizer, **kwds) -> PreTrainedTokenizerFast:
+    """Suggested kwds are max_length."""
+    tokenizer = PreTrainedTokenizer(tokenizer_object=tokenizer_object, **(kwds | SPECIALS))
     tokenizer.add_special_tokens(SPECIALS)
     return tokenizer
 
