@@ -4,30 +4,30 @@
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=01-00:00:00
+#SBATCH --time=05-00:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=1
-#SBATCH --ntasks=16
-#SBATCH --mem=32G
-#SBATCH --gres=gpu:a100:1
+#SBATCH --cpus-per-task=3
+#SBATCH --ntasks=9
+#SBATCH --mem=256G
+#SBATCH --gres=gpu:a100:4
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
 # export CUDA_VISIBLE_DEVICES=1
 # export CUDA_LAUNCH_BLOCKING=1
-# export TRANSFORMERS_VERBOSITY="debug"
+# export TRANSFORMERS_VERBOSITY="info"
 
-strategy="epoch"
-steps=10
+strategy="steps"
+steps=200
 
-#torchrun --standalone --nnodes=1 --nproc_per_node=1 \
+torchrun --no-python --nnodes=1 --nproc_per_node=4 \
 python \
 src/learn/train.py \
 --root="./output" \
---model_name_or_path="reformer" \
---max_length=4096 \
---task="clf" \
+--model_name_or_path="longformer" \
+--max_length=16384 \
+--task="mlm" \
 --do_train \
 --do_eval \
 --output_dir=tmp \
@@ -38,16 +38,21 @@ src/learn/train.py \
 --evaluation_strategy=$strategy \
 --eval_steps=$steps \
 --logging_steps=$steps \
---dataloader_num_workers=8 \
---num_train_epochs=200 \
---per_device_train_batch_size=64 \
---per_device_eval_batch_size=64 \
---gradient_accumulation_steps=4 \
+--dataloader_num_workers=2 \
+--max_steps=1000000 \
+--per_device_train_batch_size=8 \
+--per_device_eval_batch_size=8 \
+--gradient_accumulation_steps=32 \
+--eval_accumulation_steps=4 \
+--warmup_steps=1000 \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
 --weight_decay=0.01 \
 --save_total_limit=5 \
 --fp16 \
---auto_find_batch_size
+--fp16_full_eval \
+--tf32=true
+#--optim="adamw_8bit"
+#--fsdp="shard_grad_op"
 #--group_by_length
-#--tf32=true  # REQUIRES =true
+# REQUIRES =true

@@ -94,7 +94,7 @@ def get_sorel_dataset(subset: Optional[int] = None) -> DatasetDict:
     dataset = Dataset.load_from_disk(INPUT_PATH / "sorel_pe_0")
     if subset:
         dataset = dataset.select(range(subset))
-    dataset = tr_vl_ts_split(dataset, vl_size=0.05, ts_size=0.05)
+    dataset = tr_vl_ts_split(dataset, vl_size=0.01, ts_size=0.04)
     return dataset
 
 

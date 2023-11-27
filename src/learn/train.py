@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import partial
+import gc
 import json
 from pathlib import Path
 from pprint import pformat, pprint
@@ -228,6 +229,8 @@ class CLFComputeMetrics(ComputeMetrics):
         return label_ids.astype(np.int64)
 
 
+# FIXME: using this seems to cause OOM errors during the evaluation loop.
+# It seems reasonable to suspect that the CLFComputeMetrics has similar issues.
 class MLMComputeMetrics(ComputeMetrics):
     def __call__(self, eval_pred: EvalPrediction) -> dict[str, float | dict]:
         # predictions (B, L, M)
@@ -580,9 +583,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             data_collator=data_collator,
             tokenizer=tokenizer,
             callbacks=callbacks,
-            compute_metrics=compute_metrics,
+            #compute_metrics=compute_metrics,
         )
-
+        gc.collect()
         print("Training...")
         trainer.train(training_arguments.resume_from_checkpoint)
         if training_arguments.load_best_model_at_end:
