@@ -471,7 +471,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     # CLM/MLM heads ignore classification-specific arugments.
     if args.task in ("mlm", "clm"):
         num_classes, id2label, label2id = None, {}, {}
-        dataset = dataset.remove_columns("labels")
     elif args.task == "clf":
         num_classes = dataset["tr"].info.features["labels"].num_classes
         id2label = {i: l for i, l in enumerate(dataset["tr"].info.features["labels"].names)}
@@ -514,7 +513,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         ),
         batched=True,
-        remove_columns=["name", "size", "length", "bytes", "text"],
+        remove_columns=["name", "bytes", "labels", "size", "length", "text"],
     )
 
     pad_to_multiple_of = PAD_TO

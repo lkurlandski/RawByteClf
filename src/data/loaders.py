@@ -114,7 +114,6 @@ def get_bodmas_dataset(
         examples["labels"] = [id2label[int(i)] for i in examples["labels"]]
         return examples
 
-
     dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe")
     # dataset.cleanup_cache_files()  # TODO: uncomment after testing complete.
 
@@ -134,3 +133,52 @@ def get_bodmas_dataset(
     dataset = dataset.select(range(subset)) if subset else dataset
     dataset = tr_vl_ts_split_with_guarentees(dataset, vl_size, ts_size, samples_per_class)
     return dataset, dist
+
+
+def test():
+    from src.learn.train import DEPTH
+    from src.learn.utils import get_tokenizer_object, get_fast_tokenizer, tokenize_fn, preprocess_a
+
+    max_length = 4096
+    task = "mlm"
+    tokenizer = get_fast_tokenizer(get_tokenizer_object(), max_length=max_length)
+    dataset = get_sorel_dataset(subset=1024)["tr"].to_iterable_dataset()
+    print(dataset.column_names)
+    print_dataset(dataset, 16)
+
+    dataset = dataset.map(
+        partial(
+            preprocess_a,
+            max_length=max_length * DEPTH if task in ("mlm", "clm") else max_length,
+        ),
+        batched=True,
+    )
+    print(dataset.column_names)
+    print_dataset(dataset, 16)
+    # Converts the "text" column into a "input_ids" column.
+    # Additional rows are added for language modeling.
+    remove_columns = ["name", "bytes", "labels", "size", "length", "text"]
+    dataset = dataset.map(
+        partial(
+            tokenize_fn,  # The partial function here is picky (`tokenizer` must be arg not kwd).
+            tokenizer,
+            truncation=True,
+            max_length=max_length,
+            return_overflowing_tokens=task in ("mlm", "clm"),
+        ),
+        batched=True,
+        batch_size=16,
+        remove_columns=remove_columns,
+    )
+    print(dataset.column_names)
+    # print(len(dataset))
+    for i, d in enumerate(dataset):
+        print(len(d["input_ids"]))
+        if i == 16:
+            break
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    test()
