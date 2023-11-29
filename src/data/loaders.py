@@ -91,10 +91,12 @@ def tr_vl_ts_split(dataset: Dataset, vl_size: float | int, ts_size: float | int)
     return dataset
 
 
-def get_sorel_dataset(subset: Optional[int] = None) -> DatasetDict:
+def get_sorel_dataset(subset: Optional[int] = None, vl_size: int | float = None, ts_size: int | float = None) -> DatasetDict:
     files = [INPUT_PATH / f"sorel_pe_{i}" for i in range(0, 32)]
-    vl_size = 10000 if subset is None else 0.1
-    ts_size = 10000 if subset is None else 0.1
+    if vl_size is None:
+        vl_size = 10000 if subset is None else 0.1
+    if ts_size is None:
+        ts_size = 10000 if subset is None else 0.1
 
     print("Loading SOREL...")
     dataset = Dataset.load_from_disk(files.pop(0))
