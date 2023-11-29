@@ -8,6 +8,7 @@ from datetime import datetime
 from functools import partial
 import gc
 import json
+import math
 from pathlib import Path
 from pprint import pformat, pprint
 from typing import Any, Literal, NewType, Optional, TypeAlias
@@ -54,6 +55,9 @@ from transformers import TrainingArguments as HfTrainingArguments
 from transformers.trainer_utils import BestRun, EvalPrediction, PredictionOutput
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
 from ray import tune
+from ray.tune.search.bayesopt import BayesOptSearch
+from ray.tune.search.hyperopt import HyperOptSearch
+from ray.tune.schedulers import ASHAScheduler
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
@@ -66,6 +70,8 @@ from src.learn.utils import (
     get_fast_tokenizer,
     preprocess_a,
     tokenize_fn,
+    float_to_int,
+    compute_total_steps,
 )
 
 # from src.malconv import MalConvModel, MalConvConfig, MalConvTrainer
@@ -88,11 +94,13 @@ INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 4
 NUM_ATTENTION_HEADS = 8
 ATTENTION_WINDOW = 512
-SUBSET = 100
+SUBSET = None
 STREAMING = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
+N_INITIAL_POINTS = 1
+N_TRIALS = 1
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -106,14 +114,45 @@ def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unuse
     """
     - hidden_size % num_attention_heads == 0
     """
+    # L_LEARNING_RATE = 1e-5
+    # U_LEARNING_RATE = 1e-3
+    # L_WEIGHT_DECAY = 1e-5
+    # U_WEIGHT_DECAY = 1e-2
+    # L_INTERMEDIATE_SIZE = 512
+    # U_INTERMEDIATE_SIZE = 2048
+    # Q_INTERMEDIATE_SIZE = PAD_TO
+    # L_NUM_HIDDEN_LAYERS = 1
+    # U_NUM_HIDDEN_LAYERS = 5
+    # Q_NUM_HIDDEN_LAYERS = 1
+    # L_NUM_ATTENTION_HEADS = 2
+    # U_NUM_ATTENTION_HEADS = 8
+    # Q_NUM_ATTENTION_HEADS = 2
+    # L_HIDDEN_SIZE = 240
+    # U_HIDDEN_SIZE = 1032
+    # Q_HIDDEN_SIZE = math.lcm(PAD_TO, *list(range(L_NUM_ATTENTION_HEADS, U_NUM_ATTENTION_HEADS + 1, Q_NUM_ATTENTION_HEADS)))
+    # L_ATTENTION_WINDOW = 128
+    # U_ATTENTION_WINDOW = 4096
+    # Q_ATTENTION_WINDOW = 128
+    # B_ATTENTION_WINDOW = 8
+
+    # return {
+    #     "learning_rate": tune.uniform(L_LEARNING_RATE, U_LEARNING_RATE),
+    #     "weight_decay": tune.uniform(L_WEIGHT_DECAY, U_WEIGHT_DECAY),
+    #     "hidden_size": tune.quniform(L_HIDDEN_SIZE, U_HIDDEN_SIZE, q=Q_HIDDEN_SIZE),
+    #     "intermediate_size": tune.quniform(L_INTERMEDIATE_SIZE, U_INTERMEDIATE_SIZE, q=Q_INTERMEDIATE_SIZE),
+    #     "num_hidden_layers": tune.qrandint(L_NUM_HIDDEN_LAYERS, U_NUM_HIDDEN_LAYERS, q=Q_NUM_HIDDEN_LAYERS),
+    #     "num_attention_heads": tune.qrandint(L_NUM_ATTENTION_HEADS, U_NUM_ATTENTION_HEADS, q=Q_NUM_ATTENTION_HEADS),
+    #     "attention_window": tune.qloguniform(L_ATTENTION_WINDOW, U_ATTENTION_WINDOW, q=Q_ATTENTION_WINDOW, base=B_ATTENTION_WINDOW),
+    # }
+
     return {
         "learning_rate": tune.uniform(1e-5, 1e-3),
         "weight_decay": tune.uniform(1e-5, 1e-2),
-        "hidden_size": tune.quniform(256, 1024, q=PAD_TO),
-        "intermediate_size": tune.quniform(512, 2048, q=PAD_TO),
-        "num_hidden_layers": tune.qrandint(1, 4, q=1),  # quniform causes errors for some reason
-        "num_attention_heads": tune.qrandint(2, 8, q=2),  # quniform causes errors for some reason
-        "attention_window": tune.qloguniform(128, 4096, q=128, base=8),
+        "hidden_size": tune.choice([256, 512, 768, 1024]),
+        "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
+        "num_hidden_layers": tune.choice([1, 2, 3, 4]),
+        "num_attention_heads": tune.choice([1, 2, 4, 8]),
+        "attention_window": tune.choice([128, 256, 512, 1024, 2048, 4096]),
     }
 
 
@@ -181,6 +220,12 @@ def object_to_model_name_or_path(obj) -> str:
     if isinstance(obj, (str | Path)) and Path(obj).exists():
         return object_to_model_name_or_path(AutoConfig.from_pretrained(str(obj)))
     raise RuntimeError()
+
+
+def get_model_type(model: str) -> Literal["HF", "MC"]:
+    if model in ("malconv", "malconv2", "malconvGCG"):
+        return "MC"
+    return "HF"
 
 
 class ImbalancedClassificationTrainer(Trainer):
@@ -342,20 +387,6 @@ class MLMComputeMetrics(ComputeMetrics):
         return y_true.numpy().astype(np.int64)
 
 
-def get_model_type(model: str) -> Literal["HF", "MC"]:
-    if model in ("malconv", "malconv2", "malconvGCG"):
-        return "MC"
-    return "HF"
-
-
-def float_to_int(x: float | int) -> int:
-    if isinstance(x, int):
-        return x
-    if x.is_integer():
-        return int(x)
-    raise TypeError(f"Tried to convert {x=} to int, but it is not an integer.")
-
-
 def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
@@ -507,13 +538,6 @@ def get_model(
     return get_model_from_config(task, config)
 
 
-def compute_total_steps(n_samples: int, n_epochs: int, batch_size: int, n_accumulation: int) -> int:
-    q, r = divmod(n_samples * n_epochs, batch_size * n_accumulation)
-    if r == 0:
-        return q
-    return q + 1
-
-
 def main(args: Args, training_arguments: TrainingArguments) -> None:
     TYPE = get_model_type(args.model_name_or_path)
 
@@ -541,8 +565,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     dataset: DatasetDict
     dist: Counter = None
+
     if args.task in ("mlm", "clm"):
-        dataset: DatasetDict = get_sorel_dataset(subset=SUBSET)
+        if args.do_tune:
+            subset = (16384 // 8) + 1
+            vl_size = subset // 2
+            ts_size = 1
+        else:
+            subset = SUBSET
+            vl_size = None
+            ts_size = None
+        dataset: DatasetDict = get_sorel_dataset(subset=subset, vl_size=vl_size, ts_size=ts_size)
+        del subset, vl_size, ts_size
     elif args.task == "clf":
         dataset, dist = get_bodmas_dataset(
             subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
@@ -750,8 +784,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             ConfusionMatrixDisplay(cf_matrix).plot()
             plt.savefig(oh.test_confusion_matrix_file)
 
+
     if args.do_tune:
-        training_arguments = replace(training_arguments, disable_tqdm=True)
+        training_arguments = replace(training_arguments, disable_tqdm=False, do_eval=True, evaluation_strategy="steps")
         model_init = partial(
             hp_model_init,
             task=args.task,
@@ -773,17 +808,30 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             compute_metrics=compute_metrics,
         )
 
+        search_alg = HyperOptSearch(
+            space=None,
+            metric="eval_loss",
+            mode="min",
+            n_initial_points=N_INITIAL_POINTS,
+        )
+        scheduler = ASHAScheduler(metric="eval_loss", mode="min")
+        print(f"{search_alg=}")
+        print(f"{scheduler=}")
+        print(BR, flush=True)
+
         oh.mkdir()
         oh.tuning_results_dir.mkdir(exist_ok=True, parents=False)
-
         print("Tuning...")
         best_trial: BestRun = trainer.hyperparameter_search(
             hp_space=hp_ray_space,
             compute_objective=hp_compute_objective,
-            n_trials=16,
+            n_trials=N_TRIALS,
             direction="minimize",
             backend="ray",
             hp_name=None,
+            scheduler=scheduler,
+            search_alg=search_alg,
+            resources_per_trial={"cpu": len(os.sched_getaffinity(0)), "gpu": 1},
         )
 
         analysis: tune.ExperimentAnalysis = best_trial.run_summary

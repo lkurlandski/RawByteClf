@@ -163,3 +163,18 @@ def find_executable_batch_size_sub(function: callable = None, starting_batch_siz
                     raise
 
     return decorator
+
+
+def float_to_int(x: float | int) -> int:
+    if isinstance(x, int):
+        return x
+    if x.is_integer():
+        return int(x)
+    raise TypeError(f"Tried to convert {x=} to int, but it is not an integer.")
+
+
+def compute_total_steps(n_samples: int, n_epochs: int, batch_size: int, n_accumulation: int) -> int:
+    q, r = divmod(n_samples * n_epochs, batch_size * n_accumulation)
+    if r == 0:
+        return q
+    return q + 1
