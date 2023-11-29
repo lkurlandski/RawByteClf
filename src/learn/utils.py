@@ -110,7 +110,9 @@ def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
     return (q + 1) * pad_to_multiple_of
 
 
-def find_executable_batch_size_sub(function: callable = None, starting_batch_size: int = 128, subtract: int = 8):
+def find_executable_batch_size_sub(
+    function: callable = None, starting_batch_size: int = 128, subtract: int = 8
+):
     """
     Monkey patch for accelerate.utils.memory.find_executable_batch_size to subtract from
     the batch size rather than dividing by 2.
