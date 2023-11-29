@@ -55,7 +55,6 @@ from transformers import TrainingArguments as HfTrainingArguments
 from transformers.trainer_utils import BestRun, EvalPrediction, PredictionOutput
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
 from ray import tune
-from ray.tune.search.bayesopt import BayesOptSearch
 from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune.schedulers import ASHAScheduler
 
@@ -100,7 +99,7 @@ BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
 N_INITIAL_POINTS = 1
-N_TRIALS = 1
+N_TRIALS = 2  # including the initial points
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -148,6 +147,7 @@ def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unuse
     return {
         "learning_rate": tune.uniform(1e-5, 1e-3),
         "weight_decay": tune.uniform(1e-5, 1e-2),
+        "warmup_steps": tune.choice([250, 500, 750, 1000]),
         "hidden_size": tune.choice([256, 512, 768, 1024]),
         "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
         "num_hidden_layers": tune.choice([1, 2, 3, 4]),
@@ -191,6 +191,8 @@ def hp_model_init(
 
     config = get_config(model_name_or_path, tokenizer, max_length, **(hparams | kwds))
     model = get_model(task, model_name_or_path, config, **kwds)
+    if model is None:
+        raise RuntimeError("Model is None for some reason.")
     return model
 
 
@@ -776,9 +778,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             plt.savefig(oh.test_confusion_matrix_file)
 
     if args.do_tune:
-        training_arguments = replace(
-            training_arguments, disable_tqdm=False, do_eval=True, evaluation_strategy="steps"
-        )
+        training_arguments = replace(training_arguments, do_eval=True, evaluation_strategy="steps")
         model_init = partial(
             hp_model_init,
             task=args.task,
@@ -796,7 +796,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             eval_dataset=dataset["vl"],
             data_collator=data_collator,
             tokenizer=tokenizer,
-            callbacks=callbacks,
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=10)],
             compute_metrics=compute_metrics,
         )
 
@@ -823,7 +823,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             hp_name=None,
             scheduler=scheduler,
             search_alg=search_alg,
-            resources_per_trial={"cpu": len(os.sched_getaffinity(0)), "gpu": 1},
+            resources_per_trial={
+                "cpu": len(os.sched_getaffinity(0)),
+                "gpu": torch.cuda.device_count(),
+            },
         )
 
         analysis: tune.ExperimentAnalysis = best_trial.run_summary
