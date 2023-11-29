@@ -78,7 +78,11 @@ def tr_vl_ts_split_with_guarentees(
     return d
 
 
-def tr_vl_ts_split(dataset: Dataset, vl_size: float, ts_size: float) -> DatasetDict:
+def tr_vl_ts_split(dataset: Dataset, vl_size: float | int, ts_size: float | int) -> DatasetDict:
+    vl_size = vl_size / len(dataset) if isinstance(vl_size, int) else vl_size
+    ts_size = ts_size / len(dataset) if isinstance(ts_size, int) else ts_size
+    assert vl_size < 1.0 and ts_size < 1.0, f"{vl_size=} and {ts_size=} must be less than 1.0."
+
     dataset = dataset.train_test_split(test_size=ts_size)
     dataset["ts"] = dataset.pop("test")
     d = dataset.pop("train").train_test_split(test_size=vl_size / (1 - ts_size))
@@ -88,13 +92,21 @@ def tr_vl_ts_split(dataset: Dataset, vl_size: float, ts_size: float) -> DatasetD
 
 
 def get_sorel_dataset(subset: Optional[int] = None) -> DatasetDict:
-    # files = [INPUT_PATH / f"sorel_pe_{i}" for i in range(0, 32)]
-    # ds = [Dataset.load_from_disk(f) for f in tqdm(files, desc="Loading SOREL...")]
-    # dataset = concatenate_datasets(ds)
-    dataset = Dataset.load_from_disk(INPUT_PATH / "sorel_pe_0")
+    files = [INPUT_PATH / f"sorel_pe_{i}" for i in range(0, 32)]
+    vl_size = 10000 if subset is None else 0.1
+    ts_size = 10000 if subset is None else 0.1
+
+    print("Loading SOREL...")
+    dataset = Dataset.load_from_disk(files.pop(0))
+    while ((subset is None) or (len(dataset) < subset) and files):
+        try:
+            dataset = concatenate_datasets([dataset, Dataset.load_from_disk(files.pop(0))])
+        except FileNotFoundError as err:
+            print(err)
+
     if subset:
         dataset = dataset.select(range(subset))
-    dataset = tr_vl_ts_split(dataset, vl_size=0.01, ts_size=0.04)
+    dataset = tr_vl_ts_split(dataset, vl_size=vl_size, ts_size=ts_size)
     return dataset
 
 
@@ -181,4 +193,6 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
+    d = get_sorel_dataset()
+    print(d)
+    sys.exit(0)
