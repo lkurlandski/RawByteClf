@@ -229,8 +229,8 @@ def get_model_type(model: str) -> Literal["HF", "MC"]:
 
 
 class ImbalancedClassificationTrainer(Trainer):
-    def __init__(self, weight: Optional[Tensor] = None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, weight: Optional[Tensor] = None, **kwargs):
+        super().__init__(**kwargs)
         self.loss_fn = CrossEntropyLoss(weight=weight)
 
     def compute_loss(self, model, inputs, return_outputs=False):
@@ -497,12 +497,13 @@ def get_model(
     config: PretrainedConfig | MalConvConfig,
     **kwds,
 ) -> PreTrainedModel | MalConvModel:
-
     # Get model from disk
     if Path(model_name_or_path).exists():
         if task == "clf":
             if get_model_type(model_name_or_path) == "HF":
-                return AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                return AutoModelForSequenceClassification.from_pretrained(
+                    model_name_or_path, **kwds
+                )
             if get_model_type(model_name_or_path) == "MC":
                 # TODO: match design pattern as from_pretrained()
                 raise NotImplementedError()
@@ -558,7 +559,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.task in ("mlm", "clm"):
         if args.do_tune:
-            subset = (16384 // 8) + 1
+            subset = SUBSET + 1
             vl_size = subset // 2
             ts_size = 1
         else:
@@ -592,7 +593,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         ds["ts"] = dataset["ts"].to_iterable_dataset(num_shards)
         ds["vl"] = dataset["vl"].to_iterable_dataset(num_shards)
         dataset = ds
-        del ds
+        del ds, num_shards
 
     # CLM/MLM heads ignore classification-specific arugments.
     if args.task in ("mlm", "clm"):
@@ -774,9 +775,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             ConfusionMatrixDisplay(cf_matrix).plot()
             plt.savefig(oh.test_confusion_matrix_file)
 
-
     if args.do_tune:
-        training_arguments = replace(training_arguments, disable_tqdm=False, do_eval=True, evaluation_strategy="steps")
+        training_arguments = replace(
+            training_arguments, disable_tqdm=False, do_eval=True, evaluation_strategy="steps"
+        )
         model_init = partial(
             hp_model_init,
             task=args.task,
@@ -830,7 +832,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 def cli():
     parser = HfArgumentParser((Args, TrainingArguments))
-    args, training_arguments = parser.parse_args_into_dataclasses()
+    args, training_arguments = parser.parse_args_into_dataclasses()  # pylint: disable=unbalanced-tuple-unpacking
     main(args, training_arguments)
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
 
