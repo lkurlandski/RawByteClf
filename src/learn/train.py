@@ -778,7 +778,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             plt.savefig(oh.test_confusion_matrix_file)
 
     if args.do_tune:
-        training_arguments = replace(training_arguments, do_eval=True, evaluation_strategy="steps")
+        training_arguments = replace(
+            training_arguments,
+            do_eval=True,
+            evaluation_strategy="steps",
+            fp16_full_eval=False,  # Due to bug in transformers, this must be False.
+        )
         model_init = partial(
             hp_model_init,
             task=args.task,

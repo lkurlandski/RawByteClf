@@ -15,7 +15,7 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
 
-# export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=1
 # export CUDA_LAUNCH_BLOCKING=1
 # export TRANSFORMERS_VERBOSITY="info"
 
@@ -33,13 +33,11 @@ src/learn/train.py \
 --overwrite_output_dir \
 --dataloader_num_workers=2 \
 --evaluation_strategy="steps" \
---eval_steps=100 \
---num_train_epochs=2 \
 --per_device_train_batch_size=8 \
 --per_device_eval_batch_size=8 \
 --gradient_accumulation_steps=32 \
 --optim="adamw_torch" \
 --fp16 \
---fp16_full_eval \
---tf32=true \
+--eval_steps=100 \
+--num_train_epochs=1 \
 --group_by_length
