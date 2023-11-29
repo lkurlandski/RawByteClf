@@ -13,3 +13,7 @@
 - Encode datasets during preprocessing.
 - Craft train, test, and validation sets.
 - Save predictions on each epoch (for evaluating accuracy of low-resource classes)
+
+pip install "ray[tune]"==2.6.3
+pip install bayesian-optimization
+pip install hyperopt
