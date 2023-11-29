@@ -10,7 +10,7 @@ import gc
 import json
 from pathlib import Path
 from pprint import pformat, pprint
-from typing import Literal, NewType, Optional
+from typing import Any, Literal, NewType, Optional, TypeAlias
 import os
 import sys
 
@@ -45,17 +45,17 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerFast,
     Trainer,
-    TrainingArguments,
     LongformerConfig,
     ReformerConfig,
     NystromformerConfig,
     FNetConfig,
 )
-from transformers.trainer_utils import EvalPrediction, PredictionOutput
+from transformers import TrainingArguments as HfTrainingArguments
+from transformers.trainer_utils import BestRun, EvalPrediction, PredictionOutput
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
+from ray import tune
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
-
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.data.utils import print_dataset
 from src.learn.utils import (
@@ -69,9 +69,17 @@ from src.learn.utils import (
 )
 
 # from src.malconv import MalConvModel, MalConvConfig, MalConvTrainer
-MalConvModel = NewType("MalConvModel", object)
-MalConvConfig = NewType("MalConvConfig", object)
-MalConvTrainer = NewType("MalConvTrainer", object)
+
+# Absolutely bizarre, but the below causes and error when hyperparmaeter tuning with ray.
+# `AttributeError: Can't get attribute 'MalConvConfig' on <module '__main__'`
+# MalConvModel = NewType("MalConvModel", object)
+# MalConvConfig = NewType("MalConvConfig", object)
+# MalConvTrainer = NewType("MalConvTrainer", object)
+
+# Pseduo type aliases for the MalConv classes.
+MalConvModel: TypeAlias = PreTrainedModel
+MalConvConfig: TypeAlias = PretrainedConfig
+MalConvTrainer: TypeAlias = Trainer
 
 
 PAD_TO = 8
@@ -79,11 +87,76 @@ HIDDEN_SIZE = 512
 INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 4
 NUM_ATTENTION_HEADS = 8
-SUBSET = None
-STREAMING = True
+ATTENTION_WINDOW = 512
+SUBSET = 100
+STREAMING = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
+
+
+class TrainingArguments(HfTrainingArguments):
+    def __init__(self, **kwds):
+        do_eval = kwds.get("do_eval", False)
+        super().__init__(**kwds)
+        self.do_eval = do_eval
+
+
+def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
+    """
+    - hidden_size % num_attention_heads == 0
+    """
+    return {
+        "learning_rate": tune.uniform(1e-5, 1e-3),
+        "weight_decay": tune.uniform(1e-5, 1e-2),
+        "hidden_size": tune.quniform(256, 1024, q=PAD_TO),
+        "intermediate_size": tune.quniform(512, 2048, q=PAD_TO),
+        "num_hidden_layers": tune.qrandint(1, 4, q=1),  # quniform causes errors for some reason
+        "num_attention_heads": tune.qrandint(2, 8, q=2),  # quniform causes errors for some reason
+        "attention_window": tune.qloguniform(128, 4096, q=128, base=8),
+    }
+
+
+def hp_model_init(
+    trial: Optional[dict[str, Any]],
+    task: str,
+    model_name_or_path: str,
+    tokenizer: Optional[PreTrainedTokenizerFast] = None,
+    max_length: Optional[int] = None,
+    num_labels: Optional[int] = None,
+    id2label: Optional[dict[int, str]] = None,
+    label2id: Optional[dict[str, int]] = None,
+) -> PreTrainedModel | MalConvModel:
+    """
+    Create new model for Optuna hyperaparameter tuning.
+
+    Args:
+        trial (Optional[Trial | dict[str, Any]]): None when first called, optuna.Trial if
+            tuning with optuna, otherwise the parameters for the trial if tuning with ray.
+
+    Cannot use kwds because huggingface checks for a function that takes one and only one parameter.
+    """
+    kwds = {
+        k: v
+        for k, v in {
+            "num_labels": num_labels,
+            "id2label": id2label,
+            "label2id": label2id,
+        }.items()
+        if v
+    }
+    if isinstance(trial, dict):
+        hparams = trial
+    else:
+        hparams = {}
+
+    config = get_config(model_name_or_path, tokenizer, max_length, **(hparams | kwds))
+    model = get_model(task, model_name_or_path, config, **kwds)
+    return model
+
+
+def hp_compute_objective(metrics: dict[str, float]) -> float:
+    return metrics["eval_loss"]
 
 
 RETURN_ATTENTION_MASK = {
@@ -133,6 +206,7 @@ class Args:
     max_length: int = field()
     task: str = field()
     root: Path = field(default=OUTPUT_PATH)
+    do_tune: bool = field(default=False)
 
 
 class OutputHelper:
@@ -181,6 +255,10 @@ class OutputHelper:
     @property
     def test_confusion_matrix_file(self) -> Path:
         return self.test_results_dir / "confusion_matrix.png"
+
+    @property
+    def tuning_results_dir(self) -> Path:
+        return self.path / "tuning_results"
 
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
@@ -270,10 +348,23 @@ def get_model_type(model: str) -> Literal["HF", "MC"]:
     return "HF"
 
 
+def float_to_int(x: float | int) -> int:
+    if isinstance(x, int):
+        return x
+    if x.is_integer():
+        return int(x)
+    raise TypeError(f"Tried to convert {x=} to int, but it is not an integer.")
+
+
 def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
     max_length: Optional[int] = None,
+    num_hidden_layers: int = NUM_HIDDEN_LAYERS,
+    num_attention_heads: int = NUM_ATTENTION_HEADS,
+    hidden_size: int = HIDDEN_SIZE,
+    intermediate_size: int = INTERMEDIATE_SIZE,
+    attention_window: int = ATTENTION_WINDOW,
     **kwds,
 ) -> PretrainedConfig:
     """
@@ -284,38 +375,43 @@ def get_config(
     if Path(model_name_or_path).exists():
         return AutoConfig.from_pretrained(model_name_or_path, **kwds)
 
+    num_hidden_layers = float_to_int(num_hidden_layers)
+    num_attention_heads = float_to_int(num_attention_heads)
+    hidden_size = float_to_int(hidden_size)
+    intermediate_size = float_to_int(intermediate_size)
+    attention_window = float_to_int(attention_window)
+
     vocab_size = pad_to_multiple_of_fn(len(tokenizer), PAD_TO)
     max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
     if model_name_or_path.lower() == "longformer":
-        attention_window = 512
         return LongformerConfig(
-            attention_window=attention_window,
+            vocab_size=vocab_size,
+            max_position_embeddings=pad_to_multiple_of_fn(attention_window + max_length, PAD_TO),
+            num_attention_heads=num_attention_heads,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            num_hidden_layers=num_hidden_layers,
             sep_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            num_hidden_layers=NUM_HIDDEN_LAYERS,
-            num_attention_heads=NUM_ATTENTION_HEADS,
-            vocab_size=vocab_size,
-            hidden_size=HIDDEN_SIZE,
-            intermediate_size=INTERMEDIATE_SIZE,
-            max_position_embeddings=pad_to_multiple_of_fn(attention_window + max_length, PAD_TO),
+            attention_window=attention_window,
             **kwds,
         )
     if model_name_or_path.lower() == "reformer":
         return ReformerConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_length,
-            num_attention_heads=NUM_ATTENTION_HEADS,
-            hidden_size=HIDDEN_SIZE,
-            feed_forward_size=INTERMEDIATE_SIZE,
+            num_attention_heads=num_attention_heads,
+            hidden_size=hidden_size,
+            feed_forward_size=intermediate_size,
+            attn_layers=["local" if i % 2 == 0 else "lsh" for i in range(NUM_HIDDEN_LAYERS)],
             attention_head_size=64,
-            attn_layers=["local", "lsh"],
             axial_norm_std=1.0,
             axial_pos_embds=True,
             axial_pos_shape=list(find_two_largest_factors(max_length)),
-            axial_pos_embds_dim=[HIDDEN_SIZE // 2, HIDDEN_SIZE // 2],
+            axial_pos_embds_dim=[hidden_size // 2, hidden_size // 2],
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
             **kwds,
@@ -324,10 +420,10 @@ def get_config(
         return NystromformerConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
-            num_hidden_layers=NUM_HIDDEN_LAYERS,
-            num_attention_heads=NUM_ATTENTION_HEADS,
-            hidden_size=HIDDEN_SIZE,
-            intermediate_size=INTERMEDIATE_SIZE,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -337,10 +433,10 @@ def get_config(
         return FNetConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
-            num_hidden_layers=NUM_HIDDEN_LAYERS,
-            num_attention_heads=NUM_ATTENTION_HEADS,
-            hidden_size=HIDDEN_SIZE,
-            intermediate_size=INTERMEDIATE_SIZE,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -386,7 +482,7 @@ def get_model_from_disk(
 
 
 def get_model_from_config(
-    task: str, config: PretrainedConfig | MalConvConfig
+    task: str, config: PretrainedConfig  # | MalConvConfig
 ) -> PreTrainedModel | MalConvModel:
     if task == "clf":
         if isinstance(config, PretrainedConfig):
@@ -401,8 +497,11 @@ def get_model_from_config(
 
 
 def get_model(
-    task: str, model_name_or_path: str, config: PretrainedConfig | MalConvConfig, **kwds
-) -> PreTrainedModel | MalConvModel:
+    task: str,
+    model_name_or_path: str,
+    config: PretrainedConfig | MalConvConfig,
+    **kwds,
+) -> PreTrainedModel:  # | MalConvModel:
     if Path(model_name_or_path).exists():
         return get_model_from_disk(task, model_name_or_path, **kwds)
     return get_model_from_config(task, config)
@@ -543,6 +642,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         compute_metrics = None
 
+    # FIXME: figure out the OOM issues with the compute_metrics.
+    compute_metrics = None
+
     print(f"{data_collator=}")
     print(BR, flush=True)
 
@@ -582,9 +684,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             data_collator=data_collator,
             tokenizer=tokenizer,
             callbacks=callbacks,
-            #compute_metrics=compute_metrics,
+            compute_metrics=compute_metrics,
         )
-        gc.collect()
+        gc.collect()  # TODO: determine if this is necessary
         print("Training...")
         trainer.train(training_arguments.resume_from_checkpoint)
         if training_arguments.load_best_model_at_end:
@@ -598,9 +700,27 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 raise NotImplementedError()
             pass
         elif training_arguments.do_train:
-            model = get_model(args.task, oh.best_model_dir, config)
+            # TODO: added the num_labels, id2label, and label2id kwds here for consistency
+            # with other parts of the code, but they may not be necessary or even cause errors.
+            model = get_model(
+                args.task,
+                oh.best_model_dir,
+                config,
+                num_labels=num_classes,
+                id2label=id2label,
+                label2id=label2id,
+            )
         else:
-            model = get_model(args.task, args.model_name_or_path, config)
+            # TODO: added the num_labels, id2label, and label2id kwds here for consistency
+            # with other parts of the code, but they may not be necessary or even cause errors.
+            model = get_model(
+                args.task,
+                args.model_name_or_path,
+                config,
+                num_labels=num_classes,
+                id2label=id2label,
+                label2id=label2id,
+            )
         print(f"{model=}")
         print(f"{count_parameters(model)=}")
 
@@ -629,6 +749,45 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             cf_matrix = confusion_matrix(y_true, y_pred)
             ConfusionMatrixDisplay(cf_matrix).plot()
             plt.savefig(oh.test_confusion_matrix_file)
+
+    if args.do_tune:
+        training_arguments = replace(training_arguments, disable_tqdm=True)
+        model_init = partial(
+            hp_model_init,
+            task=args.task,
+            model_name_or_path=args.model_name_or_path,
+            tokenizer=tokenizer,
+            max_length=args.max_length,
+            num_labels=num_classes,
+            id2label=id2label,
+            label2id=label2id,
+        )
+        trainer = ModelTrainer(
+            model_init=model_init,
+            args=training_arguments,
+            train_dataset=dataset["tr"],
+            eval_dataset=dataset["vl"],
+            data_collator=data_collator,
+            tokenizer=tokenizer,
+            callbacks=callbacks,
+            compute_metrics=compute_metrics,
+        )
+
+        oh.mkdir()
+        oh.tuning_results_dir.mkdir(exist_ok=True, parents=False)
+
+        print("Tuning...")
+        best_trial: BestRun = trainer.hyperparameter_search(
+            hp_space=hp_ray_space,
+            compute_objective=hp_compute_objective,
+            n_trials=16,
+            direction="minimize",
+            backend="ray",
+            hp_name=None,
+        )
+
+        analysis: tune.ExperimentAnalysis = best_trial.run_summary
+        analysis.dataframe().to_csv(oh.tuning_results_dir / "dataframe.csv")
 
 
 def cli():
