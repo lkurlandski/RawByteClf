@@ -491,30 +491,31 @@ def get_config(
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
 
 
-def get_model_from_disk(
+def get_model(
     task: str,
     model_name_or_path: str,
+    config: PretrainedConfig | MalConvConfig,
     **kwds,
 ) -> PreTrainedModel | MalConvModel:
-    if task == "clf":
-        if get_model_type(model_name_or_path) == "HF":
-            return AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
-        if get_model_type(model_name_or_path) == "MC":
-            # TODO: match design pattern as from_pretrained()
-            raise NotImplementedError()
-            # model = MalConvModel(config)
-            # model.load_state_dict(MalConvModel.get_state_dict(model_name_or_path))
-            # return model
-    if task == "mlm":
-        return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
-    if task == "clm":
-        return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
-    raise RuntimeError()
 
+    # Get model from disk
+    if Path(model_name_or_path).exists():
+        if task == "clf":
+            if get_model_type(model_name_or_path) == "HF":
+                return AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+            if get_model_type(model_name_or_path) == "MC":
+                # TODO: match design pattern as from_pretrained()
+                raise NotImplementedError()
+                # model = MalConvModel(config)
+                # model.load_state_dict(MalConvModel.get_state_dict(model_name_or_path))
+                # return model
+        if task == "mlm":
+            return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
+        if task == "clm":
+            return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
+        raise RuntimeError()
 
-def get_model_from_config(
-    task: str, config: PretrainedConfig  # | MalConvConfig
-) -> PreTrainedModel | MalConvModel:
+    # Get model from config
     if task == "clf":
         if isinstance(config, PretrainedConfig):
             return AutoModelForSequenceClassification.from_config(config)
@@ -525,17 +526,6 @@ def get_model_from_config(
     if task == "clm":
         return AutoModelForCausalLM.from_config(config)
     raise RuntimeError()
-
-
-def get_model(
-    task: str,
-    model_name_or_path: str,
-    config: PretrainedConfig | MalConvConfig,
-    **kwds,
-) -> PreTrainedModel:  # | MalConvModel:
-    if Path(model_name_or_path).exists():
-        return get_model_from_disk(task, model_name_or_path, **kwds)
-    return get_model_from_config(task, config)
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
