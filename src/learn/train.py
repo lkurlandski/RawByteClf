@@ -93,13 +93,13 @@ INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 4
 NUM_ATTENTION_HEADS = 8
 ATTENTION_WINDOW = 512
-SUBSET = None
+SUBSET = 16384
 STREAMING = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
-N_INITIAL_POINTS = 1
-N_TRIALS = 2  # including the initial points
+N_INITIAL_POINTS = 8 # 512
+N_TRIALS = 16  # including the initial points
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -783,6 +783,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             do_eval=True,
             evaluation_strategy="steps",
             fp16_full_eval=False,  # Due to bug in transformers, this must be False.
+            load_best_model_at_end=False,  # Greater flexibility with eval_steps.
+            disable_tqdm=torch.cuda.device_count() > 1,  # Unreadable when using multiple GPUs.
         )
         model_init = partial(
             hp_model_init,
@@ -801,7 +803,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             eval_dataset=dataset["vl"],
             data_collator=data_collator,
             tokenizer=tokenizer,
-            callbacks=[EarlyStoppingCallback(early_stopping_patience=10)],
+            callbacks=None,
             compute_metrics=compute_metrics,
         )
 
@@ -812,8 +814,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             n_initial_points=N_INITIAL_POINTS,
         )
         scheduler = ASHAScheduler(metric="eval_loss", mode="min")
+        resources_per_trial = {
+            "cpu": len(os.sched_getaffinity(0)) // torch.cuda.device_count(),
+            "gpu": 1,
+        }
         print(f"{search_alg=}")
         print(f"{scheduler=}")
+        print(f"{resources_per_trial=}")
         print(BR, flush=True)
 
         oh.mkdir()
@@ -828,10 +835,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             hp_name=None,
             scheduler=scheduler,
             search_alg=search_alg,
-            resources_per_trial={
-                "cpu": len(os.sched_getaffinity(0)),
-                "gpu": torch.cuda.device_count(),
-            },
+            resources_per_trial=resources_per_trial,
         )
 
         analysis: tune.ExperimentAnalysis = best_trial.run_summary
