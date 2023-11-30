@@ -57,6 +57,7 @@ from transformers.models.reformer.modeling_reformer import _get_least_common_mul
 from ray import tune
 from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune.schedulers import ASHAScheduler
+from ray.tune import TuneError
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
@@ -98,7 +99,7 @@ STREAMING = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
-N_INITIAL_POINTS = 8 # 512
+N_INITIAL_POINTS = 8  # 512
 N_TRIALS = 16  # including the initial points
 
 
@@ -818,25 +819,48 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             "cpu": len(os.sched_getaffinity(0)) // torch.cuda.device_count(),
             "gpu": 1,
         }
+        raise_on_failed_trial = False
         print(f"{search_alg=}")
         print(f"{scheduler=}")
         print(f"{resources_per_trial=}")
+        print(f"{raise_on_failed_trial=}")
         print(BR, flush=True)
 
         oh.mkdir()
         oh.tuning_results_dir.mkdir(exist_ok=True, parents=False)
         print("Tuning...")
-        best_trial: BestRun = trainer.hyperparameter_search(
-            hp_space=hp_ray_space,
-            compute_objective=hp_compute_objective,
-            n_trials=N_TRIALS,
-            direction="minimize",
-            backend="ray",
-            hp_name=None,
-            scheduler=scheduler,
-            search_alg=search_alg,
-            resources_per_trial=resources_per_trial,
-        )
+
+        try:
+            best_trial: BestRun = trainer.hyperparameter_search(
+                hp_space=hp_ray_space,
+                compute_objective=hp_compute_objective,
+                n_trials=N_TRIALS,
+                direction="minimize",
+                backend="ray",
+                hp_name=None,
+                scheduler=scheduler,
+                search_alg=search_alg,
+                resources_per_trial=resources_per_trial,
+                raise_on_failed_trial=raise_on_failed_trial,
+            )
+        except TuneError as err:
+            print(BR, flush=True)
+            print(
+                f"Encountered a TuneError with {raise_on_failed_trial=}."
+                "If raise_on_failed_trial=True or raise_on_failed_trial=None, then this indicates"
+                "that at least one trial failed. To avoid this, set raise_on_failed_trial=False."
+            )
+            print(BR, flush=True)
+            raise err
+        except AttributeError as err:
+            print(BR, flush=True)
+            print(
+                f"Encountered an AttributeError with {raise_on_failed_trial=}."
+                "If raise_on_failed_trial=False, then this most likely indicates"
+                "that every trial failed."
+            )
+            print(BR, flush=True)
+            raise err
 
         analysis: tune.ExperimentAnalysis = best_trial.run_summary
         analysis.dataframe().to_csv(oh.tuning_results_dir / "dataframe.csv")
@@ -844,7 +868,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 def cli():
     parser = HfArgumentParser((Args, TrainingArguments))
-    args, training_arguments = parser.parse_args_into_dataclasses()  # pylint: disable=unbalanced-tuple-unpacking
+    # pylint: disable=unbalanced-tuple-unpacking
+    args, training_arguments = parser.parse_args_into_dataclasses()
+    # pylint: enable=unbalanced-tuple-unpacking
     main(args, training_arguments)
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
 

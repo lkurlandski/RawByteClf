@@ -38,7 +38,6 @@ src/learn/train.py \
 --gradient_accumulation_steps=32 \
 --optim="adamw_torch" \
 --fp16 \
---eval_steps=10 \
---max_steps=100 \
---group_by_length \
---disable_tqdm
+--eval_steps=1 \
+--max_steps=2 \
+--group_by_length
