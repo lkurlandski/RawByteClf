@@ -99,8 +99,8 @@ STREAMING = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
-N_INITIAL_POINTS = 8  # 512
-N_TRIALS = 16  # including the initial points
+N_INITIAL_POINTS = 32
+N_TRIALS = 256  # including the initial points
 
 
 class TrainingArguments(HfTrainingArguments):
