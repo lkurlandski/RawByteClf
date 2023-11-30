@@ -147,8 +147,8 @@ def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unuse
 
     return {
         "learning_rate": tune.uniform(1e-5, 1e-3),
-        "weight_decay": tune.uniform(1e-5, 1e-2),
-        "warmup_steps": tune.choice([250, 500, 750, 1000]),
+        # "weight_decay": tune.uniform(1e-5, 1e-2),
+        # "warmup_steps": tune.choice([250, 500, 750, 1000]),
         "hidden_size": tune.choice([256, 512, 768, 1024]),
         "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
         "num_hidden_layers": tune.choice([1, 2, 3, 4]),
@@ -814,7 +814,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             mode="min",
             n_initial_points=N_INITIAL_POINTS,
         )
-        scheduler = ASHAScheduler(metric="eval_loss", mode="min")
+        scheduler = None  # ASHAScheduler(metric="eval_loss", mode="min")
         resources_per_trial = {
             "cpu": len(os.sched_getaffinity(0)) // torch.cuda.device_count(),
             "gpu": 1,
@@ -838,7 +838,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 direction="minimize",
                 backend="ray",
                 hp_name=None,
-                scheduler=scheduler,
+                # scheduler=scheduler,
                 search_alg=search_alg,
                 resources_per_trial=resources_per_trial,
                 raise_on_failed_trial=raise_on_failed_trial,
