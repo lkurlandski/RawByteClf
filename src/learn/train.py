@@ -2,6 +2,8 @@
 Train and evaluate the models for malware family classification.
 """
 
+print(f"Entered {__file__=}")
+
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -16,6 +18,7 @@ import os
 import sys
 
 if __name__ == "__main__":
+    print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: disable=wrong-import-position
 
@@ -816,7 +819,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         scheduler = None  # ASHAScheduler(metric="eval_loss", mode="min")
         resources_per_trial = {
-            "cpu": len(os.sched_getaffinity(0)) // torch.cuda.device_count(),
+            "cpu": 2,
             "gpu": 1,
         }
         raise_on_failed_trial = False

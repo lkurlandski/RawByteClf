@@ -37,7 +37,7 @@ src/learn/train.py \
 --per_device_eval_batch_size=8 \
 --gradient_accumulation_steps=32 \
 --optim="adamw_torch" \
---eval_steps=10 \
+--eval_steps=50 \
 --max_steps=100 \
 --fp16 \
 --tf32=true \
