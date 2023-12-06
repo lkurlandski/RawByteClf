@@ -92,13 +92,13 @@ MalConvTrainer: TypeAlias = Trainer
 
 
 PAD_TO = 8
-HIDDEN_SIZE = 512
+HIDDEN_SIZE = 1024
 INTERMEDIATE_SIZE = 1024
-NUM_HIDDEN_LAYERS = 4
-NUM_ATTENTION_HEADS = 8
-ATTENTION_WINDOW = 512
-SUBSET = 16384
-STREAMING = False
+NUM_HIDDEN_LAYERS = 1
+NUM_ATTENTION_HEADS = 4
+ATTENTION_WINDOW = 128
+SUBSET = None
+STREAMING = True
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
@@ -113,6 +113,8 @@ class TrainingArguments(HfTrainingArguments):
         self.do_eval = do_eval
 
 
+# FIXME: when tuning with short runs, we really shouldn't involve any of the parameters
+# associated with optimization, e.g., learning_rate, etc.
 def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
     """
     - hidden_size % num_attention_heads == 0
@@ -234,6 +236,8 @@ def get_model_type(model: str) -> Literal["HF", "MC"]:
     return "HF"
 
 
+# FIXME: this uses mean pooling prior to classification layer.
+# should the hidden state of [CLS] token be used instead?
 class ImbalancedClassificationTrainer(Trainer):
     def __init__(self, weight: Optional[Tensor] = None, **kwargs):
         super().__init__(**kwargs)
@@ -677,6 +681,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     compute_metrics = None
 
     print(f"{data_collator=}")
+    print(f"{compute_metrics=}")
     print(BR, flush=True)
 
     callbacks = []  # [EarlyStoppingCallback(early_stopping_patience=5)]
@@ -755,6 +760,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{model=}")
         print(f"{count_parameters(model)=}")
 
+        if isinstance(compute_metrics, ComputeMetrics):
+            compute_metrics.set_detailed(True)
+        
         trainer = ModelTrainer(
             model=model,
             args=training_arguments,
@@ -766,7 +774,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         oh.test_results_dir.mkdir(exist_ok=True, parents=False)
         print("Evaluating...")
-        compute_metrics.set_detailed(True)
         output: PredictionOutput = trainer.predict(dataset["ts"])
 
         results = output.metrics
