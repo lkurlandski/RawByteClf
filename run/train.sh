@@ -4,12 +4,12 @@
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=01-00:00:00
+#SBATCH --time=05-00:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=3
-#SBATCH --ntasks=3
-#SBATCH --mem=64G
-#SBATCH --gres=gpu:a100:1
+#SBATCH --ntasks=9
+#SBATCH --mem=96G
+#SBATCH --gres=gpu:a100:4
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
@@ -18,14 +18,14 @@ conda activate RawByteClf
 # export CUDA_LAUNCH_BLOCKING=1
 # export TRANSFORMERS_VERBOSITY="info"
 
-strategy="epoch"
+strategy="steps"
 save_eval_steps=100
 logging_steps=10
 
-torchrun --no-python --standalone --nnodes=1 --nproc_per_node=4 \
+torchrun --no-python --nnodes=1 --nproc_per_node=4 \
 python \
 src/learn/train.py \
---root="./output_test_overfitting" \  # FIXME: select output directory!!!
+--root="./output" \
 --model_name_or_path="longformer" \
 --max_length=16384 \
 --task="mlm" \
@@ -45,8 +45,8 @@ src/learn/train.py \
 --gradient_accumulation_steps=32 \
 --max_steps=10000 \
 --optim="adamw_torch" \
---learning_rate="1e-4" \
---weight_decay=0.01 \
+--learning_rate="5e-4" \
+--weight_decay=0.005 \
 --warmup_steps=500 \
 --save_total_limit=5 \
 --fp16 \
