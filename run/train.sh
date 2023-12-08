@@ -8,7 +8,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=3
 #SBATCH --ntasks=9
-#SBATCH --mem=96G
+#SBATCH --mem=256G
 #SBATCH --gres=gpu:a100:4
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -43,6 +43,7 @@ src/learn/train.py \
 --per_device_train_batch_size=8 \
 --per_device_eval_batch_size=8 \
 --gradient_accumulation_steps=32 \
+--eval_accumulation_steps=4 \
 --max_steps=10000 \
 --optim="adamw_torch" \
 --learning_rate="5e-4" \
