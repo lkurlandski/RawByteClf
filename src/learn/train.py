@@ -34,7 +34,7 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 import torch
 from torch import tensor, Tensor
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, Embedding
 import transformers
 from transformers import (
     AutoConfig,
@@ -92,16 +92,23 @@ MalConvTrainer: TypeAlias = Trainer
 
 
 PAD_TO = 8
+
 HIDDEN_SIZE = 1024
 INTERMEDIATE_SIZE = 1024
 NUM_HIDDEN_LAYERS = 1
 NUM_ATTENTION_HEADS = 4
 ATTENTION_WINDOW = 128
+
 SUBSET = None
 STREAMING = True
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
+
+FINETUNING_FREEZE_POSITIONAL_EMBEDDINGS = True
+FINETUNING_DUPLICATE_POSITIONAL_EMBEDDINGS = True
+FINETUNING_INITIALIZE_POSITIONAL_EMBEDDINGS = False
+
 N_INITIAL_POINTS = 32
 N_TRIALS = 256  # including the initial points
 
@@ -253,6 +260,61 @@ class ImbalancedClassificationTrainer(Trainer):
 
         loss = self.loss_fn(logits.to("cpu"), labels.to("cpu")).to(logits.device)
         return (loss, outputs) if return_outputs else loss
+
+
+def longformer_max_position_embeddings(max_length: int, attention_window: int) -> int:
+    return pad_to_multiple_of_fn(attention_window + max_length, PAD_TO)
+
+
+# TODO: separate the logic of the nn.Embedding from the logic of the PreTrainedModel.
+def modify_positional_embeddings(
+    model: PreTrainedModel,
+    max_position_embeddings: int,
+    freeze: bool = False,
+    duplicate: bool = False,
+    initialize: bool = False,
+    initalizer_range: float = None,
+) -> None:
+    def _extra_duplicate_embeddings(length: int, X: Tensor) -> PreTrainedModel:
+        return torch.cat([X for _ in range(0, length // X.shape[0] + 1)], dim=0)[:length]
+
+    def _extra_random_embeddings(shape: tuple[int], X: Optional[Tensor] = None) -> PreTrainedModel:
+        return torch.normal(mean=0.0, std=initalizer_range, size=shape)
+
+    if not any([freeze, duplicate, initialize]):
+        return model
+    if not isinstance(model, transformers.LongformerForSequenceClassification):
+        raise TypeError(f"Cannot add additional positional embeddings to this model: {type(model)}")
+    if duplicate and initialize:
+        raise ValueError("Must specify either `duplicate` (bool) or `initalize` (bool).")
+    if initialize and initalizer_range is None:
+        raise ValueError("Must specify `initalizer_range` (float) when `initialize` is True.")
+
+    current_embeddings = model.longformer.embeddings.position_embeddings
+    print(f"{current_embeddings=}")
+
+    if duplicate or initialize:
+        extra_embeddings_shape = (
+            max_position_embeddings - current_embeddings.num_embeddings,
+            current_embeddings.embedding_dim,
+        )
+        if duplicate:
+            extra_embeddings = _extra_duplicate_embeddings(
+                extra_embeddings_shape[0], current_embeddings.weight
+            )
+        elif initialize:
+            extra_embeddings = _extra_random_embeddings(extra_embeddings_shape)
+        _new_embeddings = torch.cat([current_embeddings.weight, extra_embeddings], dim=0)
+    else:
+        _new_embeddings = current_embeddings.weight
+
+    new_embeddings = Embedding.from_pretrained(
+        _new_embeddings, freeze=freeze, padding_idx=current_embeddings.padding_idx
+    )
+    model.longformer.embeddings.position_embeddings = new_embeddings
+    print(f"{new_embeddings=}")
+    print(BR, flush=True)
+    return model
 
 
 @dataclass
@@ -428,7 +490,9 @@ def get_config(
     if model_name_or_path.lower() == "longformer":
         return LongformerConfig(
             vocab_size=vocab_size,
-            max_position_embeddings=pad_to_multiple_of_fn(attention_window + max_length, PAD_TO),
+            max_position_embeddings=longformer_max_position_embeddings(
+                max_length, attention_window
+            ),
             num_attention_heads=num_attention_heads,
             hidden_size=hidden_size,
             intermediate_size=intermediate_size,
@@ -639,6 +703,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         ),
         batched=True,
     )
+    remove_columns = ["name", "bytes", "size", "length", "text"]
+    if args.task != "clf":
+        remove_columns.append("labels")
     # Converts the "text" column into a "input_ids" column.
     # Additional rows are added for language modeling.
     dataset = dataset.map(
@@ -650,7 +717,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         ),
         batched=True,
-        remove_columns=["name", "bytes", "labels", "size", "length", "text"],
+        remove_columns=remove_columns,
     )
 
     pad_to_multiple_of = PAD_TO
@@ -710,6 +777,30 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         print(f"{model=}")
         print(f"{count_parameters(model)=}")
+        print(BR, flush=True)
+
+        # FIXME: find a better way of implementing this
+        # FIXME: think about whether this breaks other things or not
+        add_positional_embeddings = args.max_length > model.config.max_position_embeddings
+        if add_positional_embeddings and isinstance(config, LongformerConfig):
+            max_position_embeddings = longformer_max_position_embeddings(
+                args.max_length, config.attention_window[0]
+            )
+        elif add_positional_embeddings:
+            max_position_embeddings = args.max_length
+        else:
+            add_positional_embeddings = model.config.max_position_embeddings
+        model = modify_positional_embeddings(
+            model,
+            max_position_embeddings=max_position_embeddings,
+            duplicate=FINETUNING_DUPLICATE_POSITIONAL_EMBEDDINGS and add_positional_embeddings,
+            initialize=FINETUNING_INITIALIZE_POSITIONAL_EMBEDDINGS and add_positional_embeddings,
+            freeze=FINETUNING_FREEZE_POSITIONAL_EMBEDDINGS,
+            initalizer_range=config.initializer_range,
+        )
+        print(f"{model=}")
+        print(f"{count_parameters(model)=}")
+        print(BR, flush=True)
 
         oh.mkdir()
         trainer = ModelTrainer(
@@ -722,8 +813,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             callbacks=callbacks,
             compute_metrics=compute_metrics,
         )
-        gc.collect()  # TODO: determine if this is necessary
+        gc.collect()
         print("Training...")
+        print(BR, flush=True)
         trainer.train(training_arguments.resume_from_checkpoint)
         if training_arguments.load_best_model_at_end:
             model.save_pretrained(oh.best_model_dir.as_posix())
@@ -762,7 +854,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         if isinstance(compute_metrics, ComputeMetrics):
             compute_metrics.set_detailed(True)
-        
+
         trainer = ModelTrainer(
             model=model,
             args=training_arguments,
