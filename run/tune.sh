@@ -4,7 +4,7 @@
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=01-00:00:00
+#SBATCH --time=05-00:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=3
 #SBATCH --ntasks=9
@@ -20,7 +20,7 @@ conda activate RawByteClf
 # export TRANSFORMERS_VERBOSITY="info"
 
 
-python \
+python -u \
 src/learn/train.py \
 --root="./output" \
 --model_name_or_path="longformer" \
@@ -37,7 +37,8 @@ src/learn/train.py \
 --per_device_eval_batch_size=8 \
 --gradient_accumulation_steps=32 \
 --optim="adamw_torch" \
+--eval_steps=50 \
+--max_steps=100 \
 --fp16 \
---eval_steps=1 \
---max_steps=2 \
+--tf32=true \
 --group_by_length

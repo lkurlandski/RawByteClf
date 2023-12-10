@@ -2,6 +2,8 @@
 Train and evaluate the models for malware family classification.
 """
 
+print(f"Entered {__file__=}")
+
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -16,6 +18,7 @@ import os
 import sys
 
 if __name__ == "__main__":
+    print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: disable=wrong-import-position
 
@@ -89,18 +92,18 @@ MalConvTrainer: TypeAlias = Trainer
 
 
 PAD_TO = 8
-HIDDEN_SIZE = 512
+HIDDEN_SIZE = 1024
 INTERMEDIATE_SIZE = 1024
-NUM_HIDDEN_LAYERS = 4
-NUM_ATTENTION_HEADS = 8
-ATTENTION_WINDOW = 512
-SUBSET = 16384
-STREAMING = False
+NUM_HIDDEN_LAYERS = 1
+NUM_ATTENTION_HEADS = 4
+ATTENTION_WINDOW = 128
+SUBSET = None
+STREAMING = True
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 DEPTH = 4
-N_INITIAL_POINTS = 8  # 512
-N_TRIALS = 16  # including the initial points
+N_INITIAL_POINTS = 32
+N_TRIALS = 256  # including the initial points
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -110,6 +113,8 @@ class TrainingArguments(HfTrainingArguments):
         self.do_eval = do_eval
 
 
+# FIXME: when tuning with short runs, we really shouldn't involve any of the parameters
+# associated with optimization, e.g., learning_rate, etc.
 def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
     """
     - hidden_size % num_attention_heads == 0
@@ -147,8 +152,8 @@ def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unuse
 
     return {
         "learning_rate": tune.uniform(1e-5, 1e-3),
-        "weight_decay": tune.uniform(1e-5, 1e-2),
-        "warmup_steps": tune.choice([250, 500, 750, 1000]),
+        # "weight_decay": tune.uniform(1e-5, 1e-2),
+        # "warmup_steps": tune.choice([250, 500, 750, 1000]),
         "hidden_size": tune.choice([256, 512, 768, 1024]),
         "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
         "num_hidden_layers": tune.choice([1, 2, 3, 4]),
@@ -231,6 +236,8 @@ def get_model_type(model: str) -> Literal["HF", "MC"]:
     return "HF"
 
 
+# FIXME: this uses mean pooling prior to classification layer.
+# should the hidden state of [CLS] token be used instead?
 class ImbalancedClassificationTrainer(Trainer):
     def __init__(self, weight: Optional[Tensor] = None, **kwargs):
         super().__init__(**kwargs)
@@ -674,6 +681,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     compute_metrics = None
 
     print(f"{data_collator=}")
+    print(f"{compute_metrics=}")
     print(BR, flush=True)
 
     callbacks = []  # [EarlyStoppingCallback(early_stopping_patience=5)]
@@ -752,6 +760,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{model=}")
         print(f"{count_parameters(model)=}")
 
+        if isinstance(compute_metrics, ComputeMetrics):
+            compute_metrics.set_detailed(True)
+        
         trainer = ModelTrainer(
             model=model,
             args=training_arguments,
@@ -763,7 +774,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         oh.test_results_dir.mkdir(exist_ok=True, parents=False)
         print("Evaluating...")
-        compute_metrics.set_detailed(True)
         output: PredictionOutput = trainer.predict(dataset["ts"])
 
         results = output.metrics
@@ -814,9 +824,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             mode="min",
             n_initial_points=N_INITIAL_POINTS,
         )
-        scheduler = ASHAScheduler(metric="eval_loss", mode="min")
+        scheduler = None  # ASHAScheduler(metric="eval_loss", mode="min")
         resources_per_trial = {
-            "cpu": len(os.sched_getaffinity(0)) // torch.cuda.device_count(),
+            "cpu": 2,
             "gpu": 1,
         }
         raise_on_failed_trial = False
@@ -838,7 +848,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 direction="minimize",
                 backend="ray",
                 hp_name=None,
-                scheduler=scheduler,
+                # scheduler=scheduler,
                 search_alg=search_alg,
                 resources_per_trial=resources_per_trial,
                 raise_on_failed_trial=raise_on_failed_trial,

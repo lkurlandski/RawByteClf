@@ -98,13 +98,15 @@ def get_sorel_dataset(subset: Optional[int] = None, vl_size: int | float = None,
     if ts_size is None:
         ts_size = 10000 if subset is None else 0.1
 
-    print("Loading SOREL...")
+    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...")
     dataset = Dataset.load_from_disk(files.pop(0))
-    while ((subset is None) or (len(dataset) < subset) and files):
+    while ((subset is None or len(dataset) < subset) and files):
         try:
             dataset = concatenate_datasets([dataset, Dataset.load_from_disk(files.pop(0))])
         except FileNotFoundError as err:
             print(err)
+        except IndexError:
+            break
 
     if subset:
         dataset = dataset.select(range(subset))
