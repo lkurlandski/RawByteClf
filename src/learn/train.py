@@ -2,6 +2,7 @@
 Train and evaluate the models for malware family classification.
 """
 
+# pylint: disable=wrong-import-position
 print(f"Entered {__file__=}")
 
 from collections import Counter
@@ -20,7 +21,7 @@ import sys
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-# pylint: disable=wrong-import-position
+# pylint: enable=wrong-import-position
 
 from datasets import (
     DatasetDict,
@@ -75,6 +76,7 @@ from src.learn.utils import (
     tokenize_fn,
     float_to_int,
     compute_total_steps,
+    str_or_bool_to_str,
 )
 
 # from src.malconv import MalConvModel, MalConvConfig, MalConvTrainer
@@ -103,11 +105,6 @@ SUBSET = None
 STREAMING = True
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
-DEPTH = 4
-
-FINETUNING_FREEZE_POSITIONAL_EMBEDDINGS = True
-FINETUNING_DUPLICATE_POSITIONAL_EMBEDDINGS = True
-FINETUNING_INITIALIZE_POSITIONAL_EMBEDDINGS = False
 
 N_INITIAL_POINTS = 32
 N_TRIALS = 256  # including the initial points
@@ -120,45 +117,13 @@ class TrainingArguments(HfTrainingArguments):
         self.do_eval = do_eval
 
 
-# FIXME: when tuning with short runs, we really shouldn't involve any of the parameters
-# associated with optimization, e.g., learning_rate, etc.
 def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
     """
     - hidden_size % num_attention_heads == 0
     """
-    # L_LEARNING_RATE = 1e-5
-    # U_LEARNING_RATE = 1e-3
-    # L_WEIGHT_DECAY = 1e-5
-    # U_WEIGHT_DECAY = 1e-2
-    # L_INTERMEDIATE_SIZE = 512
-    # U_INTERMEDIATE_SIZE = 2048
-    # Q_INTERMEDIATE_SIZE = PAD_TO
-    # L_NUM_HIDDEN_LAYERS = 1
-    # U_NUM_HIDDEN_LAYERS = 5
-    # Q_NUM_HIDDEN_LAYERS = 1
-    # L_NUM_ATTENTION_HEADS = 2
-    # U_NUM_ATTENTION_HEADS = 8
-    # Q_NUM_ATTENTION_HEADS = 2
-    # L_HIDDEN_SIZE = 240
-    # U_HIDDEN_SIZE = 1032
-    # Q_HIDDEN_SIZE = math.lcm(PAD_TO, *list(range(L_NUM_ATTENTION_HEADS, U_NUM_ATTENTION_HEADS + 1, Q_NUM_ATTENTION_HEADS)))
-    # L_ATTENTION_WINDOW = 128
-    # U_ATTENTION_WINDOW = 4096
-    # Q_ATTENTION_WINDOW = 128
-    # B_ATTENTION_WINDOW = 8
-
-    # return {
-    #     "learning_rate": tune.uniform(L_LEARNING_RATE, U_LEARNING_RATE),
-    #     "weight_decay": tune.uniform(L_WEIGHT_DECAY, U_WEIGHT_DECAY),
-    #     "hidden_size": tune.quniform(L_HIDDEN_SIZE, U_HIDDEN_SIZE, q=Q_HIDDEN_SIZE),
-    #     "intermediate_size": tune.quniform(L_INTERMEDIATE_SIZE, U_INTERMEDIATE_SIZE, q=Q_INTERMEDIATE_SIZE),
-    #     "num_hidden_layers": tune.qrandint(L_NUM_HIDDEN_LAYERS, U_NUM_HIDDEN_LAYERS, q=Q_NUM_HIDDEN_LAYERS),
-    #     "num_attention_heads": tune.qrandint(L_NUM_ATTENTION_HEADS, U_NUM_ATTENTION_HEADS, q=Q_NUM_ATTENTION_HEADS),
-    #     "attention_window": tune.qloguniform(L_ATTENTION_WINDOW, U_ATTENTION_WINDOW, q=Q_ATTENTION_WINDOW, base=B_ATTENTION_WINDOW),
-    # }
 
     return {
-        "learning_rate": tune.uniform(1e-5, 1e-3),
+        # "learning_rate": tune.uniform(1e-5, 1e-3),
         # "weight_decay": tune.uniform(1e-5, 1e-2),
         # "warmup_steps": tune.choice([250, 500, 750, 1000]),
         "hidden_size": tune.choice([256, 512, 768, 1024]),
@@ -243,8 +208,6 @@ def get_model_type(model: str) -> Literal["HF", "MC"]:
     return "HF"
 
 
-# FIXME: this uses mean pooling prior to classification layer.
-# should the hidden state of [CLS] token be used instead?
 class ImbalancedClassificationTrainer(Trainer):
     def __init__(self, weight: Optional[Tensor] = None, **kwargs):
         super().__init__(**kwargs)
@@ -258,7 +221,11 @@ class ImbalancedClassificationTrainer(Trainer):
         outputs = model(**inputs)
         logits = outputs.logits
 
-        loss = self.loss_fn(logits.to("cpu"), labels.to("cpu")).to(logits.device)
+        device = logits.device
+        if self.loss_fn.weight.device != device:
+            self.loss_fn.weight = self.loss_fn.weight.to(device)
+
+        loss = self.loss_fn(logits.view(-1, model.config.num_labels), labels.view(-1))
         return (loss, outputs) if return_outputs else loss
 
 
@@ -266,32 +233,24 @@ def longformer_max_position_embeddings(max_length: int, attention_window: int) -
     return pad_to_multiple_of_fn(attention_window + max_length, PAD_TO)
 
 
-# TODO: separate the logic of the nn.Embedding from the logic of the PreTrainedModel.
-def modify_positional_embeddings(
-    model: PreTrainedModel,
+def _modify_positional_embeddings(
+    current_embeddings: Embedding,
     max_position_embeddings: int,
     freeze: bool = False,
     duplicate: bool = False,
     initialize: bool = False,
     initalizer_range: float = None,
-) -> None:
+) -> Embedding:
     def _extra_duplicate_embeddings(length: int, X: Tensor) -> PreTrainedModel:
         return torch.cat([X for _ in range(0, length // X.shape[0] + 1)], dim=0)[:length]
 
-    def _extra_random_embeddings(shape: tuple[int], X: Optional[Tensor] = None) -> PreTrainedModel:
+    def _extra_random_embeddings(shape: tuple[int]) -> PreTrainedModel:
         return torch.normal(mean=0.0, std=initalizer_range, size=shape)
 
-    if not any([freeze, duplicate, initialize]):
-        return model
-    if not isinstance(model, transformers.LongformerForSequenceClassification):
-        raise TypeError(f"Cannot add additional positional embeddings to this model: {type(model)}")
     if duplicate and initialize:
         raise ValueError("Must specify either `duplicate` (bool) or `initalize` (bool).")
     if initialize and initalizer_range is None:
         raise ValueError("Must specify `initalizer_range` (float) when `initialize` is True.")
-
-    current_embeddings = model.longformer.embeddings.position_embeddings
-    print(f"{current_embeddings=}")
 
     if duplicate or initialize:
         extra_embeddings_shape = (
@@ -308,12 +267,42 @@ def modify_positional_embeddings(
     else:
         _new_embeddings = current_embeddings.weight
 
-    new_embeddings = Embedding.from_pretrained(
+    return Embedding.from_pretrained(
         _new_embeddings, freeze=freeze, padding_idx=current_embeddings.padding_idx
     )
-    model.longformer.embeddings.position_embeddings = new_embeddings
+
+
+def modify_positional_embeddings(
+    model: PreTrainedModel,
+    max_position_embeddings: int,
+    freeze: bool = False,
+    duplicate: bool = False,
+    initialize: bool = False,
+    initalizer_range: float = None,
+) -> PreTrainedModel:
+    if not any([freeze, duplicate, initialize]):
+        return model
+    if not isinstance(model, (transformers.LongformerForSequenceClassification,)):
+        raise TypeError(f"Cannot add additional positional embeddings to this model: {type(model)}")
+
+    if isinstance(model, transformers.LongformerForSequenceClassification):
+        current_embeddings = model.longformer.embeddings.position_embeddings
+
+    print(f"{current_embeddings=}")
+    new_embeddings = _modify_positional_embeddings(
+        current_embeddings,
+        max_position_embeddings,
+        freeze,
+        duplicate,
+        initialize,
+        initalizer_range,
+    )
     print(f"{new_embeddings=}")
     print(BR, flush=True)
+
+    if isinstance(model, transformers.LongformerForSequenceClassification):
+        model.longformer.embeddings.position_embeddings = new_embeddings
+
     return model
 
 
@@ -322,6 +311,10 @@ class Args:
     model_name_or_path: str = field()
     max_length: int = field()
     task: str = field()
+    depth: int = field(default=1)
+    ft_freeze_positional_embeddings: bool | str = field(default=False)
+    ft_duplicate_positional_embeddings: bool | str = field(default=False)
+    ft_initialize_positional_embeddings: bool | str = field(default=False)
     root: Path = field(default=OUTPUT_PATH)
     do_tune: bool = field(default=False)
 
@@ -332,10 +325,29 @@ class OutputHelper:
         model_name_or_path: str,
         max_length: int,
         task: str,
+        depth: int,
+        ft_freeze_positional_embeddings: bool | str,
+        ft_duplicate_positional_embeddings: bool | str,
+        ft_initialize_positional_embeddings: bool | str,
         root: Path,
     ) -> None:
         self.root = Path(root)
-        self.path = self.root.joinpath(model_name_or_path, str(max_length), task)
+        args = [
+            model_name_or_path,
+            str(max_length),
+            task,
+            str(depth),
+            str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
+            str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
+            str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
+        ]
+        self.path = self.root.joinpath(*args)
+
+    def __repr__(self) -> str:
+        return self.path.as_posix()
+
+    def __str__(self) -> str:
+        return self.path.as_posix()
 
     @property
     def best_model_dir(self) -> Path:
@@ -604,9 +616,20 @@ def get_model(
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
+    print(f"{args=}")
+
     TYPE = get_model_type(args.model_name_or_path)
 
-    oh = OutputHelper(args.model_name_or_path, args.max_length, args.task, args.root)
+    oh = OutputHelper(
+        args.model_name_or_path,
+        args.max_length,
+        args.task,
+        args.depth,
+        args.ft_freeze_positional_embeddings,
+        args.ft_duplicate_positional_embeddings,
+        args.ft_initialize_positional_embeddings,
+        args.root,
+    )
     print(f"{oh=}")
     print(BR, flush=True)
 
@@ -699,7 +722,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dataset = dataset.map(
         partial(
             preprocess_a,
-            max_length=args.max_length * DEPTH if args.task in ("mlm", "clm") else args.max_length,
+            max_length=args.max_length * args.depth
+            if args.task in ("mlm", "clm")
+            else args.max_length,
         ),
         batched=True,
     )
@@ -793,9 +818,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         model = modify_positional_embeddings(
             model,
             max_position_embeddings=max_position_embeddings,
-            duplicate=FINETUNING_DUPLICATE_POSITIONAL_EMBEDDINGS and add_positional_embeddings,
-            initialize=FINETUNING_INITIALIZE_POSITIONAL_EMBEDDINGS and add_positional_embeddings,
-            freeze=FINETUNING_FREEZE_POSITIONAL_EMBEDDINGS,
+            duplicate=args.ft_duplicate_positional_embeddings and add_positional_embeddings,
+            initialize=args.ft_initialize_positional_embeddings and add_positional_embeddings,
+            freeze=args.ft_freeze_positional_embeddings,
             initalizer_range=config.initializer_range,
         )
         print(f"{model=}")
