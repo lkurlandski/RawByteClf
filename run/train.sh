@@ -29,6 +29,10 @@ src/learn/train.py \
 --model_name_or_path="longformer" \
 --max_length=16384 \
 --task="mlm" \
+--depth=4 \
+--ft_freeze_positional_embeddings=true \
+--ft_duplicate_positional_embeddings \
+--ft_initialize_positional_embeddings=false \
 --do_train \
 --do_eval \
 --output_dir=tmp \

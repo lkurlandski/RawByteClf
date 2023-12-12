@@ -180,3 +180,17 @@ def compute_total_steps(n_samples: int, n_epochs: int, batch_size: int, n_accumu
     if r == 0:
         return q
     return q + 1
+
+
+def str_or_bool_to_str(s: str | bool) -> bool:
+    if isinstance(s, bool):
+        return s
+    if not isinstance(s, str):
+        raise TypeError(f"Expected str or bool, got {type(s)}")
+
+    if s.lower() in ("true", "yes"):
+        return True
+    if s.lower() in ("false", "no"):
+        return False
+
+    raise ValueError(f"Expected 'true', 'false', 'yes' or 'no', got {s}")
