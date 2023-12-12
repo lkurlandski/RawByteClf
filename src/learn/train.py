@@ -337,10 +337,13 @@ class OutputHelper:
             str(max_length),
             task,
             str(depth),
-            str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
-            str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
-            str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
         ]
+        if task == "clf":
+            args.extend([
+                str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
+                str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
+                str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
+            ])
         self.path = self.root.joinpath(*args)
 
     def __repr__(self) -> str:
