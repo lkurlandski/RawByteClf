@@ -2,6 +2,8 @@
 Called when the package is imported.
 """
 
+print(f"Entered {__file__=}")
+
 import random
 
 import numpy as np
