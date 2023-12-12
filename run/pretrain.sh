@@ -1,65 +1,60 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=pretrain_2_3
+#SBATCH --job-name=train
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=01-00:00:00
+#SBATCH --time=05-00:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=1
-#SBATCH --ntasks=16
-#SBATCH --mem=32G
-#SBATCH --gres=gpu:a100:1
-
-if [ $# -eq 0 ]; then
-  echo "Please provide the log2 of the vocab size as an argument."
-  exit 1
-fi
-
-export vocab_size=$((2**$1 + 6))
-export steps=100
-export strategy="epoch"
+#SBATCH --cpus-per-task=3
+#SBATCH --ntasks=9
+#SBATCH --mem=256G
+#SBATCH --gres=gpu:a100:4
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
-# export CUDA_VISIBLE_DEVICES=0
-# export CUDA_LAUNCH_BLOCKING=1 
+# export CUDA_VISIBLE_DEVICES=1
+# export CUDA_LAUNCH_BLOCKING=1
+# export TRANSFORMERS_VERBOSITY="info"
 
-# torchrun --standalone --nnodes=1 --nproc_per_node=2 \
+strategy="steps"
+save_eval_steps=100
+logging_steps=10
+
+torchrun --no-python --nnodes=1 --nproc_per_node=4 \
 python \
-src/pretrain.py \
---vocab_size=$vocab_size \
---num_tok=1000 \
---num=1 \
---algorithm="Raw" \
---model="longformer" \
---max_length=10000 \
---scale_numerator=2 \
---scale_denominator=3 \
---early_stopping=false \
+src/learn/train.py \
+--root="./output" \
+--model_name_or_path="longformer" \
+--max_length=16384 \
 --task="mlm" \
---pretrain_task="mlm" \
+--depth=4 \
 --do_train \
 --do_eval \
 --output_dir=tmp \
 --overwrite_output_dir \
 --load_best_model_at_end \
 --save_strategy=$strategy \
---save_steps=$steps \
+--save_steps=$save_eval_steps \
 --evaluation_strategy=$strategy \
---eval_steps=$steps \
---logging_steps=$steps \
---dataloader_num_workers=14 \
---num_train_epochs=25 \
+--eval_steps=$save_eval_steps \
+--logging_steps=$logging_steps \
+--dataloader_num_workers=2 \
 --per_device_train_batch_size=8 \
---per_device_eval_batch_size=16 \
---gradient_accumulation_steps=16 \
+--per_device_eval_batch_size=8 \
+--gradient_accumulation_steps=32 \
+--eval_accumulation_steps=4 \
+--max_steps=10000 \
 --optim="adamw_torch" \
---learning_rate="5e-5" \
---weight_decay=0.01 \
---group_by_length \
+--learning_rate="5e-4" \
+--weight_decay=0.005 \
+--warmup_steps=500 \
 --save_total_limit=5 \
 --fp16 \
---auto_find_batch_size \
---tf32=true  # REQUIRES =true
+--fp16_full_eval \
+--tf32=true
+#--optim="adamw_8bit"
+#--fsdp="shard_grad_op"
+#--group_by_length
+# REQUIRES =true

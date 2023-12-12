@@ -22,7 +22,7 @@ strategy="steps"
 save_eval_steps=100
 logging_steps=10
 
-torchrun --no-python --nnodes=1 --nproc_per_node=4 \
+# torchrun --no-python --nnodes=1 --nproc_per_node=4 \
 python \
 src/learn/train.py \
 --root="./output" \
@@ -31,7 +31,7 @@ src/learn/train.py \
 --task="mlm" \
 --depth=4 \
 --ft_freeze_positional_embeddings=true \
---ft_duplicate_positional_embeddings \
+--ft_duplicate_positional_embeddings=true \
 --ft_initialize_positional_embeddings=false \
 --do_train \
 --do_eval \
