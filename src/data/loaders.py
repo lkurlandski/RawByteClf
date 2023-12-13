@@ -3,18 +3,11 @@ High-level loading API for the datasets.
 """
 
 from collections import Counter
-from copy import deepcopy
-from functools import partial
-import logging
-import math
 import os
-from pathlib import Path
-from pprint import pprint
 import random
 import sys
 import time
 from typing import Optional, Protocol
-import warnings
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -22,22 +15,15 @@ if __name__ == "__main__":
 
 from datasets import (
     concatenate_datasets,
-    interleave_datasets,
-    ClassLabel,
     Dataset,
     DatasetDict,
     IterableDataset,
-    IterableDatasetDict,
-    Features,
     Value,
 )
-from datasets.utils.logging import set_verbosity, disable_progress_bar, enable_progress_bar
 import numpy as np
-from tqdm import tqdm
 
-from src.cfg import INPUT_PATH, OUTPUT_PATH
-from src.data.cfg import BODMAS_LABELS_FILE, BODMAS_DIST_FILE
-from src.data.utils import print_dataset
+from src.data.utils import balance_imbalanced_dataset
+from src.cfg import INPUT_PATH
 
 
 ITER_SIZE = 1024
@@ -170,69 +156,7 @@ def get_bodmas_dataset(
     return dataset, dist
 
 
-def balance_imbalanced_dataset(
-    dataset: Dataset | IterableDataset,
-    dist: Counter,
-    smoothing_factor: float = 1,
-    check: bool = True,
-) -> tuple[IterableDataset | Dataset, Counter]:
-    """Oversample a dataset to balance the classes.
-
-    Args:
-        dataset: The dataset to balance.
-        dist: The class distribution of the dataset.
-        smoothing_factor: The amount of smoothing to apply when oversampling. 
-            1 means the classes will be fully balanced.
-
-    Returns:
-        A tuple of the balanced dataset and its class distribution.
-    """
-
-    assert 0 < smoothing_factor <= 1, f"{smoothing_factor=} must be between 0 and 1."
-    if not isinstance(dataset, IterableDataset):
-        warnings.warn("The dataset is not an IterableDataset, so this might take a long time...")
-
-    id2label = {i: l for i, l in enumerate(dataset.info.features["labels"].names)}
-    label2id = {l: i for i, l in enumerate(id2label.values())}
-
-    # Extract one dataset for each class
-    # It is critical for the datasets to have non null features, otherwise the
-    # interleave_datasets function will take hours to complete, ie, .cast()
-    set_verbosity(logging.CRITICAL)
-    disable_progress_bar()
-    datasets = []
-    for l in tqdm(list(dist.keys()), desc="Filtering..."):
-        label_or_id = (l, label2id.get(l))
-        d = dataset.filter(
-            lambda exs: [e in label_or_id for e in exs["labels"]], batched=True
-        ).cast(dataset.features)
-        datasets.append(d)
-    set_verbosity(logging.INFO)
-    enable_progress_bar()
-
-    if check:
-        for d in tqdm(datasets, desc="Checking..."):
-            if isinstance(dataset, Dataset):
-                assert len(d) > 0, "Some classes have no samples."
-            elif isinstance(dataset, IterableDataset):
-                assert bool(next(iter(d), False)), "Some classes have no samples."
-
-    # Compute the probabilities for each class
-    ratio = [1 / math.pow(dist[l], smoothing_factor) for l in dist.keys()]
-    s = sum(ratio)
-    probabilities = [p / s for p in ratio]
-
-    f = max(dist.values()) / max(probabilities)
-    new_dist = Counter({l: int(v * p * f) for (l, v), p in zip(dist.items(), probabilities)})
-
-    print(f"Interleaving...")
-    dataset = interleave_datasets(datasets, probabilities, stopping_strategy="all_exhausted")
-
-    return dataset, new_dist
-
-
 def test_balance_imbalanced_dataset() -> None:
-
     def test_iteration_time(dataset: Dataset | IterableDataset, b: int = 1, n: int = 16) -> int:
         s = time.time()
         for i, d in enumerate(dataset.iter(b)):
