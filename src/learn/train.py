@@ -814,7 +814,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         elif add_positional_embeddings:
             max_position_embeddings = args.max_length
         else:
-            add_positional_embeddings = model.config.max_position_embeddings
+            max_position_embeddings = model.config.max_position_embeddings
         model = modify_positional_embeddings(
             model,
             max_position_embeddings=max_position_embeddings,
