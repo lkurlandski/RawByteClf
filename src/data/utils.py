@@ -3,16 +3,28 @@ Utility functions.
 """
 
 from argparse import ArgumentParser, Namespace
+from collections import Counter
 import csv
 import bz2
 import gzip
 from io import BufferedReader
+import logging
 import lzma
+import math
 from pathlib import Path
 from typing import ClassVar, Generator, NamedTuple, Optional
+import warnings
 import zlib
 
-from datasets import Dataset, DatasetDict, IterableDataset, IterableDatasetDict
+from datasets import (
+    interleave_datasets,
+    Dataset,
+    DatasetDict,
+    IterableDataset,
+    IterableDatasetDict,
+)
+from datasets.utils.logging import set_verbosity, disable_progress_bar, enable_progress_bar
+from tqdm import tqdm
 import py7zr
 
 from src.data.cfg import SOREL_META_CSV, DATASET_NAMES
@@ -186,3 +198,74 @@ def decompress(
             fp.write(b)
 
     return b
+
+
+def balance_imbalanced_dataset(
+    dataset: Dataset | IterableDataset,
+    dist: Counter,
+    smoothing_factor: float = 1,
+    check: bool = True,
+) -> tuple[IterableDataset | Dataset, Counter]:
+    """Oversample a dataset to balance the classes.
+
+    Args:
+        dataset: The dataset to balance.
+        dist: The class distribution of the dataset.
+        smoothing_factor: The amount of smoothing to apply when oversampling.
+            1 means the classes will be fully balanced.
+
+    Returns:
+        A tuple of the balanced dataset and its class distribution.
+    """
+
+    warnings.warn(
+        "This function adds and indices mapping to the dataset, making iterating over it slow."
+        "The dataset will have to be reindexed using flatten_indices() to be useful."
+    )
+
+    assert 0 < smoothing_factor <= 1, f"{smoothing_factor=} must be between 0 and 1."
+    if not isinstance(dataset, IterableDataset):
+        warnings.warn("The dataset is not an IterableDataset, so this might take a long time...")
+
+    id2label = {i: l for i, l in enumerate(dataset.info.features["labels"].names)}
+    label2id = {l: i for i, l in enumerate(id2label.values())}
+
+    # Extract one dataset for each class
+    # It is critical for the datasets to have non null features, otherwise the
+    # interleave_datasets function will take hours to complete, ie, .cast()
+    set_verbosity(logging.CRITICAL)
+    disable_progress_bar()
+    datasets = []
+    for l in tqdm(list(dist.keys()), desc="Filtering..."):
+        label_or_id = (l, label2id.get(l))
+        d = dataset.filter(
+            lambda exs: [e in label_or_id for e in exs["labels"]], batched=True
+        ).cast(dataset.features)
+        datasets.append(d)
+    set_verbosity(logging.INFO)
+    enable_progress_bar()
+
+    if check:
+        for d in tqdm(datasets, desc="Checking..."):
+            if isinstance(dataset, Dataset):
+                assert len(d) > 0, "Some classes have no samples."
+            elif isinstance(dataset, IterableDataset):
+                assert bool(next(iter(d), False)), "Some classes have no samples."
+
+    probabilities = class_probabilities_with_smoothing(dist, smoothing_factor)
+
+    f = max(dist.values()) / max(probabilities)
+    new_dist = Counter({l: int(v * p * f) for (l, v), p in zip(dist.items(), probabilities)})
+
+    print(f"Interleaving...")
+    dataset = interleave_datasets(datasets, probabilities, stopping_strategy="all_exhausted")
+
+    return dataset, new_dist
+
+
+def class_probabilities_with_smoothing(
+    dist: Counter, smoothing_factor: float = 1
+) -> dict[str, float]:
+    ratio = {k: (1 / math.pow(l, smoothing_factor)) for k, l in dist.items()}
+    s = sum(ratio.values())
+    return {k: v / s for k, v in ratio.items()}

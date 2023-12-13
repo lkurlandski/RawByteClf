@@ -3,25 +3,27 @@ High-level loading API for the datasets.
 """
 
 from collections import Counter
-from functools import partial
 import os
-from pathlib import Path
-from pprint import pprint
 import random
 import sys
+import time
 from typing import Optional, Protocol
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: disable=wrong-import-position
 
-from datasets import concatenate_datasets, ClassLabel, Dataset, DatasetDict, Features, Value
+from datasets import (
+    concatenate_datasets,
+    Dataset,
+    DatasetDict,
+    IterableDataset,
+    Value,
+)
 import numpy as np
-from tqdm import tqdm
 
-from src.cfg import INPUT_PATH, OUTPUT_PATH
-from src.data.cfg import BODMAS_LABELS_FILE, BODMAS_DIST_FILE
-from src.data.utils import print_dataset
+from src.data.utils import balance_imbalanced_dataset
+from src.cfg import INPUT_PATH
 
 
 ITER_SIZE = 1024
@@ -91,7 +93,9 @@ def tr_vl_ts_split(dataset: Dataset, vl_size: float | int, ts_size: float | int)
     return dataset
 
 
-def get_sorel_dataset(subset: Optional[int] = None, vl_size: int | float = None, ts_size: int | float = None) -> DatasetDict:
+def get_sorel_dataset(
+    subset: Optional[int] = None, vl_size: int | float = None, ts_size: int | float = None
+) -> DatasetDict:
     files = [INPUT_PATH / f"sorel_pe_{i}" for i in range(0, 32)]
     if vl_size is None:
         vl_size = 10000 if subset is None else 0.1
@@ -100,7 +104,7 @@ def get_sorel_dataset(subset: Optional[int] = None, vl_size: int | float = None,
 
     print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...", flush=True)
     dataset = Dataset.load_from_disk(files.pop(0))
-    while ((subset is None or len(dataset) < subset) and files):
+    while (subset is None or len(dataset) < subset) and files:
         try:
             dataset = concatenate_datasets([dataset, Dataset.load_from_disk(files.pop(0))])
         except FileNotFoundError as err:
@@ -118,7 +122,7 @@ def get_bodmas_dataset(
     subset: Optional[int] = None,
     min_freq: Optional[int] = None,
     top_k: Optional[int] = None,
-) -> DatasetDict:
+) -> tuple[Dataset, Counter]:
     """Expect additional computation if min_freq or top_k is not None."""
 
     samples_per_class = 1
@@ -135,16 +139,17 @@ def get_bodmas_dataset(
     dataset = Dataset.load_from_disk(INPUT_PATH / "bodmas_pe")
     # dataset.cleanup_cache_files()  # TODO: uncomment after testing complete.
 
+    # Select the samples that meet the top_k and/or min_freq requirements
     dist: Counter[int, int] = Counter(dataset["labels"])
     id2label: dict[int, str] = {i: n for i, n in enumerate(dataset.info.features["labels"].names)}
     label2id: dict[str, int] = {n: int(i) for i, n in id2label.items()}
     unknowns = label2id["unknown"], label2id["Unknown"]
     keep = [l for l, n in dist.most_common(top_k) if (n >= min_freq and l not in unknowns)]
-
     dataset = dataset.filter(lambda exs: [e in keep for e in exs["labels"]], batched=True)
+
+    # Convert the int labels to str, then replace them with their class name
     dataset = dataset.cast_column("labels", Value("string"))
     dataset = dataset.map(map_id2label_fn, batched=True)
-
     dist = Counter(dataset["labels"])
 
     dataset = dataset.class_encode_column("labels")
@@ -153,52 +158,36 @@ def get_bodmas_dataset(
     return dataset, dist
 
 
-def test():
-    from src.learn.train import DEPTH
-    from src.learn.utils import get_tokenizer_object, get_fast_tokenizer, tokenize_fn, preprocess_a
+def test_balance_imbalanced_dataset() -> None:
+    def test_iteration_time(dataset: Dataset | IterableDataset, b: int = 1, n: int = 16) -> int:
+        s = time.time()
+        for i, d in enumerate(dataset.iter(b)):
+            if i >= n:
+                break
+        return time.time() - s
 
-    max_length = 4096
-    task = "mlm"
-    tokenizer = get_fast_tokenizer(get_tokenizer_object(), max_length=max_length)
-    dataset = get_sorel_dataset(subset=1024)["tr"].to_iterable_dataset()
-    print(dataset.column_names)
-    print_dataset(dataset, 16)
+    B = 1
+    N = 1
+    S = 1
 
-    dataset = dataset.map(
-        partial(
-            preprocess_a,
-            max_length=max_length * DEPTH if task in ("mlm", "clm") else max_length,
-        ),
-        batched=True,
-    )
-    print(dataset.column_names)
-    print_dataset(dataset, 16)
-    # Converts the "text" column into a "input_ids" column.
-    # Additional rows are added for language modeling.
-    remove_columns = ["name", "bytes", "labels", "size", "length", "text"]
-    dataset = dataset.map(
-        partial(
-            tokenize_fn,  # The partial function here is picky (`tokenizer` must be arg not kwd).
-            tokenizer,
-            truncation=True,
-            max_length=max_length,
-            return_overflowing_tokens=task in ("mlm", "clm"),
-        ),
-        batched=True,
-        batch_size=16,
-        remove_columns=remove_columns,
-    )
-    print(dataset.column_names)
-    # print(len(dataset))
-    for i, d in enumerate(dataset):
-        print(len(d["input_ids"]))
-        if i == 16:
-            break
+    dataset, dist = get_bodmas_dataset()
+    dataset: Dataset = dataset["tr"]
+    dataset = dataset.to_iterable_dataset(S)
 
-    sys.exit(0)
+    print(f"{dist=}\n{'-' * 88}")
+    print(f"{dataset=}")
+    if hasattr(dataset, "__len__"):
+        print(f"{len(dataset)=}")
+    print(f"{test_iteration_time(dataset, B, N)=}")
+
+    dataset, dist = balance_imbalanced_dataset(dataset, dist, 0.5, check=False)
+    print(f"{dist=}\n{'-' * 88}")
+    print(f"{dataset=}")
+    if hasattr(dataset, "__len__"):
+        print(f"{len(dataset)=}")
+    dataset.flatten_indices()
+    print(f"{test_iteration_time(dataset, B, N)=}")
 
 
 if __name__ == "__main__":
-    d = get_sorel_dataset()
-    print(d)
-    sys.exit(0)
+    ...
