@@ -98,7 +98,7 @@ def get_sorel_dataset(subset: Optional[int] = None, vl_size: int | float = None,
     if ts_size is None:
         ts_size = 10000 if subset is None else 0.1
 
-    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...")
+    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...", flush=True)
     dataset = Dataset.load_from_disk(files.pop(0))
     while ((subset is None or len(dataset) < subset) and files):
         try:
@@ -125,6 +125,8 @@ def get_bodmas_dataset(
     ts_size = 0.1
     vl_size = 0.1
     min_freq = samples_per_class * 3 if min_freq is None else min_freq
+
+    print(f"Loading BODMAS ({subset=} {vl_size=} {ts_size=} {min_freq=} {top_k=})...", flush=True)
 
     def map_id2label_fn(examples: dict[str, list]) -> dict[str, list]:
         examples["labels"] = [id2label[int(i)] for i in examples["labels"]]
