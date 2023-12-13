@@ -48,6 +48,9 @@ def tr_vl_ts_split_with_guarentees(
     if any(counts < (samples_per_class * 3)):
         raise ValueError("Not enough samples per class.")
 
+    vl_size = vl_size / len(dataset) if isinstance(vl_size, int) else vl_size
+    ts_size = ts_size / len(dataset) if isinstance(ts_size, int) else ts_size
+
     tr_dist, tr_idx = {v: 0 for v in values}, []
     vl_dist, vl_idx = {v: 0 for v in values}, []
     ts_dist, ts_idx = {v: 0 for v in values}, []
@@ -122,12 +125,12 @@ def get_bodmas_dataset(
     subset: Optional[int] = None,
     min_freq: Optional[int] = None,
     top_k: Optional[int] = None,
+    ts_size: int | float = 0.1,
+    vl_size: int | float = 0.1,
 ) -> tuple[Dataset, Counter]:
     """Expect additional computation if min_freq or top_k is not None."""
 
     samples_per_class = 1
-    ts_size = 0.1
-    vl_size = 0.1
     min_freq = samples_per_class * 3 if min_freq is None else min_freq
 
     print(f"Loading BODMAS ({subset=} {vl_size=} {ts_size=} {min_freq=} {top_k=})...", flush=True)
