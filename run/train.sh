@@ -8,7 +8,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=3
 #SBATCH --ntasks=9
-#SBATCH --mem=96G
+#SBATCH --mem=256G
 #SBATCH --gres=gpu:a100:4
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -22,7 +22,7 @@ strategy="steps"
 save_eval_steps=100
 logging_steps=10
 
-torchrun --no-python --nnodes=1 --nproc_per_node=4 \
+# torchrun --no-python --nnodes=1 --nproc_per_node=4 \
 python \
 src/learn/train.py \
 --root="./output" \
@@ -31,7 +31,7 @@ src/learn/train.py \
 --task="mlm" \
 --depth=4 \
 --ft_freeze_positional_embeddings=true \
---ft_duplicate_positional_embeddings \
+--ft_duplicate_positional_embeddings=true \
 --ft_initialize_positional_embeddings=false \
 --do_train \
 --do_eval \
@@ -47,6 +47,7 @@ src/learn/train.py \
 --per_device_train_batch_size=8 \
 --per_device_eval_batch_size=8 \
 --gradient_accumulation_steps=32 \
+--eval_accumulation_steps=4 \
 --max_steps=10000 \
 --optim="adamw_torch" \
 --learning_rate="5e-4" \
