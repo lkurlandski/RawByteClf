@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 from pprint import pformat, pprint
+import random
 from typing import Any, Literal, NewType, Optional, TypeAlias
 import os
 import sys
@@ -30,6 +31,7 @@ from datasets import (
     IterableDatasetDict,
     concatenate_datasets,
 )
+import evaluate
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
@@ -93,6 +95,11 @@ MalConvConfig: TypeAlias = PretrainedConfig
 MalConvTrainer: TypeAlias = Trainer
 
 
+random.seed(0)
+np.random.seed(0)
+torch.random.manual_seed(0)
+
+
 PAD_TO = 8
 
 HIDDEN_SIZE = 1024
@@ -108,6 +115,21 @@ BODMAS_MIN_FREQ = None
 
 N_INITIAL_POINTS = 32
 N_TRIALS = 256  # including the initial points
+
+
+ACCURACY = evaluate.load("accuracy")
+F1 = evaluate.load("f1")
+
+
+# FIXME: fix the entire compute metrics pipeline....
+def COMPUTE_METRICS(eval_pred: EvalPrediction):
+    predictions, labels = eval_pred
+    predictions = np.argmax(predictions, axis=1)
+    return {
+        "accuracy": ACCURACY.compute(predictions=predictions, references=labels),
+        "f1-macro": F1.compute(predictions=predictions, references=labels, average="macro"),
+        "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro"),
+    }
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -756,24 +778,27 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         data_collator = DataCollatorWithPadding(
             tokenizer=tokenizer, padding=True, pad_to_multiple_of=pad_to_multiple_of
         )
-        compute_metrics = CLFComputeMetrics()
+        # compute_metrics = CLFComputeMetrics()
+        compute_metrics = COMPUTE_METRICS
     elif args.task == "mlm":
         if TYPE != "HF":
             raise ValueError("Langauge modeling not supported for this model.")
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, pad_to_multiple_of=pad_to_multiple_of
         )
-        compute_metrics = MLMComputeMetrics()
+        # compute_metrics = MLMComputeMetrics()
+        compute_metrics = None
     elif args.task == "clm":
         if TYPE != "HF":
             raise ValueError("Langauge modeling not supported for this model.")
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=False, pad_to_multiple_of=pad_to_multiple_of
         )
+        # compute_metrics = CLMComputeMetrics()
         compute_metrics = None
 
     # FIXME: figure out the OOM issues with the compute_metrics.
-    compute_metrics = None
+    # compute_metrics = None
 
     print(f"{data_collator=}")
     print(f"{compute_metrics=}")
@@ -804,7 +829,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             label2id=label2id,
         )
         print(f"{model=}")
-        print(f"{count_parameters(model)=}")
+        print(f"{count_parameters(model, requires_grad=False)=}")
+        print(f"{count_parameters(model, requires_grad=True)=}")
         print(BR, flush=True)
 
         # FIXME: find a better way of implementing this
@@ -827,7 +853,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             initalizer_range=config.initializer_range,
         )
         print(f"{model=}")
-        print(f"{count_parameters(model)=}")
+        print(f"{count_parameters(model, requires_grad=False)=}")
+        print(f"{count_parameters(model, requires_grad=True)=}")
         print(BR, flush=True)
 
         oh.mkdir()
@@ -878,7 +905,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 label2id=label2id,
             )
         print(f"{model=}")
-        print(f"{count_parameters(model)=}")
+        print(f"{count_parameters(model, requires_grad=False)=}")
+        print(f"{count_parameters(model, requires_grad=True)=}")
 
         if isinstance(compute_metrics, ComputeMetrics):
             compute_metrics.set_detailed(True)
@@ -900,6 +928,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         with open(oh.test_results_file, "w") as fp:
             json.dump(results, fp, indent=4)
 
+        compute_metrics = COMPUTE_METRICS
         y_true, y_pred = compute_metrics.get_y_true_y_pred(output.predictions, output.label_ids)
         np.savetxt(oh.test_predictions_file, y_pred, "%i")
         np.savetxt(oh.test_labels_file, y_true, "%i")
