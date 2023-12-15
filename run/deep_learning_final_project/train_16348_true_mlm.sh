@@ -42,7 +42,7 @@ src/learn/train.py \
 --ft_freeze_positional_embeddings=true \
 --ft_duplicate_positional_embeddings=true \
 --ft_initialize_positional_embeddings=false \
---per_device_train_batch_size=24 \
+--per_device_train_batch_size=16 \
 --per_device_eval_batch_size=64 \
---gradient_accumulation_steps=8 \
+--gradient_accumulation_steps=12 \
 --eval_accumulation_steps=16
