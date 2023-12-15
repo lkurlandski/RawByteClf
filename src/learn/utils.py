@@ -222,6 +222,11 @@ def float_to_int(x: float | int) -> int:
 
 
 def compute_total_steps(n_samples: int, n_epochs: int, batch_size: int, n_accumulation: int) -> int:
+    n_samples = float_to_int(n_samples)
+    n_epochs = float_to_int(n_epochs)
+    batch_size = float_to_int(batch_size)
+    n_accumulation = float_to_int(n_accumulation)
+
     q, r = divmod(n_samples * n_epochs, batch_size * n_accumulation)
     if r == 0:
         return q

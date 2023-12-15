@@ -122,19 +122,26 @@ F1 = evaluate.load("f1")
 
 
 # FIXME: fix the entire compute metrics pipeline....
-def COMPUTE_METRICS(eval_pred: EvalPrediction):
+def COMPUTE_METRICS(eval_pred: EvalPrediction) -> dict[str, float]:
     predictions, labels = eval_pred
     predictions = np.argmax(predictions, axis=1)
     return {
-        "accuracy": ACCURACY.compute(predictions=predictions, references=labels),
-        "f1-macro": F1.compute(predictions=predictions, references=labels, average="macro"),
-        "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro"),
+        "accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
+        "f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
+        "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
     }
 
 
 class TrainingArguments(HfTrainingArguments):
     def __init__(self, **kwds):
         do_eval = kwds.get("do_eval", False)
+
+        if "resume_from_checkpoint" in kwds:  # lets us pass in "true" from command line
+            try:
+                kwds["resume_from_checkpoint"] = str_or_bool_to_str(kwds["resume_from_checkpoint"])
+            except ValueError:
+                pass
+
         super().__init__(**kwds)
         self.do_eval = do_eval
 
@@ -705,6 +712,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 training_arguments.per_device_train_batch_size,
                 training_arguments.gradient_accumulation_steps,
             )
+            assert isinstance(max_steps, int)
             training_arguments = replace(training_arguments, max_steps=max_steps)
         # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
         ds = IterableDatasetDict()
