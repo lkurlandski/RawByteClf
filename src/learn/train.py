@@ -122,21 +122,33 @@ F1 = evaluate.load("f1")
 
 
 # FIXME: fix the entire compute metrics pipeline....
-def COMPUTE_METRICS(eval_pred: EvalPrediction) -> dict[str, float]:
-    predictions, labels = eval_pred
+def COMPUTE_METRICS(eval_pred: EvalPrediction, single_shot_classes: Optional[list[int]] = None) -> dict[str, float]:
+    predictions, labels = eval_pred.predictions, eval_pred.label_ids
     predictions = np.argmax(predictions, axis=1)
-    return {
+    metrics = {
         "accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
         "f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
         "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
     }
+    if single_shot_classes is None:
+        return eval
+
+    include = np.array([i for i, l in enumerate(labels) if l in single_shot_classes])
+    predictions = predictions[include]
+    labels = labels[include]
+    metrics.update({
+        "ss_accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
+        "ss_f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
+        "ss_f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
+    })
+    return metrics
 
 
 class TrainingArguments(HfTrainingArguments):
     def __init__(self, **kwds):
         do_eval = kwds.get("do_eval", False)
 
-        if "resume_from_checkpoint" in kwds:  # lets us pass in "true" from command line
+        if kwds.get("resume_from_checkpoint", None):  # lets us pass in "true" from command line
             try:
                 kwds["resume_from_checkpoint"] = str_or_bool_to_str(kwds["resume_from_checkpoint"])
             except ValueError:
@@ -702,6 +714,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
         )
     print(f"{dataset=}")
+    print(f"{dist=}")
     print(BR, flush=True)
 
     if STREAMING:
@@ -886,11 +899,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             json.dump(trainer.state.log_history, fp, indent=4)
 
     if training_arguments.do_eval:
+        # If we just trained the model, we don't need to load anything
         if training_arguments.do_train and training_arguments.load_best_model_at_end:
             if TYPE == "MC":
                 raise NotImplementedError()
             pass
-        elif training_arguments.do_train:
+        # Load the best model
+        else:
             # TODO: added the num_labels, id2label, and label2id kwds here for consistency
             # with other parts of the code, but they may not be necessary or even cause errors.
             model = get_model(
@@ -901,23 +916,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 id2label=id2label,
                 label2id=label2id,
             )
-        else:
-            # TODO: added the num_labels, id2label, and label2id kwds here for consistency
-            # with other parts of the code, but they may not be necessary or even cause errors.
-            model = get_model(
-                args.task,
-                args.model_name_or_path,
-                config,
-                num_labels=num_classes,
-                id2label=id2label,
-                label2id=label2id,
-            )
+
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
 
         if isinstance(compute_metrics, ComputeMetrics):
             compute_metrics.set_detailed(True)
+
+        single_shot_classes=[label2id[l] for l in dist if dist[l] == 3]
+        compute_metrics = partial(COMPUTE_METRICS, single_shot_classes=single_shot_classes)
+        print("single_shot_classes=")
+        pprint(single_shot_classes)
 
         trainer = ModelTrainer(
             model=model,
@@ -936,14 +946,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         with open(oh.test_results_file, "w") as fp:
             json.dump(results, fp, indent=4)
 
-        compute_metrics = COMPUTE_METRICS
-        y_true, y_pred = compute_metrics.get_y_true_y_pred(output.predictions, output.label_ids)
-        np.savetxt(oh.test_predictions_file, y_pred, "%i")
-        np.savetxt(oh.test_labels_file, y_true, "%i")
-        if args.task == "clf":
-            cf_matrix = confusion_matrix(y_true, y_pred)
-            ConfusionMatrixDisplay(cf_matrix).plot()
-            plt.savefig(oh.test_confusion_matrix_file)
+        # compute_metrics = CLFComputeMetrics()
+        # y_true, y_pred = compute_metrics.get_y_true_y_pred(output.predictions, output.label_ids)
+        # np.savetxt(oh.test_predictions_file, y_pred, "%i")
+        # np.savetxt(oh.test_labels_file, y_true, "%i")
+        # if args.task == "clf":
+        #     cf_matrix = confusion_matrix(y_true, y_pred)
+        #     ConfusionMatrixDisplay(cf_matrix).plot()
+        #     plt.savefig(oh.test_confusion_matrix_file)
 
     if args.do_tune:
         training_arguments = replace(
