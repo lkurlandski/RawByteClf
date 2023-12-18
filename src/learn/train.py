@@ -1,5 +1,9 @@
 """
 Train and evaluate the models for malware family classification.
+
+# FIXME: the config that gets checkpointed gets is messed up when resizing the
+# positional embeddings! To patch, simply manually adjust the config.json file.
+# To fix, adjust the Config object.
 """
 
 # pylint: disable=wrong-import-position
