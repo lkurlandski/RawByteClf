@@ -135,7 +135,7 @@ def COMPUTE_METRICS(eval_pred: EvalPrediction, single_shot_classes: Optional[lis
         "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
     }
     if single_shot_classes is None:
-        return eval
+        return metrics
 
     include = np.array([i for i, l in enumerate(labels) if l in single_shot_classes])
     predictions = predictions[include]
