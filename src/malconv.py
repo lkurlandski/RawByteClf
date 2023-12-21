@@ -27,7 +27,9 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 
 # The default configuration values are determined by the value in the training scripts
 # or from the default values of the __init__ function from the original implementation.
-# For compatibility with PretrainedConfig, all values must have a deaful, hence the -1.
+# These defaults may not work that well, but they are what seems to have been used
+# in the original codebase and the original paper.
+# For compatibility with PretrainedConfig, all values must have a default, hence the -1s.
 # For classification with MalConv or MalConvGCG, set out_size to the number of classes.
 
 
@@ -224,7 +226,6 @@ class LowMemConvBase(nn.Module, ABC):
         of (B, C, L), where C is the number of channels, and L is again the input length
         (though its OK if it got a little shorter due to convs without padding or something).
         """
-        ...
 
     def determinRF(self) -> tuple[int]:
         """
@@ -607,9 +608,9 @@ def test():
 
     dataset, _ = get_bodmas_dataset()
     dataset = dataset.rename_column("labels", "label")
-    dataset["tr"] = dataset["tr"].select(list(range(100)))
-    dataset["vl"] = dataset["vl"].select(list(range(100)))
-    dataset["ts"] = dataset["ts"].select(list(range(100)))
+    dataset["tr"] = dataset["tr"].select(list(range(128)))
+    dataset["vl"] = dataset["vl"].select(list(range(128)))
+    dataset["ts"] = dataset["ts"].select(list(range(128)))
 
     tokenizer = get_tokenizer_object()
     tokenizer = get_fast_tokenizer(tokenizer, model_max_length=MAX_LENGTH)
@@ -627,12 +628,26 @@ def test():
         remove_columns=["name", "bytes", "size", "length", "text"],
     )
 
-    config = MalConvGCTConfig(
+    # config = MalConvGCTConfig(
+    #     num_embd=len(tokenizer),
+    #     out_size=dataset["tr"].info.features["label"].num_classes,
+    #     pad_idx=tokenizer.pad_token_id,
+    #     channels=128,
+    #     window_size=512,
+    #     stride=512,
+    # )
+    # model = MalConvGCT(config)
+
+    config = MalConvConfig(
         num_embd=len(tokenizer),
         out_size=dataset["tr"].info.features["label"].num_classes,
         pad_idx=tokenizer.pad_token_id,
+        channels=128,
+        window_size=512,
+        stride=512,
     )
     model = MalConv(config)
+
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     args = TrainingArguments(
         "./tmp/malconv_with_trainer",
