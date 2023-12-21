@@ -1,21 +1,26 @@
 """
-MalConv CNN.
-
-Adapted from:
-https://github.com/Alexander-H-Liu/MalConv-Pytorch/tree/master
+A huggingface-compatible implementation of MalConv2 and MalConvGCG.
 """
 
 from __future__ import annotations
 from copy import deepcopy
+from datetime import datetime
+import os
 from pathlib import Path
 from pprint import pformat, pprint
 import shutil
 import sys
 from typing import Any, Optional
 
+if __name__ == "__main__":
+    print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+
 from datasets import Dataset
+import numpy as np
 import torch
 from torch import nn, optim, Tensor
+from torch.nn import CrossEntropyLoss
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from transformers import (
@@ -26,10 +31,459 @@ from transformers import (
     TrainerCallback,
     TrainingArguments,
 )
+from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers.trainer_callback import TrainerState
 from tqdm import tqdm
 
 from utils import get_highest_path
+
+
+CHUNK_SIZE = 65536
+OVERLAP = 512
+MIN_CHUNK_SIZE = 1024
+
+
+def drop_zeros_hook(module: Any, grad_input: list[Tensor], grad_out: Any) -> tuple[Tensor]:
+    """
+    This function is used to replace gradients that are all zeros with None
+    In pyTorch None will not get back-propogated
+    So we use this as a approximation to saprse BP to avoid redundant and useless work
+    """
+    grads = []
+    with torch.no_grad():
+        for g in grad_input:
+            if torch.nonzero(g).shape[0] == 0:  # ITS ALL EMPTY!
+                grads.append(g.to_sparse())
+            else:
+                grads.append(g)
+
+    return tuple(grads)
+
+
+class CheckpointFunction(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, run_function, length, *args):
+        ctx.run_function = run_function
+        ctx.input_tensors = list(args[:length])
+        ctx.input_params = list(args[length:])
+        with torch.no_grad():
+            output_tensors = ctx.run_function(*ctx.input_tensors)
+        return output_tensors
+
+    @staticmethod
+    def backward(ctx, *output_grads):
+        for i in range(len(ctx.input_tensors)):
+            temp = ctx.input_tensors[i]
+            ctx.input_tensors[i] = temp.detach()
+            ctx.input_tensors[i].requires_grad = temp.requires_grad
+        with torch.enable_grad():
+            output_tensors = ctx.run_function(*ctx.input_tensors)
+        input_grads = torch.autograd.grad(
+            output_tensors, ctx.input_tensors + ctx.input_params, output_grads, allow_unused=True
+        )
+        return (None, None) + input_grads
+
+
+class CatMod(torch.nn.Module):
+
+    def __init__(self):
+        super(CatMod, self).__init__()
+
+    def forward(self, x):
+        return torch.cat(x, dim=2)
+
+
+class LowMemConvBase(nn.Module):
+    def __init__(
+        self,
+        chunk_size: int = CHUNK_SIZE,
+        overlap: int = OVERLAP,
+        min_chunk_size: int = MIN_CHUNK_SIZE,
+    ) -> None:
+        super(LowMemConvBase, self).__init__()
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+        self.min_chunk_size = min_chunk_size
+
+        # Used for pooling over time in a meory efficent way
+        self.pooling = nn.AdaptiveMaxPool1d(1)
+        self.cat = CatMod()
+        self.cat.register_backward_hook(drop_zeros_hook)
+        self.receptive_field = None
+
+        # Used to force checkpoint code to behave correctly due to poor design 
+        # https://discuss.pytorch.org/t/checkpoint-with-no-grad-requiring-inputs-problem/19117/11
+        self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+
+    def processRange(self, x: Tensor, **kwargs) -> None:
+        """
+        This method does the work to convert an LongTensor input x of shape (B, L) , where B is the
+        batch size and L is the length of the input. The output of this functoin should be a tensor
+        of (B, C, L), where C is the number of channels, and L is again the input length
+        (though its OK if it got a little shorter due to convs without padding or something).
+        """
+        pass
+
+    def determinRF(self) -> tuple[int]:
+        """
+        Lets determine the receptive field & stride of our sub-network
+        """
+
+        if self.receptive_field is not None:
+            return self.receptive_field, self.stride, self.out_channels
+        # else, figure this out!
+
+        if not hasattr(self, "device_ids"):
+            # We are training with just one device. Lets find out where we should move the data
+            cur_device = next(self.embd.parameters()).device
+        else:
+            cur_device = "cpu"
+
+        # Lets do a simple binary search to figure out how large our RF is.
+        # It can't be larger than our chunk size! So use that as upper bound
+        min_rf = 1
+        max_rf = self.chunk_size
+
+        with torch.no_grad():
+            tmp = torch.zeros((1, max_rf)).long().to(cur_device)
+
+            while True:
+                test_size = (min_rf + max_rf) // 2
+                is_valid = True
+                try:
+                    self.processRange(tmp[:, 0:test_size])
+                except:
+                    is_valid = False
+
+                if is_valid:
+                    max_rf = test_size
+                else:
+                    min_rf = test_size + 1
+
+                if max_rf == min_rf:
+                    self.receptive_field = min_rf
+                    out_shape = self.processRange(tmp).shape
+                    self.stride = self.chunk_size // out_shape[2]
+                    self.out_channels = out_shape[1]
+                    break
+
+        return self.receptive_field, self.stride, self.out_channels
+
+    def pool_group(self, *args) -> Tensor:
+        x = self.cat(args)
+        x = self.pooling(x)
+        return x
+
+    def seq2fix(self, x: Tensor, pr_args: Optional[dict] = None) -> Tensor:
+        """
+        Takes in an input LongTensor of (B, L) that will be converted to a fixed length
+        representation (B, C), where C is the number of channels provided by the base_network 
+        given at construction.
+        """
+        pr_args = {} if pr_args is None else pr_args
+
+        receptive_window, stride, out_channels = self.determinRF()
+
+        if x.shape[1] < receptive_window:  # This is a tiny input! pad it out please
+            x = F.pad(x, (0, receptive_window - x.shape[1]), value=0)  # 0 is the pad value we use
+
+        batch_size = x.shape[0]
+        length = x.shape[1]
+
+        # Lets go through the input data without gradients first, and find the positions that "win"
+        # the max-pooling. Most of the gradients will be zero, and we don't want to waste valuable
+        # memory and time computing them.
+        # Once we know the winners, we will go back and compute the forward activations on JUST
+        # the subset of positions that won!
+        winner_values = np.zeros((batch_size, out_channels)) - 1.0
+        winner_indices = np.zeros((batch_size, out_channels), dtype=np.int64)
+
+        if not hasattr(self, "device_ids"):
+            cur_device = next(self.embd.parameters()).device
+        else:
+            cur_device = None
+
+        step = self.chunk_size
+        start = 0
+        end = start + step
+
+        with torch.no_grad():
+            while start < end and (end - start) >= max(self.min_chunk_size, receptive_window):
+                x_sub = x[:, start:end]
+                if cur_device is not None:
+                    x_sub = x_sub.to(cur_device)
+                activs = self.processRange(x_sub.long(), **pr_args)
+                activ_win, activ_indx = F.max_pool1d(
+                    activs, kernel_size=activs.shape[2], return_indices=True
+                )
+                activ_win = activ_win.cpu().numpy()[:, :, 0]
+                activ_indx = activ_indx.cpu().numpy()[:, :, 0]
+                selected = winner_values < activ_win
+                winner_indices[selected] = activ_indx[selected] * stride + start
+                winner_values[selected] = activ_win[selected]
+                start = end
+                end = min(start + step, length)
+
+        # Now we know every index that won, we need to compute values and with gradients!
+
+        # Find unique winners for every batch
+        final_indices = [np.unique(winner_indices[b, :]) for b in range(batch_size)]
+
+        # Collect inputs that won for each batch
+        chunk_list = [
+            [
+                x[b : b + 1, max(i - receptive_window, 0) : min(i + receptive_window, length)]
+                for i in final_indices[b]
+            ]
+            for b in range(batch_size)
+        ]
+        # Convert to a torch tensor of the bytes
+        chunk_list = [torch.cat(c, dim=1)[0, :] for c in chunk_list]
+
+        # Padd out shorter sequences to the longest one
+        x_selected = torch.nn.utils.rnn.pad_sequence(chunk_list, batch_first=True)
+
+        # Shape is not (B, L) Lets compute!
+
+        if cur_device is not None:
+            x_selected = x_selected.to(cur_device)
+        x_selected = self.processRange(x_selected.long(), **pr_args)
+        x_selected = self.pooling(x_selected)
+        x_selected = x_selected.view(x_selected.size(0), -1)
+
+        return x_selected
+
+
+class MalConv(LowMemConvBase):
+    def __init__(
+        self,
+        num_embd: int,
+        embd_size: int = 8,
+        out_size: int = 2,
+        channels: int = 128,
+        window_size: int = 512,
+        stride: int = 512,
+        log_stride: Optional[int] = None,
+    ) -> None:
+        super(MalConv, self).__init__()
+        self.embd = nn.Embedding(num_embd, embd_size, padding_idx=0)
+        if not log_stride is None:
+            stride = 2**log_stride
+
+        self.conv_1 = nn.Conv1d(embd_size, channels, window_size, stride=stride, bias=True)
+        self.conv_2 = nn.Conv1d(embd_size, channels, window_size, stride=stride, bias=True)
+
+        self.fc_1 = nn.Linear(channels, channels)
+        self.fc_2 = nn.Linear(channels, out_size)
+
+        self.num_labels = out_size
+
+    def processRange(self, x: Tensor) -> Tensor:
+        x = self.embd(x)
+        x = torch.transpose(x, -1, -2)
+
+        cnn_value = self.conv_1(x)
+        gating_weight = torch.sigmoid(self.conv_2(x))
+
+        x = cnn_value * gating_weight
+
+        return x
+
+    def forward(
+        self,
+        input_ids: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        labels: Optional[Tensor] = None,
+    ) -> SequenceClassifierOutput:
+        x = input_ids
+
+        post_conv = x = self.seq2fix(x)
+        penult = x = F.relu(self.fc_1(x))
+        x = self.fc_2(x)
+
+        logits = x
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=None,
+            attentions=None,
+        )
+
+
+class MalConvML(LowMemConvBase):
+    def __init__(
+        self,
+        num_embd: int,
+        out_size: int = 2,
+        channels: int = 128,
+        window_size: int = 512,
+        stride: int = 512,
+        layers: int = 1,
+        embd_size: int = 8,
+        log_stride: Optional[int] = None,
+    ):
+        super(MalConvML, self).__init__()
+        self.embd = nn.Embedding(num_embd, embd_size, padding_idx=0)
+        if not log_stride is None:
+            stride = 2**log_stride
+
+        self.convs = nn.ModuleList(
+            [nn.Conv1d(embd_size, channels * 2, window_size, stride=stride, bias=True)]
+            + [
+                nn.Conv1d(channels, channels * 2, window_size, stride=1, bias=True)
+                for i in range(layers - 1)
+            ]
+        )
+        # one-by-one cons to perform information sharing
+        self.convs_1 = nn.ModuleList(
+            [nn.Conv1d(channels, channels, 1, bias=True) for i in range(layers)]
+        )
+
+        self.fc_1 = nn.Linear(channels, channels)
+        self.fc_2 = nn.Linear(channels, out_size)
+
+    def processRange(self, x: Tensor) -> Tensor:
+        x = self.embd(x)
+        x = x.permute(0, 2, 1).contiguous()
+
+        for conv_glu, conv_share in zip(self.convs, self.convs_1):
+            x = F.leaky_relu(conv_share(F.glu(conv_glu(x.contiguous()), dim=1)))
+
+        return x
+
+    def forward(self, x: Tensor) -> tuple[Tensor]:
+        post_conv = x = self.seq2fix(x)
+
+        penult = x = F.relu(self.fc_1(x))
+        x = self.fc_2(x)
+
+        return x, penult, post_conv
+
+
+class MalConvGCT(LowMemConvBase):
+    def __init__(
+        self,
+        num_embd: int,
+        out_size: int = 2,
+        channels: int = 128,
+        window_size: int = 512,
+        stride: int = 512,
+        layers: int = 1,
+        embd_size: int = 8,
+        log_stride: Optional[int] = None,
+        low_mem: bool = True,
+    ):
+        super(MalConvGCT, self).__init__()
+        self.low_mem = low_mem
+        self.embd = nn.Embedding(num_embd, embd_size, padding_idx=0)
+        if not log_stride is None:
+            stride = 2**log_stride
+
+        self.context_net = MalConvML(
+            num_embd=num_embd,
+            out_size=channels,
+            channels=channels,
+            window_size=window_size,
+            stride=stride,
+            layers=layers,
+            embd_size=embd_size,
+        )
+        self.convs = nn.ModuleList(
+            [nn.Conv1d(embd_size, channels * 2, window_size, stride=stride, bias=True)]
+            + [
+                nn.Conv1d(channels, channels * 2, window_size, stride=1, bias=True)
+                for i in range(layers - 1)
+            ]
+        )
+
+        self.linear_atn = nn.ModuleList([nn.Linear(channels, channels) for i in range(layers)])
+
+        # one-by-one cons to perform information sharing
+        self.convs_share = nn.ModuleList(
+            [nn.Conv1d(channels, channels, 1, bias=True) for i in range(layers)]
+        )
+
+        self.fc_1 = nn.Linear(channels, channels)
+        self.fc_2 = nn.Linear(channels, out_size)
+
+        self.num_labels = out_size
+
+    def determinRF(self) -> tuple[int]:
+        """Over-write the determinRF call to use the base context_net to detemrin RF.
+        We should have the same total RF, and this will simplify logic significantly."""
+        return self.context_net.determinRF()
+
+    def processRange(self, x: int, gct: Tensor) -> Tensor:
+        if gct is None:
+            raise Exception("No Global Context Given")
+
+        x = self.embd(x)
+        # x = torch.transpose(x,-1,-2)
+        x = x.permute(0, 2, 1)
+
+        for conv_glu, linear_cntx, conv_share in zip(self.convs, self.linear_atn, self.convs_share):
+            x = F.glu(conv_glu(x), dim=1)
+            x = F.leaky_relu(conv_share(x))
+            x_len = x.shape[2]
+            B = x.shape[0]
+            C = x.shape[1]
+
+            sqrt_dim = np.sqrt(x.shape[1])
+            # we are going to need a version of GCT with a time dimension, which we will adapt as needed to the right length
+            ctnx = torch.tanh(linear_cntx(gct))
+
+            # Size is (B, C), but we need (B, C, 1) to use as a 1d conv filter
+            ctnx = torch.unsqueeze(ctnx, dim=2)
+            # roll the batches into the channels
+            x_tmp = x.view(1, B * C, -1)
+            # Now we can apply a conv with B groups, so that each batch gets its own context applied only to what was needed
+            x_tmp = F.conv1d(x_tmp, ctnx, groups=B)
+            # x_tmp will have a shape of (1, B, L), now we just need to re-order the data back to (B, 1, L)
+            x_gates = x_tmp.view(B, 1, -1)
+
+            # Now we effectively apply σ(x_t^T tanh(W c))
+            gates = torch.sigmoid(x_gates)
+            x = x * gates
+
+        return x
+
+    def forward(
+        self,
+        input_ids: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        labels: Optional[Tensor] = None,
+    ) -> SequenceClassifierOutput:
+        x = input_ids
+
+        if self.low_mem:
+            global_context = CheckpointFunction.apply(self.context_net.seq2fix, 1, x)
+        else:
+            global_context = self.context_net.seq2fix(x)
+
+        post_conv = x = self.seq2fix(x, pr_args={"gct": global_context})
+        penult = x = F.leaky_relu(self.fc_1(x))
+        x = self.fc_2(x)
+
+        logits = x
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=None,
+            attentions=None,
+        )
 
 
 class MalConvConfig(PretrainedConfig):
@@ -57,152 +511,61 @@ class MalConvConfig(PretrainedConfig):
         return f"{self.__class__.__name__}(\n{pformat(vars(self))}\n)"
 
 
-class MalConvModel(nn.Module):
-    def __init__(self, config: MalConvConfig):
-        super(MalConvModel, self).__init__()
-        self.embed = nn.Embedding(config.num_embd, config.embed_size, padding_idx=config.pad_idx)
-        self.conv_1 = nn.Conv1d(
-            int(config.embed_size / 2),
-            config.hidden_size,
-            config.window_size,
-            stride=config.window_size,
-            bias=True,
-        )
-        self.conv_2 = nn.Conv1d(
-            int(config.embed_size / 2),
-            config.hidden_size,
-            config.window_size,
-            stride=config.window_size,
-            bias=True,
-        )
-        self.pooling = nn.MaxPool1d(int(config.max_length / config.window_size))
-        self.mlp = nn.Sequential(
-            nn.Linear(config.hidden_size, config.hidden_size),
-            nn.Dropout(config.dropout_p),
-            nn.ReLU(),
-            nn.Linear(config.hidden_size, config.num_labels),
-        )
+if __name__ == "__main__":
+    from functools import partial
 
-    def forward(self, x: Tensor, softmax: bool = False) -> Tensor:
-        x = self.embed(x)
-        x = torch.transpose(x, -1, -2)
-        cnn_value = self.conv_1(x.narrow(-2, 0, 4))
-        gating_weight = F.sigmoid(self.conv_2(x.narrow(-2, 4, 4)))
-        x = cnn_value * gating_weight
-        x = self.pooling(x)
-        x = x.view(-1, 128)
-        x = self.mlp(x)
-        if softmax:
-            x = F.softmax(x)
-        return x
+    from transformers import Trainer
 
-    def save_pretrained(self, save_directory: str | Path) -> None:
-        save_directory = Path(save_directory)
-        save_directory.mkdir(exist_ok=True)
-        torch.save(self.state_dict(), save_directory / "model.pt")
-
-    @staticmethod
-    def get_state_dict(save_directory: str | Path) -> Tensor:
-        save_directory = Path(save_directory)
-        return torch.load(save_directory / "model.pt")
+    from src.data.loaders import get_bodmas_dataset
+    from src.learn.utils import get_tokenizer_object, get_fast_tokenizer, tokenize_fn, preprocess_a
 
 
-class MalConvTrainer:
-    def __init__(
-        self,
-        model: PreTrainedModel,
-        args: TrainingArguments,
-        train_dataset: Optional[Dataset] = None,
-        eval_dataset: Optional[Dataset] = None,
-        data_collator: Optional[DataCollatorWithPadding] = None,
-        tokenizer: Optional[PreTrainedTokenizer] = None,
-        callbacks: Optional[list[TrainerCallback]] = None,
-        compute_metrics: Optional[Any] = None,
-    ) -> None:
-        self.model = model
-        self.args = args
-        self.train_dataset = train_dataset
-        self.eval_dataset = eval_dataset
-        self.data_collator = data_collator
-        self.tokenizer = tokenizer
-        self.callbacks = callbacks
-        self.compute_metrics = compute_metrics
-        if torch.cuda.is_available() and not self.args.no_cuda:
-            self.device = torch.device("cuda")
-        else:
-            self.device = torch.device("cpu")
-        self.loss_fn = nn.CrossEntropyLoss()
-        self.state = TrainerState(epoch=0, log_history=[])
+    MAX_LENGTH = 2 ** 14
 
-    def train(self, _) -> None:
-        best_model = deepcopy(self.model.to("cpu"))
-        best_accuracy = 0.0
-        self.model = self.model.to(self.device)
-        optimizer = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
-        epochs = list(range(1, int(self.args.num_train_epochs) + 1))
-        for epoch in tqdm(epochs, total=self.args.num_train_epochs):
-            loader = self.get_dataloader(self.train_dataset, self.args.per_device_train_batch_size)
-            cum_loss = 0
-            self.model = self.model.train()
-            self.model = self.model.to(self.device)
-            for batch in enumerate(loader):
-                X = batch[1]["input_ids"].to(self.device)
-                Y = batch[1]["labels"].to(self.device)
-                optimizer.zero_grad()
-                logits = self.model(X)
-                loss: Tensor = self.loss_fn(logits, Y)
-                loss.backward()
-                optimizer.step()
-                cum_loss += loss.item()
-            metrics = self.evaluate(self.eval_dataset)
-            metrics["loss"] = cum_loss / len(loader)
-            metrics["epoch"] = float(epoch)
-            self.state.log_history.append(metrics)
-            self.state.epoch = float(epoch)
-            if self.args.load_best_model_at_end and metrics["eval_accuracy"] > best_accuracy:
-                best_model = deepcopy(self.model.to("cpu"))
-                self.model = self.model.to(self.device)
-                best_accuracy = metrics["eval_accuracy"]
-            path = Path(self.args.output_dir) / f"checkpoint-{epoch}"
-            self.model.save_pretrained(path.as_posix())
-            self.prune_checkpoints()
-        if self.args.load_best_model_at_end:
-            self.model = best_model.to(self.device)
+    dataset, dist = get_bodmas_dataset()
+    dataset = dataset.rename_column("labels", "label")
+    dataset["tr"] = dataset["tr"].select(list(range(100)))
+    dataset["vl"] = dataset["vl"].select(list(range(100)))
+    dataset["ts"] = dataset["ts"].select(list(range(100)))
+    tokenizer = get_tokenizer_object()
+    tokenizer = get_fast_tokenizer(tokenizer, model_max_length=MAX_LENGTH)
 
-    def evaluate(self, test_dataset) -> dict[str, float]:
-        self.model = self.model.eval()
-        self.model = self.model.to(self.device)
-        loader = self.get_dataloader(test_dataset, self.args.per_device_eval_batch_size)
-        losses = []
-        accuracies = []
-        with torch.no_grad():
-            for _, batch in enumerate(loader):
-                X = batch["input_ids"].to(self.device)
-                Y = batch["labels"].to(self.device)
-                logits = self.model(X)
-                loss: Tensor = self.loss_fn(logits, Y)
-                losses.append(loss.item())
-                pred = F.softmax(logits, dim=1).argmax(dim=1)
-                accuracy = pred == Y
-                accuracies.extend(accuracy.detach().cpu().tolist())
-        return {
-            "eval_loss": sum(losses) / len(losses),
-            "eval_accuracy": sum(accuracies) / len(accuracies),
-        }
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, pad_to_multiple_of=8)
 
-    def get_dataloader(self, dataset: Dataset, batch_size: int) -> DataLoader:
-        return DataLoader(
-            dataset.remove_columns(["text"]),
-            batch_size=batch_size,
-            shuffle=True,
-            collate_fn=self.data_collator,
-            num_workers=self.args.dataloader_num_workers,
-        )
+    dataset = dataset.map(partial(preprocess_a, max_length=MAX_LENGTH), batched=True)
+    dataset = dataset.map(
+        partial(
+            tokenize_fn,
+            tokenizer,
+            truncation=True,
+            max_length=MAX_LENGTH,
+            return_overflowing_tokens=False,
+        ),
+        batched=True,
+        remove_columns=["name", "bytes", "size", "length", "text"],
+    )
 
-    def prune_checkpoints(self) -> None:
-        if self.args.save_total_limit is None:
-            return
-        checkpoints = list(Path(self.args.output_dir).glob("checkpoint-*"))
-        if len(checkpoints) >= self.args.save_total_limit:
-            checkpoint = get_highest_path(checkpoints, lstrip="checkpoint-", lowest=True)
-            shutil.rmtree(checkpoint)
+    num_labels = dataset["tr"].info.features["label"].num_classes
+
+    model = MalConv(num_embd=len(tokenizer), out_size=num_labels)
+    model = MalConvGCT(num_embd=len(tokenizer), out_size=num_labels)
+
+    args = TrainingArguments(
+        "./tmp/malconv_with_trainer",
+        num_train_epochs=100,
+        per_device_train_batch_size=64,
+        no_cuda=True,
+    )
+
+    trainer = Trainer(
+        model,
+        args,
+        data_collator,
+        train_dataset=dataset["tr"],
+        eval_dataset=dataset["vl"],
+    )
+
+    os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+    trainer.train(None)
