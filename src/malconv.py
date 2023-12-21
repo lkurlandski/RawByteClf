@@ -2,8 +2,12 @@
 A huggingface-compatible implementation of MalConv2 and MalConvGCG.
 """
 
-from __future__ import annotations
+# pylint: disable=wrong-import-position
+print(f"Entered {__file__=}")
+
+from abc import ABC, abstractmethod
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime
 import os
 from pathlib import Path
@@ -15,6 +19,7 @@ from typing import Any, Optional
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+# pylint: enable=wrong-import-position
 
 from datasets import Dataset
 import numpy as np
@@ -38,11 +43,132 @@ from tqdm import tqdm
 from utils import get_highest_path
 
 
-CHUNK_SIZE = 65536
-OVERLAP = 512
-MIN_CHUNK_SIZE = 1024
+# The default configuration values are determined by the value in the training scripts
+# or from the default values of the __init__ function from the original implementation.
+# For compatibility with PretrainedConfig, all values must have a deaful, hence the -1.
+# For classification with MalConv or MalConvGCG, set out_size to the number of classes.
 
 
+class BaseMalConvConfig(PretrainedConfig):
+    def __init__(
+        self,
+        out_size: int = -1,
+        pad_idx: int = -1,
+        num_embd: int = -1,
+        embd_size: int = -1,
+        window_size: int = -1,
+        channels: int = -1,
+        stride: int = -1,
+        chunk_size: int = 65536,
+        overlap: int = 512,
+        min_chunk_size: int = 1024,
+    ) -> None:
+        super().__init__()
+        self.out_size = out_size
+        self.pad_idx = pad_idx
+        self.num_embd = num_embd
+        self.embd_size = embd_size
+        self.window_size = window_size
+        self.channels = channels
+        self.stride = stride
+        self.chunk_size = chunk_size
+        self.overlap = overlap
+        self.min_chunk_size = min_chunk_size
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(\n{pformat(vars(self))}\n)"
+
+
+@dataclass
+class MalConvConfig(BaseMalConvConfig):
+    def __init__(
+        self,
+        out_size: int = -1,
+        pad_idx: int = -1,
+        num_embd: int = -1,
+        embd_size: int = 8,
+        window_size: int = 512,
+        channels: int = 128,
+        stride: int = 512,
+        chunk_size: int = 65536,
+        overlap: int = 512,
+        min_chunk_size: int = 1024,
+    ) -> None:
+        super().__init__(
+            out_size,
+            pad_idx,
+            num_embd,
+            embd_size,
+            window_size,
+            channels,
+            stride,
+            chunk_size,
+            overlap,
+            min_chunk_size,
+        )
+
+
+class MalConvMLConfig(BaseMalConvConfig):
+    def __init__(
+        self,
+        out_size: int = -1,
+        pad_idx: int = -1,
+        num_embd: int = -1,
+        embd_size: int = 8,
+        window_size: int = 512,
+        channels: int = 128,
+        stride: int = 512,
+        layers: int = 1,
+        chunk_size: int = 65536,
+        overlap: int = 512,
+        min_chunk_size: int = 1024,
+    ) -> None:
+        super().__init__(
+            out_size,
+            pad_idx,
+            num_embd,
+            embd_size,
+            window_size,
+            channels,
+            stride,
+            chunk_size,
+            overlap,
+            min_chunk_size,
+        )
+        self.layers = layers
+
+
+class MalConvGCTConfig(BaseMalConvConfig):
+    def __init__(
+        self,
+        out_size: int = -1,
+        pad_idx: int = -1,
+        num_embd: int = -1,
+        embd_size: int = 8,
+        window_size: int = 64,
+        channels: int = 128,
+        stride: int = 64,
+        layers: int = 1,
+        chunk_size: int = 65536,
+        overlap: int = 512,
+        min_chunk_size: int = 1024,
+    ) -> None:
+        super().__init__(
+            out_size,
+            pad_idx,
+            num_embd,
+            embd_size,
+            window_size,
+            channels,
+            stride,
+            chunk_size,
+            overlap,
+            min_chunk_size,
+        )
+        self.layers = layers
+
+
+# pylint: disable=unused-argument
 def drop_zeros_hook(module: Any, grad_input: list[Tensor], grad_out: Any) -> tuple[Tensor]:
     """
     This function is used to replace gradients that are all zeros with None
@@ -52,7 +178,7 @@ def drop_zeros_hook(module: Any, grad_input: list[Tensor], grad_out: Any) -> tup
     grads = []
     with torch.no_grad():
         for g in grad_input:
-            if torch.nonzero(g).shape[0] == 0:  # ITS ALL EMPTY!
+            if torch.nonzero(g).shape[0] == 0:
                 grads.append(g.to_sparse())
             else:
                 grads.append(g)
@@ -61,7 +187,6 @@ def drop_zeros_hook(module: Any, grad_input: list[Tensor], grad_out: Any) -> tup
 
 
 class CheckpointFunction(torch.autograd.Function):
-
     @staticmethod
     def forward(ctx, run_function, length, *args):
         ctx.run_function = run_function
@@ -86,22 +211,13 @@ class CheckpointFunction(torch.autograd.Function):
 
 
 class CatMod(torch.nn.Module):
-
-    def __init__(self):
-        super(CatMod, self).__init__()
-
     def forward(self, x):
         return torch.cat(x, dim=2)
 
 
-class LowMemConvBase(nn.Module):
-    def __init__(
-        self,
-        chunk_size: int = CHUNK_SIZE,
-        overlap: int = OVERLAP,
-        min_chunk_size: int = MIN_CHUNK_SIZE,
-    ) -> None:
-        super(LowMemConvBase, self).__init__()
+class LowMemConvBase(nn.Module, ABC):
+    def __init__(self, chunk_size: int, overlap: int, min_chunk_size: int) -> None:
+        super().__init__()
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.min_chunk_size = min_chunk_size
@@ -112,10 +228,11 @@ class LowMemConvBase(nn.Module):
         self.cat.register_backward_hook(drop_zeros_hook)
         self.receptive_field = None
 
-        # Used to force checkpoint code to behave correctly due to poor design 
+        # Used to force checkpoint code to behave correctly due to poor design
         # https://discuss.pytorch.org/t/checkpoint-with-no-grad-requiring-inputs-problem/19117/11
         self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
 
+    @abstractmethod
     def processRange(self, x: Tensor, **kwargs) -> None:
         """
         This method does the work to convert an LongTensor input x of shape (B, L) , where B is the
@@ -123,7 +240,7 @@ class LowMemConvBase(nn.Module):
         of (B, C, L), where C is the number of channels, and L is again the input length
         (though its OK if it got a little shorter due to convs without padding or something).
         """
-        pass
+        ...
 
     def determinRF(self) -> tuple[int]:
         """
@@ -178,7 +295,7 @@ class LowMemConvBase(nn.Module):
     def seq2fix(self, x: Tensor, pr_args: Optional[dict] = None) -> Tensor:
         """
         Takes in an input LongTensor of (B, L) that will be converted to a fixed length
-        representation (B, C), where C is the number of channels provided by the base_network 
+        representation (B, C), where C is the number of channels provided by the base_network
         given at construction.
         """
         pr_args = {} if pr_args is None else pr_args
@@ -186,7 +303,7 @@ class LowMemConvBase(nn.Module):
         receptive_window, stride, out_channels = self.determinRF()
 
         if x.shape[1] < receptive_window:  # This is a tiny input! pad it out please
-            x = F.pad(x, (0, receptive_window - x.shape[1]), value=0)  # 0 is the pad value we use
+            x = F.pad(x, (0, receptive_window - x.shape[1]), value=self.config.pad_idx)
 
         batch_size = x.shape[0]
         length = x.shape[1]
@@ -256,28 +373,21 @@ class LowMemConvBase(nn.Module):
 
 
 class MalConv(LowMemConvBase):
-    def __init__(
-        self,
-        num_embd: int,
-        embd_size: int = 8,
-        out_size: int = 2,
-        channels: int = 128,
-        window_size: int = 512,
-        stride: int = 512,
-        log_stride: Optional[int] = None,
-    ) -> None:
-        super(MalConv, self).__init__()
-        self.embd = nn.Embedding(num_embd, embd_size, padding_idx=0)
-        if not log_stride is None:
-            stride = 2**log_stride
+    def __init__(self, config: MalConvConfig) -> None:
+        super().__init__(config.chunk_size, config.overlap, config.min_chunk_size)
 
-        self.conv_1 = nn.Conv1d(embd_size, channels, window_size, stride=stride, bias=True)
-        self.conv_2 = nn.Conv1d(embd_size, channels, window_size, stride=stride, bias=True)
+        self.config = config
+        self.num_labels = config.out_size
 
-        self.fc_1 = nn.Linear(channels, channels)
-        self.fc_2 = nn.Linear(channels, out_size)
-
-        self.num_labels = out_size
+        self.embd = nn.Embedding(config.num_embd, config.embd_size, padding_idx=self.config.pad_idx)
+        self.conv_1 = nn.Conv1d(
+            config.embd_size, config.channels, config.window_size, stride=config.stride, bias=True
+        )
+        self.conv_2 = nn.Conv1d(
+            config.embd_size, config.channels, config.window_size, stride=config.stride, bias=True
+        )
+        self.fc_1 = nn.Linear(config.channels, config.channels)
+        self.fc_2 = nn.Linear(config.channels, config.out_size)
 
     def processRange(self, x: Tensor) -> Tensor:
         x = self.embd(x)
@@ -318,36 +428,37 @@ class MalConv(LowMemConvBase):
 
 
 class MalConvML(LowMemConvBase):
-    def __init__(
-        self,
-        num_embd: int,
-        out_size: int = 2,
-        channels: int = 128,
-        window_size: int = 512,
-        stride: int = 512,
-        layers: int = 1,
-        embd_size: int = 8,
-        log_stride: Optional[int] = None,
-    ):
-        super(MalConvML, self).__init__()
-        self.embd = nn.Embedding(num_embd, embd_size, padding_idx=0)
-        if not log_stride is None:
-            stride = 2**log_stride
+    def __init__(self, config: MalConvMLConfig) -> None:
+        super().__init__(config.chunk_size, config.overlap, config.min_chunk_size)
+        self.config = config
 
+        self.embd = nn.Embedding(config.num_embd, config.embd_size, padding_idx=self.config.pad_idx)
         self.convs = nn.ModuleList(
-            [nn.Conv1d(embd_size, channels * 2, window_size, stride=stride, bias=True)]
+            [
+                nn.Conv1d(
+                    config.embd_size,
+                    config.channels * 2,
+                    config.window_size,
+                    stride=config.stride,
+                    bias=True,
+                )
+            ]
             + [
-                nn.Conv1d(channels, channels * 2, window_size, stride=1, bias=True)
-                for i in range(layers - 1)
+                nn.Conv1d(
+                    config.channels, config.channels * 2, config.window_size, stride=1, bias=True
+                )
+                for _ in range(config.layers - 1)
             ]
         )
-        # one-by-one cons to perform information sharing
         self.convs_1 = nn.ModuleList(
-            [nn.Conv1d(channels, channels, 1, bias=True) for i in range(layers)]
+            [
+                nn.Conv1d(config.channels, config.channels, 1, bias=True)
+                for i in range(config.layers)
+            ]
         )
 
-        self.fc_1 = nn.Linear(channels, channels)
-        self.fc_2 = nn.Linear(channels, out_size)
+        self.fc_1 = nn.Linear(config.channels, config.channels)
+        self.fc_2 = nn.Linear(config.channels, config.out_size)
 
     def processRange(self, x: Tensor) -> Tensor:
         x = self.embd(x)
@@ -368,52 +479,58 @@ class MalConvML(LowMemConvBase):
 
 
 class MalConvGCT(LowMemConvBase):
-    def __init__(
-        self,
-        num_embd: int,
-        out_size: int = 2,
-        channels: int = 128,
-        window_size: int = 512,
-        stride: int = 512,
-        layers: int = 1,
-        embd_size: int = 8,
-        log_stride: Optional[int] = None,
-        low_mem: bool = True,
-    ):
-        super(MalConvGCT, self).__init__()
-        self.low_mem = low_mem
-        self.embd = nn.Embedding(num_embd, embd_size, padding_idx=0)
-        if not log_stride is None:
-            stride = 2**log_stride
+    def __init__(self, config: MalConvGCTConfig) -> None:
+        super().__init__(config.chunk_size, config.overlap, config.min_chunk_size)
+        self.config = config
+        self.num_labels = config.out_size
+
+        self.low_mem = True
+        self.embd = nn.Embedding(config.num_embd, config.embd_size, padding_idx=self.config.pad_idx)
 
         self.context_net = MalConvML(
-            num_embd=num_embd,
-            out_size=channels,
-            channels=channels,
-            window_size=window_size,
-            stride=stride,
-            layers=layers,
-            embd_size=embd_size,
+            MalConvMLConfig(
+                num_embd=config.num_embd,
+                out_size=config.channels,
+                channels=config.channels,
+                window_size=config.window_size,
+                stride=config.stride,
+                layers=config.layers,
+                embd_size=config.embd_size,
+            )
         )
+
         self.convs = nn.ModuleList(
-            [nn.Conv1d(embd_size, channels * 2, window_size, stride=stride, bias=True)]
+            [
+                nn.Conv1d(
+                    config.embd_size,
+                    config.channels * 2,
+                    config.window_size,
+                    stride=config.stride,
+                    bias=True,
+                )
+            ]
             + [
-                nn.Conv1d(channels, channels * 2, window_size, stride=1, bias=True)
-                for i in range(layers - 1)
+                nn.Conv1d(
+                    config.channels, config.channels * 2, config.window_size, stride=1, bias=True
+                )
+                for _ in range(config.layers - 1)
             ]
         )
 
-        self.linear_atn = nn.ModuleList([nn.Linear(channels, channels) for i in range(layers)])
+        self.linear_atn = nn.ModuleList(
+            [nn.Linear(config.channels, config.channels) for i in range(config.layers)]
+        )
 
         # one-by-one cons to perform information sharing
         self.convs_share = nn.ModuleList(
-            [nn.Conv1d(channels, channels, 1, bias=True) for i in range(layers)]
+            [
+                nn.Conv1d(config.channels, config.channels, 1, bias=True)
+                for i in range(config.layers)
+            ]
         )
 
-        self.fc_1 = nn.Linear(channels, channels)
-        self.fc_2 = nn.Linear(channels, out_size)
-
-        self.num_labels = out_size
+        self.fc_1 = nn.Linear(config.channels, config.channels)
+        self.fc_2 = nn.Linear(config.channels, config.out_size)
 
     def determinRF(self) -> tuple[int]:
         """Over-write the determinRF call to use the base context_net to detemrin RF.
@@ -436,16 +553,19 @@ class MalConvGCT(LowMemConvBase):
             C = x.shape[1]
 
             sqrt_dim = np.sqrt(x.shape[1])
-            # we are going to need a version of GCT with a time dimension, which we will adapt as needed to the right length
+            # we are going to need a version of GCT with a time dimension,
+            # which we will adapt as needed to the right length
             ctnx = torch.tanh(linear_cntx(gct))
 
             # Size is (B, C), but we need (B, C, 1) to use as a 1d conv filter
             ctnx = torch.unsqueeze(ctnx, dim=2)
             # roll the batches into the channels
             x_tmp = x.view(1, B * C, -1)
-            # Now we can apply a conv with B groups, so that each batch gets its own context applied only to what was needed
+            # Now we can apply a conv with B groups, so that each batch gets
+            # its own context applied only to what was needed
             x_tmp = F.conv1d(x_tmp, ctnx, groups=B)
-            # x_tmp will have a shape of (1, B, L), now we just need to re-order the data back to (B, 1, L)
+            # x_tmp will have a shape of (1, B, L), now we just need to
+            # re-order the data back to (B, 1, L)
             x_gates = x_tmp.view(B, 1, -1)
 
             # Now we effectively apply σ(x_t^T tanh(W c))
@@ -486,32 +606,9 @@ class MalConvGCT(LowMemConvBase):
         )
 
 
-class MalConvConfig(PretrainedConfig):
-    def __init__(
-        self,
-        num_embd: int = 257,
-        embed_size: int = 8,
-        max_length: int = 2000000,
-        window_size: int = 512,
-        hidden_size: int = 128,
-        num_labels: int = 2,
-        pad_idx: int = 0,
-        dropout_p: float = 0.5,
-    ) -> None:
-        self.num_embd = num_embd
-        self.embed_size = embed_size
-        self.max_length = max_length
-        self.window_size = window_size
-        self.hidden_size = hidden_size
-        self.num_labels = num_labels
-        self.pad_idx = pad_idx
-        self.dropout_p = dropout_p
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(\n{pformat(vars(self))}\n)"
-
-
-if __name__ == "__main__":
+def test():
+    # pylint: disable=import-outside-toplevel
+    # pylint: disable=wrong-import-position
     from functools import partial
 
     from transformers import Trainer
@@ -519,18 +616,19 @@ if __name__ == "__main__":
     from src.data.loaders import get_bodmas_dataset
     from src.learn.utils import get_tokenizer_object, get_fast_tokenizer, tokenize_fn, preprocess_a
 
+    MAX_LENGTH = 2**14
+    NUM_TRAIN_EPOCHS = 1
+    BATCH_SIZE = 64
+    NO_CUDA = True
 
-    MAX_LENGTH = 2 ** 14
-
-    dataset, dist = get_bodmas_dataset()
+    dataset, _ = get_bodmas_dataset()
     dataset = dataset.rename_column("labels", "label")
     dataset["tr"] = dataset["tr"].select(list(range(100)))
     dataset["vl"] = dataset["vl"].select(list(range(100)))
     dataset["ts"] = dataset["ts"].select(list(range(100)))
+
     tokenizer = get_tokenizer_object()
     tokenizer = get_fast_tokenizer(tokenizer, model_max_length=MAX_LENGTH)
-
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, pad_to_multiple_of=8)
 
     dataset = dataset.map(partial(preprocess_a, max_length=MAX_LENGTH), batched=True)
     dataset = dataset.map(
@@ -545,18 +643,19 @@ if __name__ == "__main__":
         remove_columns=["name", "bytes", "size", "length", "text"],
     )
 
-    num_labels = dataset["tr"].info.features["label"].num_classes
-
-    model = MalConv(num_embd=len(tokenizer), out_size=num_labels)
-    model = MalConvGCT(num_embd=len(tokenizer), out_size=num_labels)
-
+    config = MalConvGCTConfig(
+        num_embd=len(tokenizer),
+        out_size=dataset["tr"].info.features["label"].num_classes,
+        pad_idx=tokenizer.pad_token_id,
+    )
+    model = MalConv(config)
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     args = TrainingArguments(
         "./tmp/malconv_with_trainer",
-        num_train_epochs=100,
-        per_device_train_batch_size=64,
-        no_cuda=True,
+        num_train_epochs=NUM_TRAIN_EPOCHS,
+        per_device_train_batch_size=BATCH_SIZE,
+        no_cuda=NO_CUDA,
     )
-
     trainer = Trainer(
         model,
         args,
@@ -568,4 +667,8 @@ if __name__ == "__main__":
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    trainer.train(None)
+    trainer.train()
+
+
+if __name__ == "__main__":
+    test()
