@@ -127,7 +127,7 @@ def get_bodmas_dataset(
     top_k: Optional[int] = None,
     ts_size: int | float = 0.1,
     vl_size: int | float = 0.1,
-) -> tuple[Dataset, Counter]:
+) -> tuple[DatasetDict, Counter]:
     """Expect additional computation if min_freq or top_k is not None."""
 
     samples_per_class = 1
