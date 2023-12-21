@@ -6,13 +6,8 @@ A huggingface-compatible implementation of MalConv2 and MalConvGCG.
 print(f"Entered {__file__=}")
 
 from abc import ABC, abstractmethod
-from copy import deepcopy
-from dataclasses import dataclass, field
 from datetime import datetime
 import os
-from pathlib import Path
-from pprint import pformat, pprint
-import shutil
 import sys
 from typing import Any, Optional
 
@@ -21,26 +16,13 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 # pylint: enable=wrong-import-position
 
-from datasets import Dataset
 import numpy as np
 import torch
-from torch import nn, optim, Tensor
+from torch import nn, Tensor
 from torch.nn import CrossEntropyLoss
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from transformers import (
-    DataCollatorWithPadding,
-    PretrainedConfig,
-    PreTrainedTokenizer,
-    PreTrainedModel,
-    TrainerCallback,
-    TrainingArguments,
-)
+from transformers import PretrainedConfig
 from transformers.modeling_outputs import SequenceClassifierOutput
-from transformers.trainer_callback import TrainerState
-from tqdm import tqdm
-
-from utils import get_highest_path
 
 
 # The default configuration values are determined by the value in the training scripts
@@ -75,11 +57,13 @@ class BaseMalConvConfig(PretrainedConfig):
         self.overlap = overlap
         self.min_chunk_size = min_chunk_size
 
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(\n{pformat(vars(self))}\n)"
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            raise Exception(
+                "MalConv does not support multi-GPU training. "
+                "Use CUDA_VISIIBLE_DEVICES=0 python ... when running the script."
+            )
 
 
-@dataclass
 class MalConvConfig(BaseMalConvConfig):
     def __init__(
         self,
@@ -611,15 +595,15 @@ def test():
     # pylint: disable=wrong-import-position
     from functools import partial
 
-    from transformers import Trainer
+    from transformers import DataCollatorWithPadding, Trainer, TrainingArguments
 
     from src.data.loaders import get_bodmas_dataset
     from src.learn.utils import get_tokenizer_object, get_fast_tokenizer, tokenize_fn, preprocess_a
 
     MAX_LENGTH = 2**14
-    NUM_TRAIN_EPOCHS = 1
-    BATCH_SIZE = 64
-    NO_CUDA = True
+    NUM_TRAIN_EPOCHS = 100
+    BATCH_SIZE = 128
+    NO_CUDA = False
 
     dataset, _ = get_bodmas_dataset()
     dataset = dataset.rename_column("labels", "label")
