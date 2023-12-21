@@ -70,8 +70,8 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.tune import TuneError
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
+from src.malconv import MalConvConfig, MalConvGCTConfig, MalConv, MalConvGCT
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
-from src.data.utils import print_dataset
 from src.learn.utils import (
     count_parameters,
     pad_to_multiple_of_fn,
@@ -84,19 +84,6 @@ from src.learn.utils import (
     compute_total_steps,
     str_or_bool_to_str,
 )
-
-# from src.malconv import MalConvModel, MalConvConfig, MalConvTrainer
-
-# Absolutely bizarre, but the below causes and error when hyperparmaeter tuning with ray.
-# `AttributeError: Can't get attribute 'MalConvConfig' on <module '__main__'`
-# MalConvModel = NewType("MalConvModel", object)
-# MalConvConfig = NewType("MalConvConfig", object)
-# MalConvTrainer = NewType("MalConvTrainer", object)
-
-# Pseduo type aliases for the MalConv classes.
-MalConvModel: TypeAlias = PreTrainedModel
-MalConvConfig: TypeAlias = PretrainedConfig
-MalConvTrainer: TypeAlias = Trainer
 
 
 random.seed(0)
@@ -126,7 +113,9 @@ F1 = evaluate.load("f1")
 
 
 # FIXME: fix the entire compute metrics pipeline....
-def COMPUTE_METRICS(eval_pred: EvalPrediction, single_shot_classes: Optional[list[int]] = None) -> dict[str, float]:
+def COMPUTE_METRICS(
+    eval_pred: EvalPrediction, single_shot_classes: Optional[list[int]] = None
+) -> dict[str, float]:
     predictions, labels = eval_pred.predictions, eval_pred.label_ids
     predictions = np.argmax(predictions, axis=1)
     metrics = {
@@ -140,11 +129,17 @@ def COMPUTE_METRICS(eval_pred: EvalPrediction, single_shot_classes: Optional[lis
     include = np.array([i for i, l in enumerate(labels) if l in single_shot_classes])
     predictions = predictions[include]
     labels = labels[include]
-    metrics.update({
-        "ss_accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
-        "ss_f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
-        "ss_f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
-    })
+    metrics.update(
+        {
+            "ss_accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
+            "ss_f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")[
+                "f1"
+            ],
+            "ss_f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")[
+                "f1"
+            ],
+        }
+    )
     return metrics
 
 
@@ -188,7 +183,7 @@ def hp_model_init(
     num_labels: Optional[int] = None,
     id2label: Optional[dict[int, str]] = None,
     label2id: Optional[dict[str, int]] = None,
-) -> PreTrainedModel | MalConvModel:
+) -> PreTrainedModel | MalConv | MalConvGCT:
     """
     Create new model for Optuna hyperaparameter tuning.
 
@@ -228,6 +223,8 @@ RETURN_ATTENTION_MASK = {
     "reformer": True,
     "nystromformer": True,
     "fnet": False,
+    "malconv": False,
+    "malconvgct": False,
 }
 
 
@@ -242,6 +239,10 @@ def object_to_model_name_or_path(obj) -> str:
         return "reformer"
     if isinstance(obj, (LongformerConfig,)):
         return "longformer"
+    if isinstance(obj, (MalConvConfig,)):
+        return "malconv"
+    if isinstance(obj, (MalConvGCTConfig,)):
+        return "malconvgct"
     if isinstance(obj, (str | Path)) and Path(obj).exists():
         return object_to_model_name_or_path(AutoConfig.from_pretrained(str(obj)))
     raise RuntimeError()
@@ -384,11 +385,13 @@ class OutputHelper:
             str(depth),
         ]
         if task == "clf":
-            args.extend([
-                str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
-                str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
-                str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
-            ])
+            args.extend(
+                [
+                    str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
+                    str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
+                    str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
+                ]
+            )
         self.path = self.root.joinpath(*args)
 
     def __repr__(self) -> str:
@@ -609,18 +612,16 @@ def get_config(
         )
     if model_name_or_path.lower() == "malconv":
         return MalConvConfig(
-            num_embd=vocab_size,
-            embed_size=8,
-            max_length=max_posititional_embeddings,
-            window_size=512,
-            hidden_size=512,
+            out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
-            **kwds,
+            num_embd=vocab_size,
         )
-    if model_name_or_path.lower() == "malconv2":
-        raise NotImplementedError()
-    if model_name_or_path.lower() == "malconvgcg":
-        raise NotImplementedError()
+    if model_name_or_path.lower() == "malconvgct":
+        return MalConvGCTConfig(
+            out_size=kwds["num_labels"],
+            pad_idx=tokenizer.pad_token_id,
+            num_embd=vocab_size,
+        )
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
 
@@ -628,9 +629,9 @@ def get_config(
 def get_model(
     task: str,
     model_name_or_path: str,
-    config: PretrainedConfig | MalConvConfig,
+    config: PretrainedConfig,
     **kwds,
-) -> PreTrainedModel | MalConvModel:
+) -> PreTrainedModel | MalConv | MalConvGCT:
     # Get model from disk
     if Path(model_name_or_path).exists():
         if task == "clf":
@@ -639,11 +640,11 @@ def get_model(
                     model_name_or_path, **kwds
                 )
             if get_model_type(model_name_or_path) == "MC":
-                # TODO: match design pattern as from_pretrained()
-                raise NotImplementedError()
-                # model = MalConvModel(config)
-                # model.load_state_dict(MalConvModel.get_state_dict(model_name_or_path))
-                # return model
+                raise NotImplementedError("TODO: implement the from_pretrained() design pattern")
+                if model_name_or_path.lower() == "malconv":
+                    ...
+                if model_name_or_path.lower() == "malconvgct":
+                    ...
         if task == "mlm":
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
         if task == "clm":
@@ -652,10 +653,12 @@ def get_model(
 
     # Get model from config
     if task == "clf":
+        if isinstance(config, MalConvConfig):
+            return MalConv(config)
+        if isinstance(config, MalConvGCTConfig):
+            return MalConvGCT(config)
         if isinstance(config, PretrainedConfig):
             return AutoModelForSequenceClassification.from_config(config)
-        if isinstance(config, MalConvConfig):
-            return MalConvModel(config)
     if task == "mlm":
         return AutoModelForMaskedLM.from_config(config)
     if task == "clm":
@@ -665,8 +668,6 @@ def get_model(
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{args=}")
-
-    TYPE = get_model_type(args.model_name_or_path)
 
     oh = OutputHelper(
         args.model_name_or_path,
@@ -806,39 +807,29 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # compute_metrics = CLFComputeMetrics()
         compute_metrics = COMPUTE_METRICS
     elif args.task == "mlm":
-        if TYPE != "HF":
-            raise ValueError("Langauge modeling not supported for this model.")
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, pad_to_multiple_of=pad_to_multiple_of
         )
         # compute_metrics = MLMComputeMetrics()
         compute_metrics = None
     elif args.task == "clm":
-        if TYPE != "HF":
-            raise ValueError("Langauge modeling not supported for this model.")
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=False, pad_to_multiple_of=pad_to_multiple_of
         )
         # compute_metrics = CLMComputeMetrics()
         compute_metrics = None
 
-    # FIXME: figure out the OOM issues with the compute_metrics.
-    # compute_metrics = None
-
     print(f"{data_collator=}")
     print(f"{compute_metrics=}")
     print(BR, flush=True)
 
-    callbacks = []  # [EarlyStoppingCallback(early_stopping_patience=5)]
+    callbacks = []
     print(f"{callbacks=}")
 
-    if TYPE == "HF":
-        if args.task == "clf":
-            ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
-        elif args.task in ("mlm", "clm"):
-            ModelTrainer = Trainer
-    elif TYPE == "MC":
-        ModelTrainer = MalConvTrainer
+    if args.task == "clf":
+        ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
+    elif args.task in ("mlm", "clm"):
+        ModelTrainer = Trainer
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
     if not STREAMING:  # dataset has already been processed, so we disable thread-based parallelism
@@ -858,29 +849,33 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{count_parameters(model, requires_grad=True)=}")
         print(BR, flush=True)
 
-        # FIXME: find a better way of implementing this
-        # FIXME: think about whether this breaks other things or not
-        add_positional_embeddings = args.max_length > model.config.max_position_embeddings
-        if add_positional_embeddings and isinstance(config, LongformerConfig):
-            max_position_embeddings = longformer_max_position_embeddings(
-                args.max_length, config.attention_window[0]
+        # Resize the embeddings if necessary
+        if isinstance(model, PreTrainedModel):
+            add_positional_embeddings = args.max_length > model.config.max_position_embeddings
+
+            if add_positional_embeddings and isinstance(config, LongformerConfig):
+                max_position_embeddings = longformer_max_position_embeddings(
+                    args.max_length, config.attention_window[0]
+                )
+            elif add_positional_embeddings:
+                max_position_embeddings = args.max_length
+            else:
+                max_position_embeddings = model.config.max_position_embeddings
+
+            config.max_position_embeddings = max_position_embeddings
+
+            model = modify_positional_embeddings(
+                model,
+                max_position_embeddings=max_position_embeddings,
+                duplicate=args.ft_duplicate_positional_embeddings and add_positional_embeddings,
+                initialize=args.ft_initialize_positional_embeddings and add_positional_embeddings,
+                freeze=args.ft_freeze_positional_embeddings,
+                initalizer_range=config.initializer_range,
             )
-        elif add_positional_embeddings:
-            max_position_embeddings = args.max_length
-        else:
-            max_position_embeddings = model.config.max_position_embeddings
-        model = modify_positional_embeddings(
-            model,
-            max_position_embeddings=max_position_embeddings,
-            duplicate=args.ft_duplicate_positional_embeddings and add_positional_embeddings,
-            initialize=args.ft_initialize_positional_embeddings and add_positional_embeddings,
-            freeze=args.ft_freeze_positional_embeddings,
-            initalizer_range=config.initializer_range,
-        )
-        print(f"{model=}")
-        print(f"{count_parameters(model, requires_grad=False)=}")
-        print(f"{count_parameters(model, requires_grad=True)=}")
-        print(BR, flush=True)
+            print(f"{model=}")
+            print(f"{count_parameters(model, requires_grad=False)=}")
+            print(f"{count_parameters(model, requires_grad=True)=}")
+            print(BR, flush=True)
 
         oh.mkdir()
         trainer = ModelTrainer(
@@ -905,8 +900,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if training_arguments.do_eval:
         # If we just trained the model, we don't need to load anything
         if training_arguments.do_train and training_arguments.load_best_model_at_end:
-            if TYPE == "MC":
-                raise NotImplementedError()
             pass
         # Load the best model
         else:
@@ -928,7 +921,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if isinstance(compute_metrics, ComputeMetrics):
             compute_metrics.set_detailed(True)
 
-        single_shot_classes=[label2id[l] for l in dist if dist[l] == 3]
+        single_shot_classes = [label2id[l] for l in dist if dist[l] == 3]
         compute_metrics = partial(COMPUTE_METRICS, single_shot_classes=single_shot_classes)
         print("single_shot_classes=")
         pprint(single_shot_classes)
