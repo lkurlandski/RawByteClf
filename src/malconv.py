@@ -10,6 +10,7 @@ from datetime import datetime
 import os
 import sys
 from typing import Any, Optional
+import warnings
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
@@ -59,10 +60,13 @@ class BaseMalConvConfig(PretrainedConfig):
         self.overlap = overlap
         self.min_chunk_size = min_chunk_size
 
+        self.num_labels = out_size
+
         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-            raise Exception(
+            warnings.warn(
                 "MalConv does not support multi-GPU training. "
                 "Use CUDA_VISIIBLE_DEVICES=0 python ... when running the script."
+                "Alternatively, use --no_cuda or --use_cpu to run on CPU."
             )
 
 
@@ -362,7 +366,6 @@ class MalConv(LowMemConvBase):
         super().__init__(config.chunk_size, config.overlap, config.min_chunk_size)
 
         self.config = config
-        self.num_labels = config.out_size
 
         self.embd = nn.Embedding(config.num_embd, config.embd_size, padding_idx=self.config.pad_idx)
         self.conv_1 = nn.Conv1d(
@@ -402,7 +405,7 @@ class MalConv(LowMemConvBase):
         loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
 
         return SequenceClassifierOutput(
             loss=loss,
@@ -467,7 +470,6 @@ class MalConvGCT(LowMemConvBase):
     def __init__(self, config: MalConvGCTConfig) -> None:
         super().__init__(config.chunk_size, config.overlap, config.min_chunk_size)
         self.config = config
-        self.num_labels = config.out_size
 
         self.low_mem = True
         self.embd = nn.Embedding(config.num_embd, config.embd_size, padding_idx=self.config.pad_idx)
@@ -581,7 +583,7 @@ class MalConvGCT(LowMemConvBase):
         loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
 
         return SequenceClassifierOutput(
             loss=loss,
