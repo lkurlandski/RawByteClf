@@ -100,7 +100,7 @@ NUM_ATTENTION_HEADS = 4
 ATTENTION_WINDOW = 128
 
 SUBSET = None
-STREAMING = True
+STREAMING = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 
@@ -157,20 +157,29 @@ class TrainingArguments(HfTrainingArguments):
         self.do_eval = do_eval
 
 
-def hp_ray_space(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
+def hp_ray_space_longformer(
+    trial: Any,
+) -> dict[str, float | int]:  # pylint: disable=unused-argument
     """
     - hidden_size % num_attention_heads == 0
     """
 
     return {
-        # "learning_rate": tune.uniform(1e-5, 1e-3),
-        # "weight_decay": tune.uniform(1e-5, 1e-2),
-        # "warmup_steps": tune.choice([250, 500, 750, 1000]),
         "hidden_size": tune.choice([256, 512, 768, 1024]),
         "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
         "num_hidden_layers": tune.choice([1, 2, 3, 4]),
         "num_attention_heads": tune.choice([1, 2, 4, 8]),
         "attention_window": tune.choice([128, 256, 512, 1024, 2048, 4096]),
+    }
+
+
+def hp_ray_space_malconv(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
+    return {
+        "stride": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
+        "window_size": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
+        "channels": tune.choice([64, 128, 192]),
+        "chunk_size": tune.choice([1024, 2048, 4096, 8192, 16384, 32768, 65536]),
+        "overlap": tune.choice([256, 512, 768]),
     }
 
 
@@ -193,6 +202,7 @@ def hp_model_init(
 
     Cannot use kwds because huggingface checks for a function that takes one and only one parameter.
     """
+
     kwds = {
         k: v
         for k, v in {
@@ -615,12 +625,14 @@ def get_config(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
+            **kwds,
         )
     if model_name_or_path.lower() == "malconvgct":
         return MalConvGCTConfig(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
+            **kwds,
         )
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
@@ -718,6 +730,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset, dist = get_bodmas_dataset(
             subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
         )
+        if args.do_tune:
+            dataset["tr"] = dataset["tr"].select(range(4096))
+            dataset["vl"] = dataset["tr"].select(range(1024))
+            dataset.pop("ts")
     print(f"{dataset=}")
     print(f"{dist=}")
     print(BR, flush=True)
@@ -951,6 +967,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         #     cf_matrix = confusion_matrix(y_true, y_pred)
         #     ConfusionMatrixDisplay(cf_matrix).plot()
         #     plt.savefig(oh.test_confusion_matrix_file)
+    import inspect
 
     if args.do_tune:
         training_arguments = replace(
@@ -973,7 +990,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         trainer = ModelTrainer(
             model_init=model_init,
-            args=training_arguments,
+            args=HfTrainingArguments(
+                **{
+                    k: v
+                    for k, v in training_arguments.__dict__.items()
+                    if k in inspect.getfullargspec(HfTrainingArguments.__init__).args
+                }
+            ),
             train_dataset=dataset["tr"],
             eval_dataset=dataset["vl"],
             data_collator=data_collator,
@@ -990,7 +1013,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         scheduler = None  # ASHAScheduler(metric="eval_loss", mode="min")
         resources_per_trial = {
-            "cpu": 2,
+            "cpu": 8,
             "gpu": 1,
         }
         raise_on_failed_trial = False
@@ -1004,9 +1027,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         oh.tuning_results_dir.mkdir(exist_ok=True, parents=False)
         print("Tuning...")
 
+        if isinstance(config, LongformerConfig):
+            hp_space = hp_ray_space_longformer
+        elif isinstance(config, (MalConvConfig, MalConvGCTConfig)):
+            hp_space = hp_ray_space_malconv
+        else:
+            raise ValueError(f"No hyperparameter space defined for this model: {type(config)=}")
+
         try:
             best_trial: BestRun = trainer.hyperparameter_search(
-                hp_space=hp_ray_space,
+                hp_space=hp_space,
                 compute_objective=hp_compute_objective,
                 n_trials=N_TRIALS,
                 direction="minimize",
