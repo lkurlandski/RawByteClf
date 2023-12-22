@@ -47,6 +47,9 @@ class BaseMalConvConfig(PretrainedConfig):
         chunk_size: int = 65536,
         overlap: int = 512,
         min_chunk_size: int = 1024,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        num_labels: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.out_size = out_size
@@ -59,13 +62,20 @@ class BaseMalConvConfig(PretrainedConfig):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.min_chunk_size = min_chunk_size
+        self.id2label = id2label
+        self.label2id = label2id
 
+        if num_labels is not None and out_size != num_labels:
+            raise ValueError(
+                f"{num_labels=} is an alias for {out_size=}. If both are passed as an argument, "
+                "they must be equal. Else, just pass `out_size` and `num_labels` will be set to it."
+            )
         self.num_labels = out_size
 
         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
             warnings.warn(
                 "MalConv does not support multi-GPU training. "
-                "Use CUDA_VISIIBLE_DEVICES=0 python ... when running the script."
+                "Use CUDA_VISIIBLE_DEVICES=0 python ... when running the script. "
                 "Alternatively, use --no_cuda or --use_cpu to run on CPU."
             )
 
@@ -83,6 +93,9 @@ class MalConvConfig(BaseMalConvConfig):
         chunk_size: int = 65536,
         overlap: int = 512,
         min_chunk_size: int = 1024,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        num_labels: Optional[int] = None,
     ) -> None:
         super().__init__(
             out_size,
@@ -95,6 +108,9 @@ class MalConvConfig(BaseMalConvConfig):
             chunk_size,
             overlap,
             min_chunk_size,
+            id2label,
+            label2id,
+            num_labels,
         )
 
 
@@ -112,6 +128,9 @@ class MalConvMLConfig(BaseMalConvConfig):
         chunk_size: int = 65536,
         overlap: int = 512,
         min_chunk_size: int = 1024,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        num_labels: Optional[int] = None,
     ) -> None:
         super().__init__(
             out_size,
@@ -124,6 +143,9 @@ class MalConvMLConfig(BaseMalConvConfig):
             chunk_size,
             overlap,
             min_chunk_size,
+            id2label,
+            label2id,
+            num_labels,
         )
         self.layers = layers
 
@@ -142,6 +164,9 @@ class MalConvGCTConfig(BaseMalConvConfig):
         chunk_size: int = 65536,
         overlap: int = 512,
         min_chunk_size: int = 1024,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        num_labels: Optional[int] = None,
     ) -> None:
         super().__init__(
             out_size,
@@ -154,6 +179,9 @@ class MalConvGCTConfig(BaseMalConvConfig):
             chunk_size,
             overlap,
             min_chunk_size,
+            id2label,
+            label2id,
+            num_labels,
         )
         self.layers = layers
 
@@ -604,15 +632,15 @@ def test():
     from src.learn.utils import get_tokenizer_object, get_fast_tokenizer, tokenize_fn, preprocess_a
 
     MAX_LENGTH = 2**14
-    NUM_TRAIN_EPOCHS = 100
-    BATCH_SIZE = 128
-    NO_CUDA = False
 
     dataset, _ = get_bodmas_dataset()
     dataset = dataset.rename_column("labels", "label")
-    dataset["tr"] = dataset["tr"].select(list(range(128)))
-    dataset["vl"] = dataset["vl"].select(list(range(128)))
-    dataset["ts"] = dataset["ts"].select(list(range(128)))
+    # dataset["tr"] = dataset["tr"].select(list(range(128)))
+    # dataset["vl"] = dataset["vl"].select(list(range(128)))
+    # dataset["ts"] = dataset["ts"].select(list(range(128)))
+    dataset["tr"] = dataset["tr"].select(range(4096))
+    dataset["vl"] = dataset["tr"].select(range(1024))
+    dataset.pop("ts")
 
     tokenizer = get_tokenizer_object()
     tokenizer = get_fast_tokenizer(tokenizer, model_max_length=MAX_LENGTH)
@@ -645,17 +673,20 @@ def test():
         out_size=dataset["tr"].info.features["label"].num_classes,
         pad_idx=tokenizer.pad_token_id,
         channels=128,
-        window_size=512,
-        stride=512,
+        window_size=64,
+        stride=64,
     )
     model = MalConv(config)
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     args = TrainingArguments(
         "./tmp/malconv_with_trainer",
-        num_train_epochs=NUM_TRAIN_EPOCHS,
-        per_device_train_batch_size=BATCH_SIZE,
-        no_cuda=NO_CUDA,
+        num_train_epochs=1,
+        per_device_train_batch_size=256,
+        per_device_eval_batch_size=256,
+        learning_rate=5e-4,
+        fp16=True,
+        no_cuda=False,
     )
     trainer = Trainer(
         model,
@@ -669,6 +700,8 @@ def test():
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     trainer.train()
+    metrics = trainer.evaluate()
+    print(metrics)
 
 
 if __name__ == "__main__":
