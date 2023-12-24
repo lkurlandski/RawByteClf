@@ -4,6 +4,10 @@ Train and evaluate the models for malware family classification.
 # FIXME: the config that gets checkpointed gets is messed up when resizing the
 # positional embeddings! To patch, simply manually adjust the config.json file.
 # To fix, adjust the Config object.
+
+# TODO: investigate increasing the batch size and number of processes for the
+# Dataset.map() calls. Experiment with malconv, as the impact of disk access is
+# more pronounced there than with the heavy transformers models.
 """
 
 # pylint: disable=wrong-import-position
@@ -70,7 +74,14 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.tune import TuneError
 
 from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
-from src.malconv import MalConvConfig, MalConvGCTConfig, MalConv, MalConvGCT
+from src.malconv import (
+    MalConvConfig,
+    MalConvGCTConfig,
+    MalConv,
+    MalConvGCT,
+    MalConvTunedConfig65536,
+    MalConvGCTTunedConfig65536,
+)
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.learn.utils import (
     count_parameters,
@@ -104,8 +115,12 @@ STREAMING = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 
-N_INITIAL_POINTS = 32
-N_TRIALS = 256  # including the initial points
+TUNE_TR_N_SAMPLES = None
+TUNE_VL_N_SAMPLES = None
+TUNE_TS_N_SAMPLES = 0
+
+N_INITIAL_POINTS = 16
+N_TRIALS = 128  # including the initial points
 
 
 ACCURACY = evaluate.load("accuracy")
@@ -625,14 +640,14 @@ def get_config(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **kwds,
+            **(MalConvTunedConfig65536 | kwds),
         )
     if model_name_or_path.lower() == "malconvgct":
         return MalConvGCTConfig(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **kwds,
+            **(MalConvGCTTunedConfig65536 | kwds),
         )
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
@@ -731,9 +746,22 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
         )
         if args.do_tune:
-            dataset["tr"] = dataset["tr"].select(range(4096))
-            dataset["vl"] = dataset["tr"].select(range(1024))
-            dataset.pop("ts")
+            if TUNE_TR_N_SAMPLES:
+                if TUNE_TR_N_SAMPLES == 0:
+                    dataset.pop("tr")
+                else:
+                    dataset["tr"] = dataset["tr"].select(range(TUNE_TR_N_SAMPLES))
+            if TUNE_VL_N_SAMPLES:
+                if TUNE_VL_N_SAMPLES == 0:
+                    dataset.pop("vl")
+                else:
+                    dataset["vl"] = dataset["vl"].select(range(TUNE_VL_N_SAMPLES))
+            if TUNE_TS_N_SAMPLES:
+                if TUNE_TS_N_SAMPLES == 0:
+                    dataset.pop("ts")
+                else:
+                    dataset["ts"] = dataset["ts"].select(range(TUNE_TS_N_SAMPLES))
+
     print(f"{dataset=}")
     print(f"{dist=}")
     print(BR, flush=True)

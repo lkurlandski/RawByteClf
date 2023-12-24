@@ -29,9 +29,28 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 # The default configuration values are determined by the value in the training scripts
 # or from the default values of the __init__ function from the original implementation.
 # These defaults may not work that well, but they are what seems to have been used
-# in the original codebase and the original paper.
+# in the original codebase and the original paper. There are some suggested hyperparameter
+# values from tuning experiments in some of the dictionaries below.
 # For compatibility with PretrainedConfig, all values must have a default, hence the -1s.
 # For classification with MalConv or MalConvGCG, set out_size to the number of classes.
+
+
+# eval_loss=5.323531
+MalConvTunedConfig65536 = {
+    "channels": 192,
+    "chunk_size": 2048,
+    "overlap": 256,
+    "stride": 64,
+    "window_size": 320,
+}
+# eval_loss = 5.588387
+MalConvGCTTunedConfig65536 = {
+    "channels": 192,
+    "chunk_size": 1024,
+    "overlap": 256,
+    "stride": 64,
+    "window_size": 384,
+}
 
 
 class BaseMalConvConfig(PretrainedConfig):
