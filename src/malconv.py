@@ -6,10 +6,11 @@ A huggingface-compatible implementation of MalConv2 and MalConvGCG.
 print(f"Entered {__file__=}")
 
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from datetime import datetime
 import os
 import sys
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 import warnings
 
 if __name__ == "__main__":
@@ -35,21 +36,27 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 # For classification with MalConv or MalConvGCG, set out_size to the number of classes.
 
 
-# eval_loss=5.323531
-MalConvTunedConfig65536 = {
-    "channels": 192,
-    "chunk_size": 2048,
-    "overlap": 256,
-    "stride": 64,
-    "window_size": 320,
-}
-# eval_loss = 5.588387
-MalConvGCTTunedConfig65536 = {
-    "channels": 192,
-    "chunk_size": 1024,
-    "overlap": 256,
-    "stride": 64,
-    "window_size": 384,
+TunedConfigs = {
+    # eval_loss=5.323531
+    "malconv": {
+        65536: {
+            "channels": 192,
+            "chunk_size": 2048,
+            "overlap": 256,
+            "stride": 64,
+            "window_size": 320,
+        }
+    },
+    # eval_loss = 5.588387
+    "malconvgct": {
+        65536: {
+            "channels": 192,
+            "chunk_size": 1024,
+            "overlap": 256,
+            "stride": 64,
+            "window_size": 384,
+        }
+    },
 }
 
 
