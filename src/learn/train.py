@@ -8,6 +8,10 @@ Train and evaluate the models for malware family classification.
 # TODO: investigate increasing the batch size and number of processes for the
 # Dataset.map() calls. Experiment with malconv, as the impact of disk access is
 # more pronounced there than with the heavy transformers models.
+
+# TODO: does the attention mask need to be handled by the tokenizer? Can it be
+# handled by the dataloader instead? If so, we could skip the entire second map 
+# process, which would greatly enhance the speed of the entire process...
 """
 
 # pylint: disable=wrong-import-position
@@ -18,6 +22,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import partial
 import gc
+import inspect
 import json
 import math
 from pathlib import Path
@@ -79,8 +84,7 @@ from src.malconv import (
     MalConvGCTConfig,
     MalConv,
     MalConvGCT,
-    MalConvTunedConfig65536,
-    MalConvGCTTunedConfig65536,
+    TunedConfigs,
 )
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.learn.utils import (
@@ -89,7 +93,8 @@ from src.learn.utils import (
     find_two_largest_factors,
     get_tokenizer_object,
     get_fast_tokenizer,
-    preprocess_a,
+    examples_to_text,
+    examples_to_input_ids,
     tokenize_fn,
     float_to_int,
     compute_total_steps,
@@ -111,9 +116,11 @@ NUM_ATTENTION_HEADS = 4
 ATTENTION_WINDOW = 128
 
 SUBSET = None
-STREAMING = False
+STREAMING = True
+EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
+PREPROCESS_AS_TEXT = True
 
 TUNE_TR_N_SAMPLES = None
 TUNE_VL_N_SAMPLES = None
@@ -268,7 +275,7 @@ def object_to_model_name_or_path(obj) -> str:
         return "malconv"
     if isinstance(obj, (MalConvGCTConfig,)):
         return "malconvgct"
-    if isinstance(obj, (str | Path)) and Path(obj).exists():
+    if isinstance(obj, (str, Path)) and Path(obj).exists():
         return object_to_model_name_or_path(AutoConfig.from_pretrained(str(obj)))
     raise RuntimeError()
 
@@ -640,14 +647,14 @@ def get_config(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **(MalConvTunedConfig65536 | kwds),
+            **(TunedConfigs["malconv"].get(max_length, {}) | kwds),
         )
     if model_name_or_path.lower() == "malconvgct":
         return MalConvGCTConfig(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **(MalConvGCTTunedConfig65536 | kwds),
+            **(TunedConfigs["malconvgct"].get(max_length, {}) | kwds),
         )
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
@@ -811,34 +818,37 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if not RETURN_ATTENTION_MASK[object_to_model_name_or_path(config)]:
         tokenizer.model_input_names.remove("attention_mask")
 
-    # Converts the first `max_length` "bytes" into a UTF-8 "text" column.
-    # We trim the bytes initially to reduce the memory footprint when tokenizing.
-    # Additional bytes are left (more than `args.mask_length`) for language modeling.
-    dataset = dataset.map(
-        partial(
-            preprocess_a,
-            max_length=args.max_length * args.depth
-            if args.task in ("mlm", "clm")
-            else args.max_length,
-        ),
-        batched=True,
-    )
-    remove_columns = ["name", "bytes", "size", "length", "text"]
-    if args.task != "clf":
-        remove_columns.append("labels")
-    # Converts the "text" column into a "input_ids" column.
-    # Additional rows are added for language modeling.
-    dataset = dataset.map(
-        partial(
-            tokenize_fn,  # The partial function here is picky (`tokenizer` must be arg not kwd).
-            tokenizer,
-            truncation=True,
+    if PREPROCESS_AS_TEXT:
+        function = partial(
+            examples_to_text,
+            max_length=args.max_length if args.task == "clf" else args.max_length * args.depth,
+            pad_idx=tokenizer.pad_token_id,
+        )
+    else:
+        function = partial(
+            examples_to_input_ids,
             max_length=args.max_length,
-            return_overflowing_tokens=args.task in ("mlm", "clm"),
-        ),
-        batched=True,
-        remove_columns=remove_columns,
-    )
+            pad_idx=tokenizer.pad_token_id,
+            pad_to_length=args.max_length,
+        )
+    dataset = dataset.map(function, batched=True)
+
+    if PREPROCESS_AS_TEXT:
+        remove_columns = ["name", "bytes", "size", "length", "text"]
+        remove_columns = remove_columns + ["labels"] if args.task != "clf" else remove_columns
+        function = (
+            partial(  # The partial function here is picky (`tokenizer` must be arg not kwd)
+                tokenize_fn,
+                tokenizer,
+                truncation=True,
+                max_length=args.max_length,
+                return_overflowing_tokens=args.task in ("mlm", "clm"),
+            ),
+        )
+        dataset = dataset.map(function, batched=True, remove_columns=remove_columns)
+
+    if EXIT_AFTER_MAP:
+        sys.exit(0)
 
     pad_to_multiple_of = PAD_TO
     if isinstance(config, transformers.ReformerConfig):
@@ -995,7 +1005,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         #     cf_matrix = confusion_matrix(y_true, y_pred)
         #     ConfusionMatrixDisplay(cf_matrix).plot()
         #     plt.savefig(oh.test_confusion_matrix_file)
-    import inspect
 
     if args.do_tune:
         training_arguments = replace(
