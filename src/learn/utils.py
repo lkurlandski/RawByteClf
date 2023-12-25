@@ -79,24 +79,39 @@ def get_slow_tokenizer(tokenizer_object: Tokenizer, **kwds) -> PreTrainedTokeniz
     return tokenizer
 
 
-def preprocess_a(examples: dict[str, list], max_length: Optional[int] = None) -> dict[str, list]:
-    """This is about half the speed of preprocess_b, but lets us use the vast HF ecosystem."""
+def examples_to_text(
+    examples: dict[str, list], max_length: Optional[int] = None
+) -> dict[str, list]:
     return {
         "text": [b[0:max_length].decode("latin1") for b in examples["bytes"]],
     }
 
 
-def preprocess_b(examples: dict[str, list]) -> dict[str, list]:
-    return {
-        "input_ids": [np.frombuffer(b, dtype=np.uint8) for b in examples["bytes"]],
-    }
+def examples_to_input_ids(
+    examples: dict[str, list],
+    max_length: int = sys.maxsize,
+    pad_idx: int = -1,
+    pad_to_length: Optional[int] = None,
+) -> dict[str, list]:
+    if pad_to_length is None:
+        pad_to_length = max(len(b) for b in examples["bytes"])
+        pad_to_length = min(pad_to_length, max_length)
+
+    r = {"input_ids": []}
+    for b in examples["bytes"]:
+        b = b[0:max_length]
+        x = np.frombuffer(b, dtype=np.uint8)
+        p = np.full(pad_to_length - len(b), pad_idx, dtype=np.uint8)
+        x = np.concatenate((x, p))
+        r["input_ids"].append(x)
+    return r
 
 
 def oversample_based_on_label(
     examples: dict[str, list[Any]], probabilities: list[float]
 ) -> dict[str, list[Any]]:
     """Over sampling to approximately match the target class distribution.
-    
+
     Args:
         examples: A dictionary of lists of examples.
         probabilities: The class distribution to match.
@@ -119,7 +134,7 @@ def oversample_based_on_label(
             oversampled_examples[key].extend([values[i] for i in oversampled_indices])
 
     examples = {
-        k : (examples[k] + oversampled_examples[k])
+        k: (examples[k] + oversampled_examples[k])
         if isinstance(examples[k], list)
         else np.concatenate((examples[k], oversampled_examples[k]))
         for k in examples
@@ -264,7 +279,6 @@ def round_list(x: list[float], digits: int = 2) -> list[float]:
 
 
 def test_oversample_based_on_label():
-
     C = 10
     class_probabilities = prob_norm(np.random.rand(C))
 
