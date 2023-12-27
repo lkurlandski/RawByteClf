@@ -822,7 +822,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         function = partial(
             examples_to_text,
             max_length=args.max_length if args.task == "clf" else args.max_length * args.depth,
-            pad_idx=tokenizer.pad_token_id,
         )
     else:
         function = partial(
@@ -836,14 +835,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if PREPROCESS_AS_TEXT:
         remove_columns = ["name", "bytes", "size", "length", "text"]
         remove_columns = remove_columns + ["labels"] if args.task != "clf" else remove_columns
-        function = (
-            partial(  # The partial function here is picky (`tokenizer` must be arg not kwd)
-                tokenize_fn,
-                tokenizer,
-                truncation=True,
-                max_length=args.max_length,
-                return_overflowing_tokens=args.task in ("mlm", "clm"),
-            ),
+        function = partial(  # The partial function here is picky (`tokenizer` must be arg not kwd)
+            tokenize_fn,
+            tokenizer,
+            truncation=True,
+            max_length=args.max_length,
+            return_overflowing_tokens=args.task in ("mlm", "clm"),
         )
         dataset = dataset.map(function, batched=True, remove_columns=remove_columns)
 
@@ -946,10 +943,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print("Training...")
         print(BR, flush=True)
         trainer.train(training_arguments.resume_from_checkpoint)
-        if training_arguments.load_best_model_at_end:
-            model.save_pretrained(oh.best_model_dir.as_posix())
-        with open(oh.log_history_file, "w") as fp:
-            json.dump(trainer.state.log_history, fp, indent=4)
+        # FIXME: create a symbolic to link to the best model...
+        # if training_arguments.load_best_model_at_end:
+        #     model.save_pretrained(oh.best_model_dir.as_posix())
+        # with open(oh.log_history_file, "w") as fp:
+        #     json.dump(trainer.state.log_history, fp, indent=4)
 
     if training_arguments.do_eval:
         # If we just trained the model, we don't need to load anything
