@@ -59,6 +59,7 @@ from transformers import (
     AutoModelForSequenceClassification,
     DataCollatorForLanguageModeling,
     DataCollatorWithPadding,
+    DefaultDataCollator,
     EarlyStoppingCallback,
     HfArgumentParser,
     PretrainedConfig,
@@ -78,7 +79,7 @@ from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune import TuneError
 
-from src.cfg import BR, INPUT_PATH, OUTPUT_PATH
+from src.cfg import BR, OUTPUT_PATH
 from src.malconv import (
     MalConvConfig,
     MalConvGCTConfig,
@@ -116,11 +117,16 @@ NUM_ATTENTION_HEADS = 4
 ATTENTION_WINDOW = 128
 
 SUBSET = None
-STREAMING = True
-EXIT_AFTER_MAP = False
+STREAMING = False
+KEEP_IN_MEMORY = True
+EXIT_AFTER_MAP = True
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
-PREPROCESS_AS_TEXT = True
+PREPROCESS_AS_TEXT = False
+PREPROCESS_AS_INPUT_IDS = True
+PREPROCESS_AS_INPUT_IDS_DO_PAD = True
+CACHE_FILE_NAME: Optional[str] = None  # "/home/lk3591/Documents/code/RawByteClf/INPUT_IDS_1048576"
+NUM_PROC: Optional[int] = None
 
 TUNE_TR_N_SAMPLES = None
 TUNE_VL_N_SAMPLES = None
@@ -823,14 +829,23 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             examples_to_text,
             max_length=args.max_length if args.task == "clf" else args.max_length * args.depth,
         )
-    else:
+    elif PREPROCESS_AS_INPUT_IDS:
         function = partial(
             examples_to_input_ids,
             max_length=args.max_length,
+            do_pad=PREPROCESS_AS_INPUT_IDS_DO_PAD,
             pad_idx=tokenizer.pad_token_id,
             pad_to_length=args.max_length,
         )
-    dataset = dataset.map(function, batched=True)
+    else:
+        function = lambda x: x
+    dataset = dataset.map(
+        function,
+        batched=True,
+        keep_in_memory=KEEP_IN_MEMORY,
+        cache_file_name=CACHE_FILE_NAME,
+        num_proc=NUM_PROC,
+    )
 
     if PREPROCESS_AS_TEXT:
         remove_columns = ["name", "bytes", "size", "length", "text"]
@@ -842,7 +857,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             max_length=args.max_length,
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         )
-        dataset = dataset.map(function, batched=True, remove_columns=remove_columns)
+        dataset = dataset.map(
+            function,
+            batched=True,
+            remove_columns=remove_columns,
+            keep_in_memory=KEEP_IN_MEMORY,
+        )
 
     if EXIT_AFTER_MAP:
         sys.exit(0)
@@ -852,9 +872,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         pad_to_multiple_of = _get_least_common_mult_chunk_len(config)
 
     if args.task == "clf":
-        data_collator = DataCollatorWithPadding(
-            tokenizer=tokenizer, padding=True, pad_to_multiple_of=pad_to_multiple_of
-        )
+        if PREPROCESS_AS_INPUT_IDS and PREPROCESS_AS_INPUT_IDS_DO_PAD:
+            data_collator = DefaultDataCollator()
+        else:
+            data_collator = DataCollatorWithPadding(
+                tokenizer=tokenizer, padding=True, pad_to_multiple_of=pad_to_multiple_of
+            )
         # compute_metrics = CLFComputeMetrics()
         compute_metrics = COMPUTE_METRICS
     elif args.task == "mlm":

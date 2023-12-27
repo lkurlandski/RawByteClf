@@ -90,10 +90,11 @@ def examples_to_text(
 def examples_to_input_ids(
     examples: dict[str, list],
     max_length: int = sys.maxsize,
+    do_pad: bool = True,
     pad_idx: int = -1,
     pad_to_length: Optional[int] = None,
 ) -> dict[str, list]:
-    if pad_to_length is None:
+    if do_pad and pad_to_length is None:
         pad_to_length = max(len(b) for b in examples["bytes"])
         pad_to_length = min(pad_to_length, max_length)
 
@@ -101,8 +102,9 @@ def examples_to_input_ids(
     for b in examples["bytes"]:
         b = b[0:max_length]
         x = np.frombuffer(b, dtype=np.uint8)
-        p = np.full(pad_to_length - len(b), pad_idx, dtype=np.uint8)
-        x = np.concatenate((x, p))
+        if do_pad:
+            p = np.full(pad_to_length - len(b), pad_idx, dtype=np.uint8)
+            x = np.concatenate((x, p))
         r["input_ids"].append(x)
     return r
 
