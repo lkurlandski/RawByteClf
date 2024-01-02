@@ -83,8 +83,10 @@ from src.cfg import BR, OUTPUT_PATH
 from src.malconv import (
     MalConvConfig,
     MalConvGCTConfig,
+    MyMalConvConfig,
     MalConv,
     MalConvGCT,
+    MyMalConv,
     TunedConfigs,
 )
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
@@ -119,7 +121,7 @@ ATTENTION_WINDOW = 128
 SUBSET = None
 STREAMING = False
 KEEP_IN_MEMORY = True
-EXIT_AFTER_MAP = True
+EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 PREPROCESS_AS_TEXT = False
@@ -184,6 +186,15 @@ class TrainingArguments(HfTrainingArguments):
         super().__init__(**kwds)
         self.do_eval = do_eval
 
+    def hf_training_arguments_object(self) -> HfTrainingArguments:
+        return HfTrainingArguments(
+            **{
+                k: v
+                for k, v in self.__dict__.items()
+                if k in inspect.getfullargspec(HfTrainingArguments.__init__).args
+            }
+        )
+
 
 def hp_ray_space_longformer(
     trial: Any,
@@ -208,6 +219,15 @@ def hp_ray_space_malconv(trial: Any) -> dict[str, float | int]:  # pylint: disab
         "channels": tune.choice([64, 128, 192]),
         "chunk_size": tune.choice([1024, 2048, 4096, 8192, 16384, 32768, 65536]),
         "overlap": tune.choice([256, 512, 768]),
+    }
+
+
+def hp_ray_space_mymalconv(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
+    return {
+        "stride": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
+        "window_size": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
+        "channels": tune.choice([64, 128, 192]),
+        "hidden_size": tune.choice([128, 256, 512, 768, 1024]),
     }
 
 
@@ -263,6 +283,7 @@ RETURN_ATTENTION_MASK = {
     "fnet": False,
     "malconv": False,
     "malconvgct": False,
+    "mymalconv": False,
 }
 
 
@@ -281,13 +302,15 @@ def object_to_model_name_or_path(obj) -> str:
         return "malconv"
     if isinstance(obj, (MalConvGCTConfig,)):
         return "malconvgct"
+    if isinstance(obj, (MyMalConvConfig,)):
+        return "mymalconv"
     if isinstance(obj, (str, Path)) and Path(obj).exists():
         return object_to_model_name_or_path(AutoConfig.from_pretrained(str(obj)))
     raise RuntimeError()
 
 
 def get_model_type(model: str) -> Literal["HF", "MC"]:
-    if model in ("malconv", "malconv2", "malconvGCG"):
+    if model in ("malconv", "malconvgct", "mymalconv"):
         return "MC"
     return "HF"
 
@@ -662,6 +685,14 @@ def get_config(
             num_embd=vocab_size,
             **(TunedConfigs["malconvgct"].get(max_length, {}) | kwds),
         )
+    if model_name_or_path.lower() == "mymalconv":
+        return MyMalConvConfig(
+            out_size=kwds["num_labels"],
+            pad_idx=tokenizer.pad_token_id,
+            num_embd=vocab_size,
+            max_length=max_posititional_embeddings,
+            **(TunedConfigs["mymalconv"].get(max_length, {}) | kwds),
+        )
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
 
@@ -685,6 +716,8 @@ def get_model(
                     ...
                 if model_name_or_path.lower() == "malconvgct":
                     ...
+                if model_name_or_path.lower() == "mymalconv":
+                    ...
         if task == "mlm":
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
         if task == "clm":
@@ -697,6 +730,8 @@ def get_model(
             return MalConv(config)
         if isinstance(config, MalConvGCTConfig):
             return MalConvGCT(config)
+        if isinstance(config, MyMalConvConfig):
+            return MyMalConv(config)
         if isinstance(config, PretrainedConfig):
             return AutoModelForSequenceClassification.from_config(config)
     if task == "mlm":
@@ -759,17 +794,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
         )
         if args.do_tune:
-            if TUNE_TR_N_SAMPLES:
+            if isinstance(TUNE_TR_N_SAMPLES, int):
                 if TUNE_TR_N_SAMPLES == 0:
                     dataset.pop("tr")
                 else:
                     dataset["tr"] = dataset["tr"].select(range(TUNE_TR_N_SAMPLES))
-            if TUNE_VL_N_SAMPLES:
+            if isinstance(TUNE_VL_N_SAMPLES, int):
                 if TUNE_VL_N_SAMPLES == 0:
                     dataset.pop("vl")
                 else:
                     dataset["vl"] = dataset["vl"].select(range(TUNE_VL_N_SAMPLES))
-            if TUNE_TS_N_SAMPLES:
+            if isinstance(TUNE_TS_N_SAMPLES, int):
                 if TUNE_TS_N_SAMPLES == 0:
                     dataset.pop("ts")
                 else:
@@ -842,9 +877,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dataset = dataset.map(
         function,
         batched=True,
-        keep_in_memory=KEEP_IN_MEMORY,
+        # keep_in_memory=KEEP_IN_MEMORY,
         # cache_file_name=CACHE_FILE_NAME,
-        num_proc=NUM_PROC,
+        # num_proc=NUM_PROC,
     )
 
     if PREPROCESS_AS_TEXT:
@@ -878,19 +913,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             data_collator = DataCollatorWithPadding(
                 tokenizer=tokenizer, padding=True, pad_to_multiple_of=pad_to_multiple_of
             )
-        # compute_metrics = CLFComputeMetrics()
         compute_metrics = COMPUTE_METRICS
     elif args.task == "mlm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, pad_to_multiple_of=pad_to_multiple_of
         )
-        # compute_metrics = MLMComputeMetrics()
         compute_metrics = None
     elif args.task == "clm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=False, pad_to_multiple_of=pad_to_multiple_of
         )
-        # compute_metrics = CLMComputeMetrics()
         compute_metrics = None
 
     print(f"{data_collator=}")
@@ -1048,13 +1080,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         trainer = ModelTrainer(
             model_init=model_init,
-            args=HfTrainingArguments(
-                **{
-                    k: v
-                    for k, v in training_arguments.__dict__.items()
-                    if k in inspect.getfullargspec(HfTrainingArguments.__init__).args
-                }
-            ),
+            args=training_arguments.hf_training_arguments_object(),
             train_dataset=dataset["tr"],
             eval_dataset=dataset["vl"],
             data_collator=data_collator,
@@ -1089,6 +1115,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             hp_space = hp_ray_space_longformer
         elif isinstance(config, (MalConvConfig, MalConvGCTConfig)):
             hp_space = hp_ray_space_malconv
+        elif isinstance(config, (MyMalConvConfig,)):
+            hp_space = hp_ray_space_mymalconv
         else:
             raise ValueError(f"No hyperparameter space defined for this model: {type(config)=}")
 

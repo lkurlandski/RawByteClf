@@ -1,5 +1,7 @@
 """
 A huggingface-compatible implementation of MalConv2 and MalConvGCG.
+
+# TODO: implement a way to load the models from disk.
 """
 
 # pylint: disable=wrong-import-position
@@ -57,7 +59,45 @@ TunedConfigs = {
             "window_size": 192,
         }
     },
+    "mymalconv": {},
 }
+
+
+class MyMalConvConfig(PretrainedConfig):
+    def __init__(
+        self,
+        out_size: int = -1,
+        pad_idx: int = -1,
+        num_embd: int = -1,
+        max_length: int = -1,
+        embd_size: int = 8,
+        window_size: int = 512,
+        channels: int = 128,
+        stride: int = 512,
+        hidden_size: int = 128,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        num_labels: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        self.out_size = out_size
+        self.pad_idx = pad_idx
+        self.num_embd = num_embd
+        self.max_length = max_length
+        self.embd_size = embd_size
+        self.window_size = window_size
+        self.channels = channels
+        self.stride = stride
+        self.hidden_size = hidden_size
+        self.id2label = id2label
+        self.label2id = label2id
+
+        if num_labels is not None and out_size != num_labels:
+            raise ValueError(
+                f"{num_labels=} is an alias for {out_size=}. If both are passed as an argument, "
+                "they must be equal. Else, just pass `out_size` and `num_labels` will be set to it."
+            )
+        self.num_labels = out_size
 
 
 class BaseMalConvConfig(PretrainedConfig):
@@ -647,6 +687,69 @@ class MalConvGCT(LowMemConvBase):
         )
 
 
+class MyMalConv(nn.Module):
+    """
+    Adapted from https://github.com/Alexander-H-Liu/MalConv-Pytorch/tree/master
+    and https://github.com/elastic/ember/blob/master/malconv/malconv.py
+    """
+
+    def __init__(self, config: MyMalConvConfig):
+        super().__init__()
+        self.config = config
+
+        self.embed = nn.Embedding(config.num_embd, config.embd_size, padding_idx=config.pad_idx)
+        self.conv_1 = nn.Conv1d(
+            int(config.embd_size / 2),
+            config.channels,
+            config.window_size,
+            stride=config.window_size,
+            bias=True,
+        )
+        self.conv_2 = nn.Conv1d(
+            int(config.embd_size / 2),
+            config.channels,
+            config.window_size,
+            stride=config.window_size,
+            bias=True,
+        )
+        self.pooling = nn.MaxPool1d(int(config.max_length / config.window_size))
+        self.mlp = nn.Sequential(
+            nn.Linear(config.channels, config.hidden_size),
+            nn.Dropout(),
+            nn.ReLU(),
+            nn.Linear(config.hidden_size, config.num_labels),
+        )
+
+    def forward(
+        self,
+        input_ids: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        labels: Optional[Tensor] = None,
+    ) -> SequenceClassifierOutput:
+        x = self.embed(input_ids)
+        x = torch.transpose(x, -1, -2)
+        cnn_value = self.conv_1(x.narrow(-2, 0, 4))
+        gating_weight = F.sigmoid(self.conv_2(x.narrow(-2, 4, 4)))
+        x = cnn_value * gating_weight
+        x = self.pooling(x)
+        x = x.view(-1, self.config.channels)
+        x = self.mlp(x)
+
+        logits = x
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+
+        return SequenceClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=None,
+            attentions=None,
+        )
+
+
 def test():
     # pylint: disable=import-outside-toplevel
     # pylint: disable=wrong-import-position
@@ -655,23 +758,30 @@ def test():
     from transformers import DataCollatorWithPadding, Trainer, TrainingArguments
 
     from src.data.loaders import get_bodmas_dataset
-    from src.learn.utils import get_tokenizer_object, get_fast_tokenizer, tokenize_fn, preprocess_a
+    from src.learn.utils import (
+        get_tokenizer_object,
+        get_fast_tokenizer,
+        tokenize_fn,
+        examples_to_text,
+    )
 
-    MAX_LENGTH = 2**14
+    MAX_LENGTH = 2**16
 
     dataset, _ = get_bodmas_dataset()
     dataset = dataset.rename_column("labels", "label")
     # dataset["tr"] = dataset["tr"].select(list(range(128)))
     # dataset["vl"] = dataset["vl"].select(list(range(128)))
     # dataset["ts"] = dataset["ts"].select(list(range(128)))
-    dataset["tr"] = dataset["tr"].select(range(4096))
-    dataset["vl"] = dataset["tr"].select(range(1024))
+    dataset["tr"] = dataset["tr"].select(range(256))
+    dataset["vl"] = dataset["tr"].select(range(256))
     dataset.pop("ts")
+
+    print(dataset)
 
     tokenizer = get_tokenizer_object()
     tokenizer = get_fast_tokenizer(tokenizer, model_max_length=MAX_LENGTH)
 
-    dataset = dataset.map(partial(preprocess_a, max_length=MAX_LENGTH), batched=True)
+    dataset = dataset.map(partial(examples_to_text, max_length=MAX_LENGTH), batched=True)
     dataset = dataset.map(
         partial(
             tokenize_fn,
@@ -694,15 +804,28 @@ def test():
     # )
     # model = MalConvGCT(config)
 
-    config = MalConvConfig(
+    # config = MalConvConfig(
+    #     num_embd=len(tokenizer),
+    #     out_size=dataset["tr"].info.features["label"].num_classes,
+    #     pad_idx=tokenizer.pad_token_id,
+    #     channels=128,
+    #     window_size=64,
+    #     stride=64,
+    # )
+    # model = MalConv(config)
+
+    config = MyMalConvConfig(
         num_embd=len(tokenizer),
         out_size=dataset["tr"].info.features["label"].num_classes,
         pad_idx=tokenizer.pad_token_id,
-        channels=128,
-        window_size=64,
-        stride=64,
+        max_length=MAX_LENGTH,
+        channels=64,
+        # hidden_size=1024,
+        # stride=320,
+        # window_size=356,
     )
-    model = MalConv(config)
+    model = MyMalConv(config)
+    print(model)
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     args = TrainingArguments(
@@ -711,8 +834,9 @@ def test():
         per_device_train_batch_size=256,
         per_device_eval_batch_size=256,
         learning_rate=5e-4,
-        fp16=True,
-        no_cuda=False,
+        # fp16=True,
+        # no_cuda=True,
+        logging_steps=1,
     )
     trainer = Trainer(
         model,
