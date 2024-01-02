@@ -843,7 +843,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         function,
         batched=True,
         keep_in_memory=KEEP_IN_MEMORY,
-        cache_file_name=CACHE_FILE_NAME,
+        # cache_file_name=CACHE_FILE_NAME,
         num_proc=NUM_PROC,
     )
 
