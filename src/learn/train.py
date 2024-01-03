@@ -120,7 +120,7 @@ ATTENTION_WINDOW = 128
 
 SUBSET = None
 STREAMING = False
-KEEP_IN_MEMORY = True
+KEEP_IN_MEMORY = False
 EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
@@ -873,14 +873,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             pad_to_length=args.max_length,
         )
     else:
-        function = lambda x: x
-    dataset = dataset.map(
-        function,
-        batched=True,
-        # keep_in_memory=KEEP_IN_MEMORY,
-        # cache_file_name=CACHE_FILE_NAME,
-        # num_proc=NUM_PROC,
-    )
+        function = lambda x: x  # TODO: why?
+
+    if isinstance(dataset, (DatasetDict, Dataset)):
+        dataset = dataset.map(
+            function,
+            batched=True,
+            keep_in_memory=KEEP_IN_MEMORY,
+            cache_file_names=CACHE_FILE_NAME,
+            num_proc=NUM_PROC,
+        )
+    else:
+        dataset = dataset.map(function, batched=True)
 
     if PREPROCESS_AS_TEXT:
         remove_columns = ["name", "bytes", "size", "length", "text"]
