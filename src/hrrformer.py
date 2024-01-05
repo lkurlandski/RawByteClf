@@ -11,6 +11,7 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 import torch.nn.functional as F
+from transformers import PreTrainedModel
 from transformers.models.bert.modeling_bert import (
     BertEmbeddings,
     BertConfig,
@@ -123,8 +124,12 @@ BERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
 ################################################################################
 
 
+class HRRConfig(BertConfig):
+    ...
+
+
 class HRRSelfAttention(nn.Module):
-    def __init__(self, config: BertConfig, position_embedding_type=None):
+    def __init__(self, config: HRRConfig, position_embedding_type=None):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(
             config, "embedding_size"
@@ -250,6 +255,8 @@ class HRRSelfAttention(nn.Module):
             # winds up messing up the dimensions of the attention scores for HRRFormer.
             # attention_scores = attention_scores + attention_mask
             # attention_scores = attention_scores + (1.0 - attention_mask) * (-1e9)  # (B, h, T, T)
+            # FIXME: for causal language modeling, the attention mask has shape (B, 1, T, T) and 
+            # this code does not work
             attention_scores = attention_scores + attention_mask.permute(0, 1, 3, 2)  # (B, h, T, 1)
 
         # Normalize the attention scores to probabilities.
@@ -267,7 +274,7 @@ class HRRSelfAttention(nn.Module):
             attention_probs = attention_probs * head_mask
 
         # HRR
-        context_layer: torch.Tensor = attention_scores * value_layer  # (B, h, T, H')
+        context_layer: torch.Tensor = attention_probs * value_layer  # (B, h, T, H')
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()  # (B, T, h, H')
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(new_context_layer_shape)  # (B, T, h * H')
@@ -277,9 +284,6 @@ class HRRSelfAttention(nn.Module):
         if self.is_decoder:
             outputs = outputs + (past_key_value,)
         return outputs
-
-
-BertSelfAttention = HRRSelfAttention
 
 
 ################################################################################
@@ -369,10 +373,38 @@ def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
     return model
 
 
-class BertAttention(nn.Module):
+class HRRPreTrainedModel(PreTrainedModel):
+    """
+    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
+    models.
+    """
+
+    config_class = HRRConfig
+    load_tf_weights = load_tf_weights_in_bert
+    base_model_prefix = "bert"  # This is the name of the main nn.Module in the model. Very dumb.
+    supports_gradient_checkpointing = True
+
+    def _init_weights(self, module):
+        """Initialize the weights"""
+        if isinstance(module, nn.Linear):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+
+
+class HRRAttention(nn.Module):
     def __init__(self, config, position_embedding_type=None):
         super().__init__()
-        self.self = BertSelfAttention(config, position_embedding_type=position_embedding_type)
+        self.self = HRRSelfAttention(config, position_embedding_type=position_embedding_type)
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
 
@@ -418,12 +450,12 @@ class BertAttention(nn.Module):
         return outputs
 
 
-class BertLayer(nn.Module):
+class HRRLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = BertAttention(config)
+        self.attention = HRRAttention(config)
         self.is_decoder = config.is_decoder
         self.add_cross_attention = config.add_cross_attention
         if self.add_cross_attention:
@@ -431,7 +463,7 @@ class BertLayer(nn.Module):
                 raise ValueError(
                     f"{self} should be used as a decoder model if cross attention is added"
                 )
-            self.crossattention = BertAttention(config, position_embedding_type="absolute")
+            self.crossattention = HRRAttention(config, position_embedding_type="absolute")
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
 
@@ -513,11 +545,11 @@ class BertLayer(nn.Module):
         return layer_output
 
 
-class BertEncoder(nn.Module):
+class HRREncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([HRRLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
     def forward(
@@ -676,7 +708,7 @@ BERT_INPUTS_DOCSTRING = r"""
     "The bare Bert Model transformer outputting raw hidden-states without any specific head on top.",
     BERT_START_DOCSTRING,
 )
-class BertModel(BertPreTrainedModel):
+class HRRModel(HRRPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -694,7 +726,7 @@ class BertModel(BertPreTrainedModel):
         self.config = config
 
         self.embeddings = BertEmbeddings(config)
-        self.encoder = BertEncoder(config)
+        self.encoder = HRREncoder(config)
 
         self.pooler = BertPooler(config) if add_pooling_layer else None
 
@@ -873,13 +905,13 @@ class BertModel(BertPreTrainedModel):
     """,
     BERT_START_DOCSTRING,
 )
-class BertForPreTraining(BertPreTrainedModel):
+class HRRForPreTraining(HRRPreTrainedModel):
     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config):
         super().__init__(config)
 
-        self.bert = BertModel(config)
+        self.bert = HRRModel(config)
         self.cls = BertPreTrainingHeads(config)
 
         # Initialize weights and apply final processing
@@ -986,7 +1018,7 @@ class BertForPreTraining(BertPreTrainedModel):
     """Bert Model with a `language modeling` head on top for CLM fine-tuning.""",
     BERT_START_DOCSTRING,
 )
-class BertLMHeadModel(BertPreTrainedModel):
+class HRRLMHeadModel(HRRPreTrainedModel):
     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config):
@@ -997,7 +1029,7 @@ class BertLMHeadModel(BertPreTrainedModel):
                 "If you want to use `BertLMHeadModel` as a standalone, add `is_decoder=True.`"
             )
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.bert = HRRModel(config, add_pooling_layer=False)
         self.cls = BertOnlyMLMHead(config)
 
         # Initialize weights and apply final processing
@@ -1147,7 +1179,7 @@ class BertLMHeadModel(BertPreTrainedModel):
 @add_start_docstrings(
     """Bert Model with a `language modeling` head on top.""", BERT_START_DOCSTRING
 )
-class BertForMaskedLM(BertPreTrainedModel):
+class HRRForMaskedLM(HRRPreTrainedModel):
     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config):
@@ -1159,7 +1191,7 @@ class BertForMaskedLM(BertPreTrainedModel):
                 "bi-directional self-attention."
             )
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.bert = HRRModel(config, add_pooling_layer=False)
         self.cls = BertOnlyMLMHead(config)
 
         # Initialize weights and apply final processing
@@ -1266,11 +1298,11 @@ class BertForMaskedLM(BertPreTrainedModel):
     """Bert Model with a `next sentence prediction (classification)` head on top.""",
     BERT_START_DOCSTRING,
 )
-class BertForNextSentencePrediction(BertPreTrainedModel):
+class HRRForNextSentencePrediction(HRRPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
-        self.bert = BertModel(config)
+        self.bert = HRRModel(config)
         self.cls = BertOnlyNSPHead(config)
 
         # Initialize weights and apply final processing
@@ -1375,13 +1407,13 @@ class BertForNextSentencePrediction(BertPreTrainedModel):
     """,
     BERT_START_DOCSTRING,
 )
-class BertForSequenceClassification(BertPreTrainedModel):
+class HRRForSequenceClassification(HRRPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = BertModel(config)
+        self.bert = HRRModel(config)
         classifier_dropout = (
             config.classifier_dropout
             if config.classifier_dropout is not None
@@ -1484,11 +1516,11 @@ class BertForSequenceClassification(BertPreTrainedModel):
     """,
     BERT_START_DOCSTRING,
 )
-class BertForMultipleChoice(BertPreTrainedModel):
+class HRRForMultipleChoice(HRRPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
-        self.bert = BertModel(config)
+        self.bert = HRRModel(config)
         classifier_dropout = (
             config.classifier_dropout
             if config.classifier_dropout is not None
@@ -1588,12 +1620,12 @@ class BertForMultipleChoice(BertPreTrainedModel):
     """,
     BERT_START_DOCSTRING,
 )
-class BertForTokenClassification(BertPreTrainedModel):
+class HRRForTokenClassification(HRRPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.bert = HRRModel(config, add_pooling_layer=False)
         classifier_dropout = (
             config.classifier_dropout
             if config.classifier_dropout is not None
@@ -1675,12 +1707,12 @@ class BertForTokenClassification(BertPreTrainedModel):
     """,
     BERT_START_DOCSTRING,
 )
-class BertForQuestionAnswering(BertPreTrainedModel):
+class HRRForQuestionAnswering(HRRPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.bert = HRRModel(config, add_pooling_layer=False)
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
         # Initialize weights and apply final processing
@@ -1771,17 +1803,3 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-
-
-HRRConfig = BertConfig
-HRRAttention = BertAttention
-HRRLayer = BertLayer
-HRREncoder = BertEncoder
-HRRModel = BertModel
-HRRForPreTraining = BertForPreTraining
-HRRForCLM = BertLMHeadModel
-HRRForMLM = BertForMaskedLM
-HRRForSequenceClassification = BertForSequenceClassification
-HRRForMultipleChoice = BertForMultipleChoice
-HRRForTokenClassification = BertForTokenClassification
-HRRForQuestionAnswering = BertForQuestionAnswering

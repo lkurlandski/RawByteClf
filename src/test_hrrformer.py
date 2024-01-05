@@ -9,10 +9,11 @@ import os
 import sys
 
 if __name__ == "__main__":
-    print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from datasets import load_dataset, Dataset, DatasetDict
+import evaluate
+import numpy as np
 from transformers import (
     BertConfig,
     BertTokenizerFast,
@@ -31,19 +32,18 @@ from transformers import (
 from src.hrrformer import (
     HRRConfig,
     HRRModel,
-    HRRForCLM,
-    HRRForMLM,
+    HRRLMHeadModel as HRRForCausalLM,
+    HRRForMaskedLM,
     HRRForSequenceClassification,
 )
 
 
 NUM_HIDDEN_LAYERS = 1
-NUM_TRAIN_EPOCHS = 1
-MAX_POSITION_EMBEDDINGS = 128
-BLOCK_SIZE = 128
-NUM_PROC = 4
-BATCH_SIZE = 128
+NUM_TRAIN_EPOCHS = 10
+MAX_POSITION_EMBEDDINGS: int = None  # clf: 512, mlm: 512, clm: 128
+BATCH_SIZE: int = None # clf: 256, mlm: 64, clm: 64
 PAD_TO_MULTIPLE_OF = 8
+NUM_PROC = 4
 
 
 def group_texts(examples, block_size: int):
@@ -74,7 +74,7 @@ def get_dataset(task: str, tokenizer: PreTrainedTokenizerFast) -> DatasetDict:
             remove_columns=dataset["train"].column_names,
         )
         dataset = dataset.map(
-            partial(group_texts, block_size=BLOCK_SIZE),
+            partial(group_texts, block_size=MAX_POSITION_EMBEDDINGS),
             batched=True,
             num_proc=NUM_PROC,
         )
@@ -111,6 +111,11 @@ def get_config(
             "id2label": {i: l for i, l in enumerate(dataset["train"].info.features["labels"].names)},
             "label2id": {l: i for i, l in enumerate(dataset["train"].info.features["labels"].names)},
         })
+    if task == "clm":
+        kwds.update({
+            "is_decoder": True,
+            # "add_cross_attention": True,  # only for seq2seq
+        })
 
     if model == "bert":
         return BertConfig(**kwds)
@@ -125,12 +130,12 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
         if model == "bert":
             return BertForCausalLM(config)
         elif model == "hrr":
-            return HRRForCLM(config)
+            return HRRForCausalLM(config)
     elif task == "mlm":
         if model == "bert":
             return BertForMaskedLM(config)
         elif model == "hrr":
-            return HRRForMLM(config)
+            return HRRForMaskedLM(config)
     elif task == "clf":
         if model == "bert":
             return BertForSequenceClassification(config)
@@ -145,8 +150,25 @@ def get_data_collator(task: str, tokenizer: PreTrainedTokenizerFast):
         return DataCollatorWithPadding(tokenizer=tokenizer, pad_to_multiple_of=PAD_TO_MULTIPLE_OF)
     elif task == "mlm":
         return DataCollatorForLanguageModeling(tokenizer=tokenizer, pad_to_multiple_of=PAD_TO_MULTIPLE_OF)
-    elif task == "clf":
-        return DataCollatorWithPadding(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=PAD_TO_MULTIPLE_OF)
+    elif task == "clm":
+        return DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=PAD_TO_MULTIPLE_OF)
+
+    raise RuntimeError(f"Unknown task: {task}")
+
+
+def get_compute_metrics(task: str):
+
+    accuracy = evaluate.load("accuracy")
+
+    def compute_metrics(eval_pred):
+        predictions, labels = eval_pred
+        predictions = np.argmax(predictions, axis=1)
+        return accuracy.compute(predictions=predictions, references=labels)
+
+    if task == "clf":
+        return compute_metrics
+    elif task == "mlm" or task == "clm":
+        return None
 
     raise RuntimeError(f"Unknown task: {task}")
 
@@ -154,26 +176,33 @@ def get_data_collator(task: str, tokenizer: PreTrainedTokenizerFast):
 def get_training_arguments(output_dir: str) -> TrainingArguments:
     return TrainingArguments(
         output_dir=output_dir,
+        overwrite_output_dir=True,
         evaluation_strategy="steps",
         save_strategy="steps",
-        save_steps=500,
-        eval_steps=100,
-        logging_steps=10,
+        save_steps=250,
+        eval_steps=250,
+        logging_steps=50,
         learning_rate=2e-5,
         num_train_epochs=NUM_TRAIN_EPOCHS,
         weight_decay=0.01,
         per_device_train_batch_size=BATCH_SIZE,
         per_device_eval_batch_size=BATCH_SIZE,
-        debug="underflow_overflow",
+        # debug="underflow_overflow",
+        # use_cpu=True,
     )
 
 
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument("--task", type=str, choices=["clm", "mlm", "clf"], default="clf")
-    parser.add_argument("--model", type=str, choices=["bert", "hrr"], default="bert")
+    parser.add_argument("--task", type=str, choices=["clm", "mlm", "clf"], default="clm")
+    parser.add_argument("--model", type=str, choices=["bert", "hrr"], default="hrr")
+    parser.add_argument("--max_position_embeddings", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=64)
     args = parser.parse_args()
+
+    MAX_POSITION_EMBEDDINGS = args.max_position_embeddings
+    BATCH_SIZE = args.batch_size
 
     tokenizer: PreTrainedTokenizerFast = BertTokenizerFast.from_pretrained("bert-base-cased")
     print(f"{tokenizer=}")
@@ -195,5 +224,9 @@ if __name__ == "__main__":
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
         data_collator=data_collator,
+        compute_metrics=get_compute_metrics(args.task),
     )
+
+    print(f"TRAINING @{datetime.now()}\n{'-' * 88}", flush=True)
     trainer.train()
+    print(f"FINISHED @{datetime.now()}\n{'-' * 88}", flush=True)
