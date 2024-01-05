@@ -39,8 +39,8 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 
 
 TunedConfigs = {
-    # eval_loss = 5.778996
     "malconv": {
+        # eval_loss = 5.778996
         65536: {
             "channels": 64,
             "chunk_size": 1024,
@@ -49,8 +49,8 @@ TunedConfigs = {
             "window_size": 64,
         }
     },
-    # eval_loss = 5.777025
     "malconvgct": {
+        # eval_loss = 5.777025
         65536: {
             "channels": 64,
             "chunk_size": 2048,
@@ -59,7 +59,15 @@ TunedConfigs = {
             "window_size": 192,
         }
     },
-    "mymalconv": {},
+    "mymalconv": {
+        # eval_loss = 5.396931
+        65536: {
+            "channels": 192,
+            "hidden_size": 128,
+            "stride": 512,
+            "window_size": 512,
+        }
+    },
 }
 
 
