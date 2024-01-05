@@ -10,7 +10,9 @@ print(f"Entered {__file__=}")
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime
+import json
 import os
+from pathlib import Path
 import sys
 from typing import Any, Optional, Literal
 import warnings
@@ -21,13 +23,16 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 import numpy as np
+import safetensors
 import torch
 from torch import nn, Tensor
 from torch.nn import CrossEntropyLoss
 import torch.nn.functional as F
 from transformers import PretrainedConfig
 from transformers.modeling_outputs import SequenceClassifierOutput
+from transformers.utils import CONFIG_NAME, SAFE_WEIGHTS_NAME, WEIGHTS_NAME
 
+from src.utils import object_from_superset_of_constructor_kwds
 
 # The default configuration values are determined by the value in the training scripts
 # or from the default values of the __init__ function from the original implementation.
@@ -258,6 +263,75 @@ class MalConvGCTConfig(BaseMalConvConfig):
             num_labels,
         )
         self.layers = layers
+
+
+def config_from_json(path: Path) -> BaseMalConvConfig | MyMalConvConfig:
+    with open(path, "r") as fp:
+        config: dict = json.load(fp)
+
+    if (config_class := config.pop("config_class", None)) is not None:
+        if config_class == "MalConvConfig":
+            return object_from_superset_of_constructor_kwds(MalConvConfig, **config)
+        if config_class == "MalConvMLConfig":
+            return object_from_superset_of_constructor_kwds(MalConvMLConfig, **config)
+        if config_class == "MalConvGCTConfig":
+            return object_from_superset_of_constructor_kwds(MalConvGCTConfig, **config)
+        if config_class == "MyMalConvConfig":
+            return object_from_superset_of_constructor_kwds(MyMalConvConfig, **config)
+        raise RuntimeError(f"Unknown config class: {config_class}")
+
+    if (model_class := config.pop("architectures", None)) is not None:
+        if model_class == "MalConv":
+            return object_from_superset_of_constructor_kwds(MalConvConfig, **config)
+        if model_class == "MalConvML":
+            return object_from_superset_of_constructor_kwds(MalConvMLConfig, **config)
+        if model_class == "MalConvGCT":
+            return object_from_superset_of_constructor_kwds(MalConvGCTConfig, **config)
+        if model_class == "MyMalConv":
+            return object_from_superset_of_constructor_kwds(MyMalConvConfig, **config)
+        raise RuntimeError(f"Unknown model class: {model_class}")
+
+    raise RuntimeError(
+        "Could not process config file. Neither `config_class` or `architectures` keywords found."
+    )
+
+
+def model_from_config(config: BaseMalConvConfig | MyMalConvConfig) -> nn.Module:
+    if isinstance(config, MalConvConfig):
+        return MalConv(config)
+    if isinstance(config, MalConvMLConfig):
+        return MalConvML(config)
+    if isinstance(config, MalConvGCTConfig):
+        return MalConvGCT(config)
+    if isinstance(config, MyMalConvConfig):
+        return MyMalConv(config)
+
+    raise RuntimeError(f"Unknown config class: {type(config)}")
+
+
+class AutoMalConvForSequenceClassification:
+
+    @staticmethod
+    def from_config(config: BaseMalConvConfig | MyMalConvConfig) -> nn.Module:
+        return model_from_config(config)
+
+    @staticmethod
+    def from_pretrained(pretrained_model_name_or_path: str, *args, **kwds) -> nn.Module:
+        pretrained_model_name_or_path = Path(pretrained_model_name_or_path)
+        config = config_from_json(pretrained_model_name_or_path / CONFIG_NAME)
+        model = model_from_config(config)
+        if (state_dict_file := pretrained_model_name_or_path / SAFE_WEIGHTS_NAME).exists():
+            model_state_dict = safetensors.torch.load_file(state_dict_file)
+        elif (state_dict_file := pretrained_model_name_or_path / WEIGHTS_NAME).exists():
+            model_state_dict = torch.load(state_dict_file)
+        else:
+            raise FileNotFoundError(
+                f"Could not find {SAFE_WEIGHTS_NAME} or {WEIGHTS_NAME} "
+                f"in {pretrained_model_name_or_path}"
+            )
+
+        model.load_state_dict(model_state_dict, strict=False)
+        return model
 
 
 # pylint: disable=unused-argument
