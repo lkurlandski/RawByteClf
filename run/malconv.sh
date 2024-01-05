@@ -25,10 +25,11 @@ logging_steps=10
 python \
 src/learn/train.py \
 --root="./output" \
---model_name_or_path="malconv" \
+--model_name_or_path="mymalconv" \
 --max_length=65536 \
 --task="clf" \
---do_tune \
+--do_train \
+--do_eval \
 --output_dir=tmp \
 --overwrite_output_dir \
 --load_best_model_at_end \
@@ -38,35 +39,12 @@ src/learn/train.py \
 --eval_steps=$save_eval_steps \
 --logging_steps=$logging_steps \
 --dataloader_num_workers=2 \
---per_device_train_batch_size=256 \
---per_device_eval_batch_size=256 \
---num_train_epochs=1 \
+--per_device_train_batch_size=192 \
+--per_device_eval_batch_size=192 \
+--num_train_epochs=50 \
 --optim="adamw_torch" \
 --learning_rate="5e-4" \
---save_total_limit=5 \
---fp16
-
-
-python \
-src/learn/train.py \
---root="./output" \
---model_name_or_path="malconvgct" \
---max_length=65536 \
---task="clf" \
---do_tune \
---output_dir=tmp \
---overwrite_output_dir \
---load_best_model_at_end \
---save_strategy=$strategy \
---save_steps=$save_eval_steps \
---evaluation_strategy=$strategy \
---eval_steps=$save_eval_steps \
---logging_steps=$logging_steps \
---dataloader_num_workers=2 \
---per_device_train_batch_size=256 \
---per_device_eval_batch_size=256 \
---num_train_epochs=1 \
---optim="adamw_torch" \
---learning_rate="5e-4" \
---save_total_limit=5 \
---fp16
+--save_total_limit=3 \
+--fp16 \
+--fp16_full_eval \
+--group_by_length
