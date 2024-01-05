@@ -187,6 +187,7 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
         weight_decay=0.01,
         per_device_train_batch_size=BATCH_SIZE,
         per_device_eval_batch_size=BATCH_SIZE,
+        save_total_limit=3,
         # debug="underflow_overflow",
         # use_cpu=True,
     )
