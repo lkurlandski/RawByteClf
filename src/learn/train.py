@@ -1,10 +1,6 @@
 """
 Train and evaluate the models for malware family classification.
 
-# FIXME: the config that gets checkpointed gets is messed up when resizing the
-# positional embeddings! To patch, simply manually adjust the config.json file.
-# To fix, adjust the Config object.
-
 # TODO: investigate increasing the batch size and number of processes for the
 # Dataset.map() calls. Experiment with malconv, as the impact of disk access is
 # more pronounced there than with the heavy transformers models.
@@ -28,7 +24,7 @@ import math
 from pathlib import Path
 from pprint import pformat, pprint
 import random
-from typing import Any, Literal, NewType, Optional, TypeAlias
+from typing import Any, Callable, Literal, Optional
 import os
 import sys
 
@@ -70,17 +66,28 @@ from transformers import (
     ReformerConfig,
     NystromformerConfig,
     FNetConfig,
+    TrainerCallback,
+    TrainerState,
+    TrainerControl,
 )
 from transformers import TrainingArguments as HfTrainingArguments
-from transformers.trainer_utils import BestRun, EvalPrediction, PredictionOutput
+from transformers.trainer_utils import (
+    BestRun,
+    EvalPrediction,
+    PredictionOutput,
+    PREFIX_CHECKPOINT_DIR,
+)
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
+from transformers.utils import CONFIG_NAME
 from ray import tune
 from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune import TuneError
 
 from src.cfg import BR, OUTPUT_PATH
+from src.utils import object_from_superset_of_constructor_kwds
 from src.malconv import (
+    AutoMalConvForSequenceClassification,
     MalConvConfig,
     MalConvGCTConfig,
     MyMalConvConfig,
@@ -89,6 +96,7 @@ from src.malconv import (
     MyMalConv,
     TunedConfigs,
 )
+from src.utils import get_highest_path
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.learn.utils import (
     count_parameters,
@@ -119,7 +127,7 @@ NUM_ATTENTION_HEADS = 4
 ATTENTION_WINDOW = 128
 
 SUBSET = None
-STREAMING = False
+STREAMING = True
 KEEP_IN_MEMORY = False
 EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
@@ -187,13 +195,20 @@ class TrainingArguments(HfTrainingArguments):
         self.do_eval = do_eval
 
     def hf_training_arguments_object(self) -> HfTrainingArguments:
-        return HfTrainingArguments(
-            **{
-                k: v
-                for k, v in self.__dict__.items()
-                if k in inspect.getfullargspec(HfTrainingArguments.__init__).args
-            }
-        )
+        return object_from_superset_of_constructor_kwds(HfTrainingArguments, **self.__dict__)
+
+
+class SaveConfigToCheckpointCallback(TrainerCallback):
+    def on_save(
+        self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds
+    ):
+        checkpoint_folder = f"{args.output_dir}/{PREFIX_CHECKPOINT_DIR}-{state.global_step}"
+        kwds["model"].config.save_pretrained(checkpoint_folder)
+        with open(f"{checkpoint_folder}/{CONFIG_NAME}", "r") as fp:
+            config = json.load(fp)
+        config["architectures"] = type(kwds["model"]).__name__
+        with open(f"{checkpoint_folder}/{CONFIG_NAME}", "w") as fp:
+            json.dump(config, fp, indent=4, sort_keys=True)
 
 
 def hp_ray_space_longformer(
@@ -266,7 +281,7 @@ def hp_model_init(
         hparams = {}
 
     config = get_config(model_name_or_path, tokenizer, max_length, **(hparams | kwds))
-    model = get_model(task, model_name_or_path, config, **kwds)
+    model = get_model(task, None, config, **kwds)
     if model is None:
         raise RuntimeError("Model is None for some reason.")
     return model
@@ -309,8 +324,9 @@ def object_to_model_name_or_path(obj) -> str:
     raise RuntimeError()
 
 
-def get_model_type(model: str) -> Literal["HF", "MC"]:
-    if model in ("malconv", "malconvgct", "mymalconv"):
+def get_model_type(model_name_or_path: str | Path) -> Literal["HF", "MC"]:
+    model_name_or_path = str(model_name_or_path)
+    if "malconv" in model_name_or_path:
         return "MC"
     return "HF"
 
@@ -463,15 +479,18 @@ class OutputHelper:
 
     @property
     def best_model_dir(self) -> Path:
-        return self.path / "best_model"
+        with open(self.last_checkpoint / "trainer_state.json") as fp:
+            state = json.load(fp)
+        best_model_checkpoint = state["best_model_checkpoint"]
+        return Path(best_model_checkpoint)
 
     @property
     def checkpoints_dir(self) -> Path:
         return self.path / "checkpoints"
 
     @property
-    def log_history_file(self) -> Path:
-        return self.path / "log_history.json"
+    def config_file(self) -> Path:
+        return self.path / "config.json"
 
     @property
     def test_results_dir(self) -> Path:
@@ -500,6 +519,10 @@ class OutputHelper:
     @property
     def tuning_results_dir(self) -> Path:
         return self.path / "tuning_results"
+
+    @property
+    def last_checkpoint(self) -> Path:
+        return get_highest_path(self.checkpoints_dir, lstrip="checkpoint-")
 
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
@@ -699,50 +722,74 @@ def get_config(
 
 def get_model(
     task: str,
-    model_name_or_path: str,
-    config: PretrainedConfig,
+    model_name_or_path: Optional[str] = None,
+    config: Optional[PretrainedConfig] = None,
     **kwds,
 ) -> PreTrainedModel | MalConv | MalConvGCT:
+    if model_name_or_path is None == config is None:
+        raise ValueError("Must specify exactly one of `model_name_or_path` or `config`.")
+    if model_name_or_path is not None and not Path(model_name_or_path).exists():
+        raise FileNotFoundError(f"Invalid model name or path: {model_name_or_path}.")
+
     # Get model from disk
-    if Path(model_name_or_path).exists():
+    if model_name_or_path:
         if task == "clf":
             if get_model_type(model_name_or_path) == "HF":
                 return AutoModelForSequenceClassification.from_pretrained(
                     model_name_or_path, **kwds
                 )
             if get_model_type(model_name_or_path) == "MC":
-                raise NotImplementedError("TODO: implement the from_pretrained() design pattern")
-                if model_name_or_path.lower() == "malconv":
-                    ...
-                if model_name_or_path.lower() == "malconvgct":
-                    ...
-                if model_name_or_path.lower() == "mymalconv":
-                    ...
+                return AutoMalConvForSequenceClassification.from_pretrained(
+                    model_name_or_path,
+                    **kwds,
+                )
         if task == "mlm":
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
         if task == "clm":
             return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
-        raise RuntimeError()
 
     # Get model from config
-    if task == "clf":
-        if isinstance(config, MalConvConfig):
-            return MalConv(config)
-        if isinstance(config, MalConvGCTConfig):
-            return MalConvGCT(config)
-        if isinstance(config, MyMalConvConfig):
-            return MyMalConv(config)
-        if isinstance(config, PretrainedConfig):
-            return AutoModelForSequenceClassification.from_config(config)
-    if task == "mlm":
-        return AutoModelForMaskedLM.from_config(config)
-    if task == "clm":
-        return AutoModelForCausalLM.from_config(config)
+    if config:
+        if task == "clf":
+            if isinstance(config, MalConvConfig):
+                return MalConv(config)
+            if isinstance(config, MalConvGCTConfig):
+                return MalConvGCT(config)
+            if isinstance(config, MyMalConvConfig):
+                return MyMalConv(config)
+            if isinstance(config, PretrainedConfig):
+                return AutoModelForSequenceClassification.from_config(config)
+        if task == "mlm":
+            return AutoModelForMaskedLM.from_config(config)
+        if task == "clm":
+            return AutoModelForCausalLM.from_config(config)
+
     raise RuntimeError()
+
+
+def get_map_kwds_for_hf_datasets(
+    function: Callable,
+    dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict,
+) -> dict[str, Any]:
+    map_kwds = {
+        "function": function,
+        "batched": True,
+    }
+    if isinstance(dataset, (DatasetDict, Dataset)):
+        map_kwds.update(
+            {
+                "keep_in_memory": KEEP_IN_MEMORY,
+                "num_proc": NUM_PROC,
+                "cache_file_names": CACHE_FILE_NAME,
+            }
+        )
+    return map_kwds
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{args=}")
+
+    TYPE = get_model_type(args.model_name_or_path)
 
     oh = OutputHelper(
         args.model_name_or_path,
@@ -874,17 +921,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
     else:
         function = lambda x: x  # TODO: why?
-
-    if isinstance(dataset, (DatasetDict, Dataset)):
-        dataset = dataset.map(
-            function,
-            batched=True,
-            keep_in_memory=KEEP_IN_MEMORY,
-            cache_file_names=CACHE_FILE_NAME,
-            num_proc=NUM_PROC,
-        )
-    else:
-        dataset = dataset.map(function, batched=True)
+    dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset))
 
     if PREPROCESS_AS_TEXT:
         remove_columns = ["name", "bytes", "size", "length", "text"]
@@ -896,12 +933,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             max_length=args.max_length,
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         )
-        dataset = dataset.map(
-            function,
-            batched=True,
-            remove_columns=remove_columns,
-            keep_in_memory=KEEP_IN_MEMORY,
-        )
+        dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset))
 
     if EXIT_AFTER_MAP:
         sys.exit(0)
@@ -934,6 +966,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     callbacks = []
+    if TYPE == "MC":
+        callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")
 
     if args.task == "clf":
@@ -945,10 +979,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if not STREAMING:  # dataset has already been processed, so we disable thread-based parallelism
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+    # FIXME: need to implement the functionality to resume_from_checkpoint when using MalConv.
+    # transformers.Trainer is unlikely to be capable of loading the model from the checkpoint, so
+    # we will need to handle this ourselves in the initial call to get_model below. Need to check
+    # if transformers.Trainer can handle the optimzer and learning rate scheduler or if that needs
+    # to be manually addressed as well.
     if training_arguments.do_train:
         model = get_model(
             args.task,
-            args.model_name_or_path,
+            None,
             config,
             num_labels=num_classes,
             id2label=id2label,
@@ -999,18 +1038,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             compute_metrics=compute_metrics,
         )
         gc.collect()
+
         print("Training...")
         print(BR, flush=True)
-        trainer.train(training_arguments.resume_from_checkpoint)
-        # FIXME: create a symbolic to link to the best model...
-        # if training_arguments.load_best_model_at_end:
-        #     model.save_pretrained(oh.best_model_dir.as_posix())
-        # with open(oh.log_history_file, "w") as fp:
-        #     json.dump(trainer.state.log_history, fp, indent=4)
+        trainer.train(training_arguments.resume_from_checkpoint if TYPE == "HF" else None)
 
     if training_arguments.do_eval:
         # If we just trained the model, we don't need to load anything
-        if training_arguments.do_train and training_arguments.load_best_model_at_end:
+        if (
+            training_arguments.do_train
+            and training_arguments.load_best_model_at_end
+            and TYPE == "HF"
+        ):
             pass
         # Load the best model
         else:
@@ -1019,7 +1058,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             model = get_model(
                 args.task,
                 oh.best_model_dir,
-                config,
+                None,
                 num_labels=num_classes,
                 id2label=id2label,
                 label2id=label2id,
