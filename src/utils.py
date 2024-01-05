@@ -3,9 +3,10 @@ Useful functions for the project.
 """
 
 from collections.abc import Collection
+import inspect
 import os
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
@@ -99,3 +100,8 @@ def is_dataset_path_completed(path: Path) -> bool:
 
 def get_scale_fn(scale: float) -> Callable[[int], float]:
     return lambda x: int(round(x * scale))
+
+
+def object_from_superset_of_constructor_kwds(cls, **kwds) -> Any:
+    kwds = {k: v for k, v in kwds.items() if k in inspect.getfullargspec(cls.__init__).args}
+    return cls(**kwds)
