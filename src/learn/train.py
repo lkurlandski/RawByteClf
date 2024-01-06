@@ -149,6 +149,10 @@ TUNE_TS_N_SAMPLES = 0
 
 N_INITIAL_POINTS = 32
 N_TRIALS = 128  # including the initial points
+TUNE_RESOURCES_PER_TRIAL = {
+    "cpu": 1,
+    "gpu": 1,
+}
 
 
 ACCURACY = evaluate.load("accuracy")
@@ -1090,14 +1094,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             n_initial_points=N_INITIAL_POINTS,
         )
         scheduler = None  # ASHAScheduler(metric="eval_loss", mode="min")
-        resources_per_trial = {
-            "cpu": 8,
-            "gpu": 1,
-        }
         raise_on_failed_trial = False
         print(f"{search_alg=}")
         print(f"{scheduler=}")
-        print(f"{resources_per_trial=}")
+        print(f"{TUNE_RESOURCES_PER_TRIAL=}")
         print(f"{raise_on_failed_trial=}")
         print(BR, flush=True)
 
@@ -1127,7 +1127,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 backend="ray",
                 hp_name=None,
                 search_alg=search_alg,
-                resources_per_trial=resources_per_trial,
+                resources_per_trial=TUNE_RESOURCES_PER_TRIAL,
                 raise_on_failed_trial=raise_on_failed_trial,
             )
         except TuneError as err:
