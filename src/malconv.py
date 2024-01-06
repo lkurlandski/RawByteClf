@@ -43,39 +43,6 @@ from src.utils import object_from_superset_of_constructor_kwds
 # For classification with MalConv or MalConvGCG, set out_size to the number of classes.
 
 
-TunedConfigs = {
-    "malconv": {
-        # eval_loss = 5.778996
-        65536: {
-            "channels": 64,
-            "chunk_size": 1024,
-            "overlap": 256,
-            "stride": 448,
-            "window_size": 64,
-        }
-    },
-    "malconvgct": {
-        # eval_loss = 5.777025
-        65536: {
-            "channels": 64,
-            "chunk_size": 2048,
-            "overlap": 768,
-            "stride": 512,
-            "window_size": 192,
-        }
-    },
-    "mymalconv": {
-        # eval_loss = 5.396931
-        65536: {
-            "channels": 192,
-            "hidden_size": 128,
-            "stride": 512,
-            "window_size": 512,
-        }
-    },
-}
-
-
 class MyMalConvConfig(PretrainedConfig):
     def __init__(
         self,

@@ -81,7 +81,6 @@ from transformers.models.reformer.modeling_reformer import _get_least_common_mul
 from transformers.utils import CONFIG_NAME
 from ray import tune
 from ray.tune.search.hyperopt import HyperOptSearch
-from ray.tune.schedulers import ASHAScheduler
 from ray.tune import TuneError
 
 from src.cfg import BR, OUTPUT_PATH
@@ -94,10 +93,22 @@ from src.malconv import (
     MalConv,
     MalConvGCT,
     MyMalConv,
-    TunedConfigs,
+)
+from src.hrrformer import (
+    HRRConfig,
+    HRRForSequenceClassification,
+    HRRForMaskedLM,
 )
 from src.utils import get_highest_path
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
+from src.learn.tuning import (
+    TunedConfigs,
+    hp_space_mymalconv,
+    hp_space_malconv,
+    hp_space_malconvgct,
+    hp_space_longformer,
+    hp_space_hrrformer,
+)
 from src.learn.utils import (
     count_parameters,
     pad_to_multiple_of_fn,
@@ -119,12 +130,6 @@ torch.random.manual_seed(0)
 
 
 PAD_TO = 8
-
-HIDDEN_SIZE = 1024
-INTERMEDIATE_SIZE = 1024
-NUM_HIDDEN_LAYERS = 1
-NUM_ATTENTION_HEADS = 4
-ATTENTION_WINDOW = 128
 
 SUBSET = None
 STREAMING = True
@@ -211,41 +216,6 @@ class SaveConfigToCheckpointCallback(TrainerCallback):
             json.dump(config, fp, indent=4, sort_keys=True)
 
 
-def hp_ray_space_longformer(
-    trial: Any,
-) -> dict[str, float | int]:  # pylint: disable=unused-argument
-    """
-    - hidden_size % num_attention_heads == 0
-    """
-
-    return {
-        "hidden_size": tune.choice([256, 512, 768, 1024]),
-        "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
-        "num_hidden_layers": tune.choice([1, 2, 3, 4]),
-        "num_attention_heads": tune.choice([1, 2, 4, 8]),
-        "attention_window": tune.choice([128, 256, 512, 1024, 2048, 4096]),
-    }
-
-
-def hp_ray_space_malconv(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
-    return {
-        "stride": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
-        "window_size": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
-        "channels": tune.choice([64, 128, 192]),
-        "chunk_size": tune.choice([1024, 2048, 4096, 8192, 16384, 32768, 65536]),
-        "overlap": tune.choice([256, 512, 768]),
-    }
-
-
-def hp_ray_space_mymalconv(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
-    return {
-        "stride": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
-        "window_size": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
-        "channels": tune.choice([64, 128, 192]),
-        "hidden_size": tune.choice([128, 256, 512, 768, 1024]),
-    }
-
-
 def hp_model_init(
     trial: Optional[dict[str, Any]],
     task: str,
@@ -299,11 +269,12 @@ RETURN_ATTENTION_MASK = {
     "malconv": False,
     "malconvgct": False,
     "mymalconv": False,
+    "hrrformer": True,
 }
 
 
 def object_to_model_name_or_path(obj) -> str:
-    if obj in ("longformer", "reformer", "nystromformer", "fnet"):
+    if obj in ("longformer", "reformer", "nystromformer", "fnet", "malconv", "malconvgct", "mymalconv", "hrrformer"):
         return obj
     if isinstance(obj, (FNetConfig,)):
         return "fnet"
@@ -610,11 +581,6 @@ def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
     max_length: Optional[int] = None,
-    num_hidden_layers: int = NUM_HIDDEN_LAYERS,
-    num_attention_heads: int = NUM_ATTENTION_HEADS,
-    hidden_size: int = HIDDEN_SIZE,
-    intermediate_size: int = INTERMEDIATE_SIZE,
-    attention_window: int = ATTENTION_WINDOW,
     **kwds,
 ) -> PretrainedConfig:
     """
@@ -625,43 +591,44 @@ def get_config(
     if Path(model_name_or_path).exists():
         return AutoConfig.from_pretrained(model_name_or_path, **kwds)
 
-    num_hidden_layers = float_to_int(num_hidden_layers)
-    num_attention_heads = float_to_int(num_attention_heads)
-    hidden_size = float_to_int(hidden_size)
-    intermediate_size = float_to_int(intermediate_size)
-    attention_window = float_to_int(attention_window)
+    # Handle float values when hyperparameter tuning.
+    float_to_int_kwds = [
+        "num_hidden_layers",
+        "num_attention_heads",
+        "hidden_size",
+        "intermediate_size",
+        "attention_window",
+    ]
+    for k in [k for k in kwds if k in float_to_int_kwds]:
+        kwds[k] = float_to_int(kwds[k])
 
     vocab_size = pad_to_multiple_of_fn(len(tokenizer), PAD_TO)
     max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
+    # kwds overrides the tuned_kwds
+    kwds = TunedConfigs[model_name_or_path.lower()].get(max_length, {}) | kwds
+
     if model_name_or_path.lower() == "longformer":
+        attention_window = kwds.pop("attention_window", 512)
         return LongformerConfig(
             vocab_size=vocab_size,
-            max_position_embeddings=longformer_max_position_embeddings(
-                max_length, attention_window
-            ),
-            num_attention_heads=num_attention_heads,
-            hidden_size=hidden_size,
-            intermediate_size=intermediate_size,
-            num_hidden_layers=num_hidden_layers,
+            max_position_embeddings=longformer_max_position_embeddings(max_length, attention_window),
+            attention_window=attention_window,
             sep_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            attention_window=attention_window,
             **kwds,
         )
     if model_name_or_path.lower() == "reformer":
+        num_hidden_layers = kwds.pop("num_hidden_layers", 6)
+        hidden_size = kwds.pop("hidden_size", 256)
         return ReformerConfig(
             vocab_size=vocab_size,
-            max_position_embeddings=max_length,
-            num_attention_heads=num_attention_heads,
+            max_position_embeddings=max_posititional_embeddings,
             hidden_size=hidden_size,
-            feed_forward_size=intermediate_size,
-            attn_layers=["local" if i % 2 == 0 else "lsh" for i in range(NUM_HIDDEN_LAYERS)],
-            attention_head_size=64,
-            axial_norm_std=1.0,
-            axial_pos_embds=True,
+            feed_forward_size=kwds.pop("feed_forward_size", kwds.pop("intermediate_size", 512)),
+            attn_layers=["local" if i % 2 == 0 else "lsh" for i in range(num_hidden_layers)],
             axial_pos_shape=list(find_two_largest_factors(max_length)),
             axial_pos_embds_dim=[hidden_size // 2, hidden_size // 2],
             pad_token_id=tokenizer.pad_token_id,
@@ -672,10 +639,6 @@ def get_config(
         return NystromformerConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
-            num_hidden_layers=num_hidden_layers,
-            num_attention_heads=num_attention_heads,
-            hidden_size=hidden_size,
-            intermediate_size=intermediate_size,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -685,10 +648,6 @@ def get_config(
         return FNetConfig(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
-            num_hidden_layers=num_hidden_layers,
-            num_attention_heads=num_attention_heads,
-            hidden_size=hidden_size,
-            intermediate_size=intermediate_size,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -715,6 +674,13 @@ def get_config(
             num_embd=vocab_size,
             max_length=max_posititional_embeddings,
             **(TunedConfigs["mymalconv"].get(max_length, {}) | kwds),
+        )
+    if model_name_or_path.lower() == "hrrformer":
+        return HRRConfig(
+            vocab_size=vocab_size,
+            max_position_embeddings=max_posititional_embeddings,
+            pad_token_id=tokenizer.pad_token_id,
+            **kwds,
         )
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
@@ -757,12 +723,18 @@ def get_model(
                 return MalConvGCT(config)
             if isinstance(config, MyMalConvConfig):
                 return MyMalConv(config)
+            if isinstance(config, HRRConfig):
+                return HRRForSequenceClassification(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForSequenceClassification.from_config(config)
         if task == "mlm":
-            return AutoModelForMaskedLM.from_config(config)
+            if isinstance(config, HRRConfig):
+                return HRRForMaskedLM(config)
+            if isinstance(config, PretrainedConfig):
+                return AutoModelForMaskedLM.from_config(config)
         if task == "clm":
-            return AutoModelForCausalLM.from_config(config)
+            if isinstance(config, PretrainedConfig):
+                return AutoModelForCausalLM.from_config(config)
 
     raise RuntimeError()
 
@@ -920,7 +892,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             pad_to_length=args.max_length,
         )
     else:
-        function = lambda x: x  # TODO: why?
+        raise RuntimeError("Specify either `PREPROCESS_AS_TEXT` or `PREPROCESS_AS_INPUT_IDS`.")
     dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset))
 
     if PREPROCESS_AS_TEXT:
@@ -1138,12 +1110,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         oh.tuning_results_dir.mkdir(exist_ok=True, parents=False)
         print("Tuning...")
 
-        if isinstance(config, LongformerConfig):
-            hp_space = hp_ray_space_longformer
-        elif isinstance(config, (MalConvConfig, MalConvGCTConfig)):
-            hp_space = hp_ray_space_malconv
+        if isinstance(config, (LongformerConfig,)):
+            hp_space = hp_space_longformer
+        elif isinstance(config, (HRRConfig,)):
+            hp_space = hp_space_hrrformer
+        elif isinstance(config, (MalConvConfig,)):
+            hp_space = hp_space_malconv
+        elif isinstance(config, (MalConvGCTConfig,)):
+            hp_space = hp_space_malconvgct
         elif isinstance(config, (MyMalConvConfig,)):
-            hp_space = hp_ray_space_mymalconv
+            hp_space = hp_space_mymalconv
         else:
             raise ValueError(f"No hyperparameter space defined for this model: {type(config)=}")
 
@@ -1155,7 +1131,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 direction="minimize",
                 backend="ray",
                 hp_name=None,
-                # scheduler=scheduler,
                 search_alg=search_alg,
                 resources_per_trial=resources_per_trial,
                 raise_on_failed_trial=raise_on_failed_trial,
