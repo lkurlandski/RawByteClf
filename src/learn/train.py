@@ -131,8 +131,8 @@ torch.random.manual_seed(0)
 
 PAD_TO = 8
 
-SUBSET = None
-STREAMING = True
+SUBSET = 16000
+STREAMING = False
 KEEP_IN_MEMORY = False
 EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
@@ -143,12 +143,12 @@ PREPROCESS_AS_INPUT_IDS_DO_PAD = True
 CACHE_FILE_NAME: Optional[str] = None  # "/home/lk3591/Documents/code/RawByteClf/INPUT_IDS_1048576"
 NUM_PROC: Optional[int] = None
 
-TUNE_TR_N_SAMPLES = 512
-TUNE_VL_N_SAMPLES = 512
+TUNE_TR_N_SAMPLES = 8000
+TUNE_VL_N_SAMPLES = 8000
 TUNE_TS_N_SAMPLES = 0
 
-N_INITIAL_POINTS = 1
-N_TRIALS = 2  # including the initial points
+N_INITIAL_POINTS = 32
+N_TRIALS = 128  # including the initial points
 
 
 ACCURACY = evaluate.load("accuracy")
@@ -844,9 +844,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         num_shards = training_arguments.dataloader_num_workers
         if not training_arguments.dataloader_num_workers:
             num_shards = 1
-        ds["tr"] = dataset["tr"].to_iterable_dataset(num_shards)
-        ds["ts"] = dataset["ts"].to_iterable_dataset(num_shards)
-        ds["vl"] = dataset["vl"].to_iterable_dataset(num_shards)
+        for split in dataset:
+            ds[split] = dataset[split].to_iterable_dataset(num_shards)
         dataset = ds
         del ds, num_shards
 
