@@ -143,12 +143,12 @@ PREPROCESS_AS_INPUT_IDS_DO_PAD = True
 CACHE_FILE_NAME: Optional[str] = None  # "/home/lk3591/Documents/code/RawByteClf/INPUT_IDS_1048576"
 NUM_PROC: Optional[int] = None
 
-TUNE_TR_N_SAMPLES = None
-TUNE_VL_N_SAMPLES = None
+TUNE_TR_N_SAMPLES = 512
+TUNE_VL_N_SAMPLES = 512
 TUNE_TS_N_SAMPLES = 0
 
-N_INITIAL_POINTS = 16
-N_TRIALS = 128  # including the initial points
+N_INITIAL_POINTS = 1
+N_TRIALS = 2  # including the initial points
 
 
 ACCURACY = evaluate.load("accuracy")
@@ -284,6 +284,8 @@ def object_to_model_name_or_path(obj) -> str:
         return "reformer"
     if isinstance(obj, (LongformerConfig,)):
         return "longformer"
+    if isinstance(obj, (HRRConfig,)):
+        return "hrrformer"
     if isinstance(obj, (MalConvConfig,)):
         return "malconv"
     if isinstance(obj, (MalConvGCTConfig,)):
@@ -306,6 +308,7 @@ class ImbalancedClassificationTrainer(Trainer):
     def __init__(self, weight: Optional[Tensor] = None, **kwargs):
         super().__init__(**kwargs)
         self.loss_fn = CrossEntropyLoss(weight=weight)
+        self.num_labels = self.model.config.num_labels
 
     def compute_loss(self, model, inputs, return_outputs=False):
         if self.label_smoother is not None or self.args.past_index >= 0:
@@ -319,7 +322,8 @@ class ImbalancedClassificationTrainer(Trainer):
         if self.loss_fn.weight.device != device:
             self.loss_fn.weight = self.loss_fn.weight.to(device)
 
-        loss = self.loss_fn(logits.view(-1, model.config.num_labels), labels.view(-1))
+        # num_labels = unwrap_model(model).config.num_labels
+        loss = self.loss_fn(logits.view(-1, self.num_labels), labels.view(-1))
         return (loss, outputs) if return_outputs else loss
 
 
@@ -606,7 +610,7 @@ def get_config(
     max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
     # kwds overrides the tuned_kwds
-    kwds = TunedConfigs[model_name_or_path.lower()].get(max_length, {}) | kwds
+    kwds = TunedConfigs[model_name_or_path.lower()][max_length] | kwds
 
     if model_name_or_path.lower() == "longformer":
         attention_window = kwds.pop("attention_window", 512)
@@ -798,36 +802,26 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dist: Counter = None
 
     if args.task in ("mlm", "clm"):
-        if args.do_tune:
-            subset = SUBSET + 1
-            vl_size = subset // 2
-            ts_size = 1
-        else:
-            subset = SUBSET
-            vl_size = None
-            ts_size = None
-        dataset: DatasetDict = get_sorel_dataset(subset=subset, vl_size=vl_size, ts_size=ts_size)
-        del subset, vl_size, ts_size
+        dataset: DatasetDict = get_sorel_dataset(SUBSET)
     elif args.task == "clf":
-        dataset, dist = get_bodmas_dataset(
-            subset=SUBSET, top_k=BODMAS_TOP_K, min_freq=BODMAS_MIN_FREQ
-        )
-        if args.do_tune:
-            if isinstance(TUNE_TR_N_SAMPLES, int):
-                if TUNE_TR_N_SAMPLES == 0:
-                    dataset.pop("tr")
-                else:
-                    dataset["tr"] = dataset["tr"].select(range(TUNE_TR_N_SAMPLES))
-            if isinstance(TUNE_VL_N_SAMPLES, int):
-                if TUNE_VL_N_SAMPLES == 0:
-                    dataset.pop("vl")
-                else:
-                    dataset["vl"] = dataset["vl"].select(range(TUNE_VL_N_SAMPLES))
-            if isinstance(TUNE_TS_N_SAMPLES, int):
-                if TUNE_TS_N_SAMPLES == 0:
-                    dataset.pop("ts")
-                else:
-                    dataset["ts"] = dataset["ts"].select(range(TUNE_TS_N_SAMPLES))
+        dataset, dist = get_bodmas_dataset(SUBSET, BODMAS_TOP_K, BODMAS_MIN_FREQ)
+
+    if args.do_tune:
+        if isinstance(TUNE_TR_N_SAMPLES, int):
+            if TUNE_TR_N_SAMPLES == 0:
+                dataset.pop("tr")
+            else:
+                dataset["tr"] = dataset["tr"].select(range(TUNE_TR_N_SAMPLES))
+        if isinstance(TUNE_VL_N_SAMPLES, int):
+            if TUNE_VL_N_SAMPLES == 0:
+                dataset.pop("vl")
+            else:
+                dataset["vl"] = dataset["vl"].select(range(TUNE_VL_N_SAMPLES))
+        if isinstance(TUNE_TS_N_SAMPLES, int):
+            if TUNE_TS_N_SAMPLES == 0:
+                dataset.pop("ts")
+            else:
+                dataset["ts"] = dataset["ts"].select(range(TUNE_TS_N_SAMPLES))
 
     print(f"{dataset=}")
     print(f"{dist=}")
