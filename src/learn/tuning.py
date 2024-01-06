@@ -48,7 +48,7 @@ TunedConfigs = defaultdict(lambda: defaultdict(dict),
         16384: {
             "hidden_size": 512,
             "intermediate_size": 1024,
-            "num_hidden_layers": 2,
+            "num_hidden_layers": 1,
             "num_attention_heads": 8,
         },
     }),
