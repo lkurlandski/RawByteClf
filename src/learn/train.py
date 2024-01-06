@@ -746,11 +746,13 @@ def get_model(
 def get_map_kwds_for_hf_datasets(
     function: Callable,
     dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict,
+    **kwds,
 ) -> dict[str, Any]:
     map_kwds = {
         "function": function,
         "batched": True,
     }
+    map_kwds.update(kwds)
     if isinstance(dataset, (DatasetDict, Dataset)):
         map_kwds.update(
             {
@@ -899,7 +901,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             max_length=args.max_length,
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         )
-        dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset))
+        dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset, remove_columns=remove_columns))
 
     if EXIT_AFTER_MAP:
         sys.exit(0)
