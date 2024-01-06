@@ -2,14 +2,16 @@
 
 """
 
+from collections import defaultdict
 from copy import deepcopy
 from typing import Any
 
 from ray import tune
 
 
-TunedConfigs: dict[str, dict[int, dict[str, int]]] = {
-    "malconv": {
+TunedConfigs = defaultdict(lambda: defaultdict(dict), 
+{
+    "malconv": defaultdict(dict, {
         # eval_loss = 5.778996
         65536: {
             "channels": 64,
@@ -17,9 +19,9 @@ TunedConfigs: dict[str, dict[int, dict[str, int]]] = {
             "overlap": 256,
             "stride": 448,
             "window_size": 64,
-        }
-    },
-    "malconvgct": {
+        },
+    }),
+    "malconvgct": defaultdict(dict, {
         # eval_loss = 5.777025
         65536: {
             "channels": 64,
@@ -27,24 +29,30 @@ TunedConfigs: dict[str, dict[int, dict[str, int]]] = {
             "overlap": 768,
             "stride": 512,
             "window_size": 192,
-        }
-    },
-    "mymalconv": {
+        },
+    }),
+    "mymalconv": defaultdict(dict, {
         # eval_loss = 5.396931
         65536: {
             "channels": 192,
             "hidden_size": 128,
             "stride": 512,
             "window_size": 512,
-        }
-    },
-    "hrrformer": {
+        },
+    }),
+    "hrrformer": defaultdict(dict, {
         # eval_loss = 
         65536: {
             
-        }
-    },
-    "longformer": {
+        },
+        16384: {
+            "hidden_size": 512,
+            "intermediate_size": 1024,
+            "num_hidden_layers": 2,
+            "num_attention_heads": 8,
+        },
+    }),
+    "longformer": defaultdict(dict, {
         # eval_loss = 5.124239 (MLM task)
         16384: {
             "hidden_size": 1024,
@@ -52,15 +60,21 @@ TunedConfigs: dict[str, dict[int, dict[str, int]]] = {
             "num_hidden_layers": 1,
             "num_attention_heads": 4,
             "attention_window": 128,
-        }
-    },
-}
+        },
+    }),
+})
 
 TunedConfigs["longformer"][65536] = deepcopy(TunedConfigs["longformer"][16384])
 
 
 def hp_space_hrrformer(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
-    ...
+
+    return {
+        "hidden_size": tune.choice([256, 512, 768, 1024]),
+        "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
+        "num_hidden_layers": tune.choice([1, 2, 3, 4]),
+        "num_attention_heads": tune.choice([1, 2, 4, 8]),
+    }
 
 
 def hp_space_longformer(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
