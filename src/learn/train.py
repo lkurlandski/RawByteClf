@@ -979,11 +979,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if not STREAMING:  # dataset has already been processed, so we disable thread-based parallelism
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    # FIXME: need to implement the functionality to resume_from_checkpoint when using MalConv.
-    # transformers.Trainer is unlikely to be capable of loading the model from the checkpoint, so
-    # we will need to handle this ourselves in the initial call to get_model below. Need to check
-    # if transformers.Trainer can handle the optimzer and learning rate scheduler or if that needs
-    # to be manually addressed as well.
+
     if training_arguments.do_train:
         model = get_model(
             args.task,
@@ -1041,29 +1037,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         print("Training...")
         print(BR, flush=True)
-        trainer.train(training_arguments.resume_from_checkpoint if TYPE == "HF" else None)
+        trainer.train(training_arguments.resume_from_checkpoint)
 
     if training_arguments.do_eval:
-        # If we just trained the model, we don't need to load anything
-        if (
-            training_arguments.do_train
-            and training_arguments.load_best_model_at_end
-            and TYPE == "HF"
-        ):
-            pass
-        # Load the best model
-        else:
-            # TODO: added the num_labels, id2label, and label2id kwds here for consistency
-            # with other parts of the code, but they may not be necessary or even cause errors.
-            model = get_model(
-                args.task,
-                oh.best_model_dir,
-                None,
-                num_labels=num_classes,
-                id2label=id2label,
-                label2id=label2id,
-            )
-
+        model = get_model(
+            args.task,
+            oh.best_model_dir,
+            None,
+            num_labels=num_classes,
+            id2label=id2label,
+            label2id=label2id,
+        )
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
