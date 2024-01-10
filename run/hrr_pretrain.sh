@@ -1,15 +1,16 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=malconv
+#SBATCH --job-name=hrrformer_pretrain
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
 #SBATCH --time=05-00:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=3
 #SBATCH --ntasks=5
 #SBATCH --mem=128G
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:a100:2
+
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
@@ -18,16 +19,18 @@ conda activate RawByteClf
 # export CUDA_LAUNCH_BLOCKING=1
 # export TRANSFORMERS_VERBOSITY="info"
 
-strategy="epoch"
+strategy="steps"
 save_eval_steps=100
 logging_steps=10
 
+torchrun --no-python --nnodes=1 --nproc_per_node=2 \
 python \
 src/learn/train.py \
 --root="./output" \
---model_name_or_path="mymalconv" \
---max_length=1048576 \
---task="clf" \
+--model_name_or_path="hrrformer" \
+--max_length=16384 \
+--task="mlm" \
+--depth=4 \
 --do_train \
 --do_eval \
 --output_dir=tmp \
@@ -38,12 +41,16 @@ src/learn/train.py \
 --evaluation_strategy=$strategy \
 --eval_steps=$save_eval_steps \
 --logging_steps=$logging_steps \
---dataloader_num_workers=4 \
---per_device_train_batch_size=192 \
---per_device_eval_batch_size=192 \
---num_train_epochs=50 \
+--dataloader_num_workers=2 \
+--per_device_train_batch_size=48 \
+--per_device_eval_batch_size=48 \
+--gradient_accumulation_steps=10 \
+--eval_accumulation_steps=16 \
+--max_steps=10000 \
 --optim="adamw_torch" \
 --learning_rate="5e-4" \
+--weight_decay=0.005 \
+--warmup_steps=500 \
 --save_total_limit=3 \
 --fp16 \
 --fp16_full_eval \

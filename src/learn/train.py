@@ -131,8 +131,8 @@ torch.random.manual_seed(0)
 
 PAD_TO = 8
 
-SUBSET = 16000
-STREAMING = False
+SUBSET = None # 80000 # tune_hrrformer
+STREAMING = True
 KEEP_IN_MEMORY = False
 EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
@@ -147,8 +147,8 @@ TUNE_TR_N_SAMPLES = 8000
 TUNE_VL_N_SAMPLES = 8000
 TUNE_TS_N_SAMPLES = 0
 
-N_INITIAL_POINTS = 32
-N_TRIALS = 128  # including the initial points
+N_INITIAL_POINTS = 8
+N_TRIALS = 32  # including the initial points
 TUNE_RESOURCES_PER_TRIAL = {
     "cpu": 1,
     "gpu": 1,
