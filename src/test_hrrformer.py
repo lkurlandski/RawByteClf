@@ -36,8 +36,18 @@ from src.hrrformer import (
     HRRForMaskedLM,
     HRRForSequenceClassification,
 )
+from src.mamba import (
+    ModelArgs as MambaConfig,
+    Mamba as MambaForCausalLM,
+    # MambaConfig,
+    # MambaModel,
+    # MambaLMHeadModel as MambaForCausalLM,
+    # MambaForMaskedLM,
+    # MambaForSequenceClassification,
+)
 
 
+HIDDEN_SIZE = 768
 NUM_HIDDEN_LAYERS = 1
 NUM_TRAIN_EPOCHS = 10
 MAX_POSITION_EMBEDDINGS: int = None  # clf: 512, mlm: 512, clm: 128
@@ -99,11 +109,12 @@ def get_dataset(task: str, tokenizer: PreTrainedTokenizerFast) -> DatasetDict:
 
 def get_config(
     task: str, model: str, tokenizer: PreTrainedTokenizerFast, dataset: DatasetDict
-) -> BertConfig | HRRConfig:
+) -> BertConfig | HRRConfig | MambaConfig:
     kwds = {
         "vocab_size": len(tokenizer),
         "num_hidden_layers": NUM_HIDDEN_LAYERS,
         "max_position_embeddings": MAX_POSITION_EMBEDDINGS,
+        "hidden_size": HIDDEN_SIZE,
     }
     if task == "clf":
         kwds.update({
@@ -121,7 +132,13 @@ def get_config(
         return BertConfig(**kwds)
     elif model == "hrr":
         return HRRConfig(**kwds)
-    
+    elif model == "mamba":
+        return MambaConfig(
+            d_model=768,
+            n_layer=12,
+            vocab_size=len(tokenizer),
+        )
+
     raise RuntimeError(f"Unknown model: {model}")
 
 
@@ -131,16 +148,22 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
             return BertForCausalLM(config)
         elif model == "hrr":
             return HRRForCausalLM(config)
+        elif model == "mamba":
+            return MambaForCausalLM(config)
     elif task == "mlm":
         if model == "bert":
             return BertForMaskedLM(config)
         elif model == "hrr":
             return HRRForMaskedLM(config)
+        elif model == "mamba":
+            return MambaForMaskedLM(config)
     elif task == "clf":
         if model == "bert":
             return BertForSequenceClassification(config)
         elif model == "hrr":
             return HRRForSequenceClassification(config)
+        elif model == "mamba":
+            return MambaForSequenceClassification(config)
 
     raise RuntimeError(f"Unknown task: {task} or unknown model: {model}")
 
@@ -197,7 +220,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--task", type=str, choices=["clm", "mlm", "clf"], default="clm")
-    parser.add_argument("--model", type=str, choices=["bert", "hrr"], default="hrr")
+    parser.add_argument("--model", type=str, choices=["bert", "hrr", "mamba"], default="hrr")
     parser.add_argument("--max_position_embeddings", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=64)
     args = parser.parse_args()
@@ -206,7 +229,10 @@ if __name__ == "__main__":
     BATCH_SIZE = args.batch_size
 
     tokenizer: PreTrainedTokenizerFast = BertTokenizerFast.from_pretrained("bert-base-cased")
+    if args.model == "mamba":
+        tokenizer.model_input_names.remove("attention_mask")
     print(f"{tokenizer=}")
+    print(f"{tokenizer.model_input_names=}")
 
     dataset: DatasetDict = get_dataset(args.task, tokenizer)
     print(f"{dataset=}")
