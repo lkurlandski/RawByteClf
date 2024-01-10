@@ -219,8 +219,13 @@ class HRRSelfAttention(nn.Module):
         # attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
 
         # HRR
-        # H' = hidden_size / num_attention_heads
-        superposition = binding(key_layer, value_layer, dim=-1)  # (B, h, T, H')
+        # H' = hidden_size / num_attention_heads  RuntimeError: cuFFT error: CUFFT_INVALID_SIZE
+        try:
+            superposition = binding(key_layer, value_layer, dim=-1)  # (B, h, T, H')
+        except RuntimeError:
+            print(f"{key_layer.shape=}")
+            print(f"{value_layer.shape=}")
+            raise
         superposition = torch.sum(superposition, dim=-2, keepdims=True)  # (B, h, 1, H')
         value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
@@ -791,6 +796,7 @@ class HRRModel(HRRPreTrainedModel):
             If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
             `past_key_values`).
         """
+
         output_attentions = (
             output_attentions if output_attentions is not None else self.config.output_attentions
         )
@@ -829,6 +835,7 @@ class HRRModel(HRRPreTrainedModel):
                 ((batch_size, seq_length + past_key_values_length)), device=device
             )
 
+        # TODO: verify that these are of dtype long
         if token_type_ids is None:
             if hasattr(self.embeddings, "token_type_ids"):
                 buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
@@ -838,6 +845,10 @@ class HRRModel(HRRPreTrainedModel):
                 token_type_ids = buffered_token_type_ids_expanded
             else:
                 token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+
+        if token_type_ids.dtype != torch.long:
+            warnings.warn(f"{token_type_ids.dtype=}, which is unexpected. Casting to torch.long")
+            token_type_ids = token_type_ids.to(torch.long)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
@@ -863,6 +874,16 @@ class HRRModel(HRRPreTrainedModel):
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
+        # FIXME: debug
+        # TODO: sometimes token_type_ids has dtype int32, which raises exceptions.
+        # if hasattr(input_ids, "dtype"):
+        #     print(f"{input_ids.dtype=}")
+        # if hasattr(position_ids, "dtype"):
+        #     print(f"{position_ids.dtype=}")
+        # if hasattr(token_type_ids, "dtype"):
+        #     print(f"{token_type_ids.dtype=}")
+        # if hasattr(inputs_embeds, "dtype"):
+        #     print(f"{inputs_embeds.dtype=}")
         embedding_output = self.embeddings(
             input_ids=input_ids,
             position_ids=position_ids,
