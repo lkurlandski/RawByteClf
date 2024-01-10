@@ -43,7 +43,10 @@ TunedConfigs = defaultdict(lambda: defaultdict(dict),
     "hrrformer": defaultdict(dict, {
         # eval_loss = 
         65536: {
-            
+            "hidden_size": 512,
+            "intermediate_size": 1024,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 8,
         },
         16384: {
             "hidden_size": 512,
