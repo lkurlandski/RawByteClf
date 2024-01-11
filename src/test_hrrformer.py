@@ -37,21 +37,18 @@ from src.hrrformer import (
     HRRForSequenceClassification,
 )
 from src.mamba import (
-    ModelArgs as MambaConfig,
-    Mamba as MambaForCausalLM,
-    # MambaConfig,
-    # MambaModel,
-    # MambaLMHeadModel as MambaForCausalLM,
-    # MambaForMaskedLM,
-    # MambaForSequenceClassification,
+    MambaConfig,
+    MambaForCausalLM,
+    MambaForMaskedLM,
+    MambaForSequenceClassification,
 )
 
 
 HIDDEN_SIZE = 768
-NUM_HIDDEN_LAYERS = 1
+NUM_HIDDEN_LAYERS = 12
 NUM_TRAIN_EPOCHS = 10
 MAX_POSITION_EMBEDDINGS: int = None  # clf: 512, mlm: 512, clm: 128
-BATCH_SIZE: int = None # clf: 256, mlm: 64, clm: 64
+BATCH_SIZE: int = None  # clf: 256, mlm: 64, clm: 64
 PAD_TO_MULTIPLE_OF = 8
 NUM_PROC = 4
 
@@ -69,42 +66,22 @@ def group_texts(examples, block_size: int):
 
 
 def get_dataset(task: str, tokenizer: PreTrainedTokenizerFast) -> DatasetDict:
+    dataset = load_dataset("ag_news")
+    dataset = dataset.map(
+        lambda examples: tokenizer(
+            examples["text"],
+            truncation=True,
+            max_length=MAX_POSITION_EMBEDDINGS,
+        ),
+        batched=True,
+        num_proc=NUM_PROC,
+    )
+    dataset = dataset.rename_column("label", "labels")
+
     if task == "clm" or task == "mlm":
-        dataset = load_dataset("eli5", split="train_asks")
-        dataset = dataset.train_test_split(test_size=0.1)
-        dataset = dataset.flatten()
-        dataset = dataset.map(
-            lambda examples: tokenizer(
-                [" ".join(x) for x in examples["answers.text"]],
-                truncation=True,
-                max_length=MAX_POSITION_EMBEDDINGS,
-            ),
-            batched=True,
-            num_proc=NUM_PROC,
-            remove_columns=dataset["train"].column_names,
-        )
-        dataset = dataset.map(
-            partial(group_texts, block_size=MAX_POSITION_EMBEDDINGS),
-            batched=True,
-            num_proc=NUM_PROC,
-        )
-        return dataset
+        dataset = dataset.remove_columns("labels")
 
-    elif task == "clf":
-        dataset = load_dataset("ag_news")
-        dataset = dataset.map(
-            lambda examples: tokenizer(
-                examples["text"],
-                truncation=True,
-                max_length=MAX_POSITION_EMBEDDINGS,
-            ),
-            batched=True,
-            num_proc=NUM_PROC,
-        )
-        dataset = dataset.rename_column("label", "labels")
-        return dataset
-
-    raise RuntimeError(f"Unknown task: {task}")
+    return dataset
 
 
 def get_config(
@@ -117,27 +94,31 @@ def get_config(
         "hidden_size": HIDDEN_SIZE,
     }
     if task == "clf":
-        kwds.update({
-            "num_labels": dataset["train"].info.features["labels"].num_classes,
-            "id2label": {i: l for i, l in enumerate(dataset["train"].info.features["labels"].names)},
-            "label2id": {l: i for i, l in enumerate(dataset["train"].info.features["labels"].names)},
-        })
+        kwds.update(
+            {
+                "num_labels": dataset["train"].info.features["labels"].num_classes,
+                "id2label": {
+                    i: l for i, l in enumerate(dataset["train"].info.features["labels"].names)
+                },
+                "label2id": {
+                    l: i for i, l in enumerate(dataset["train"].info.features["labels"].names)
+                },
+            }
+        )
     if task == "clm":
-        kwds.update({
-            "is_decoder": True,
-            # "add_cross_attention": True,  # only for seq2seq
-        })
+        kwds.update(
+            {
+                "is_decoder": True,
+                # "add_cross_attention": True,  # only for seq2seq
+            }
+        )
 
     if model == "bert":
         return BertConfig(**kwds)
     elif model == "hrr":
         return HRRConfig(**kwds)
     elif model == "mamba":
-        return MambaConfig(
-            d_model=768,
-            n_layer=12,
-            vocab_size=len(tokenizer),
-        )
+        return MambaConfig(**kwds)
 
     raise RuntimeError(f"Unknown model: {model}")
 
@@ -172,15 +153,18 @@ def get_data_collator(task: str, tokenizer: PreTrainedTokenizerFast):
     if task == "clf":
         return DataCollatorWithPadding(tokenizer=tokenizer, pad_to_multiple_of=PAD_TO_MULTIPLE_OF)
     elif task == "mlm":
-        return DataCollatorForLanguageModeling(tokenizer=tokenizer, pad_to_multiple_of=PAD_TO_MULTIPLE_OF)
+        return DataCollatorForLanguageModeling(
+            tokenizer=tokenizer, pad_to_multiple_of=PAD_TO_MULTIPLE_OF
+        )
     elif task == "clm":
-        return DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=PAD_TO_MULTIPLE_OF)
+        return DataCollatorForLanguageModeling(
+            tokenizer=tokenizer, mlm=False, pad_to_multiple_of=PAD_TO_MULTIPLE_OF
+        )
 
     raise RuntimeError(f"Unknown task: {task}")
 
 
 def get_compute_metrics(task: str):
-
     accuracy = evaluate.load("accuracy")
 
     def compute_metrics(eval_pred):
@@ -217,7 +201,6 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
 
 
 if __name__ == "__main__":
-
     parser = ArgumentParser()
     parser.add_argument("--task", type=str, choices=["clm", "mlm", "clf"], default="clm")
     parser.add_argument("--model", type=str, choices=["bert", "hrr", "mamba"], default="hrr")
@@ -243,7 +226,9 @@ if __name__ == "__main__":
     model: BertModel | HRRModel = get_model(args.task, args.model, config)
     print(f"{model=}")
 
-    data_collator: DataCollatorForLanguageModeling | DataCollatorWithPadding = get_data_collator(args.task, tokenizer)
+    data_collator: DataCollatorForLanguageModeling | DataCollatorWithPadding = get_data_collator(
+        args.task, tokenizer
+    )
 
     trainer = Trainer(
         model=model,
