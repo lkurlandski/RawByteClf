@@ -25,13 +25,12 @@ from transformers import (
     BertForMaskedLM,
     BertLMHeadModel as BertForCausalLM,
     BertForSequenceClassification,
-    BertModel,
+    PretrainedConfig,
+    PreTrainedModel,
 )
-
 
 from src.hrrformer import (
     HRRConfig,
-    HRRModel,
     HRRLMHeadModel as HRRForCausalLM,
     HRRForMaskedLM,
     HRRForSequenceClassification,
@@ -42,6 +41,7 @@ from src.mamba import (
     MambaForMaskedLM,
     MambaForSequenceClassification,
 )
+from src.utils import count_parameters
 
 
 HIDDEN_SIZE = 768
@@ -220,11 +220,12 @@ if __name__ == "__main__":
     dataset: DatasetDict = get_dataset(args.task, tokenizer)
     print(f"{dataset=}")
 
-    config: BertConfig | HRRConfig = get_config(args.task, args.model, tokenizer, dataset)
+    config: PretrainedConfig = get_config(args.task, args.model, tokenizer, dataset)
     print(f"{config=}")
 
-    model: BertModel | HRRModel = get_model(args.task, args.model, config)
+    model: PreTrainedModel = get_model(args.task, args.model, config)
     print(f"{model=}")
+    print(f"{count_parameters(model)=}")
 
     data_collator: DataCollatorForLanguageModeling | DataCollatorWithPadding = get_data_collator(
         args.task, tokenizer

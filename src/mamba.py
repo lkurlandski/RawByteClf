@@ -141,7 +141,7 @@ class MambaModel(MambaPretrainedModel):
         super().__init__(config)
         self.config = config
         self.embedding = nn.Embedding(config.vocab_size, config.d_model)
-        self.layers = nn.Sequential(*[ResidualBlock(config) for _ in range(config.n_layer)])
+        self.layers = nn.ModuleList([ResidualBlock(config) for _ in range(config.n_layer)])
         self.norm_f = RMSNorm(config.d_model)
         self.pooler = BertPooler(config) if add_pooling_layer else None
         self.post_init()
@@ -150,7 +150,11 @@ class MambaModel(MambaPretrainedModel):
         self, input_ids: Tensor, labels: Optional[Tensor] = None
     ) -> BaseModelOutputWithPooling:
         embedding_output = self.embedding(input_ids)
-        mamba_output = self.layers(embedding_output)
+
+        mamba_output = embedding_output
+        for layer in self.layers:
+            mamba_output = layer(mamba_output)
+
         sequence_output = self.norm_f(mamba_output)
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
