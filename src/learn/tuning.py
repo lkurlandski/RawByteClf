@@ -72,11 +72,23 @@ def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str
                 "attention_window": 128,
             }
 
+    if model_name == "mamba":
+        return {
+            "hidden_size": 512,
+            "num_hidden_layers": 2,
+            "d_state": 12,
+            "expand": 2,
+            "dt_rank": "auto",
+            "d_conv": 4,
+            "conv_bias": True,
+            "bias": False,
+            "intermediate_size": 1024,
+        }
+
     return {}
 
 
 def hp_space_hrrformer(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
-
     return {
         "hidden_size": tune.choice([256, 512, 768, 1024]),
         "intermediate_size": tune.choice([512, 1024, 1536, 2048]),
@@ -126,4 +138,3 @@ def hp_space_mymalconv(trial: Any) -> dict[str, float | int]:  # pylint: disable
         "channels": tune.choice([64, 128, 192]),
         "hidden_size": tune.choice([128, 256, 512, 768, 1024]),
     }
-

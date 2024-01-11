@@ -53,8 +53,8 @@ class MambaConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size: int = -1,
-        hidden_size: int = -1,
+        vocab_size: int = 8000,
+        hidden_size: int = 768,
         num_hidden_layers: int = 2,
         d_state: int = 12,
         expand: int = 2,
@@ -116,7 +116,7 @@ class MambaConfig(PretrainedConfig):
         self.classifier_dropout = classifier_dropout
 
 
-class MambaPretrainedModel(PreTrainedModel):
+class MambaPreTrainedModel(PreTrainedModel):
     config_class = MambaConfig
     base_model_prefix = "mamba"
     supports_gradient_checkpointing = True
@@ -136,7 +136,7 @@ class MambaPretrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
 
-class MambaModel(MambaPretrainedModel):
+class MambaModel(MambaPreTrainedModel):
     def __init__(self, config: MambaConfig, add_pooling_layer: bool = True):
         super().__init__(config)
         self.config = config
@@ -166,7 +166,7 @@ class MambaModel(MambaPretrainedModel):
         )
 
 
-class MambaForCausalLM(MambaPretrainedModel):
+class MambaForCausalLM(MambaPreTrainedModel):
     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config: MambaConfig) -> None:
@@ -198,7 +198,7 @@ class MambaForCausalLM(MambaPretrainedModel):
         )
 
 
-class MambaForMaskedLM(MambaPretrainedModel):
+class MambaForMaskedLM(MambaPreTrainedModel):
     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
     def __init__(self, config: MambaConfig) -> None:
@@ -228,7 +228,7 @@ class MambaForMaskedLM(MambaPretrainedModel):
         )
 
 
-class MambaForSequenceClassification(MambaPretrainedModel):
+class MambaForSequenceClassification(MambaPreTrainedModel):
     def __init__(self, config: MambaConfig) -> None:
         super().__init__(config)
         self.num_labels = config.num_labels

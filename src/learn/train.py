@@ -103,6 +103,13 @@ from src.hrrformer import (
     HRRForSequenceClassification,
     HRRForMaskedLM,
 )
+from src.mamba import (
+    MambaConfig,
+    MambaForSequenceClassification,
+    MambaForMaskedLM,
+    MambaForCausalLM,
+    MambaPreTrainedModel,
+)
 from src.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
@@ -139,7 +146,7 @@ torch.random.manual_seed(0)
 
 PAD_TO = 8
 
-SUBSET = None # 80000 # tune_hrrformer
+SUBSET = None  # 80000 # tune_hrrformer
 STREAMING = True
 KEEP_IN_MEMORY = False
 EXIT_AFTER_MAP = False
@@ -283,6 +290,7 @@ MODEL_NAMES = [
     "mymalconv",
     "hrrformer",
     "rwkv",
+    "mamba",
 ]
 
 
@@ -296,6 +304,7 @@ RETURN_ATTENTION_MASK = {
     "mymalconv": False,
     "hrrformer": True,
     "rwkv": False,
+    "mamba": False,
 }
 
 
@@ -314,6 +323,8 @@ def object_to_model_name_or_path(obj) -> str:
         return "hrrformer"
     if isinstance(obj, (RwkvConfig,)):
         return "rwkv"
+    if isinstance(obj, (MambaConfig,)):
+        return "mamba"
     if isinstance(obj, (MalConvConfig,)):
         return "malconv"
     if isinstance(obj, (MalConvGCTConfig,)):
@@ -430,6 +441,21 @@ def modify_positional_embeddings(
         model.longformer.embeddings.position_embeddings = new_embeddings
 
     return model
+
+
+def modify_positional_embeddings_allowed(model: Any) -> bool:
+    incompatible = [
+        RwkvPreTrainedModel,
+        MambaPreTrainedModel,
+        MalConv,
+        MalConvGCT,
+        MyMalConv,
+    ]
+    if isinstance(model, tuple(incompatible)):
+        return False
+    if isinstance(model, PreTrainedModel):
+        return True
+    return False
 
 
 @dataclass
@@ -644,7 +670,9 @@ def get_config(
         attention_window = kwds.pop("attention_window", 512)
         return LongformerConfig(
             vocab_size=vocab_size,
-            max_position_embeddings=longformer_max_position_embeddings(max_length, attention_window),
+            max_position_embeddings=longformer_max_position_embeddings(
+                max_length, attention_window
+            ),
             attention_window=attention_window,
             sep_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
@@ -700,6 +728,13 @@ def get_config(
             context_length=max_posititional_embeddings,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            **kwds,
+        )
+    if model_name_or_path.lower() == "mamba":
+        return MambaConfig(
+            vocab_size=vocab_size,
+            pad_token_id=tokenizer.pad_token_id,
+            pad_vocab_size_multiple=PAD_TO,
             **kwds,
         )
     if model_name_or_path.lower() == "malconv":
@@ -769,14 +804,26 @@ def get_model(
                 return HRRForSequenceClassification(config)
             if isinstance(config, RwkvConfig):
                 return RwkvForSequenceClassification(config)
+            if isinstance(config, MambaConfig):
+                return MambaForSequenceClassification(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForSequenceClassification.from_config(config)
         if task == "mlm":
             if isinstance(config, HRRConfig):
                 return HRRForMaskedLM(config)
+            if isinstance(config, RwkvConfig):
+                raise NotImplementedError()
+            if isinstance(config, MambaConfig):
+                return MambaForMaskedLM(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForMaskedLM.from_config(config)
         if task == "clm":
+            if isinstance(config, HRRConfig):
+                raise NotImplementedError()
+            if isinstance(config, RwkvConfig):
+                pass
+            if isinstance(config, MambaConfig):
+                return MambaForCausalLM(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForCausalLM.from_config(config)
 
@@ -940,7 +987,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             max_length=args.max_length,
             return_overflowing_tokens=args.task in ("mlm", "clm"),
         )
-        dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset, remove_columns=remove_columns))
+        dataset = dataset.map(
+            **get_map_kwds_for_hf_datasets(function, dataset, remove_columns=remove_columns)
+        )
 
     if EXIT_AFTER_MAP:
         sys.exit(0)
@@ -986,7 +1035,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if not STREAMING:  # dataset has already been processed, so we disable thread-based parallelism
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-
     if training_arguments.do_train:
         model = get_model(
             args.task,
@@ -1002,7 +1050,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR, flush=True)
 
         # Resize the embeddings if necessary
-        if isinstance(model, PreTrainedModel) and not isinstance(model, (MalConv, MalConvGCT, MyMalConv, RwkvPreTrainedModel)):
+        if modify_positional_embeddings_allowed(model):
             add_positional_embeddings = args.max_length > model.config.max_position_embeddings
 
             if add_positional_embeddings and isinstance(config, LongformerConfig):
