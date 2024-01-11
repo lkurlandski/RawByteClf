@@ -110,7 +110,7 @@ from src.rwkv import (
 from src.utils import get_highest_path
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.learn.tuning import (
-    TunedConfigs,
+    tuned_configs,
     hp_space_mymalconv,
     hp_space_malconv,
     hp_space_malconvgct,
@@ -638,7 +638,7 @@ def get_config(
     max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
     # kwds overrides the tuned_kwds
-    kwds = TunedConfigs[model_name_or_path.lower()][max_length] | kwds
+    kwds = tuned_configs(model_name_or_path.lower(), max_length) | kwds
 
     if model_name_or_path.lower() == "longformer":
         attention_window = kwds.pop("attention_window", 512)

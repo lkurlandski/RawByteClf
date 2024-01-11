@@ -4,87 +4,75 @@
 
 from collections import defaultdict
 from copy import deepcopy
-from typing import Any
+from typing import Any, Optional
 
 from ray import tune
 
 
-TunedConfigs = defaultdict(lambda: defaultdict(dict), 
-{
-    "malconv": defaultdict(dict, {
-        # eval_loss = 5.778996
-        65536: {
-            "channels": 64,
-            "chunk_size": 1024,
-            "overlap": 256,
-            "stride": 448,
-            "window_size": 64,
-        },
-    }),
-    "malconvgct": defaultdict(dict, {
-        # eval_loss = 5.777025
-        65536: {
-            "channels": 64,
-            "chunk_size": 2048,
-            "overlap": 768,
-            "stride": 512,
-            "window_size": 192,
-        },
-    }),
-    "mymalconv": defaultdict(dict, {
-        # eval_loss = 5.396931
-        65536: {
-            "channels": 192,
-            "hidden_size": 128,
-            "stride": 512,
-            "window_size": 512,
-        },
-    }),
-    "hrrformer": defaultdict(dict, {
-        # eval_loss = 
-        65536: {
-            "hidden_size": 512,
-            "intermediate_size": 1024,
-            "num_hidden_layers": 1,
-            "num_attention_heads": 8,
-        },
-        16384: {
-            "hidden_size": 512,
-            "intermediate_size": 1024,
-            "num_hidden_layers": 1,
-            "num_attention_heads": 8,
-        },
-    }),
-    "rwkv": defaultdict(dict, {
-        65536: {
-            "hidden_size": 512,
-            "intermediate_size": 1024,
-            "num_hidden_layers": 2,
-        },
-        16384: {
-            "hidden_size": 512,
-            "intermediate_size": 1024,
-            "num_hidden_layers": 2,
-        },
-        1024: {
-            "hidden_size": 512,
-            "intermediate_size": 1024,
-            "num_hidden_layers": 2,
-        },
-    }),
-    "longformer": defaultdict(dict, {
-        # eval_loss = 5.124239 (MLM task)
-        16384: {
-            "hidden_size": 1024,
-            "intermediate_size": 1024,
-            "num_hidden_layers": 1,
-            "num_attention_heads": 4,
-            "attention_window": 128,
-        },
-    }),
-})
+def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str, int]:
+    if model_name == "malconv":
+        if max_length == 65536:  # eval_loss = 5.778996
+            return {
+                "channels": 64,
+                "chunk_size": 1024,
+                "overlap": 256,
+                "stride": 448,
+                "window_size": 64,
+            }
 
-TunedConfigs["longformer"][65536] = deepcopy(TunedConfigs["longformer"][16384])
+    if model_name == "malconvgct":  # eval_loss = 5.777025
+        if max_length == 65536:
+            return {
+                "channels": 64,
+                "chunk_size": 2048,
+                "overlap": 768,
+                "stride": 512,
+                "window_size": 192,
+            }
+
+    if model_name == "mymalconv":  # eval_loss = 5.396931
+        if max_length == 65536:
+            return {
+                "channels": 192,
+                "hidden_size": 128,
+                "stride": 512,
+                "window_size": 512,
+            }
+
+    if model_name == "hrrformer":
+        return {
+            "hidden_size": 512,
+            "intermediate_size": 1024,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 8,
+        }
+
+    if model_name == "rwkv":
+        return {
+            "hidden_size": 512,
+            "intermediate_size": 1024,
+            "num_hidden_layers": 2,
+        }
+
+    if model_name == "longformer":
+        if max_length == 16384:  # eval_loss = 5.124239 (MLM task)
+            return {
+                "hidden_size": 1024,
+                "intermediate_size": 1024,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "attention_window": 128,
+            }
+        if max_length == 65536:
+            return {
+                "hidden_size": 1024,
+                "intermediate_size": 1024,
+                "num_hidden_layers": 1,
+                "num_attention_heads": 4,
+                "attention_window": 128,
+            }
+
+    return {}
 
 
 def hp_space_hrrformer(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
