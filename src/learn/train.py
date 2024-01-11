@@ -1,6 +1,9 @@
 """
 Train and evaluate the models for malware family classification.
 
+# FIXME: determine if the tokenizer needs to add the [CLS] token for sequence
+# classification.
+
 # TODO: investigate increasing the batch size and number of processes for the
 # Dataset.map() calls. Experiment with malconv, as the impact of disk access is
 # more pronounced there than with the heavy transformers models.
@@ -66,6 +69,7 @@ from transformers import (
     ReformerConfig,
     NystromformerConfig,
     FNetConfig,
+    RwkvPreTrainedModel,
     TrainerCallback,
     TrainerState,
     TrainerControl,
@@ -78,7 +82,7 @@ from transformers.trainer_utils import (
     PREFIX_CHECKPOINT_DIR,
 )
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
-from transformers.utils import CONFIG_NAME
+from transformers.utils import CONFIG_NAME, is_ninja_available
 from ray import tune
 from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune import TuneError
@@ -98,6 +102,10 @@ from src.hrrformer import (
     HRRConfig,
     HRRForSequenceClassification,
     HRRForMaskedLM,
+)
+from src.rwkv import (
+    RwkvConfig,
+    RwkvForSequenceClassification,
 )
 from src.utils import get_highest_path
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
@@ -265,6 +273,19 @@ def hp_compute_objective(metrics: dict[str, float]) -> float:
     return metrics["eval_loss"]
 
 
+MODEL_NAMES = [
+    "longformer",
+    "reformer",
+    "nystromformer",
+    "fnet",
+    "malconv",
+    "malconvgct",
+    "mymalconv",
+    "hrrformer",
+    "rwkv",
+]
+
+
 RETURN_ATTENTION_MASK = {
     "longformer": True,
     "reformer": True,
@@ -274,11 +295,12 @@ RETURN_ATTENTION_MASK = {
     "malconvgct": False,
     "mymalconv": False,
     "hrrformer": True,
+    "rwkv": False,
 }
 
 
 def object_to_model_name_or_path(obj) -> str:
-    if obj in ("longformer", "reformer", "nystromformer", "fnet", "malconv", "malconvgct", "mymalconv", "hrrformer"):
+    if obj in MODEL_NAMES:
         return obj
     if isinstance(obj, (FNetConfig,)):
         return "fnet"
@@ -290,6 +312,8 @@ def object_to_model_name_or_path(obj) -> str:
         return "longformer"
     if isinstance(obj, (HRRConfig,)):
         return "hrrformer"
+    if isinstance(obj, (RwkvConfig,)):
+        return "rwkv"
     if isinstance(obj, (MalConvConfig,)):
         return "malconv"
     if isinstance(obj, (MalConvGCTConfig,)):
@@ -661,19 +685,36 @@ def get_config(
             eos_token_id=tokenizer.eos_token_id,
             **kwds,
         )
+    if model_name_or_path.lower() == "hrrformer":
+        return HRRConfig(
+            vocab_size=vocab_size,
+            max_position_embeddings=max_posititional_embeddings,
+            pad_token_id=tokenizer.pad_token_id,
+            **kwds,
+        )
+    if model_name_or_path.lower() == "rwkv":
+        if not is_ninja_available():
+            raise RuntimeError("Ninja is required to use RWKV. Without it, the model is too slow.")
+        return RwkvConfig(
+            vocab_size=vocab_size,
+            context_length=max_posititional_embeddings,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            **kwds,
+        )
     if model_name_or_path.lower() == "malconv":
         return MalConvConfig(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **(TunedConfigs["malconv"].get(max_length, {}) | kwds),
+            **kwds,
         )
     if model_name_or_path.lower() == "malconvgct":
         return MalConvGCTConfig(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **(TunedConfigs["malconvgct"].get(max_length, {}) | kwds),
+            **kwds,
         )
     if model_name_or_path.lower() == "mymalconv":
         return MyMalConvConfig(
@@ -681,13 +722,6 @@ def get_config(
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
             max_length=max_posititional_embeddings,
-            **(TunedConfigs["mymalconv"].get(max_length, {}) | kwds),
-        )
-    if model_name_or_path.lower() == "hrrformer":
-        return HRRConfig(
-            vocab_size=vocab_size,
-            max_position_embeddings=max_posititional_embeddings,
-            pad_token_id=tokenizer.pad_token_id,
             **kwds,
         )
 
@@ -733,6 +767,8 @@ def get_model(
                 return MyMalConv(config)
             if isinstance(config, HRRConfig):
                 return HRRForSequenceClassification(config)
+            if isinstance(config, RwkvConfig):
+                return RwkvForSequenceClassification(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForSequenceClassification.from_config(config)
         if task == "mlm":
@@ -966,7 +1002,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR, flush=True)
 
         # Resize the embeddings if necessary
-        if isinstance(model, PreTrainedModel):
+        if isinstance(model, PreTrainedModel) and not isinstance(model, (MalConv, MalConvGCT, MyMalConv, RwkvPreTrainedModel)):
             add_positional_embeddings = args.max_length > model.config.max_position_embeddings
 
             if add_positional_embeddings and isinstance(config, LongformerConfig):

@@ -17,14 +17,15 @@ import numpy as np
 from transformers import (
     BertConfig,
     BertTokenizerFast,
+    BertForMaskedLM,
+    BertLMHeadModel as BertForCausalLM,
+    BertForSequenceClassification,
+    RwkvForCausalLM,
     DataCollatorForLanguageModeling,
     DataCollatorWithPadding,
     PreTrainedTokenizerFast,
     Trainer,
     TrainingArguments,
-    BertForMaskedLM,
-    BertLMHeadModel as BertForCausalLM,
-    BertForSequenceClassification,
     PretrainedConfig,
     PreTrainedModel,
 )
@@ -40,6 +41,11 @@ from src.mamba import (
     MambaForCausalLM,
     MambaForMaskedLM,
     MambaForSequenceClassification,
+)
+from src.rwkv import (
+    RwkvConfig,
+    RwkvForSequenceClassification,
+    RwkvForMaskedLM,
 )
 from src.utils import count_parameters
 
@@ -119,6 +125,9 @@ def get_config(
         return HRRConfig(**kwds)
     elif model == "mamba":
         return MambaConfig(**kwds)
+    elif model == "rwkv":
+        kwds["context_length"] = kwds.pop("max_position_embeddings")
+        return RwkvConfig(**kwds)
 
     raise RuntimeError(f"Unknown model: {model}")
 
@@ -131,6 +140,8 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
             return HRRForCausalLM(config)
         elif model == "mamba":
             return MambaForCausalLM(config)
+        elif model == "rwkv":
+            return RwkvForCausalLM(config)
     elif task == "mlm":
         if model == "bert":
             return BertForMaskedLM(config)
@@ -138,6 +149,8 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
             return HRRForMaskedLM(config)
         elif model == "mamba":
             return MambaForMaskedLM(config)
+        elif model == "rwkv":
+            return RwkvForMaskedLM(config)
     elif task == "clf":
         if model == "bert":
             return BertForSequenceClassification(config)
@@ -145,6 +158,8 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
             return HRRForSequenceClassification(config)
         elif model == "mamba":
             return MambaForSequenceClassification(config)
+        elif model == "rwkv":
+            return RwkvForSequenceClassification(config)
 
     raise RuntimeError(f"Unknown task: {task} or unknown model: {model}")
 
@@ -203,7 +218,7 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--task", type=str, choices=["clm", "mlm", "clf"], default="clm")
-    parser.add_argument("--model", type=str, choices=["bert", "hrr", "mamba"], default="hrr")
+    parser.add_argument("--model", type=str, choices=["bert", "hrr", "mamba", "rwkv"], default="hrr")
     parser.add_argument("--max_position_embeddings", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=64)
     args = parser.parse_args()
