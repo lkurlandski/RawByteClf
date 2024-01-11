@@ -17,3 +17,5 @@
 pip install "ray[tune]"==2.6.3
 pip install bayesian-optimization
 pip install hyperopt
+
+pip install ninja
