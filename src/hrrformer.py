@@ -2,6 +2,7 @@
 
 
 import os
+import sys
 import warnings
 from typing import List, Optional, Tuple, Union
 
@@ -221,14 +222,38 @@ class HRRSelfAttention(nn.Module):
         # HRR
         # H' = hidden_size / num_attention_heads  RuntimeError: cuFFT error: CUFFT_INVALID_SIZE
         try:
-            superposition = binding(key_layer, value_layer, dim=-1)  # (B, h, T, H')
+            superpositions = binding(key_layer, value_layer, dim=-1)  # (B, h, T, H')
         except RuntimeError:
             print(f"{key_layer.shape=}")
             print(f"{value_layer.shape=}")
             raise
-        superposition = torch.sum(superposition, dim=-2, keepdims=True)  # (B, h, 1, H')
+
+        superposition = torch.sum(superpositions, dim=-2, keepdims=True)  # (B, h, 1, H')
         value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
+
+        # FIXME: debug statements
+        from pathlib import Path
+
+        root = Path("./tmp/weight_analysis") / os.environ["ANALYSIS_ID"]
+        variables = ["key_layer", "value_layer", "query_layer", "superpositions", "superposition", "value_approx", "attention_scores"]
+        paths = {v: root / f"{v}.csv" for v in variables}
+
+        if not root.exists():
+            root.mkdir(exist_ok=False, parents=True)
+            for p in paths.values():
+                p.write_text("min,max,mean,stdev\n")
+
+        for name, value in zip(variables, [key_layer, value_layer, query_layer, superpositions, superposition, value_approx, attention_scores]):
+            with open(paths[name], "a") as fp:
+                fp.write(
+                    f"{round(value.min().item(), 1)},"
+                    f"{round(value.max().item(), 1)},"
+                    f"{round(value.mean().item(), 1)},"
+                    f"{round(value.std().item(), 1)}\n"
+                )
+        # FIXME: debug statements
+
 
         # Add the positional encoding
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
