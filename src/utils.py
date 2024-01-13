@@ -105,3 +105,23 @@ def get_scale_fn(scale: float) -> Callable[[int], float]:
 def object_from_superset_of_constructor_kwds(cls, **kwds) -> Any:
     kwds = {k: v for k, v in kwds.items() if k in inspect.getfullargspec(cls.__init__).args}
     return cls(**kwds)
+
+
+def bash_file_to_vscode_debug_str(file: Path) -> str:
+    args = []
+    add = False
+    with open(file, "r") as fp:
+        for line in fp:
+            if add:
+                args.append(line)
+            if line.startswith("python"):
+                add = True
+
+    args = [a for a in args if not a.startswith("#")]
+    args = [a.replace('"', "").replace("'", "").replace("\\", "").rstrip() for a in args]
+    args = [f'"{a}"' for a in args]
+    return ", ".join(args)
+
+
+if __name__ == "__main__":
+    print(bash_file_to_vscode_debug_str(Path("run/hrr_train_65536_false_none.sh")))
