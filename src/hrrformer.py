@@ -1,10 +1,10 @@
 """PyTorch BERT model."""
 
-
+import math
 import os
 import sys
 import warnings
-from typing import List, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 from HRR.with_pytorch import binding, unbinding, cosine_similarity
 import torch
@@ -12,7 +12,7 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 import torch.nn.functional as F
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, PretrainedConfig
 from transformers.models.bert.modeling_bert import (
     BertEmbeddings,
     BertConfig,
@@ -120,13 +120,57 @@ BERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
 ]
 
 
-################################################################################
-###################################### HRRFormer ###############################
-################################################################################
+class HRRConfig(PretrainedConfig):
+    """
+    This is a copy-paste of the BertConfig class with one additional parameter.
+    """
+    def __init__(
+        self,
+        vocab_size: int = 30522,
+        hidden_size: int = 768,
+        num_hidden_layers: int = 12,
+        num_attention_heads: int = 12,
+        intermediate_size: int = 3072,
+        hidden_act: str = "gelu",
+        hidden_dropout_prob: float = 0.1,
+        attention_probs_dropout_prob: float = 0.1,
+        max_position_embeddings: int = 512,
+        type_vocab_size: int = 2,
+        initializer_range: float = 0.02,
+        layer_norm_eps: float = 1e-12,
+        pad_token_id: int = 0,
+        position_embedding_type: str = "absolute",
+        use_cache: bool = True,
+        classifier_dropout: Optional[float] = None,
+        superposition_scale_factor: float | Literal["max", "mean"] = 1.0,
+        **kwargs,
+    ):
+        super().__init__(pad_token_id=pad_token_id, **kwargs)
 
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.hidden_act = hidden_act
+        self.intermediate_size = intermediate_size
+        self.hidden_dropout_prob = hidden_dropout_prob
+        self.attention_probs_dropout_prob = attention_probs_dropout_prob
+        self.max_position_embeddings = max_position_embeddings
+        self.type_vocab_size = type_vocab_size
+        self.initializer_range = initializer_range
+        self.layer_norm_eps = layer_norm_eps
+        self.position_embedding_type = position_embedding_type
+        self.use_cache = use_cache
+        self.classifier_dropout = classifier_dropout
 
-class HRRConfig(BertConfig):
-    ...
+        if isinstance(superposition_scale_factor, (float, int)):
+            self.superposition_scale_factor = float(superposition_scale_factor)
+        elif superposition_scale_factor == "max":
+            self.superposition_scale_factor = 1.0 / math.sqrt(max_position_embeddings)
+        elif superposition_scale_factor == "mean":
+            self.superposition_scale_factor = "mean"
+        else:
+            raise ValueError(f"Invalid value {superposition_scale_factor=}")
 
 
 class HRRSelfAttention(nn.Module):
@@ -162,6 +206,7 @@ class HRRSelfAttention(nn.Module):
             )
 
         self.is_decoder = config.is_decoder
+        self.superposition_scale_factor = config.superposition_scale_factor
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -228,32 +273,19 @@ class HRRSelfAttention(nn.Module):
             print(f"{value_layer.shape=}")
             raise
 
-        superposition = torch.sum(superpositions, dim=-2, keepdims=True)  # (B, h, 1, H')
+        # Calculating the superposition as the sum of the superpositions can lead to overflow,
+        # especially when using fp16. After some analysis, we find that aggressive gradient
+        # clipping can alleviate this problem to some degree. However, we also found that scaling
+        # the superpositions by a constant factor, e.g., 1 / sqrt(H'), or taking the mean instead
+        # of the sum does not seem to impact learning and can also be used to avoid overflow.
+        # so we use the mean. torch.mean() also causes overflow, so we compute it manually instead.
+        superposition: torch.Tensor  # (B, h, 1, H')
+        if self.superposition_scale_factor == "mean":
+            superposition = torch.sum(torch.div(superpositions, superpositions.size(-2)), dim=-2, keepdim=True)
+        else:
+            superposition = torch.sum(superpositions * self.superposition_scale_factor, dim=-2, keepdims=True)
         value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
-
-        # FIXME: debug statements
-        from pathlib import Path
-
-        root = Path("./tmp/weight_analysis") / os.environ["ANALYSIS_ID"]
-        variables = ["key_layer", "value_layer", "query_layer", "superpositions", "superposition", "value_approx", "attention_scores"]
-        paths = {v: root / f"{v}.csv" for v in variables}
-
-        if not root.exists():
-            root.mkdir(exist_ok=False, parents=True)
-            for p in paths.values():
-                p.write_text("min,max,mean,stdev\n")
-
-        for name, value in zip(variables, [key_layer, value_layer, query_layer, superpositions, superposition, value_approx, attention_scores]):
-            with open(paths[name], "a") as fp:
-                fp.write(
-                    f"{round(value.min().item(), 1)},"
-                    f"{round(value.max().item(), 1)},"
-                    f"{round(value.mean().item(), 1)},"
-                    f"{round(value.std().item(), 1)}\n"
-                )
-        # FIXME: debug statements
-
 
         # Add the positional encoding
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
