@@ -29,7 +29,7 @@ def process_trainer_state(path: Path) -> tuple[list[dict], list[dict]]:
         trainer_state = json.load(fp)
     log_history = trainer_state["log_history"]
     validation_reports = [d for d in log_history if "eval_loss" in d]
-    train_reports = [d for d in log_history if "train_loss" in d]
+    train_reports = [d for d in log_history if "loss" in d]
     return validation_reports, train_reports
 
 
