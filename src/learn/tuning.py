@@ -42,9 +42,10 @@ def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str
     if model_name == "hrrformer":
         return {
             "hidden_size": 512,
-            "intermediate_size": 1024,
+            "intermediate_size": 2048,
             "num_hidden_layers": 1,
             "num_attention_heads": 8,
+            "superposition_scale_factor": "max",
         }
 
     if model_name == "rwkv":
