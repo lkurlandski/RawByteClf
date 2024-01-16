@@ -885,6 +885,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     tokenizer = get_tokenizer_object()
     tokenizer = get_fast_tokenizer(tokenizer, model_max_length=args.max_length)
     print(f"{tokenizer=}")
+    print(f"{tokenizer.all_special_ids=}")
+    print(f"{tokenizer.all_special_tokens=}")
+    print(f"{tokenizer.all_special_tokens_extended=}")
     print(BR, flush=True)
 
     dataset: DatasetDict
