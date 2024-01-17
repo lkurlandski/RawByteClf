@@ -147,7 +147,6 @@ torch.random.manual_seed(0)
 PAD_TO = 8
 
 SUBSET = None  # 80000 # tune_hrrformer
-STREAMING = True
 KEEP_IN_MEMORY = False
 EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
@@ -467,15 +466,24 @@ def modify_positional_embeddings_allowed(model: Any) -> bool:
 
 @dataclass
 class Args:
+
     model_name_or_path: str = field()
     max_length: int = field()
     task: str = field()
     depth: int = field(default=1)
-    ft_freeze_positional_embeddings: bool | str = field(default=False)
-    ft_duplicate_positional_embeddings: bool | str = field(default=False)
-    ft_initialize_positional_embeddings: bool | str = field(default=False)
+    streaming: bool = field(default=True)
+    ft_freeze_positional_embeddings: bool = field(default=False)
+    ft_duplicate_positional_embeddings: bool = field(default=False)
+    ft_initialize_positional_embeddings: bool = field(default=False)
     root: Path = field(default=OUTPUT_PATH)
     do_tune: bool = field(default=False)
+
+    def __post_init__(self) -> None:
+        self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
+        self.ft_duplicate_positional_embeddings = str_or_bool_to_str(self.ft_duplicate_positional_embeddings)
+        self.ft_initialize_positional_embeddings = str_or_bool_to_str(self.ft_initialize_positional_embeddings)
+        self.streaming = str_or_bool_to_str(self.streaming)
+        self.do_tune = str_or_bool_to_str(self.do_tune)
 
 
 class OutputHelper:
@@ -917,7 +925,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{dist=}")
     print(BR, flush=True)
 
-    if STREAMING:
+    if args.streaming:
         if training_arguments.max_steps == -1:
             max_steps = compute_total_steps(
                 len(dataset["tr"]),
@@ -1033,7 +1041,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         ModelTrainer = Trainer
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
-    if not STREAMING:  # dataset has already been processed, so we disable thread-based parallelism
+    if not args.streaming:  # dataset has been processed, so we disable thread-based parallelism
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     if training_arguments.do_train:
