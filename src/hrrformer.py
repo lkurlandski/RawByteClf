@@ -287,6 +287,29 @@ class HRRSelfAttention(nn.Module):
         value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
+
+        # These are debugging statements for trying to figure out issues with numerical overflow.
+        # from pathlib import Path
+
+        # root = Path("./tmp/weight_analysis") / os.environ["ANALYSIS_ID"]
+        # variables = ["key_layer", "value_layer", "query_layer", "superpositions", "superposition", "value_approx", "attention_scores"]
+        # paths = {v: root / f"{v}.csv" for v in variables}
+
+        # if not root.exists():
+        #     root.mkdir(exist_ok=False, parents=True)
+        #     for p in paths.values():
+        #         p.write_text("min,max,mean,stdev\n")
+
+        # for name, value in zip(variables, [key_layer, value_layer, query_layer, superpositions, superposition, value_approx, attention_scores]):
+        #     v = value.abs()
+        #     with open(paths[name], "a") as fp:
+        #         fp.write(
+        #             f"{v.min().item()},"
+        #             f"{v.max().item()},"
+        #             f"{v.mean().item()},"
+        #             f"{v.std().item()}\n"
+        #         )
+
         # Add the positional encoding
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
             raise NotImplementedError()
