@@ -231,6 +231,8 @@ if __name__ == "__main__":
         tokenizer.model_input_names.remove("attention_mask")
     print(f"{tokenizer=}")
     print(f"{tokenizer.model_input_names=}")
+    print(f"{tokenizer.all_special_ids=}")
+    print(f"{tokenizer.all_special_tokens=}")
 
     dataset: DatasetDict = get_dataset(args.task, tokenizer)
     print(f"{dataset=}")
