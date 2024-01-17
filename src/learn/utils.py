@@ -4,8 +4,9 @@ Utility functions for training and evaluation.
 
 # pylint: disable=wrong-import-position
 print(f"Entered {__file__=}")
+# pylint: enable=wrong-import-position
 
-from collections import Counter, OrderedDict
+from collections import Counter
 import functools
 import gc
 import inspect
@@ -16,75 +17,17 @@ import random
 import sys
 from typing import Any, Optional
 
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-# pylint: enable=wrong-import-position
-
 from accelerate.utils.memory import should_reduce_batch_size
 from accelerate.utils import is_xpu_available
-from datasets import Dataset, IterableDataset, IterableDatasetDict, concatenate_datasets
-from datasets.formatting.formatting import LazyBatch, LazyRow
 import numpy as np
-from tokenizers import models, pre_tokenizers, Tokenizer, Regex
 import torch
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
-
-from src.cfg import INPUT_PATH, OUTPUT_PATH
-from src.utils import count_parameters
-
-
-SPECIALS = OrderedDict(
-    {
-        "pad_token": "<pad>",
-        "unk_token": "<unk>",
-        "mask_token": "<msk>",
-        "bos_token": "<bos>",
-        "eos_token": "<eos>",
-        "cls_token": "<cls>",
-        "sep_token": "<sep>",
-    }
-)
-
-
-def get_tokenizer_object() -> Tokenizer:
-    alphabet = [bytes([i]).decode("latin1") for i in range(256)]
-    vocab = {v: i for i, v in enumerate(SPECIALS.values())} | {
-        v: i for i, v in enumerate(alphabet, start=len(SPECIALS))
-    }
-
-    model = models.WordLevel(
-        vocab=vocab,
-        unk_token=SPECIALS["unk_token"],
-    )
-    tokenizer = Tokenizer(model)
-    tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
-        [
-            pre_tokenizers.Split(Regex("."), behavior="isolated"),
-        ]
-    )
-    return tokenizer
-
-
-def get_fast_tokenizer(tokenizer_object: Tokenizer, **kwds) -> PreTrainedTokenizerFast:
-    """Suggested kwds are max_length."""
-    tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer_object, **(kwds | SPECIALS))
-    tokenizer.add_special_tokens(SPECIALS)
-    return tokenizer
-
-
-def get_slow_tokenizer(tokenizer_object: Tokenizer, **kwds) -> PreTrainedTokenizerFast:
-    """Suggested kwds are max_length."""
-    tokenizer = PreTrainedTokenizer(tokenizer_object=tokenizer_object, **(kwds | SPECIALS))
-    tokenizer.add_special_tokens(SPECIALS)
-    return tokenizer
+from transformers import PreTrainedTokenizerFast
 
 
 def examples_to_text(
     examples: dict[str, list], max_length: Optional[int] = None
 ) -> dict[str, list]:
-    return {
-        "text": [b[0:max_length].decode("latin1") for b in examples["bytes"]],
-    }
+    return {"text": [b[0:max_length].decode("latin1") for b in examples["bytes"]]}
 
 
 def examples_to_input_ids(

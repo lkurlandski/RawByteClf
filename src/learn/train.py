@@ -1,6 +1,6 @@
 """
 Train and evaluate the models for malware family classification.
-
+# TODO: drop bytes after converting to text!
 # FIXME: determine if the tokenizer needs to add the [CLS] token for sequence
 # classification.
 
@@ -88,7 +88,11 @@ from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune import TuneError
 
 from src.cfg import BR, OUTPUT_PATH
-from src.utils import object_from_superset_of_constructor_kwds
+from src.utils import (
+    count_parameters,
+    get_highest_path,
+    object_from_superset_of_constructor_kwds,
+)
 from src.malconv import (
     AutoMalConvForSequenceClassification,
     MalConvConfig,
@@ -114,7 +118,6 @@ from src.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.utils import get_highest_path
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
 from src.learn.evaluation import clf_compute_metrics
 from src.learn.tuning import (
@@ -126,11 +129,8 @@ from src.learn.tuning import (
     hp_space_hrrformer,
 )
 from src.learn.utils import (
-    count_parameters,
     pad_to_multiple_of_fn,
     find_two_largest_factors,
-    get_tokenizer_object,
-    get_fast_tokenizer,
     examples_to_text,
     examples_to_input_ids,
     tokenize_fn,
@@ -138,6 +138,7 @@ from src.learn.utils import (
     compute_total_steps,
     str_or_bool_to_str,
 )
+from src.learn.tokenization import get_tokenizer
 
 
 random.seed(0)
@@ -195,9 +196,7 @@ class TrainingArguments(HfTrainingArguments):
 
 
 class SaveConfigToCheckpointCallback(TrainerCallback):
-    def on_save(
-        self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds
-    ):
+    def on_save(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
         checkpoint_folder = f"{args.output_dir}/{PREFIX_CHECKPOINT_DIR}-{state.global_step}"
         kwds["model"].config.save_pretrained(checkpoint_folder)
         with open(f"{checkpoint_folder}/{CONFIG_NAME}", "r") as fp:
@@ -265,7 +264,6 @@ MODEL_NAMES = [
     "mamba",
 ]
 
-
 RETURN_ATTENTION_MASK = {
     "longformer": True,
     "reformer": True,
@@ -279,8 +277,22 @@ RETURN_ATTENTION_MASK = {
     "mamba": False,
 }
 
+REQUIRES_CLS_TOKEN = {
+    "longformer": True,
+    "reformer": False,
+    "nystromformer": False,
+    "fnet": True,
+    "malconv": False,
+    "malconvgct": False,
+    "mymalconv": False,
+    "hrrformer": True,
+    "rwkv": False,
+    "mamba": False,
+}
 
-def object_to_model_name_or_path(obj) -> str:
+
+# TODO: add support for passing in a PreTrainedModel object.
+def object_to_model_name(obj: PretrainedConfig | str | Path) -> str:
     if obj in MODEL_NAMES:
         return obj
     if isinstance(obj, (FNetConfig,)):
@@ -304,7 +316,7 @@ def object_to_model_name_or_path(obj) -> str:
     if isinstance(obj, (MyMalConvConfig,)):
         return "mymalconv"
     if isinstance(obj, (str, Path)) and Path(obj).exists():
-        return object_to_model_name_or_path(AutoConfig.from_pretrained(str(obj)))
+        return object_to_model_name(AutoConfig.from_pretrained(str(obj)))
     raise RuntimeError()
 
 
@@ -741,6 +753,8 @@ def get_map_kwds_for_hf_datasets(
     map_kwds = {
         "function": function,
         "batched": True,
+        "batch_size": 1000,
+        "writer_batch_size": 1000,
     }
     map_kwds.update(kwds)
     if isinstance(dataset, (DatasetDict, Dataset)):
@@ -758,6 +772,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{args=}")
 
     TYPE = get_model_type(args.model_name_or_path)
+    MODEL_NAME = object_to_model_name(args.model_name_or_path)
 
     oh = OutputHelper(
         args.model_name_or_path,
@@ -776,12 +791,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{training_arguments=}")
     print(BR, flush=True)
 
-    tokenizer = get_tokenizer_object()
-    tokenizer = get_fast_tokenizer(tokenizer, model_max_length=args.max_length)
+    tokenizer = get_tokenizer(
+        model_requires_cls_token=REQUIRES_CLS_TOKEN[MODEL_NAME],
+        model_max_length=args.max_length,
+    )
     print(f"{tokenizer=}")
     print(f"{tokenizer.all_special_ids=}")
     print(f"{tokenizer.all_special_tokens=}")
     print(f"{tokenizer.all_special_tokens_extended=}")
+    print(f"{tokenizer.model_input_names=}")
     print(BR, flush=True)
 
     dataset: DatasetDict
@@ -854,7 +872,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{config=}")
     print(BR, flush=True)
 
-    if not RETURN_ATTENTION_MASK[object_to_model_name_or_path(config)]:
+    if not RETURN_ATTENTION_MASK[MODEL_NAME]:
         tokenizer.model_input_names.remove("attention_mask")
 
     if PREPROCESS_AS_TEXT:
@@ -883,6 +901,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             truncation=True,
             max_length=args.max_length,
             return_overflowing_tokens=args.task in ("mlm", "clm"),
+            add_special_tokens=True,
         )
         dataset = dataset.map(
             **get_map_kwds_for_hf_datasets(function, dataset, remove_columns=remove_columns)
@@ -1025,7 +1044,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         results = output.metrics
         with open(oh.test_results_file, "w") as fp:
             json.dump(results, fp, indent=4)
-
 
     if args.do_tune:
         training_arguments = replace(
