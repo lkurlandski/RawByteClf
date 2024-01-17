@@ -206,10 +206,17 @@ def COMPUTE_METRICS(
 
 
 class TrainingArguments(HfTrainingArguments):
+
     def __init__(self, **kwds):
+        # If do_eval flag is not passed, as would be the case when passing do_tune, it is set to
+        # True by the transformers.TrainingArguments. When we pass do_tune, we do not want the
+        # do_eval flag to be set to True, so we adjust the value as needed at the end of __init__.
         do_eval = kwds.get("do_eval", False)
 
-        if kwds.get("resume_from_checkpoint", None):  # lets us pass in "true" from command line
+        # If resume_from_checkpoint is passed as a flag without an argument, it is not set to True
+        # by the transformers.TrainingArguments. This let's us pass in "true" from the command line,
+        # and have the flag be set to True, i.e., resume training from the last checkpoint.
+        if kwds.get("resume_from_checkpoint", None):
             try:
                 kwds["resume_from_checkpoint"] = str_or_bool_to_str(kwds["resume_from_checkpoint"])
             except ValueError:
@@ -869,16 +876,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{oh=}")
     print(BR, flush=True)
 
-    training_arguments = replace(
-        training_arguments,
-        output_dir=oh.checkpoints_dir.as_posix(),
-        load_best_model_at_end=True,
-        resume_from_checkpoint=(
-            True
-            if training_arguments.resume_from_checkpoint == "last-checkpoint"
-            else training_arguments.resume_from_checkpoint
-        ),
-    )
+    training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
     print(f"{training_arguments=}")
     print(BR, flush=True)
 
