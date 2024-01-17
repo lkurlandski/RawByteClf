@@ -116,6 +116,7 @@ from src.rwkv import (
 )
 from src.utils import get_highest_path
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
+from src.learn.evaluation import clf_compute_metrics
 from src.learn.tuning import (
     tuned_configs,
     hp_space_mymalconv,
@@ -167,41 +168,6 @@ TUNE_RESOURCES_PER_TRIAL = {
     "cpu": 1,
     "gpu": 1,
 }
-
-
-ACCURACY = evaluate.load("accuracy")
-F1 = evaluate.load("f1")
-
-
-# FIXME: fix the entire compute metrics pipeline....
-def COMPUTE_METRICS(
-    eval_pred: EvalPrediction, single_shot_classes: Optional[list[int]] = None
-) -> dict[str, float]:
-    predictions, labels = eval_pred.predictions, eval_pred.label_ids
-    predictions = np.argmax(predictions, axis=1)
-    metrics = {
-        "accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
-        "f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
-        "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
-    }
-    if single_shot_classes is None:
-        return metrics
-
-    include = np.array([i for i, l in enumerate(labels) if l in single_shot_classes])
-    predictions = predictions[include]
-    labels = labels[include]
-    metrics.update(
-        {
-            "ss_accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
-            "ss_f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")[
-                "f1"
-            ],
-            "ss_f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")[
-                "f1"
-            ],
-        }
-    )
-    return metrics
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -572,84 +538,6 @@ class OutputHelper:
         self.path.mkdir(exist_ok=True, parents=True)
 
 
-class ComputeMetrics:
-    def __init__(self, detailed: bool = False) -> None:
-        self.detailed = detailed
-
-    def set_detailed(self, detailed: bool) -> None:
-        self.detailed = detailed
-
-    def return_report(self, report: dict[str, float | dict]) -> dict[str, float | dict]:
-        if self.detailed:
-            return report
-        return {
-            "accuracy": report["accuracy"],
-            "f1_macro": report["macro avg"]["f1-score"],
-            "f1_weighted": report["weighted avg"]["f1-score"],
-        }
-
-
-class CLFComputeMetrics(ComputeMetrics):
-    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float | dict]:
-        # predictions (B, M)
-        # label_ids (B,)
-        y_true, y_pred = self.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
-        report = classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
-        return super().return_report(report)
-
-    @staticmethod
-    def get_y_true_y_pred(
-        predictions: np.ndarray, label_ids: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        return CLFComputeMetrics.get_y_true(label_ids), CLFComputeMetrics.get_y_pred(predictions)
-
-    @staticmethod
-    def get_y_pred(predictions: np.ndarray) -> np.ndarray:
-        predictions = tensor(predictions, dtype=torch.float32)
-        probas = torch.softmax(predictions, dim=1).numpy()
-        y_pred = np.argmax(probas, axis=1)
-        return y_pred
-
-    @staticmethod
-    def get_y_true(label_ids: np.ndarray) -> np.ndarray:
-        return label_ids.astype(np.int64)
-
-
-# FIXME: using this seems to cause OOM errors during the evaluation loop.
-# It seems reasonable to suspect that the CLFComputeMetrics has similar issues.
-class MLMComputeMetrics(ComputeMetrics):
-    def __call__(self, eval_pred: EvalPrediction) -> dict[str, float | dict]:
-        # predictions (B, L, M)
-        # label_ids (B, M)
-        y_true, y_pred = self.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
-        report = classification_report(y_true, y_pred, output_dict=True, zero_division=np.nan)
-        return super().return_report(report)
-
-    @staticmethod
-    def get_y_true_y_pred(
-        predictions: np.ndarray, label_ids: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        y_pred = MLMComputeMetrics.get_y_pred(predictions)
-        y_true = MLMComputeMetrics.get_y_true(label_ids)
-        mask = y_true == -100
-        y_pred = y_pred[~mask]
-        y_true = y_true[~mask]
-        return y_true, y_pred
-
-    @staticmethod
-    def get_y_pred(predictions: np.ndarray) -> np.ndarray:
-        predictions = tensor(predictions, dtype=torch.float32)
-        predictions = predictions.view(-1, predictions.shape[2])  # (B * L, M)
-        probas = torch.softmax(predictions, dim=1).numpy()
-        y_pred = np.argmax(probas, axis=1)
-        return y_pred
-
-    @staticmethod
-    def get_y_true(label_ids: np.ndarray) -> np.ndarray:
-        y_true = tensor(label_ids, dtype=torch.float32).view(-1)  # (B * L,)
-        return y_true.numpy().astype(np.int64)
-
-
 def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
@@ -1014,7 +902,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             data_collator = DataCollatorWithPadding(
                 tokenizer=tokenizer, padding=True, pad_to_multiple_of=pad_to_multiple_of
             )
-        compute_metrics = COMPUTE_METRICS
+        compute_metrics = clf_compute_metrics
     elif args.task == "mlm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, pad_to_multiple_of=pad_to_multiple_of
@@ -1116,11 +1004,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
 
-        if isinstance(compute_metrics, ComputeMetrics):
-            compute_metrics.set_detailed(True)
-
         single_shot_classes = [label2id[l] for l in dist if dist[l] == 3]
-        compute_metrics = partial(COMPUTE_METRICS, single_shot_classes=single_shot_classes)
+        compute_metrics = partial(clf_compute_metrics, single_shot_classes=single_shot_classes)
         print("single_shot_classes=")
         pprint(single_shot_classes)
 
@@ -1141,14 +1026,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         with open(oh.test_results_file, "w") as fp:
             json.dump(results, fp, indent=4)
 
-        # compute_metrics = CLFComputeMetrics()
-        # y_true, y_pred = compute_metrics.get_y_true_y_pred(output.predictions, output.label_ids)
-        # np.savetxt(oh.test_predictions_file, y_pred, "%i")
-        # np.savetxt(oh.test_labels_file, y_true, "%i")
-        # if args.task == "clf":
-        #     cf_matrix = confusion_matrix(y_true, y_pred)
-        #     ConfusionMatrixDisplay(cf_matrix).plot()
-        #     plt.savefig(oh.test_confusion_matrix_file)
 
     if args.do_tune:
         training_arguments = replace(
