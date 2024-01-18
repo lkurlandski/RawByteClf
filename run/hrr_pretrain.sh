@@ -19,39 +19,37 @@ conda activate RawByteClf
 # export CUDA_LAUNCH_BLOCKING=1
 # export TRANSFORMERS_VERBOSITY="info"
 
-strategy="steps"
-save_eval_steps=100
-logging_steps=10
-
-torchrun --no-python --nnodes=1 --nproc_per_node=2 \
+# torchrun --no-python --nnodes=1 --nproc_per_node=2 \
 python \
 src/learn/train.py \
 --root="./output" \
---model_name_or_path="hrrformer" \
---max_length=16384 \
 --task="mlm" \
---depth=4 \
+--streaming=true \
+--depth=1 \
 --do_train \
 --do_eval \
 --output_dir=tmp \
 --overwrite_output_dir \
---load_best_model_at_end \
---save_strategy=$strategy \
---save_steps=$save_eval_steps \
---evaluation_strategy=$strategy \
---eval_steps=$save_eval_steps \
---logging_steps=$logging_steps \
---dataloader_num_workers=2 \
---per_device_train_batch_size=48 \
---per_device_eval_batch_size=48 \
---gradient_accumulation_steps=10 \
---eval_accumulation_steps=16 \
+--save_strategy="steps" \
+--evaluation_strategy="steps" \
+--save_steps=100 \
+--eval_steps=100 \
+--logging_steps=10 \
 --max_steps=10000 \
+--dataloader_num_workers=4 \
 --optim="adamw_torch" \
---learning_rate="5e-4" \
---weight_decay=0.005 \
---warmup_steps=500 \
+--learning_rate="1e-4" \
+--weight_decay=0.01 \
+--max_grad_norm=0.75 \
 --save_total_limit=3 \
 --fp16 \
 --fp16_full_eval \
---tf32=true
+--model_name_or_path="hrrformer" \
+--max_length=65536 \
+--ft_freeze_positional_embeddings=false \
+--ft_duplicate_positional_embeddings=false \
+--ft_initialize_positional_embeddings=false \
+--per_device_train_batch_size=8 \
+--per_device_eval_batch_size=12 \
+--gradient_accumulation_steps=16 \
+--eval_accumulation_steps=32
