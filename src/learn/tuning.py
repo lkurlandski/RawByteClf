@@ -47,6 +47,7 @@ def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str
             "num_attention_heads": 8,
             "superposition_scale_factor": "max",
             "initializer_range": 0.01,
+            "superpositions_to_bf": False,
         }
 
     if model_name == "rwkv":

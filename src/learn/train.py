@@ -151,7 +151,6 @@ PAD_TO = 8
 SUBSET = None  # 80000 # tune_hrrformer
 KEEP_IN_MEMORY = False
 MOVE_IN_MEMORY = False
-EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
 PREPROCESS_AS_TEXT = True
@@ -462,6 +461,7 @@ class Args:
     task: str = field()
     depth: int = field(default=1)
     streaming: bool = field(default=True)
+    exit_after_map: bool = field(default=False)
     ft_freeze_positional_embeddings: bool = field(default=False)
     ft_duplicate_positional_embeddings: bool = field(default=False)
     ft_initialize_positional_embeddings: bool = field(default=False)
@@ -473,6 +473,7 @@ class Args:
         self.ft_duplicate_positional_embeddings = str_or_bool_to_str(self.ft_duplicate_positional_embeddings)
         self.ft_initialize_positional_embeddings = str_or_bool_to_str(self.ft_initialize_positional_embeddings)
         self.streaming = str_or_bool_to_str(self.streaming)
+        self.exit_after_map = str_or_bool_to_str(self.exit_after_map)
         self.do_tune = str_or_bool_to_str(self.do_tune)
 
 
@@ -919,7 +920,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             **get_map_kwds_for_hf_datasets(function, dataset, remove_columns=remove_columns)
         )
 
-    if EXIT_AFTER_MAP:
+    if args.exit_after_map:
         sys.exit(0)
     if MOVE_IN_MEMORY and not args.streaming:
         for s in dataset:
