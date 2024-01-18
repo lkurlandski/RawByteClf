@@ -277,7 +277,10 @@ RETURN_ATTENTION_MASK = {
     "mamba": False,
 }
 
-REQUIRES_CLS_TOKEN = {
+
+# This is the technical details of which models need BERT-like sequence processing, but for
+# simplicity, we'll just use it for all of the models because it doesn't really make a difference.
+APPLY_BERT_PROCESSING = {
     "longformer": True,
     "reformer": False,
     "nystromformer": False,
@@ -289,6 +292,10 @@ REQUIRES_CLS_TOKEN = {
     "rwkv": False,
     "mamba": False,
 }
+
+
+def APPLY_BERT_PROCESSING(model_name: str) -> bool:
+    return True
 
 
 # TODO: add support for passing in a PreTrainedModel object.
@@ -792,7 +799,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     tokenizer = get_tokenizer(
-        model_requires_cls_token=REQUIRES_CLS_TOKEN[MODEL_NAME],
+        model_requires_cls_token=APPLY_BERT_PROCESSING(MODEL_NAME),
         model_max_length=args.max_length,
     )
     print(f"{tokenizer=}")
