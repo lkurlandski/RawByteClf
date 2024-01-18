@@ -143,6 +143,7 @@ class HRRConfig(PretrainedConfig):
         use_cache: bool = True,
         classifier_dropout: Optional[float] = None,
         superposition_scale_factor: float | Literal["max", "mean"] = 1.0,
+        superpositions_to_bf: bool = False,
         **kwargs,
     ):
         super().__init__(pad_token_id=pad_token_id, **kwargs)
@@ -162,6 +163,7 @@ class HRRConfig(PretrainedConfig):
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
+        self.superpositions_to_bf = superpositions_to_bf
 
         if isinstance(superposition_scale_factor, (float, int)):
             self.superposition_scale_factor = float(superposition_scale_factor)
@@ -207,6 +209,7 @@ class HRRSelfAttention(nn.Module):
 
         self.is_decoder = config.is_decoder
         self.superposition_scale_factor = config.superposition_scale_factor
+        self.superpositions_to_bf = config.superpositions_to_bf
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -280,11 +283,14 @@ class HRRSelfAttention(nn.Module):
         # of the sum does not seem to impact learning and can also be used to avoid overflow.
         # so we use the mean. torch.mean() also causes overflow, so we compute it manually instead.
         superposition: torch.Tensor  # (B, h, 1, H')
+        if self.superpositions_to_bf:
+            if key_layer.dtype == torch.float16:
+                superpositions = superpositions.to(torch.bfloat16)
         if self.superposition_scale_factor == "mean":
             superposition = torch.sum(torch.div(superpositions, superpositions.size(-2)), dim=-2, keepdim=True)
         else:
             superposition = torch.sum(superpositions * self.superposition_scale_factor, dim=-2, keepdims=True)
-        value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
+        value_approx = unbinding(superposition.to(query_layer.dtype), query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
 
