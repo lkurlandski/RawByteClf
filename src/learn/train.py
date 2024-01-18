@@ -150,6 +150,7 @@ PAD_TO = 8
 
 SUBSET = None  # 80000 # tune_hrrformer
 KEEP_IN_MEMORY = False
+MOVE_IN_MEMORY = False
 EXIT_AFTER_MAP = False
 BODMAS_TOP_K = None
 BODMAS_MIN_FREQ = None
@@ -920,6 +921,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if EXIT_AFTER_MAP:
         sys.exit(0)
+    if MOVE_IN_MEMORY and not args.streaming:
+        for s in dataset:
+            dataset[s] = dataset[s].select(range(len(dataset[s])), keep_in_memory=True)
 
     pad_to_multiple_of = PAD_TO
     if isinstance(config, transformers.ReformerConfig):
