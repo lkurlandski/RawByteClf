@@ -156,7 +156,11 @@ BODMAS_MIN_FREQ = None
 PREPROCESS_AS_TEXT = True
 PREPROCESS_AS_INPUT_IDS = False
 PREPROCESS_AS_INPUT_IDS_DO_PAD = True
-CACHE_FILE_NAME: Optional[str] = None  # "/home/lk3591/Documents/code/RawByteClf/INPUT_IDS_1048576"
+
+# Arguments for the Dataset.map() function.
+BATCH_SIZE: Optional[int] = 1000
+WRITER_BATCH_SIZE: Optional[int] = 1000
+CACHE_FILE_NAME: Optional[str] = None
 NUM_PROC: Optional[int] = None
 
 TUNE_TR_N_SAMPLES = 8000
@@ -760,8 +764,7 @@ def get_map_kwds_for_hf_datasets(
     map_kwds = {
         "function": function,
         "batched": True,
-        "batch_size": 1000,
-        "writer_batch_size": 1000,
+        "batch_size": BATCH_SIZE,
     }
     map_kwds.update(kwds)
     if isinstance(dataset, (DatasetDict, Dataset)):
@@ -770,6 +773,7 @@ def get_map_kwds_for_hf_datasets(
                 "keep_in_memory": KEEP_IN_MEMORY,
                 "num_proc": NUM_PROC,
                 "cache_file_names": CACHE_FILE_NAME,
+                "writer_batch_size": WRITER_BATCH_SIZE,
             }
         )
     return map_kwds
