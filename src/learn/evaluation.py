@@ -118,3 +118,34 @@ def clf_compute_metrics(
     }
     metrics.update(ss_metrics)
     return metrics
+
+
+def mlm_get_y_true_y_pred(predictions: np.ndarray, label_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    y_pred = mlm_get_y_pred(predictions)
+    y_true = mlm_get_y_true(label_ids)
+    mask = y_true == -100
+    y_pred = y_pred[~mask]
+    y_true = y_true[~mask]
+    return y_true, y_pred
+
+
+def mlm_get_y_pred(predictions: np.ndarray) -> np.ndarray:
+    predictions = tensor(predictions, dtype=torch.float32)
+    predictions = predictions.view(-1, predictions.shape[2])  # (B * L, M)
+    probas = torch.softmax(predictions, dim=1).numpy()
+    y_pred = np.argmax(probas, axis=1).astype(np.int32)
+    return y_pred
+
+
+def mlm_get_y_true(label_ids: np.ndarray) -> np.ndarray:
+    y_true = tensor(label_ids, dtype=torch.float32).view(-1)  # (B * L,)
+    return y_true.numpy().astype(np.int32)
+
+
+def mlm_compute_metrics(eval_pred: EvalPrediction) -> dict[str, float]:
+    y_true, y_pred = mlm_get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
+    return {
+        "accuracy": ACCURACY.compute(predictions=y_pred, references=y_true)["accuracy"],
+        "f1-macro": F1.compute(predictions=y_pred, references=y_true, average="macro")["f1"],
+        "f1-micro": F1.compute(predictions=y_pred, references=y_true, average="micro")["f1"],
+    }

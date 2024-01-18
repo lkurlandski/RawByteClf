@@ -119,7 +119,7 @@ from src.rwkv import (
     RwkvForSequenceClassification,
 )
 from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
-from src.learn.evaluation import clf_compute_metrics
+from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics
 from src.learn.tuning import (
     tuned_configs,
     hp_space_mymalconv,
@@ -941,7 +941,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=True, pad_to_multiple_of=pad_to_multiple_of
         )
-        compute_metrics = None
+        compute_metrics = mlm_compute_metrics
     elif args.task == "clm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer, mlm=False, pad_to_multiple_of=pad_to_multiple_of
