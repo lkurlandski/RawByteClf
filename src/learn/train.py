@@ -163,16 +163,17 @@ WRITER_BATCH_SIZE: Optional[int] = 1000
 CACHE_FILE_NAME: Optional[str] = None
 NUM_PROC: Optional[int] = None
 
-TUNE_TR_N_SAMPLES = 8000
-TUNE_VL_N_SAMPLES = 8000
+TUNE_TR_N_SAMPLES = None
+TUNE_VL_N_SAMPLES = None
 TUNE_TS_N_SAMPLES = 0
 
-N_INITIAL_POINTS = 8
-N_TRIALS = 32  # including the initial points
+N_INITIAL_POINTS = 16
+N_TRIALS = 64  # including the initial points
 TUNE_RESOURCES_PER_TRIAL = {
-    "cpu": 1,
+    "cpu": 4,
     "gpu": 1,
 }
+RAISE_ON_FAILED_TRIAL = False
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -274,7 +275,7 @@ RETURN_ATTENTION_MASK = {
     "nystromformer": True,
     "fnet": False,
     "malconv": False,
-    "malconvgct": False,
+    "malconvgct": True,
     "mymalconv": False,
     "hrrformer": True,
     "rwkv": False,
@@ -725,6 +726,7 @@ def get_model(
             if isinstance(config, MalConvConfig):
                 return MalConv(config)
             if isinstance(config, MalConvGCTConfig):
+                print(config)
                 return MalConvGCT(config)
             if isinstance(config, MyMalConvConfig):
                 return MyMalConv(config)
@@ -885,7 +887,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{config=}")
     print(BR, flush=True)
 
-    if not RETURN_ATTENTION_MASK[MODEL_NAME]:
+    if not RETURN_ATTENTION_MASK[MODEL_NAME]:  # FIXME: causes change in the dataset's fingerprint.
         tokenizer.model_input_names.remove("attention_mask")
 
     if PREPROCESS_AS_TEXT:
@@ -1098,11 +1100,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             n_initial_points=N_INITIAL_POINTS,
         )
         scheduler = None  # ASHAScheduler(metric="eval_loss", mode="min")
-        raise_on_failed_trial = False
         print(f"{search_alg=}")
         print(f"{scheduler=}")
         print(f"{TUNE_RESOURCES_PER_TRIAL=}")
-        print(f"{raise_on_failed_trial=}")
+        print(f"{RAISE_ON_FAILED_TRIAL=}")
         print(BR, flush=True)
 
         oh.mkdir()
@@ -1132,22 +1133,22 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 hp_name=None,
                 search_alg=search_alg,
                 resources_per_trial=TUNE_RESOURCES_PER_TRIAL,
-                raise_on_failed_trial=raise_on_failed_trial,
+                raise_on_failed_trial=RAISE_ON_FAILED_TRIAL,
             )
         except TuneError as err:
             print(BR, flush=True)
             print(
-                f"Encountered a TuneError with {raise_on_failed_trial=}."
-                "If raise_on_failed_trial=True or raise_on_failed_trial=None, then this indicates"
-                "that at least one trial failed. To avoid this, set raise_on_failed_trial=False."
+                f"Encountered a TuneError with {RAISE_ON_FAILED_TRIAL=}."
+                "If RAISE_ON_FAILED_TRIAL=True or RAISE_ON_FAILED_TRIAL=None, then this indicates"
+                "that at least one trial failed. To avoid this, set RAISE_ON_FAILED_TRIAL=False."
             )
             print(BR, flush=True)
             raise err
         except AttributeError as err:
             print(BR, flush=True)
             print(
-                f"Encountered an AttributeError with {raise_on_failed_trial=}."
-                "If raise_on_failed_trial=False, then this most likely indicates"
+                f"Encountered an AttributeError with {RAISE_ON_FAILED_TRIAL=}."
+                "If RAISE_ON_FAILED_TRIAL=False, then this most likely indicates"
                 "that every trial failed."
             )
             print(BR, flush=True)

@@ -126,11 +126,12 @@ def hp_space_malconv(trial: Any) -> dict[str, float | int]:  # pylint: disable=u
 
 def hp_space_malconvgct(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument
     return {
-        "stride": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
-        "window_size": tune.choice([64, 128, 192, 256, 320, 384, 448, 512]),
-        "channels": tune.choice([64, 128, 192]),
-        "chunk_size": tune.choice([1024, 2048, 4096, 8192, 16384, 32768, 65536]),
-        "overlap": tune.choice([256, 512, 768]),
+        "stride": tune.choice([32, 64]),
+        "window_size": tune.choice([384, 512]),
+        "channels": tune.choice([192, 256]),
+        "chunk_size": tune.choice([1024, 2048]),
+        "overlap": tune.choice([128, 256, 512, 768, 1024]),
+        "hidden_size": tune.choice([128, 256, 512, 768, 1024]),
     }
 
 
