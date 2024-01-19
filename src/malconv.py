@@ -51,10 +51,10 @@ class MyMalConvConfig(PretrainedConfig):
         num_embd: int = -1,
         max_length: int = -1,
         embd_size: int = 8,
+        hidden_size: Optional[int] = -1,
         window_size: int = 512,
         channels: int = 128,
         stride: int = 512,
-        hidden_size: int = 128,
         id2label: Optional[dict[int, str]] = None,
         label2id: Optional[dict[str, int]] = None,
         num_labels: Optional[int] = None,
@@ -65,10 +65,10 @@ class MyMalConvConfig(PretrainedConfig):
         self.num_embd = num_embd
         self.max_length = max_length
         self.embd_size = embd_size
+        self.hidden_size = hidden_size if hidden_size > 0 else channels
         self.window_size = window_size
         self.channels = channels
         self.stride = stride
-        self.hidden_size = hidden_size
         self.id2label = id2label
         self.label2id = label2id
 
@@ -87,6 +87,7 @@ class BaseMalConvConfig(PretrainedConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = -1,
+        hidden_size: Optional[int] = -1,
         window_size: int = -1,
         channels: int = -1,
         stride: int = -1,
@@ -102,6 +103,7 @@ class BaseMalConvConfig(PretrainedConfig):
         self.pad_idx = pad_idx
         self.num_embd = num_embd
         self.embd_size = embd_size
+        self.hidden_size = hidden_size if hidden_size > 0 else channels
         self.window_size = window_size
         self.channels = channels
         self.stride = stride
@@ -133,6 +135,7 @@ class MalConvConfig(BaseMalConvConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = 8,
+        hidden_size: Optional[int] = -1,
         window_size: int = 512,
         channels: int = 128,
         stride: int = 512,
@@ -144,19 +147,20 @@ class MalConvConfig(BaseMalConvConfig):
         num_labels: Optional[int] = None,
     ) -> None:
         super().__init__(
-            out_size,
-            pad_idx,
-            num_embd,
-            embd_size,
-            window_size,
-            channels,
-            stride,
-            chunk_size,
-            overlap,
-            min_chunk_size,
-            id2label,
-            label2id,
-            num_labels,
+            out_size=out_size,
+            pad_idx=pad_idx,
+            num_embd=num_embd,
+            embd_size=embd_size,
+            hidden_size=hidden_size,
+            window_size=window_size,
+            channels=channels,
+            stride=stride,
+            chunk_size=chunk_size,
+            overlap=overlap,
+            min_chunk_size=min_chunk_size,
+            id2label=id2label,
+            label2id=label2id,
+            num_labels=num_labels,
         )
 
 
@@ -167,6 +171,7 @@ class MalConvMLConfig(BaseMalConvConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = 8,
+        hidden_size: Optional[int] = -1,
         window_size: int = 512,
         channels: int = 128,
         stride: int = 512,
@@ -179,19 +184,20 @@ class MalConvMLConfig(BaseMalConvConfig):
         num_labels: Optional[int] = None,
     ) -> None:
         super().__init__(
-            out_size,
-            pad_idx,
-            num_embd,
-            embd_size,
-            window_size,
-            channels,
-            stride,
-            chunk_size,
-            overlap,
-            min_chunk_size,
-            id2label,
-            label2id,
-            num_labels,
+            out_size=out_size,
+            pad_idx=pad_idx,
+            num_embd=num_embd,
+            embd_size=embd_size,
+            hidden_size=hidden_size,
+            window_size=window_size,
+            channels=channels,
+            stride=stride,
+            chunk_size=chunk_size,
+            overlap=overlap,
+            min_chunk_size=min_chunk_size,
+            id2label=id2label,
+            label2id=label2id,
+            num_labels=num_labels,
         )
         self.layers = layers
 
@@ -203,6 +209,7 @@ class MalConvGCTConfig(BaseMalConvConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = 8,
+        hidden_size: Optional[int] = -1,
         window_size: int = 64,
         channels: int = 128,
         stride: int = 64,
@@ -215,19 +222,20 @@ class MalConvGCTConfig(BaseMalConvConfig):
         num_labels: Optional[int] = None,
     ) -> None:
         super().__init__(
-            out_size,
-            pad_idx,
-            num_embd,
-            embd_size,
-            window_size,
-            channels,
-            stride,
-            chunk_size,
-            overlap,
-            min_chunk_size,
-            id2label,
-            label2id,
-            num_labels,
+            out_size=out_size,
+            pad_idx=pad_idx,
+            num_embd=num_embd,
+            embd_size=embd_size,
+            hidden_size=hidden_size,
+            window_size=window_size,
+            channels=channels,
+            stride=stride,
+            chunk_size=chunk_size,
+            overlap=overlap,
+            min_chunk_size=min_chunk_size,
+            id2label=id2label,
+            label2id=label2id,
+            num_labels=num_labels,
         )
         self.layers = layers
 
@@ -258,9 +266,7 @@ def config_from_json(path: Path) -> BaseMalConvConfig | MyMalConvConfig:
             return object_from_superset_of_constructor_kwds(MyMalConvConfig, **config)
         raise RuntimeError(f"Unknown model class: {model_class}")
 
-    raise RuntimeError(
-        "Could not process config file. Neither `config_class` or `architectures` keywords found."
-    )
+    raise RuntimeError("Could not process config file. Neither `config_class` or `architectures` keywords found.")
 
 
 def model_from_config(config: BaseMalConvConfig | MyMalConvConfig) -> nn.Module:
@@ -277,7 +283,6 @@ def model_from_config(config: BaseMalConvConfig | MyMalConvConfig) -> nn.Module:
 
 
 class AutoMalConvForSequenceClassification:
-
     @staticmethod
     def from_config(config: BaseMalConvConfig | MyMalConvConfig) -> nn.Module:
         return model_from_config(config)
@@ -293,8 +298,7 @@ class AutoMalConvForSequenceClassification:
             model_state_dict = torch.load(state_dict_file)
         else:
             raise FileNotFoundError(
-                f"Could not find {SAFE_WEIGHTS_NAME} or {WEIGHTS_NAME} "
-                f"in {pretrained_model_name_or_path}"
+                f"Could not find {SAFE_WEIGHTS_NAME} or {WEIGHTS_NAME} " f"in {pretrained_model_name_or_path}"
             )
 
         model.load_state_dict(model_state_dict, strict=False)
@@ -463,9 +467,7 @@ class LowMemConvBase(nn.Module, ABC):
                 if cur_device is not None:
                     x_sub = x_sub.to(cur_device)
                 activs = self.processRange(x_sub.long(), **pr_args)
-                activ_win, activ_indx = F.max_pool1d(
-                    activs, kernel_size=activs.shape[2], return_indices=True
-                )
+                activ_win, activ_indx = F.max_pool1d(activs, kernel_size=activs.shape[2], return_indices=True)
                 activ_win = activ_win.cpu().numpy()[:, :, 0]
                 activ_indx = activ_indx.cpu().numpy()[:, :, 0]
                 selected = winner_values < activ_win
@@ -481,10 +483,7 @@ class LowMemConvBase(nn.Module, ABC):
 
         # Collect inputs that won for each batch
         chunk_list = [
-            [
-                x[b : b + 1, max(i - receptive_window, 0) : min(i + receptive_window, length)]
-                for i in final_indices[b]
-            ]
+            [x[b : b + 1, max(i - receptive_window, 0) : min(i + receptive_window, length)] for i in final_indices[b]]
             for b in range(batch_size)
         ]
         # Convert to a torch tensor of the bytes
@@ -511,14 +510,16 @@ class MalConv(LowMemConvBase):
         self.config = config
 
         self.embd = nn.Embedding(config.num_embd, config.embd_size, padding_idx=self.config.pad_idx)
-        self.conv_1 = nn.Conv1d(
-            config.embd_size, config.channels, config.window_size, stride=config.stride, bias=True
+        self.conv_1 = nn.Conv1d(config.embd_size, config.channels, config.window_size, stride=config.stride, bias=True)
+        self.conv_2 = nn.Conv1d(config.embd_size, config.channels, config.window_size, stride=config.stride, bias=True)
+
+        self.mlp = ClassificationHead(
+            config.channels,
+            config.num_labels,
+            config.hidden_size,
+            "leaky_relu",
+            0.5,
         )
-        self.conv_2 = nn.Conv1d(
-            config.embd_size, config.channels, config.window_size, stride=config.stride, bias=True
-        )
-        self.fc_1 = nn.Linear(config.channels, config.channels)
-        self.fc_2 = nn.Linear(config.channels, config.out_size)
 
     def processRange(self, x: Tensor) -> Tensor:
         x = self.embd(x)
@@ -539,11 +540,8 @@ class MalConv(LowMemConvBase):
     ) -> SequenceClassifierOutput:
         x = input_ids
 
-        post_conv = x = self.seq2fix(x)
-        penult = x = F.relu(self.fc_1(x))
-        x = self.fc_2(x)
-
-        logits = x
+        post_conv = self.seq2fix(x)
+        logits = self.mlp(post_conv)
 
         loss = None
         if labels is not None:
@@ -575,17 +573,12 @@ class MalConvML(LowMemConvBase):
                 )
             ]
             + [
-                nn.Conv1d(
-                    config.channels, config.channels * 2, config.window_size, stride=1, bias=True
-                )
+                nn.Conv1d(config.channels, config.channels * 2, config.window_size, stride=1, bias=True)
                 for _ in range(config.layers - 1)
             ]
         )
         self.convs_1 = nn.ModuleList(
-            [
-                nn.Conv1d(config.channels, config.channels, 1, bias=True)
-                for i in range(config.layers)
-            ]
+            [nn.Conv1d(config.channels, config.channels, 1, bias=True) for i in range(config.layers)]
         )
 
         self.fc_1 = nn.Linear(config.channels, config.channels)
@@ -602,10 +595,8 @@ class MalConvML(LowMemConvBase):
 
     def forward(self, x: Tensor) -> tuple[Tensor]:
         post_conv = x = self.seq2fix(x)
-
         penult = x = F.relu(self.fc_1(x))
         x = self.fc_2(x)
-
         return x, penult, post_conv
 
 
@@ -620,12 +611,17 @@ class MalConvGCT(LowMemConvBase):
         self.context_net = MalConvML(
             MalConvMLConfig(
                 num_embd=config.num_embd,
+                hidden_size=config.hidden_size,
                 out_size=config.channels,
                 channels=config.channels,
                 window_size=config.window_size,
                 stride=config.stride,
                 layers=config.layers,
                 embd_size=config.embd_size,
+                pad_idx=config.pad_idx,
+                chunk_size=config.chunk_size,
+                overlap=config.overlap,
+                min_chunk_size=config.min_chunk_size,
             )
         )
 
@@ -640,27 +636,25 @@ class MalConvGCT(LowMemConvBase):
                 )
             ]
             + [
-                nn.Conv1d(
-                    config.channels, config.channels * 2, config.window_size, stride=1, bias=True
-                )
+                nn.Conv1d(config.channels, config.channels * 2, config.window_size, stride=1, bias=True)
                 for _ in range(config.layers - 1)
             ]
         )
 
-        self.linear_atn = nn.ModuleList(
-            [nn.Linear(config.channels, config.channels) for i in range(config.layers)]
-        )
+        self.linear_atn = nn.ModuleList([nn.Linear(config.channels, config.channels) for _ in range(config.layers)])
 
         # one-by-one cons to perform information sharing
         self.convs_share = nn.ModuleList(
-            [
-                nn.Conv1d(config.channels, config.channels, 1, bias=True)
-                for i in range(config.layers)
-            ]
+            [nn.Conv1d(config.channels, config.channels, 1, bias=True) for _ in range(config.layers)]
         )
 
-        self.fc_1 = nn.Linear(config.channels, config.channels)
-        self.fc_2 = nn.Linear(config.channels, config.out_size)
+        self.mlp = ClassificationHead(
+            config.channels,
+            config.num_labels,
+            config.hidden_size,
+            "leaky_relu",
+            0.5,
+        )
 
     def determinRF(self) -> tuple[int]:
         """Over-write the determinRF call to use the base context_net to detemrin RF.
@@ -717,11 +711,8 @@ class MalConvGCT(LowMemConvBase):
         else:
             global_context = self.context_net.seq2fix(x)
 
-        post_conv = x = self.seq2fix(x, pr_args={"gct": global_context})
-        penult = x = F.leaky_relu(self.fc_1(x))
-        x = self.fc_2(x)
-
-        logits = x
+        post_conv = self.seq2fix(x, pr_args={"gct": global_context})
+        logits = self.mlp(post_conv)
 
         loss = None
         if labels is not None:
@@ -762,11 +753,12 @@ class MyMalConv(nn.Module):
             bias=True,
         )
         self.pooling = nn.MaxPool1d(int(config.max_length / config.window_size))
-        self.mlp = nn.Sequential(
-            nn.Linear(config.channels, config.hidden_size),
-            nn.Dropout(),
-            nn.ReLU(),
-            nn.Linear(config.hidden_size, config.num_labels),
+        self.mlp = ClassificationHead(
+            config.channels,
+            config.num_labels,
+            config.hidden_size,
+            "leaky_relu",
+            0.5,
         )
 
     def forward(
@@ -797,6 +789,39 @@ class MyMalConv(nn.Module):
             hidden_states=None,
             attentions=None,
         )
+
+
+class ClassificationHead(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int = 1,
+        hidden_size: Optional[int] = None,
+        hidden_act: Literal["tanh", "relu", "leaky_relu"] = "relu",
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+
+        hidden_size = in_features if hidden_size is None else hidden_size
+
+        if hidden_act == "leaky_relu":
+            activation = nn.LeakyReLU()
+        elif hidden_act == "tanh":
+            activation = nn.Tanh()
+        elif hidden_act == "relu":
+            activation = nn.ReLU()
+        else:
+            raise ValueError(f"Unknown activation function: {hidden_act=}")
+
+        self.mlp = nn.Sequential(
+            nn.Linear(in_features, hidden_size),
+            nn.Dropout(dropout),
+            activation,
+            nn.Linear(hidden_size, out_features),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.mlp(x)
 
 
 def test():
