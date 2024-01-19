@@ -42,6 +42,7 @@ src/learn/train.py \
 --weight_decay=0.01 \
 --max_grad_norm=0.75 \
 --save_total_limit=3 \
+--tf32=true \
 --fp16 \
 --fp16_full_eval \
 --model_name_or_path="hrrformer" \
@@ -50,6 +51,6 @@ src/learn/train.py \
 --ft_duplicate_positional_embeddings=false \
 --ft_initialize_positional_embeddings=false \
 --per_device_train_batch_size=8 \
---per_device_eval_batch_size=12 \
+--per_device_eval_batch_size=8 \
 --gradient_accumulation_steps=16 \
---eval_accumulation_steps=32
+--eval_accumulation_steps=8
