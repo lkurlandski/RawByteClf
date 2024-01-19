@@ -275,7 +275,7 @@ RETURN_ATTENTION_MASK = {
     "nystromformer": True,
     "fnet": False,
     "malconv": False,
-    "malconvgct": True,
+    "malconvgct": False,
     "mymalconv": False,
     "hrrformer": True,
     "rwkv": False,
@@ -887,9 +887,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{config=}")
     print(BR, flush=True)
 
-    if not RETURN_ATTENTION_MASK[MODEL_NAME]:  # FIXME: causes change in the dataset's fingerprint.
-        tokenizer.model_input_names.remove("attention_mask")
-
     if PREPROCESS_AS_TEXT:
         function = partial(
             examples_to_text,
@@ -931,6 +928,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     pad_to_multiple_of = PAD_TO
     if isinstance(config, transformers.ReformerConfig):
         pad_to_multiple_of = _get_least_common_mult_chunk_len(config)
+
+    # Change the tokenizer's attributes for the data_collator to use correctly.
+    # This let's us use the previously generated cache files then drop the
+    # attention_mask before passing the inputs to the model.
+    if not RETURN_ATTENTION_MASK[MODEL_NAME]:
+        tokenizer.model_input_names.remove("attention_mask")
 
     if args.task == "clf":
         if PREPROCESS_AS_INPUT_IDS and PREPROCESS_AS_INPUT_IDS_DO_PAD:
