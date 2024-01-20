@@ -2,6 +2,7 @@
 
 import math
 import os
+from pathlib import Path
 import sys
 import warnings
 from typing import List, Literal, Optional, Tuple, Union
@@ -144,6 +145,7 @@ class HRRConfig(PretrainedConfig):
         classifier_dropout: Optional[float] = None,
         superposition_scale_factor: float | Literal["max", "mean", "log"] = 1.0,
         superpositions_to_bf: bool = False,
+        superpositions_log_path: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -172,6 +174,7 @@ class HRRConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
         self.superpositions_to_bf = superpositions_to_bf
+        self.superpositions_log_path = superpositions_log_path
 
         if isinstance(superposition_scale_factor, (float, int)):
             self.superposition_scale_factor = float(superposition_scale_factor)
@@ -218,6 +221,7 @@ class HRRSelfAttention(nn.Module):
         self.is_decoder = config.is_decoder
         self.superposition_scale_factor = config.superposition_scale_factor
         self.superpositions_to_bf = config.superpositions_to_bf
+        self.superpositions_log_path = config.superpositions_log_path
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -306,34 +310,46 @@ class HRRSelfAttention(nn.Module):
         value_approx = unbinding(superposition.to(query_layer.dtype), query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
-        # The superpositions have a tendency to overflow. We log statistics about their values here,
-        # if the HRRFORMER_SUPERPOSITIONS_PATH environment variable exists.
-        if (root := os.environ.get("HRRFORMER_SUPERPOSITIONS_PATH", False)):
-            from pathlib import Path
-            root = Path(root)
-            p_pos = root / "superpositions_pos.csv"
-            p_neg = root / "superpositions_neg.csv"
-            if not root.exists():
-                root.mkdir(parents=True)
+        # The superpositions have a tendency to overflow. We log statistics about their values here.
+        if self.superpositions_log_path:
+            superpositions_log_path = Path(self.superpositions_log_path)
+            p_pos = superpositions_log_path / "superpositions_pos.csv"
+            p_neg = superpositions_log_path / "superpositions_neg.csv"
+            p_err = superpositions_log_path / "err.txt"
+            if not superpositions_log_path.exists():
+                superpositions_log_path.mkdir(parents=True)
                 p_pos.write_text("min,max,mean,stdev\n")
                 p_neg.write_text("min,max,mean,stdev\n")
 
-            pos: torch.Tensor = superpositions[(superpositions > 0) & (superpositions != 0)]
-            neg: torch.Tensor = superpositions[(superpositions < 0) & (superpositions != 0)]
-            with open(p_pos, "a") as fp:
-                fp.write(
-                    f"{pos.min().item()},"
-                    f"{pos.max().item()},"
-                    f"{pos.mean().item()},"
-                    f"{pos.std().item()}\n"
-                )
-            with open(p_neg, "a") as fp:
-                fp.write(
-                    f"{neg.min().item()},"
-                    f"{neg.max().item()},"
-                    f"{neg.mean().item()},"
-                    f"{neg.std().item()}\n"
-                )
+            if torch.all(superpositions == 0):
+                p_err.write("Error: superpositions is all zero\n")
+            else:
+
+                pos: torch.Tensor = superpositions[(superpositions > 0) & (superpositions != 0)]
+                if pos.numel() == 0:
+                    with open(p_err, "a") as fp:
+                        fp.write("Error: pos is empty\n")
+                else:
+                    with open(p_pos, "a") as fp:
+                        fp.write(
+                            f"{pos.min().item()},"
+                            f"{pos.max().item()},"
+                            f"{pos.mean().item()},"
+                            f"{pos.std().item()}\n"
+                        )
+
+                neg: torch.Tensor = superpositions[(superpositions < 0) & (superpositions != 0)]
+                if neg.numel() == 0:
+                    with open(p_err, "a") as fp:
+                        fp.write("Error: neg is empty\n")
+                else:
+                    with open(p_neg, "a") as fp:
+                        fp.write(
+                            f"{neg.min().item()},"
+                            f"{neg.max().item()},"
+                            f"{neg.mean().item()},"
+                            f"{neg.std().item()}\n"
+                        )
 
 
         # Add the positional encoding
