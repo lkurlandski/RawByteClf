@@ -50,11 +50,13 @@ from src.rwkv import (
 from src.utils import count_parameters
 
 
-HIDDEN_SIZE = 768
-NUM_HIDDEN_LAYERS = 12
-NUM_TRAIN_EPOCHS = 10
-MAX_POSITION_EMBEDDINGS: int = None  # clf: 512, mlm: 512, clm: 128
-BATCH_SIZE: int = None  # clf: 256, mlm: 64, clm: 64
+HIDDEN_SIZE = 512
+NUM_HIDDEN_LAYERS = 4
+NUM_ATTENTION_HEADS = 8
+INTERMEDIATE_SIZE = 2048
+NUM_TRAIN_EPOCHS: int = None
+MAX_POSITION_EMBEDDINGS: int = None
+BATCH_SIZE: int = None
 PAD_TO_MULTIPLE_OF = 8
 NUM_PROC = 4
 
@@ -98,6 +100,8 @@ def get_config(
         "num_hidden_layers": NUM_HIDDEN_LAYERS,
         "max_position_embeddings": MAX_POSITION_EMBEDDINGS,
         "hidden_size": HIDDEN_SIZE,
+        "intermediate_size": INTERMEDIATE_SIZE,
+        "num_attention_heads": NUM_ATTENTION_HEADS,
     }
     if task == "clf":
         kwds.update(
@@ -122,6 +126,7 @@ def get_config(
     if model == "bert":
         return BertConfig(**kwds)
     elif model == "hrr":
+        kwds.update({"superposition_scale_factor": "log"})
         return HRRConfig(**kwds)
     elif model == "mamba":
         return MambaConfig(**kwds)
@@ -220,10 +225,13 @@ if __name__ == "__main__":
     parser.add_argument("--task", type=str, choices=["clm", "mlm", "clf"], default="clm")
     parser.add_argument("--model", type=str, choices=["bert", "hrr", "mamba", "rwkv"], default="hrr")
     parser.add_argument("--max_position_embeddings", type=int, default=128)
+    parser.add_argument("--num_train_epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--tail", type=str, default="")
     args = parser.parse_args()
 
     MAX_POSITION_EMBEDDINGS = args.max_position_embeddings
+    NUM_TRAIN_EPOCHS = args.num_train_epochs
     BATCH_SIZE = args.batch_size
 
     tokenizer: PreTrainedTokenizerFast = BertTokenizerFast.from_pretrained("bert-base-cased")
@@ -250,7 +258,7 @@ if __name__ == "__main__":
 
     trainer = Trainer(
         model=model,
-        args=get_training_arguments(f"./tmp/{args.task}/{args.model}"),
+        args=get_training_arguments(f"./tmp/{args.task}/{args.model}/{args.tail}"),
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
         data_collator=data_collator,

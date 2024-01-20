@@ -142,10 +142,18 @@ class HRRConfig(PretrainedConfig):
         position_embedding_type: str = "absolute",
         use_cache: bool = True,
         classifier_dropout: Optional[float] = None,
-        superposition_scale_factor: float | Literal["max", "mean"] = 1.0,
+        superposition_scale_factor: float | Literal["max", "mean", "log"] = 1.0,
         superpositions_to_bf: bool = False,
         **kwargs,
     ):
+        """
+        Args
+          superposition_scale_factor: A scaling factor to apply to the superpositions before
+            summation. This can be a scalar floating point value, `max`, which will scale by the
+            square root of the maximum possible value for the sequence length for this model,
+            `mean`, which will scale by the length of the input sequence, or `log`, which perform
+            the summation in a more stable log space.
+        """
         super().__init__(pad_token_id=pad_token_id, **kwargs)
 
         self.vocab_size = vocab_size
@@ -169,8 +177,8 @@ class HRRConfig(PretrainedConfig):
             self.superposition_scale_factor = float(superposition_scale_factor)
         elif superposition_scale_factor == "max":
             self.superposition_scale_factor = 1.0 / math.sqrt(max_position_embeddings)
-        elif superposition_scale_factor == "mean":
-            self.superposition_scale_factor = "mean"
+        elif superposition_scale_factor in ("mean", "log"):
+            self.superposition_scale_factor = superposition_scale_factor
         else:
             raise ValueError(f"Invalid value {superposition_scale_factor=}")
 
@@ -286,35 +294,47 @@ class HRRSelfAttention(nn.Module):
         if self.superpositions_to_bf:
             if key_layer.dtype == torch.float16:
                 superpositions = superpositions.to(torch.bfloat16)
+
         if self.superposition_scale_factor == "mean":
             superposition = torch.sum(torch.div(superpositions, superpositions.size(-2)), dim=-2, keepdim=True)
+        elif self.superposition_scale_factor == "log":
+            max_value, _ = torch.max(superpositions, dim=-2, keepdim=True)
+            superposition = torch.log(torch.sum(torch.exp(superpositions - max_value), dim=-2, keepdim=True)) + max_value
         else:
             superposition = torch.sum(superpositions * self.superposition_scale_factor, dim=-2, keepdims=True)
+
         value_approx = unbinding(superposition.to(query_layer.dtype), query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
+        # The superpositions have a tendency to overflow. We log statistics about their values here,
+        # if the HRRFORMER_SUPERPOSITIONS_PATH environment variable exists.
+        if (root := os.environ.get("HRRFORMER_SUPERPOSITIONS_PATH", False)):
+            from pathlib import Path
+            root = Path(root)
+            p_pos = root / "superpositions_pos.csv"
+            p_neg = root / "superpositions_neg.csv"
+            if not root.exists():
+                root.mkdir(parents=True)
+                p_pos.write_text("min,max,mean,stdev\n")
+                p_neg.write_text("min,max,mean,stdev\n")
 
-        # These are debugging statements for trying to figure out issues with numerical overflow.
-        # from pathlib import Path
+            pos: torch.Tensor = superpositions[(superpositions > 0) & (superpositions != 0)]
+            neg: torch.Tensor = superpositions[(superpositions < 0) & (superpositions != 0)]
+            with open(p_pos, "a") as fp:
+                fp.write(
+                    f"{pos.min().item()},"
+                    f"{pos.max().item()},"
+                    f"{pos.mean().item()},"
+                    f"{pos.std().item()}\n"
+                )
+            with open(p_neg, "a") as fp:
+                fp.write(
+                    f"{neg.min().item()},"
+                    f"{neg.max().item()},"
+                    f"{neg.mean().item()},"
+                    f"{neg.std().item()}\n"
+                )
 
-        # root = Path("./tmp/weight_analysis") / os.environ["ANALYSIS_ID"]
-        # variables = ["key_layer", "value_layer", "query_layer", "superpositions", "superposition", "value_approx", "attention_scores"]
-        # paths = {v: root / f"{v}.csv" for v in variables}
-
-        # if not root.exists():
-        #     root.mkdir(exist_ok=False, parents=True)
-        #     for p in paths.values():
-        #         p.write_text("min,max,mean,stdev\n")
-
-        # for name, value in zip(variables, [key_layer, value_layer, query_layer, superpositions, superposition, value_approx, attention_scores]):
-        #     v = value.abs()
-        #     with open(paths[name], "a") as fp:
-        #         fp.write(
-        #             f"{v.min().item()},"
-        #             f"{v.max().item()},"
-        #             f"{v.mean().item()},"
-        #             f"{v.std().item()}\n"
-        #         )
 
         # Add the positional encoding
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
