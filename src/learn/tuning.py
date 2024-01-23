@@ -46,7 +46,7 @@ def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str
             "num_hidden_layers": 1,
             "num_attention_heads": 8,
             "superposition_scale_factor": "log",
-            "superpositions_log_path": f"./tmp/hrr_log_path/log/{max_length}"
+            # "superpositions_log_path": f"./tmp/hrr_log_path/log/{max_length}"
         }
 
     if model_name == "rwkv":

@@ -1,8 +1,6 @@
 """
 Train and evaluate the models for malware family classification.
 # TODO: drop bytes after converting to text!
-# FIXME: determine if the tokenizer needs to add the [CLS] token for sequence
-# classification.
 
 # TODO: investigate increasing the batch size and number of processes for the
 # Dataset.map() calls. Experiment with malconv, as the impact of disk access is
@@ -59,7 +57,6 @@ from transformers import (
     DataCollatorForLanguageModeling,
     DataCollatorWithPadding,
     DefaultDataCollator,
-    EarlyStoppingCallback,
     HfArgumentParser,
     PretrainedConfig,
     PreTrainedModel,
@@ -77,7 +74,6 @@ from transformers import (
 from transformers import TrainingArguments as HfTrainingArguments
 from transformers.trainer_utils import (
     BestRun,
-    EvalPrediction,
     PredictionOutput,
     PREFIX_CHECKPOINT_DIR,
 )
@@ -118,7 +114,16 @@ from src.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.data.loaders import get_sorel_dataset, get_bodmas_dataset
+from src.data.loaders_hf import (
+    get_sorel_dataset as get_sorel_dataset_hf,
+    get_bodmas_dataset as get_bodmas_dataset_hf,
+)
+from src.data.loaders_pt import (
+    get_sorel_dataset as get_sorel_dataset_pt,
+    get_bodmas_dataset as get_bodmas_dataset_pt,
+    preprocess_fn_add_cls_token,
+    BinaryDataset,
+)
 from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics
 from src.learn.tuning import (
     tuned_configs,
@@ -144,6 +149,10 @@ from src.learn.tokenization import get_tokenizer
 random.seed(0)
 np.random.seed(0)
 torch.random.manual_seed(0)
+
+
+get_sorel_dataset = get_sorel_dataset_pt
+get_bodmas_dataset = get_bodmas_dataset_pt
 
 
 PAD_TO = 8
@@ -354,7 +363,7 @@ class ImbalancedClassificationTrainer(Trainer):
         logits = outputs.logits
 
         device = logits.device
-        if self.loss_fn.weight.device != device:
+        if self.loss_fn.weight is not None and self.loss_fn.weight.device != device:
             self.loss_fn.weight = self.loss_fn.weight.to(device)
 
         # num_labels = unwrap_model(model).config.num_labels
@@ -568,6 +577,7 @@ def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
     max_length: Optional[int] = None,
+    output_path: Optional[Path | str] = None,
     **kwds,
 ) -> PretrainedConfig:
     """
@@ -577,6 +587,8 @@ def get_config(
     """
     if Path(model_name_or_path).exists():
         return AutoConfig.from_pretrained(model_name_or_path, **kwds)
+
+    output_path = output_path.as_posix() if isinstance(output_path, Path) else output_path
 
     # Handle float values when hyperparameter tuning.
     float_to_int_kwds = [
@@ -647,6 +659,7 @@ def get_config(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
             pad_token_id=tokenizer.pad_token_id,
+            superpositions_log_path=output_path,
             **kwds,
         )
     if model_name_or_path.lower() == "rwkv":
@@ -786,7 +799,8 @@ def get_map_kwds_for_hf_datasets(
 def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{args=}")
 
-    TYPE = get_model_type(args.model_name_or_path)
+    DATASET_TYPE: Literal["HF", "PT"]
+    MODEL_TYPE: Literal["HF", "MC"] = get_model_type(args.model_name_or_path)
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
 
     oh = OutputHelper(
@@ -817,15 +831,28 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{tokenizer.model_input_names=}")
     print(BR, flush=True)
 
-    dataset: DatasetDict
-    dist: Counter = None
+    dataset: DatasetDict | dict[Literal["tr", "vl", "ts"], BinaryDataset] = None
+    dist: Optional[Counter[str, int]] = None
 
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(SUBSET)
     elif args.task == "clf":
-        dataset, dist = get_bodmas_dataset(SUBSET, BODMAS_TOP_K, BODMAS_MIN_FREQ)
+        dataset, dist = get_bodmas_dataset(
+            SUBSET,
+            BODMAS_TOP_K,
+            BODMAS_MIN_FREQ,
+            max_length=args.max_length,
+            preprocess_fn=partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
+        )
+
+    if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
+        DATASET_TYPE = "HF"
+    else:
+        DATASET_TYPE = "PT"
 
     if args.do_tune:
+        if DATASET_TYPE != "HF":
+            raise NotImplementedError("TODO: transition to pytorch's datasets.")
         if isinstance(TUNE_TR_N_SAMPLES, int):
             if TUNE_TR_N_SAMPLES == 0:
                 dataset.pop("tr")
@@ -856,24 +883,34 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             assert isinstance(max_steps, int)
             training_arguments = replace(training_arguments, max_steps=max_steps)
-        # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
-        ds = IterableDatasetDict()
-        num_shards = training_arguments.dataloader_num_workers
-        if not training_arguments.dataloader_num_workers:
-            num_shards = 1
-        for split in dataset:
-            ds[split] = dataset[split].to_iterable_dataset(num_shards)
-        dataset = ds
-        del ds, num_shards
+        if DATASET_TYPE == "HF":
+            # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
+            ds = IterableDatasetDict()
+            num_shards = training_arguments.dataloader_num_workers
+            if not training_arguments.dataloader_num_workers:
+                num_shards = 1
+            for split in dataset:
+                ds[split] = dataset[split].to_iterable_dataset(num_shards)
+            dataset = ds
+            del ds, num_shards
 
-    # CLM/MLM heads ignore classification-specific arugments.
-    if args.task in ("mlm", "clm"):
-        num_classes, id2label, label2id = None, {}, {}
-    elif args.task == "clf":
-        num_classes = dataset["tr"].info.features["labels"].num_classes
-        id2label = {i: l for i, l in enumerate(dataset["tr"].info.features["labels"].names)}
-        label2id = {l: i for i, l in enumerate(id2label.values())}
-        dataset = dataset.rename_column("labels", "label")
+    # CLM/MLM heads ignore classification-specific arugments, so we can leave these as defaults.
+    num_classes: Optional[int] = None
+    id2label: dict[int, str] = {}
+    label2id: dict[str, int] = {}
+    if args.task == "clf":
+        if DATASET_TYPE == "HF":
+            num_classes = dataset["tr"].info.features["labels"].num_classes
+            id2label = {i: l for i, l in enumerate(dataset["tr"].info.features["labels"].names)}
+            label2id = {l: i for i, l in enumerate(id2label.values())}
+            dataset = dataset.rename_column("labels", "label")
+        elif DATASET_TYPE == "PT":
+            id2label = dataset["tr"].dataset.id2label
+            label2id = dataset["tr"].dataset.label2id
+            num_classes = dataset["tr"].dataset.num_classes
+        print(f"{id2label=}")
+        print(f"{label2id=}")
+        print(f"{dist=}")
         weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
 
     config = get_config(
@@ -902,9 +939,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
     else:
         raise RuntimeError("Specify either `PREPROCESS_AS_TEXT` or `PREPROCESS_AS_INPUT_IDS`.")
-    dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset))
 
-    if PREPROCESS_AS_TEXT:
+    if DATASET_TYPE == "HF":
+        dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset))
+
+    if PREPROCESS_AS_TEXT and DATASET_TYPE == "HF":
         remove_columns = ["name", "bytes", "size", "length", "text"]
         remove_columns = remove_columns + ["labels"] if args.task != "clf" else remove_columns
         function = partial(  # The partial function here is picky (`tokenizer` must be arg not kwd)
@@ -921,7 +960,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.exit_after_map:
         sys.exit(0)
-    if MOVE_IN_MEMORY and not args.streaming:
+    if MOVE_IN_MEMORY and not args.streaming and DATASET_TYPE == "HF":
         for s in dataset:
             dataset[s] = dataset[s].select(range(len(dataset[s])), keep_in_memory=True)
 
@@ -959,7 +998,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     callbacks = []
-    if TYPE == "MC":
+    if MODEL_TYPE == "MC":
         callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")
 
@@ -1021,7 +1060,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             train_dataset=dataset["tr"],
             eval_dataset=dataset["vl"],
             data_collator=data_collator,
-            tokenizer=tokenizer,
+            tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
             callbacks=callbacks,
             compute_metrics=compute_metrics,
         )
