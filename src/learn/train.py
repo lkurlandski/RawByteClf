@@ -160,7 +160,7 @@ PAD_TO = 8
 SUBSET = None  # 80000 # tune_hrrformer
 KEEP_IN_MEMORY = False
 MOVE_IN_MEMORY = False
-BODMAS_TOP_K = None
+BODMAS_TOP_K = 10
 BODMAS_MIN_FREQ = None
 PREPROCESS_AS_TEXT = True
 PREPROCESS_AS_INPUT_IDS = False
@@ -569,6 +569,10 @@ class OutputHelper:
     def last_checkpoint(self) -> Path:
         return get_highest_path(self.checkpoints_dir, lstrip="checkpoint-")
 
+    @property
+    def superpositions_log_path(self) -> Path:
+        return self.path / "superpositions_log_path"
+
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
 
@@ -838,11 +842,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset: DatasetDict = get_sorel_dataset(SUBSET)
     elif args.task == "clf":
         dataset, dist = get_bodmas_dataset(
-            SUBSET,
-            BODMAS_TOP_K,
-            BODMAS_MIN_FREQ,
+            subset=SUBSET,
+            min_freq=BODMAS_MIN_FREQ,
+            top_k=BODMAS_TOP_K,
             max_length=args.max_length,
             preprocess_fn=partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
+            keep_in_memory=not args.streaming,
         )
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
@@ -920,6 +925,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         num_labels=num_classes,
         id2label=id2label,
         label2id=label2id,
+        output_path=oh.superpositions_log_path,
     )
     print(f"{config=}")
     print(BR, flush=True)

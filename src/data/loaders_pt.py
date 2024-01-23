@@ -211,7 +211,9 @@ def get_bodmas_dataset(
         label2id,
     )
     dataset = tr_vl_ts_split_with_guarentees(dataset, vl_size, ts_size, samples_per_class)
-    return dataset, Counter(files_and_labels.values())
+    dist = Counter(files_and_labels.values())
+
+    return dataset, dist
 
 
 def get_goodware_vs_malware_dataset():
