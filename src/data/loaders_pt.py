@@ -31,7 +31,7 @@ from src.data.cfg import BODMAS_LABELS_FILE, DATASET_TO_FILES
 from src.data.utils import _tr_vl_ts_split_with_guarentees
 
 
-def read_binary_file(f: Path, max_length: int = sys.maxsize, dtype: np.dtype = np.uint8) -> np.ndarray:
+def read_binary_file(f: Path, max_length: int = -1, dtype: np.dtype = np.uint8) -> np.ndarray:
     with open(f, "rb") as fp:
         b = fp.read(max_length)
     x = np.frombuffer(b, dtype=dtype)
@@ -56,7 +56,7 @@ class BinaryDataset(Dataset):
         self,
         files: list[Path],
         labels: Optional[list[int] | int] = None,
-        max_length: int = sys.maxsize,
+        max_length: int = -1,
         keep_in_memory: bool = False,
         preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
         id2label: Optional[dict[int, str]] = None,
@@ -139,6 +139,9 @@ class BinaryDataset(Dataset):
             return self._label2id
         raise NotImplementedError()
 
+    def num_classes(self) -> int:
+        return len(self.dist)
+
 
 def tr_vl_ts_split_with_guarentees(
     dataset: BinaryDataset,
@@ -166,10 +169,10 @@ def get_bodmas_dataset(
     top_k: Optional[int] = None,
     ts_size: int | float = 0.1,
     vl_size: int | float = 0.1,
-    max_length: int = sys.maxsize,
+    max_length: int = -1,
     keep_in_memory: bool = False,
     preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
-) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter]:
+) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
 
     samples_per_class = 1
     min_freq = samples_per_class * 3 if min_freq is None else min_freq
@@ -208,7 +211,7 @@ def get_bodmas_dataset(
         label2id,
     )
     dataset = tr_vl_ts_split_with_guarentees(dataset, vl_size, ts_size, samples_per_class)
-    return dataset, Counter(labels)
+    return dataset, Counter(files_and_labels.values())
 
 
 def get_goodware_vs_malware_dataset():
