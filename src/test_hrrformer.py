@@ -20,6 +20,9 @@ from transformers import (
     BertForMaskedLM,
     BertLMHeadModel as BertForCausalLM,
     BertForSequenceClassification,
+    LongformerConfig,
+    LongformerForMaskedLM,
+    LongformerForSequenceClassification,
     RwkvForCausalLM,
     DataCollatorForLanguageModeling,
     DataCollatorWithPadding,
@@ -125,6 +128,8 @@ def get_config(
 
     if model == "bert":
         return BertConfig(**kwds)
+    elif model == "lng":
+        return LongformerConfig(**kwds)
     elif model == "hrr":
         kwds.update({"superposition_scale_factor": "log"})
         return HRRConfig(**kwds)
@@ -141,6 +146,8 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
     if task == "clm":
         if model == "bert":
             return BertForCausalLM(config)
+        elif model == "lng":
+            return LongformerForCausalLM(config)
         elif model == "hrr":
             return HRRForCausalLM(config)
         elif model == "mamba":
@@ -150,6 +157,8 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
     elif task == "mlm":
         if model == "bert":
             return BertForMaskedLM(config)
+        elif model == "lng":
+            return LongformerForMaskedLM(config)
         elif model == "hrr":
             return HRRForMaskedLM(config)
         elif model == "mamba":
@@ -159,6 +168,8 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
     elif task == "clf":
         if model == "bert":
             return BertForSequenceClassification(config)
+        elif model == "lng":
+            return LongformerForSequenceClassification(config)
         elif model == "hrr":
             return HRRForSequenceClassification(config)
         elif model == "mamba":
