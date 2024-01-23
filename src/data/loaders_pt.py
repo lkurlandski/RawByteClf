@@ -139,6 +139,7 @@ class BinaryDataset(Dataset):
             return self._label2id
         raise NotImplementedError()
 
+    @property
     def num_classes(self) -> int:
         return len(self.dist)
 
