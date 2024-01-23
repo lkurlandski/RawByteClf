@@ -14,9 +14,10 @@
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
+torchrun --no-python --nnodes=1 --nproc_per_node=2 \
 python \
 src/learn/train.py \
---root="./outputbf" \
+--root="./output" \
 --task="clf" \
 --streaming=false \
 --depth=1 \
@@ -24,25 +25,28 @@ src/learn/train.py \
 --do_eval \
 --output_dir=tmp \
 --overwrite_output_dir=true \
---save_strategy="epoch" \
---evaluation_strategy="epoch" \
---logging_steps=10 \
+--save_strategy="steps" \
+--evaluation_strategy="steps" \
+--eval_steps=500 \
+--save_steps=10 \
+--logging_steps=1 \
 --dataloader_num_workers=4 \
---num_train_epochs=50 \
+--num_train_epochs=5 \
 --optim="adamw_torch" \
---learning_rate="1e-4" \
+--learning_rate="5e-4" \
+--lr_scheduler_type="inverse_sqrt" \
+--warmup_steps=100 \
 --weight_decay=0.01 \
---max_grad_norm=0.75 \
+--max_grad_norm=1.0 \
 --save_total_limit=3 \
---tf32=true \
---fp16 \
---fp16_full_eval \
 --model_name_or_path="hrrformer" \
---max_length=65536 \
+--max_length=16384 \
 --ft_freeze_positional_embeddings=false \
 --ft_duplicate_positional_embeddings=false \
 --ft_initialize_positional_embeddings=false \
---per_device_train_batch_size=12 \
---per_device_eval_batch_size=12 \
---gradient_accumulation_steps=16 \
---eval_accumulation_steps=32
+--per_device_train_batch_size=16 \
+--per_device_eval_batch_size=16 \
+--gradient_accumulation_steps=4 \
+--eval_accumulation_steps=16 \
+--fp16 \
+--fp16_full_eval
