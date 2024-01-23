@@ -12,7 +12,8 @@ import logging
 import lzma
 import math
 from pathlib import Path
-from typing import ClassVar, Generator, NamedTuple, Optional
+import random
+from typing import ClassVar, Generator, NamedTuple, Literal, Optional
 import warnings
 import zlib
 
@@ -24,6 +25,7 @@ from datasets import (
     IterableDatasetDict,
 )
 from datasets.utils.logging import set_verbosity, disable_progress_bar, enable_progress_bar
+import numpy as np
 from tqdm import tqdm
 import py7zr
 
@@ -269,3 +271,46 @@ def class_probabilities_with_smoothing(
     ratio = {k: (1 / math.pow(l, smoothing_factor)) for k, l in dist.items()}
     s = sum(ratio.values())
     return {k: v / s for k, v in ratio.items()}
+
+
+def _tr_vl_ts_split_with_guarentees(
+    y: np.ndarray,
+    len_dataset: int,
+    vl_size: float,
+    ts_size: float,
+    samples_per_class: int = 1,
+) -> dict[Literal["tr", "vl", "ts"], list]:
+
+    values, counts = np.unique(y, return_counts=True)
+    if any(counts < (samples_per_class * 3)):
+        raise ValueError("Not enough samples per class.")
+
+    vl_size = vl_size / len_dataset if isinstance(vl_size, int) else vl_size
+    ts_size = ts_size / len_dataset if isinstance(ts_size, int) else ts_size
+
+    tr_dist, tr_idx = {v: 0 for v in values}, []
+    vl_dist, vl_idx = {v: 0 for v in values}, []
+    ts_dist, ts_idx = {v: 0 for v in values}, []
+    for i, l in enumerate(y):
+        if ts_dist[l] < samples_per_class:
+            ts_dist[l] += 1
+            ts_idx.append(i)
+        elif vl_dist[l] < samples_per_class:
+            vl_dist[l] += 1
+            vl_idx.append(i)
+        elif tr_dist[l] < samples_per_class:
+            tr_dist[l] += 1
+            tr_idx.append(i)
+        else:
+            r = random.uniform(0, 1)
+            if 0 <= r < ts_size:
+                ts_dist[l] += 1
+                ts_idx.append(i)
+            elif ts_size <= r < ts_size + vl_size:
+                vl_dist[l] += 1
+                vl_idx.append(i)
+            else:
+                tr_dist[l] += 1
+                tr_idx.append(i)
+
+    return {"tr": np.array(tr_idx), "vl": np.array(vl_idx), "ts": np.array(ts_idx)}

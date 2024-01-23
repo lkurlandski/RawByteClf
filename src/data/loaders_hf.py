@@ -1,5 +1,5 @@
 """
-High-level loading API for the datasets.
+High-level loading API for huggingface datasets.
 """
 
 from collections import Counter
@@ -22,7 +22,7 @@ from datasets import (
 )
 import numpy as np
 
-from src.data.utils import balance_imbalanced_dataset
+from src.data.utils import balance_imbalanced_dataset, _tr_vl_ts_split_with_guarentees
 from src.cfg import INPUT_PATH
 
 
@@ -44,42 +44,12 @@ def tr_vl_ts_split_with_guarentees(
     Guarentees that at least `samples_per_class` samples from each class are present in each split.
     """
     y = np.array(dataset["labels"])
-    values, counts = np.unique(y, return_counts=True)
-    if any(counts < (samples_per_class * 3)):
-        raise ValueError("Not enough samples per class.")
-
-    vl_size = vl_size / len(dataset) if isinstance(vl_size, int) else vl_size
-    ts_size = ts_size / len(dataset) if isinstance(ts_size, int) else ts_size
-
-    tr_dist, tr_idx = {v: 0 for v in values}, []
-    vl_dist, vl_idx = {v: 0 for v in values}, []
-    ts_dist, ts_idx = {v: 0 for v in values}, []
-    for i, l in enumerate(y):
-        if ts_dist[l] < samples_per_class:
-            ts_dist[l] += 1
-            ts_idx.append(i)
-        elif vl_dist[l] < samples_per_class:
-            vl_dist[l] += 1
-            vl_idx.append(i)
-        elif tr_dist[l] < samples_per_class:
-            tr_dist[l] += 1
-            tr_idx.append(i)
-        else:
-            r = random.uniform(0, 1)
-            if 0 <= r < ts_size:
-                ts_dist[l] += 1
-                ts_idx.append(i)
-            elif ts_size <= r < ts_size + vl_size:
-                vl_dist[l] += 1
-                vl_idx.append(i)
-            else:
-                tr_dist[l] += 1
-                tr_idx.append(i)
+    idx = _tr_vl_ts_split_with_guarentees(y, len(dataset), vl_size, ts_size, samples_per_class)
 
     d = DatasetDict()
-    d["tr"] = dataset.select(tr_idx)
-    d["vl"] = dataset.select(vl_idx)
-    d["ts"] = dataset.select(ts_idx)
+    d["tr"] = dataset.select(idx["tr"])
+    d["vl"] = dataset.select(idx["vl"])
+    d["ts"] = dataset.select(idx["ts"])
     return d
 
 
