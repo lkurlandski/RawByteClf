@@ -90,6 +90,7 @@ def _dataset_to_report_files_and_binaries(
     # pylint: enable=unnecessary-lambda
 
 
+# {"reports" | "binaries" : {dataset_name: [Path]}}
 DATASET_TO_FILES: dict[str, dict[str, Callable[[], Iterable[Path]]]] = {
     "reports": _dataset_to_report_files_and_binaries(reports=True),
     "binaries": _dataset_to_report_files_and_binaries(binaries=True),
