@@ -185,6 +185,9 @@ class HRRConfig(PretrainedConfig):
         else:
             raise ValueError(f"Invalid value {superposition_scale_factor=}")
 
+        if superpositions_to_bf:
+            raise NotImplementedError("This needs some more careful work to ensure correctedness.")
+
 
 class HRRSelfAttention(nn.Module):
     def __init__(self, config: HRRConfig, position_embedding_type=None):
@@ -307,7 +310,7 @@ class HRRSelfAttention(nn.Module):
         else:
             superposition = torch.sum(superpositions * self.superposition_scale_factor, dim=-2, keepdims=True)
 
-        value_approx = unbinding(superposition.to(query_layer.dtype), query_layer, dim=-1)  # (B, h, T, H')
+        value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
         # The superpositions have a tendency to overflow. We log statistics about their values here.
@@ -316,10 +319,28 @@ class HRRSelfAttention(nn.Module):
             p_pos = superpositions_log_path / "superpositions_pos.csv"
             p_neg = superpositions_log_path / "superpositions_neg.csv"
             p_err = superpositions_log_path / "err.txt"
+            p_nan = superpositions_log_path / "nan.txt"
             if not superpositions_log_path.exists():
                 superpositions_log_path.mkdir(parents=True)
                 p_pos.write_text("min,max,mean,stdev\n")
                 p_neg.write_text("min,max,mean,stdev\n")
+                p_err.write_text("")
+                p_nan.write_text("superpositions,superposition,key_layer,query_layer,value_layer,value_approx,attention_scores\n")
+
+            contains_nan = [
+                torch.any(torch.isnan(t)).item() for t in
+                [
+                    superpositions,
+                    superposition,
+                    key_layer,
+                    query_layer,
+                    value_layer,
+                    value_approx,
+                    attention_scores,
+                ]
+            ]
+            with open(p_nan, "a") as fp:
+                fp.write(",".join([str(b) for b in contains_nan]) + "\n")
 
             if torch.all(superpositions == 0):
                 p_err.write("Error: superpositions is all zero\n")
