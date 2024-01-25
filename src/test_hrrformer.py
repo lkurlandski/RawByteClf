@@ -33,23 +33,47 @@ from transformers import (
     PreTrainedModel,
 )
 
-from src.hrrformer import (
-    HRRConfig,
-    HRRLMHeadModel as HRRForCausalLM,
-    HRRForMaskedLM,
-    HRRForSequenceClassification,
-)
-from src.mamba import (
-    MambaConfig,
-    MambaForCausalLM,
-    MambaForMaskedLM,
-    MambaForSequenceClassification,
-)
-from src.rwkv import (
-    RwkvConfig,
-    RwkvForSequenceClassification,
-    RwkvForMaskedLM,
-)
+class CannotPerformDueToImportError:
+    def __init__(self, *args, **kwargs):
+        raise ImportError()
+
+try:
+    from src.hrrformer import (
+        HRRConfig,
+        HRRLMHeadModel as HRRForCausalLM,
+        HRRForMaskedLM,
+        HRRForSequenceClassification,
+    )
+except ImportError:
+    HRRConfig = CannotPerformDueToImportError
+    HRRForCausalLM = CannotPerformDueToImportError
+    HRRForMaskedLM = CannotPerformDueToImportError
+    HRRForSequenceClassification = CannotPerformDueToImportError
+
+try:
+    from src.mamba import (
+        MambaConfig,
+        MambaForCausalLM,
+        MambaForMaskedLM,
+        MambaForSequenceClassification,
+    )
+except ImportError:
+    MambaConfig = CannotPerformDueToImportError
+    MambaForCausalLM = CannotPerformDueToImportError
+    MambaForMaskedLM = CannotPerformDueToImportError
+    MambaForSequenceClassification = CannotPerformDueToImportError
+
+try:
+    from src.rwkv import (
+        RwkvConfig,
+        RwkvForSequenceClassification,
+        RwkvForMaskedLM,
+    )
+except ImportError:
+    RwkvConfig = CannotPerformDueToImportError
+    RwkvForSequenceClassification = CannotPerformDueToImportError
+    RwkvForMaskedLM = CannotPerformDueToImportError
+
 from src.utils import count_parameters
 
 
