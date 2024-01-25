@@ -11,6 +11,7 @@ print(f"Entered {__file__=}")
 import asyncio
 from collections import Counter
 from datetime import datetime
+from itertools import islice
 import os
 from pathlib import Path
 import random
@@ -29,7 +30,9 @@ from torch.utils.data import ConcatDataset, Dataset, Subset, random_split
 from tqdm import tqdm
 
 from src.data.cfg import BODMAS_LABELS_FILE, DATASET_TO_FILES
-from src.data.utils import _tr_vl_ts_split_with_guarentees
+from src.data.utils import _tr_vl_ts_split_with_guarentees, stream_sorel_meta
+from src.data.loaders_hf import get_sorel_dataset as get_sorel_dataset_hf
+from src.data.prepare_datasets import s3_dataset_generator
 
 
 def read_binary_file(f: Path, max_length: int = -1, dtype: np.dtype = np.uint8) -> np.ndarray:
@@ -65,7 +68,7 @@ class BinaryDataset(Dataset):
         files: list[Path],
         labels: Optional[list[int] | int] = None,
         max_length: int = -1,
-        keep_in_memory: bool = False,
+        keep_in_memory: bool = True,
         preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
         id2label: Optional[dict[int, str]] = None,
         label2id: Optional[dict[str, int]] = None,
@@ -98,7 +101,7 @@ class BinaryDataset(Dataset):
         self._dist = None
 
     def __getitem__(self, i: int) -> tuple[torch.LongTensor, torch.LongTensor]:
-        r = {"name": self.files[i].name}
+        r = {"name": self.files[i].name if isinstance(self.files[i], Path) else self.files[i].split("/")[-1]}
 
         if self.labels is not None:
             y_i = self.labels[i]
@@ -160,6 +163,86 @@ class BinaryDataset(Dataset):
         return len(self.dist)
 
 
+class StreamingBinaryDataset(BinaryDataset):
+
+    def __init__(
+        self,
+        hashes: list[str],
+        labels: Optional[list[int] | int] = None,
+        max_length: int = -1,
+        keep_in_memory: bool = True,  # pylint: disable=unused-argument
+        preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        asyncronous_loading: bool = True,  # pylint: disable=unused-argument
+    ) -> None:
+
+        if isinstance(labels, list):
+            if not isinstance(labels[0], int):
+                raise TypeError(f"labels must be a list of ints, not {type(labels[0])=}")
+            self.labels = labels
+        elif isinstance(labels, int):
+            self.labels = [labels] * len(hashes)
+        else:
+            self.labels = None
+
+        iterable = s3_dataset_generator(hashes, max_length=max_length, errors=2)
+        samples = list(tqdm(iterable, desc="Streaming dataset...", total=len(hashes)))
+        kept = set(s["name"] for s in samples)
+
+        self.x = [np.frombuffer(s["bytes"], dtype=np.uint8) for s in samples]
+        self.files = [f for f in hashes if f in kept]
+        self.max_length = max_length
+        self.preprocess_fn = preprocess_fn
+        self.keep_in_memory = True
+
+        self._id2label = id2label
+        self._label2id = label2id
+        self._dist = None
+
+    def __len__(self) -> int:
+        return len(self.x)
+
+
+
+class StaticBinaryDataset(BinaryDataset):
+
+    def __init__(
+        self,
+        files: list[str],
+        x: list[np.ndarray],
+        labels: Optional[list[int] | int] = None,
+        max_length: int = -1,
+        keep_in_memory: bool = True,  # pylint: disable=unused-argument
+        preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        asyncronous_loading: bool = True,  # pylint: disable=unused-argument
+    ) -> None:
+
+        if isinstance(labels, list):
+            if not isinstance(labels[0], int):
+                raise TypeError(f"labels must be a list of ints, not {type(labels[0])=}")
+            self.labels = labels
+        elif isinstance(labels, int):
+            self.labels = [labels] * len(x)
+        else:
+            self.labels = None
+
+        self.x = x
+        self.files = files
+        self.max_length = max_length
+        self.preprocess_fn = preprocess_fn
+        self.keep_in_memory = True
+
+        self._id2label = id2label
+        self._label2id = label2id
+        self._dist = None
+
+    def __len__(self) -> int:
+        return len(self.x)
+
+
 def tr_vl_ts_split_with_guarentees(
     dataset: BinaryDataset,
     vl_size: float,
@@ -174,10 +257,46 @@ def tr_vl_ts_split_with_guarentees(
     return {split: Subset(dataset, idx[split]) for split in ["tr", "vl", "ts"]}
 
 
-def get_sorel_dataset(
-    subset: Optional[int] = None, vl_size: int | float = None, ts_size: int | float = None
+def tr_vl_ts_split(
+    dataset: Dataset,
+    vl_size: float | int,
+    ts_size: float | int,
 ) -> dict[Literal["tr", "vl", "ts"], BinaryDataset]:
-    raise NotImplementedError()
+    vl_size = vl_size / len(dataset) if isinstance(vl_size, int) else vl_size
+    ts_size = ts_size / len(dataset) if isinstance(ts_size, int) else ts_size
+    assert vl_size < 1.0 and ts_size < 1.0, f"{vl_size=} and {ts_size=} must be less than 1.0."
+
+    splits = random_split(dataset, [1 - vl_size - ts_size, vl_size, ts_size])
+    return {
+        "tr": splits[0],
+        "vl": splits[1],
+        "ts": splits[2],
+    }
+
+
+def get_sorel_dataset(
+    subset: Optional[int] = None,
+    vl_size: int | float = None,
+    ts_size: int | float = None,
+    **kwds,
+) -> dict[Literal["tr", "vl", "ts"], BinaryDataset]:
+    if vl_size is None:
+        vl_size = 10000 if subset is None else 0.1
+    if ts_size is None:
+        ts_size = 10000 if subset is None else 0.1
+
+    dataset = get_sorel_dataset_hf(subset, 1, 1)
+
+    files = []
+    x = []
+    for s in ["tr", "vl", "ts"]:
+        for d in dataset[s].iter(batch_size=1024):
+            files.extend(d["name"])
+            x.extend([np.frombuffer(b, dtype=np.uint8) for b in d["bytes"][:kwds.pop("max_length", None)]])
+
+    dataset = StaticBinaryDataset(files, x=x, **kwds)
+
+    return tr_vl_ts_split(dataset, vl_size=vl_size, ts_size=ts_size)
 
 
 def get_bodmas_dataset(
@@ -186,9 +305,7 @@ def get_bodmas_dataset(
     top_k: Optional[int] = None,
     ts_size: int | float = 0.1,
     vl_size: int | float = 0.1,
-    max_length: int = -1,
-    keep_in_memory: bool = False,
-    preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
+    **kwds,
 ) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
 
     samples_per_class = 1
@@ -221,11 +338,9 @@ def get_bodmas_dataset(
     dataset = BinaryDataset(
         files,
         labels,
-        max_length,
-        keep_in_memory,
-        preprocess_fn,
-        id2label,
-        label2id,
+        id2label=id2label,
+        label2id=label2id,
+        **kwds,
     )
     dataset = tr_vl_ts_split_with_guarentees(dataset, vl_size, ts_size, samples_per_class)
     dist = Counter(files_and_labels.values())
@@ -272,21 +387,28 @@ def test():
     # for k, v in dataset.items():
     #     print(k, len(v))
 
-    import time
+    # import time
 
-    start = time.time()
+    # start = time.time()
 
-    files = list(DATASET_TO_FILES["binaries"]["bodmas_pe"]())
-    labels = list(range(len(files)))
-    max_length = 65536
+    # files = list(DATASET_TO_FILES["binaries"]["bodmas_pe"]())
+    # labels = list(range(len(files)))
+    # max_length = 65536
 
-    dataset = BinaryDataset(files, labels, max_length, True, asyncronous_loading=True)
+    # dataset = BinaryDataset(files, labels, max_length, True, asyncronous_loading=True)
 
-    for i in range(10):
-        print(dataset[i]["input_ids"].tolist()[0:16])
-    print()
+    # for i in range(10):
+    #     print(dataset[i]["input_ids"].tolist()[0:16])
+    # print()
 
-    print(f"Time taken: {time.time() - start:.2f}s")
+    # print(f"Time taken: {time.time() - start:.2f}s")
+
+
+    dataset = get_sorel_dataset(10000, 0.1, 0.1)
+    print(dataset)
+    for d in dataset["tr"]:
+        print(d)
+        break
 
 
 if __name__ == "__main__":
