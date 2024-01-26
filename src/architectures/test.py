@@ -9,7 +9,7 @@ import os
 import sys
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from datasets import load_dataset, Dataset, DatasetDict
 import evaluate
@@ -38,7 +38,7 @@ class CannotPerformDueToImportError:
         raise ImportError()
 
 try:
-    from src.hrrformer import (
+    from src.architectures.hrrformer import (
         HRRConfig,
         HRRLMHeadModel as HRRForCausalLM,
         HRRForMaskedLM,
@@ -51,7 +51,7 @@ except ImportError:
     HRRForSequenceClassification = CannotPerformDueToImportError
 
 try:
-    from src.mamba import (
+    from src.architectures.mamba import (
         MambaConfig,
         MambaForCausalLM,
         MambaForMaskedLM,
@@ -64,7 +64,7 @@ except ImportError:
     MambaForSequenceClassification = CannotPerformDueToImportError
 
 try:
-    from src.rwkv import (
+    from src.architectures.rwkv import (
         RwkvConfig,
         RwkvForSequenceClassification,
         RwkvForMaskedLM,

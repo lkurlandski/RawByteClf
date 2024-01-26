@@ -89,7 +89,7 @@ from src.utils import (
     get_highest_path,
     object_from_superset_of_constructor_kwds,
 )
-from src.malconv import (
+from src.architectures.malconv import (
     AutoMalConvForSequenceClassification,
     MalConvConfig,
     MalConvGCTConfig,
@@ -98,19 +98,19 @@ from src.malconv import (
     MalConvGCT,
     MyMalConv,
 )
-from src.hrrformer import (
+from src.architectures.hrrformer import (
     HRRConfig,
     HRRForSequenceClassification,
     HRRForMaskedLM,
 )
-from src.mamba import (
+from src.architectures.mamba import (
     MambaConfig,
     MambaForSequenceClassification,
     MambaForMaskedLM,
     MambaForCausalLM,
     MambaPreTrainedModel,
 )
-from src.rwkv import (
+from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
