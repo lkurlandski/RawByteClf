@@ -52,7 +52,7 @@ from transformers.utils import (
 )
 from transformers.models.bert.configuration_bert import BertConfig
 
-from src.utils import log_tensor
+from src.utils import log_tensor, stable_softmax
 
 
 __all__ = [
@@ -148,6 +148,7 @@ class HRRConfig(PretrainedConfig):
         superposition_scale_factor: float | Literal["max", "mean", "log", "norm"] = 1.0,
         superpositions_to_bf: bool = False,
         tensor_log_path: Optional[str] = None,
+        tensor_logging: bool = False,
         **kwargs,
     ):
         """
@@ -176,7 +177,9 @@ class HRRConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
         self.superpositions_to_bf = superpositions_to_bf
-        self.tensor_log_path = tensor_log_path.as_posix() if isinstance(tensor_log_path, Path) else tensor_log_path
+        self.tensor_log_path = None
+        if tensor_logging:
+            self.tensor_log_path = tensor_log_path.as_posix() if isinstance(tensor_log_path, Path) else tensor_log_path
 
         if isinstance(superposition_scale_factor, (float, int)):
             self.superposition_scale_factor = float(superposition_scale_factor)
@@ -283,10 +286,10 @@ class HRRSelfAttention(nn.Module):
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         # attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-
-        log_tensor(self.tensor_log_path, key_layer, "key_layer")
-        log_tensor(self.tensor_log_path, value_layer, "value_layer")
-        log_tensor(self.tensor_log_path, query_layer, "query_layer")
+        if self.tensor_log_path:
+            log_tensor(self.tensor_log_path, key_layer, "key_layer")
+            log_tensor(self.tensor_log_path, value_layer, "value_layer")
+            log_tensor(self.tensor_log_path, query_layer, "query_layer")
 
         # HRR
         # H' = hidden_size / num_attention_heads  RuntimeError: cuFFT error: CUFFT_INVALID_SIZE
@@ -335,46 +338,35 @@ class HRRSelfAttention(nn.Module):
         # Add the positional encoding
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
             raise NotImplementedError()
-            query_length, key_length = query_layer.shape[2], key_layer.shape[2]
-            if use_cache:
-                position_ids_l = torch.tensor(key_length - 1, dtype=torch.long, device=hidden_states.device).view(-1, 1)
-            else:
-                position_ids_l = torch.arange(query_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
-            position_ids_r = torch.arange(key_length, dtype=torch.long, device=hidden_states.device).view(1, -1)
-            distance = position_ids_l - position_ids_r
+            # query_length, key_length = query_layer.shape[2], key_layer.shape[2]
+            # if use_cache:
+            #     position_ids_l = torch.tensor(key_length - 1, dtype=torch.long, device=hidden_states.device).view(-1, 1)
+            # else:
+            #     position_ids_l = torch.arange(query_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
+            # position_ids_r = torch.arange(key_length, dtype=torch.long, device=hidden_states.device).view(1, -1)
+            # distance = position_ids_l - position_ids_r
 
-            positional_embedding = self.distance_embedding(distance + self.max_position_embeddings - 1)
-            positional_embedding = positional_embedding.to(dtype=query_layer.dtype)  # fp16 compatibility
+            # positional_embedding = self.distance_embedding(distance + self.max_position_embeddings - 1)
+            # positional_embedding = positional_embedding.to(dtype=query_layer.dtype)  # fp16 compatibility
 
-            if self.position_embedding_type == "relative_key":
-                relative_position_scores = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-                attention_scores = attention_scores + relative_position_scores
-            elif self.position_embedding_type == "relative_key_query":
-                relative_position_scores_query = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-                relative_position_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
-                attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
+            # if self.position_embedding_type == "relative_key":
+            #     relative_position_scores = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
+            #     attention_scores = attention_scores + relative_position_scores
+            # elif self.position_embedding_type == "relative_key_query":
+            #     relative_position_scores_query = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
+            #     relative_position_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
+            #     attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
 
         # attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        # Apply the attention mask.
+        # TODO: for causal language modeling, the attention mask has shape (B, 1, T, T).
         if attention_mask is not None:
-            # Apply the attention mask.
-            # The original HRR implementation implements this strangely. That original implementation
-            # also does not work with transformer's attention_mask, which is a different shape and
-            # winds up messing up the dimensions of the attention scores for HRRFormer.
-            # attention_scores = attention_scores + attention_mask
-            # attention_scores = attention_scores + (1.0 - attention_mask) * (-1e9)  # (B, h, T, T)
-            # FIXME: for causal language modeling, the attention mask has shape (B, 1, T, T) and 
-            # this code does not work
             attention_scores = attention_scores + attention_mask.permute(0, 1, 3, 2)  # (B, h, T, 1)
 
         # Normalize the attention scores to probabilities.
-        # attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        # HRR
         attention_probs = F.softmax(attention_scores, dim=-2)
         if self.tensor_log_path:
             log_tensor(self.tensor_log_path, attention_probs, "attention_probs")
-
-        # This is actually dropping out entire tokens to attend to, which might
-        # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
         if self.tensor_log_path:
             log_tensor(self.tensor_log_path, attention_probs, "attention_probs_post_dropout")
@@ -382,18 +374,18 @@ class HRRSelfAttention(nn.Module):
         # Mask heads if we want to
         if head_mask is not None:
             raise NotImplementedError()
-            attention_probs = attention_probs * head_mask
+            # attention_probs = attention_probs * head_mask
 
-        # HRR
         context_layer: torch.Tensor = attention_probs * value_layer  # (B, h, T, H')
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()  # (B, T, h, H')
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(new_context_layer_shape)  # (B, T, h * H')
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
-
         if self.is_decoder:
-            outputs = outputs + (past_key_value,)
+            raise NotImplementedError()
+            # outputs = outputs + (past_key_value,)
+
         return outputs
 
 
