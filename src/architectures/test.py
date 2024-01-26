@@ -9,7 +9,7 @@ import os
 import sys
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from datasets import load_dataset, Dataset, DatasetDict
 import evaluate
@@ -33,23 +33,47 @@ from transformers import (
     PreTrainedModel,
 )
 
-from src.hrrformer import (
-    HRRConfig,
-    HRRLMHeadModel as HRRForCausalLM,
-    HRRForMaskedLM,
-    HRRForSequenceClassification,
-)
-from src.mamba import (
-    MambaConfig,
-    MambaForCausalLM,
-    MambaForMaskedLM,
-    MambaForSequenceClassification,
-)
-from src.rwkv import (
-    RwkvConfig,
-    RwkvForSequenceClassification,
-    RwkvForMaskedLM,
-)
+class CannotPerformDueToImportError:
+    def __init__(self, *args, **kwargs):
+        raise ImportError()
+
+try:
+    from src.architectures.hrrformer import (
+        HRRConfig,
+        HRRLMHeadModel as HRRForCausalLM,
+        HRRForMaskedLM,
+        HRRForSequenceClassification,
+    )
+except ImportError:
+    HRRConfig = CannotPerformDueToImportError
+    HRRForCausalLM = CannotPerformDueToImportError
+    HRRForMaskedLM = CannotPerformDueToImportError
+    HRRForSequenceClassification = CannotPerformDueToImportError
+
+try:
+    from src.architectures.mamba import (
+        MambaConfig,
+        MambaForCausalLM,
+        MambaForMaskedLM,
+        MambaForSequenceClassification,
+    )
+except ImportError:
+    MambaConfig = CannotPerformDueToImportError
+    MambaForCausalLM = CannotPerformDueToImportError
+    MambaForMaskedLM = CannotPerformDueToImportError
+    MambaForSequenceClassification = CannotPerformDueToImportError
+
+try:
+    from src.architectures.rwkv import (
+        RwkvConfig,
+        RwkvForSequenceClassification,
+        RwkvForMaskedLM,
+    )
+except ImportError:
+    RwkvConfig = CannotPerformDueToImportError
+    RwkvForSequenceClassification = CannotPerformDueToImportError
+    RwkvForMaskedLM = CannotPerformDueToImportError
+
 from src.utils import count_parameters
 
 

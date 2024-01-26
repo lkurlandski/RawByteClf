@@ -43,10 +43,10 @@ def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str
         return {
             "hidden_size": 512,
             "intermediate_size": 2048,
-            "num_hidden_layers": 1,
+            "num_hidden_layers": 2,
             "num_attention_heads": 8,
-            "superposition_scale_factor": "log",
-            # "superpositions_log_path": f"./tmp/hrr_log_path/log/{max_length}"
+            "superposition_scale_factor": "norm",
+            # "tensor_log_path": f"./tmp/hrr_log_path/log/{max_length}"
         }
 
     if model_name == "rwkv":
