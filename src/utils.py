@@ -194,5 +194,13 @@ def log_tensor(path: str | Path, x: Tensor, name: str) -> None:
         fp.write("\n")
 
 
+def stable_softmax(x: Tensor, dim: int = 0):
+    max_values, _ = torch.max(x, dim=dim, keepdim=True)
+    exp_scores = torch.exp(x - max_values)
+    sum_exp_scores = torch.sum(exp_scores, dim=dim, keepdim=True)
+    softmax_result = exp_scores / sum_exp_scores
+    return softmax_result
+
+
 if __name__ == "__main__":
     print(bash_file_to_vscode_debug_str(Path("run/hrr_train_65536_false_none.sh")))
