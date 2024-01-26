@@ -1,5 +1,5 @@
 """
-
+Utilies to help with the output of the training process.
 """
 
 # pylint: disable=wrong-import-position

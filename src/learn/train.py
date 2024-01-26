@@ -703,6 +703,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.ft_duplicate_positional_embeddings,
         args.ft_initialize_positional_embeddings,
         args.root,
+        args.tail,
     )
     print(f"{oh=}")
     print(BR, flush=True)
