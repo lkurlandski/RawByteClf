@@ -2,6 +2,7 @@
 Various codes for data analysis.
 """
 
+from collections import defaultdict
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,6 @@ import sys
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
 
@@ -33,8 +33,16 @@ def process_trainer_state(path: Path) -> tuple[list[dict], list[dict]]:
     return validation_reports, train_reports
 
 
+def overflow_analysis(path: Path) -> dict[str, pd.DataFrame]:
+    data: dict[tuple] = defaultdict(dict)
+    for f in path.iterdir():
+        df = pd.read_csv(f)
+        data[f.stem] = df
+    return data
+
+
 def main():
-    path = "/home/lk3591/Documents/code/RawByteClf/output/mymalconv/65536/clf/1/False/False/False/tuning_results/dataframe.csv"
+    path = ".output/mymalconv/65536/clf/1/False/False/False/tuning_results/dataframe.csv"
     df = process_tuning_dataframe(path)
     with pd.option_context("display.max_rows", None, "display.max_columns", None):
         print(df)

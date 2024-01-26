@@ -10,7 +10,8 @@ from typing import Any, Callable
 
 import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
-from torch import nn
+import torch
+from torch import nn, Tensor
 
 
 def process_mem(fmt: str = "G") -> str:
@@ -121,6 +122,76 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
     args = [a.replace('"', "").replace("'", "").replace("\\", "").rstrip() for a in args]
     args = [f'"{a}"' for a in args]
     return ", ".join(args)
+
+
+def log_tensor(path: str | Path, x: Tensor, name: str) -> None:
+    """
+    Log statistics of a tensor to a CSV file for debugging.
+
+    Args:
+        path: The path to the directory where the CSV file is stored.
+        x: The tensor to log.
+        name: The stem of the csv file.
+
+    If the CSV file does not exist, it will be created. If it does exist, it will be appended to.
+        The csv file will contain the following fields:
+            pos_min: The minimum value of the positive elements of the tensor.
+            pos_max: The maximum value of the positive elements of the tensor.
+            pos_mean: The mean value of the positive elements of the tensor.
+            pos_stdev: The standard deviation of the positive elements of the tensor.
+            neg_min: The minimum value of the negative elements of the tensor.
+            neg_max: The maximum value of the negative elements of the tensor.
+            neg_mean: The mean value of the negative elements of the tensor.
+            neg_stdev: The standard deviation of the negative elements of the tensor.
+        If the tensor is all zero, each field will be 0.
+        If the tensor contains NaN, each field will be NaN.
+    """
+    path = Path(path)
+    if not path.exists():
+        path.mkdir(parents=True)
+
+    p = path / f"{name}.csv"
+
+    if not p.exists():
+        with open(p, "w") as fp:
+            fp.write("pos_min,pos_max,pos_mean,pos_stdev,neg_min,neg_max,neg_mean,neg_stdev\n")
+
+    if torch.any(torch.isnan(x)):
+        with open(p, "a") as fp:
+            fp.write("NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN\n")
+        return
+
+    if torch.all(x == 0):
+        with open(p, "a") as fp:
+            fp.write("0,0,0,0,0,0,0,0\n")
+        return
+
+    pos: Tensor = x[(x > 0) & (x != 0)]
+    with open(p, "a") as fp:
+        if pos.numel() == 0:
+            fp.write(",,,,")
+        else:
+            fp.write(
+                f"{pos.min().item()},"
+                f"{pos.max().item()},"
+                f"{pos.mean().item()},"
+                f"{pos.std().item()},"
+            )
+
+    neg: Tensor = x[(x < 0) & (x != 0)]
+    with open(p, "a") as fp:
+        if neg.numel() == 0:
+            fp.write(",,,,")
+        else:
+            fp.write(
+                f"{neg.min().item()},"
+                f"{neg.max().item()},"
+                f"{neg.mean().item()},"
+                f"{neg.std().item()}"
+            )
+
+    with open(p, "a") as fp:
+        fp.write("\n")
 
 
 if __name__ == "__main__":

@@ -52,6 +52,8 @@ from transformers.utils import (
 )
 from transformers.models.bert.configuration_bert import BertConfig
 
+from src.utils import log_tensor
+
 
 __all__ = [
     "HRRConfig",
@@ -143,9 +145,9 @@ class HRRConfig(PretrainedConfig):
         position_embedding_type: str = "absolute",
         use_cache: bool = True,
         classifier_dropout: Optional[float] = None,
-        superposition_scale_factor: float | Literal["max", "mean", "log"] = 1.0,
+        superposition_scale_factor: float | Literal["max", "mean", "log", "norm"] = 1.0,
         superpositions_to_bf: bool = False,
-        superpositions_log_path: Optional[str] = None,
+        tensor_log_path: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -174,13 +176,13 @@ class HRRConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
         self.superpositions_to_bf = superpositions_to_bf
-        self.superpositions_log_path = superpositions_log_path
+        self.tensor_log_path = tensor_log_path
 
         if isinstance(superposition_scale_factor, (float, int)):
             self.superposition_scale_factor = float(superposition_scale_factor)
         elif superposition_scale_factor == "max":
             self.superposition_scale_factor = 1.0 / math.sqrt(max_position_embeddings)
-        elif superposition_scale_factor in ("mean", "log"):
+        elif superposition_scale_factor in ("mean", "log", "norm"):
             self.superposition_scale_factor = superposition_scale_factor
         else:
             raise ValueError(f"Invalid value {superposition_scale_factor=}")
@@ -224,7 +226,7 @@ class HRRSelfAttention(nn.Module):
         self.is_decoder = config.is_decoder
         self.superposition_scale_factor = config.superposition_scale_factor
         self.superpositions_to_bf = config.superpositions_to_bf
-        self.superpositions_log_path = config.superpositions_log_path
+        self.tensor_log_path = config.tensor_log_path
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -282,11 +284,19 @@ class HRRSelfAttention(nn.Module):
         # Take the dot product between "query" and "key" to get the raw attention scores.
         # attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
 
+        log_tensor(self.tensor_log_path, key_layer, "key_layer")
+        log_tensor(self.tensor_log_path, value_layer, "value_layer")
+        log_tensor(self.tensor_log_path, query_layer, "query_layer")
+
         # HRR
         # H' = hidden_size / num_attention_heads  RuntimeError: cuFFT error: CUFFT_INVALID_SIZE
         try:
-            superpositions = binding(key_layer, value_layer, dim=-1)  # (B, h, T, H')
-        except RuntimeError:
+            superpositions = binding(
+                key_layer,
+                value_layer,
+                dim=-1,
+            ).to(torch.float16)  # (B, h, T, H')
+        except RuntimeError:  # TODO: hyperparameter tuning can sometimes induce this error...why?
             print(f"{key_layer.shape=}")
             print(f"{value_layer.shape=}")
             raise
@@ -307,71 +317,20 @@ class HRRSelfAttention(nn.Module):
         elif self.superposition_scale_factor == "log":
             max_value, _ = torch.max(superpositions, dim=-2, keepdim=True)
             superposition = torch.log(torch.sum(torch.exp(superpositions - max_value), dim=-2, keepdim=True)) + max_value
+        elif self.superposition_scale_factor == "norm":
+            superpositions = F.normalize(superpositions, p=2.0, dim=-2, eps=1e-12, out=None)
+            superposition = torch.sum(superpositions, dim=-2, keepdims=True)
         else:
             superposition = torch.sum(superpositions * self.superposition_scale_factor, dim=-2, keepdims=True)
 
         value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
-        # The superpositions have a tendency to overflow. We log statistics about their values here.
-        if self.superpositions_log_path:
-            superpositions_log_path = Path(self.superpositions_log_path)
-            p_pos = superpositions_log_path / "superpositions_pos.csv"
-            p_neg = superpositions_log_path / "superpositions_neg.csv"
-            p_err = superpositions_log_path / "err.txt"
-            p_nan = superpositions_log_path / "nan.txt"
-            if not superpositions_log_path.exists():
-                superpositions_log_path.mkdir(parents=True)
-                p_pos.write_text("min,max,mean,stdev\n")
-                p_neg.write_text("min,max,mean,stdev\n")
-                p_err.write_text("")
-                p_nan.write_text("superpositions,superposition,key_layer,query_layer,value_layer,value_approx,attention_scores\n")
-
-            contains_nan = [
-                torch.any(torch.isnan(t)).item() for t in
-                [
-                    superpositions,
-                    superposition,
-                    key_layer,
-                    query_layer,
-                    value_layer,
-                    value_approx,
-                    attention_scores,
-                ]
-            ]
-            with open(p_nan, "a") as fp:
-                fp.write(",".join([str(b) for b in contains_nan]) + "\n")
-
-            if torch.all(superpositions == 0):
-                p_err.write("Error: superpositions is all zero\n")
-            else:
-
-                pos: torch.Tensor = superpositions[(superpositions > 0) & (superpositions != 0)]
-                if pos.numel() == 0:
-                    with open(p_err, "a") as fp:
-                        fp.write("Error: pos is empty\n")
-                else:
-                    with open(p_pos, "a") as fp:
-                        fp.write(
-                            f"{pos.min().item()},"
-                            f"{pos.max().item()},"
-                            f"{pos.mean().item()},"
-                            f"{pos.std().item()}\n"
-                        )
-
-                neg: torch.Tensor = superpositions[(superpositions < 0) & (superpositions != 0)]
-                if neg.numel() == 0:
-                    with open(p_err, "a") as fp:
-                        fp.write("Error: neg is empty\n")
-                else:
-                    with open(p_neg, "a") as fp:
-                        fp.write(
-                            f"{neg.min().item()},"
-                            f"{neg.max().item()},"
-                            f"{neg.mean().item()},"
-                            f"{neg.std().item()}\n"
-                        )
-
+        if self.tensor_log_path:
+            log_tensor(self.tensor_log_path, superpositions, "superpositions")
+            log_tensor(self.tensor_log_path, superposition, "superposition")
+            log_tensor(self.tensor_log_path, value_approx, "value_approx")
+            log_tensor(self.tensor_log_path, attention_scores, "attention_scores")
 
         # Add the positional encoding
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
@@ -411,10 +370,14 @@ class HRRSelfAttention(nn.Module):
         # attention_probs = nn.functional.softmax(attention_scores, dim=-1)
         # HRR
         attention_probs = F.softmax(attention_scores, dim=-2)
+        if self.tensor_log_path:
+            log_tensor(self.tensor_log_path, attention_probs, "attention_probs")
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
+        if self.tensor_log_path:
+            log_tensor(self.tensor_log_path, attention_probs, "attention_probs_post_dropout")
 
         # Mask heads if we want to
         if head_mask is not None:

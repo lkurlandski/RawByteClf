@@ -131,8 +131,8 @@ class OutputHelper:
         return get_highest_path(self.checkpoints_dir, lstrip="checkpoint-")
 
     @property
-    def superpositions_log_path(self) -> Path:
-        return self.path / "superpositions_log_path"
+    def tensor_log_path(self) -> Path:
+        return self.path / "tensor_log_path"
 
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)

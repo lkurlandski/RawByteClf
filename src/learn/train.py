@@ -550,7 +550,7 @@ def get_config(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
             pad_token_id=tokenizer.pad_token_id,
-            superpositions_log_path=output_path,
+            tensor_log_path=output_path,
             **kwds,
         )
     if model_name_or_path.lower() == "rwkv":
@@ -818,7 +818,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         num_labels=num_classes,
         id2label=id2label,
         label2id=label2id,
-        output_path=oh.superpositions_log_path,
+        output_path=oh.tensor_log_path,
     )
     print(f"{config=}")
     print(BR, flush=True)
