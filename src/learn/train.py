@@ -302,7 +302,14 @@ def hp_model_init(
     else:
         hparams = {}
 
-    config = get_config(model_name_or_path, tokenizer, max_length, **(hparams | kwds))
+    config = get_config(
+        model_name_or_path,
+        tokenizer,
+        max_length,
+        tensor_log_path=None,
+        arch_config=None,
+        **(hparams | kwds),
+    )
     model = get_model(task, None, config, **kwds)
     if model is None:
         raise RuntimeError("Model is None for some reason.")
@@ -468,20 +475,34 @@ def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
     max_length: Optional[int] = None,
-    output_path: Optional[Path | str] = None,
+    tensor_log_path: Optional[Path] = None,
+    arch_config: Optional[dict[str, Any]] = None,
     **kwds,
 ) -> PretrainedConfig:
     """
-    kwds
-    ----
+    Get the configuration for the model.
+
+    Precedence (highest to lowest):
+        - config from the tokenizer, max_length, and tensor_log_path args
+        - kwds
+        - arch_config
+        - config from from tuning
+        - default config from the architecture itself
+
+    Args:
+        model_name_or_path (str): name of the model or path to the model
+        tokenizer (PreTrainedTokenizerFast): tokenizer to use
+        max_length (int): maximum length of the input sequence
+        arch_config (dict): architecture-specific configuration
+        id2label (dict[int, str]): use for classification
+        label2id (dict[str, int]): use for classification
         num_labels (int): use for classification
     """
     if Path(model_name_or_path).exists():
         return AutoConfig.from_pretrained(model_name_or_path, **kwds)
 
-    output_path = output_path.as_posix() if isinstance(output_path, Path) else output_path
-
     # Handle float values when hyperparameter tuning.
+    # FIXME: this probably gets broken...
     float_to_int_kwds = [
         "num_hidden_layers",
         "num_attention_heads",
@@ -495,103 +516,107 @@ def get_config(
     vocab_size = pad_to_multiple_of_fn(len(tokenizer), PAD_TO)
     max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
-    # kwds overrides the tuned_kwds
-    kwds = tuned_configs(model_name_or_path.lower(), max_length) | kwds
+    arch_config = dict() if arch_config is None else arch_config
+    kwds = tuned_configs(model_name_or_path.lower(), max_length) | arch_config | kwds
 
     if model_name_or_path.lower() == "longformer":
-        attention_window = kwds.pop("attention_window", 512)
-        return LongformerConfig(
+        kwds = kwds | dict(
             vocab_size=vocab_size,
-            max_position_embeddings=longformer_max_position_embeddings(
-                max_length, attention_window
-            ),
-            attention_window=attention_window,
+            max_position_embeddings=longformer_max_position_embeddings(max_length, kwds.pop("attention_window", 512)),
+            attention_window=kwds.pop("attention_window", 512),
             sep_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            **kwds,
         )
+        return LongformerConfig(**kwds)
+
     if model_name_or_path.lower() == "reformer":
-        num_hidden_layers = kwds.pop("num_hidden_layers", 6)
-        hidden_size = kwds.pop("hidden_size", 256)
-        return ReformerConfig(
+        kwds = kwds | dict(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
-            hidden_size=hidden_size,
+            hidden_size=kwds.pop("hidden_size", 256),
             feed_forward_size=kwds.pop("feed_forward_size", kwds.pop("intermediate_size", 512)),
-            attn_layers=["local" if i % 2 == 0 else "lsh" for i in range(num_hidden_layers)],
+            attn_layers=["local" if i % 2 == 0 else "lsh" for i in range(kwds.pop("num_hidden_layers", 6))],
             axial_pos_shape=list(find_two_largest_factors(max_length)),
-            axial_pos_embds_dim=[hidden_size // 2, hidden_size // 2],
+            axial_pos_embds_dim=[kwds.pop("hidden_size", 256) // 2, kwds.pop("hidden_size", 256) // 2],
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            **kwds,
         )
+        return ReformerConfig(**kwds)
+
     if model_name_or_path.lower() == "nystromformer":
-        return NystromformerConfig(
+        kwds = kwds | dict(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            **kwds,
         )
+        return NystromformerConfig(**kwds)
+
     if model_name_or_path.lower() == "fnet":
-        return FNetConfig(
+        kwds = kwds | dict(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
             pad_token_id=tokenizer.pad_token_id,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            **kwds,
         )
+        return FNetConfig(**kwds)
+
     if model_name_or_path.lower() == "hrrformer":
-        return HRRConfig(
+        kwds = kwds | dict(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
             pad_token_id=tokenizer.pad_token_id,
-            tensor_log_path=output_path,
-            **kwds,
+            tensor_log_path=tensor_log_path,
         )
+        return HRRConfig(**kwds)
+
     if model_name_or_path.lower() == "rwkv":
         if not is_ninja_available():
             raise RuntimeError("Ninja is required to use RWKV. Without it, the model is too slow.")
-        return RwkvConfig(
+        kwds = kwds | dict(
             vocab_size=vocab_size,
             context_length=max_posititional_embeddings,
             bos_token_id=tokenizer.bos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            **kwds,
         )
+        return RwkvConfig(**kwds)
+
     if model_name_or_path.lower() == "mamba":
-        return MambaConfig(
+        kwds = kwds | dict(
             vocab_size=vocab_size,
             pad_token_id=tokenizer.pad_token_id,
             pad_vocab_size_multiple=PAD_TO,
-            **kwds,
         )
+        return MambaConfig(**kwds)
+
     if model_name_or_path.lower() == "malconv":
-        return MalConvConfig(
+        kwds = kwds | dict(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **kwds,
         )
+        return MalConvConfig(**kwds)
+
     if model_name_or_path.lower() == "malconvgct":
-        return MalConvGCTConfig(
+        kwds = kwds | dict(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
-            **kwds,
         )
+        return MalConvGCTConfig(**kwds)
+
     if model_name_or_path.lower() == "mymalconv":
-        return MyMalConvConfig(
+        kwds = kwds | dict(
             out_size=kwds["num_labels"],
             pad_idx=tokenizer.pad_token_id,
             num_embd=vocab_size,
             max_length=max_posititional_embeddings,
-            **kwds,
         )
+        return MyMalConvConfig(**kwds)
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
 
@@ -704,6 +729,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.ft_initialize_positional_embeddings,
         args.root,
         args.tail,
+        args.arch_config,
     )
     print(f"{oh=}")
     print(BR, flush=True)
@@ -815,10 +841,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.model_name_or_path,
         tokenizer,
         args.max_length,
+        tensor_log_path=oh.tensor_log_path,
+        arch_config=args.arch_config,
         num_labels=num_classes,
         id2label=id2label,
         label2id=label2id,
-        output_path=oh.tensor_log_path,
     )
     print(f"{config=}")
     print(BR, flush=True)

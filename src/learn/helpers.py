@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from typing import Optional
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
@@ -37,6 +38,14 @@ class Args:
     root: Path = field(default=OUTPUT_PATH)
     tail: str = field(default="")
     do_tune: bool = field(default=False)
+    arch_config_file: Optional[Path] = field(
+        default=None,
+        metadata={"help": "Location of a configuration file to use for the architecture."},
+    )
+    arch_config: Optional[dict | str] = field(
+        default=None,
+        metadata={"help": "Configuration dict to use for the architecture. Mutally exclusive with arch_config_file."},
+    )
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -45,6 +54,14 @@ class Args:
         self.streaming = str_or_bool_to_str(self.streaming)
         self.exit_after_map = str_or_bool_to_str(self.exit_after_map)
         self.do_tune = str_or_bool_to_str(self.do_tune)
+
+        if self.arch_config_file and self.arch_config:
+            raise ValueError("Cannot specify both arch_config_file and arch_config.")
+        if self.arch_config and isinstance(self.arch_config, str):
+            self.arch_config = json.loads(self.arch_config)
+        if self.arch_config_file:
+            with open(self.arch_config_file) as fp:
+                self.arch_config = json.load(fp)
 
 
 class OutputHelper:
@@ -59,6 +76,7 @@ class OutputHelper:
         ft_initialize_positional_embeddings: bool | str,
         root: Path,
         tail: str,
+        arch_config: Optional[dict] = None,
     ) -> None:
         self.root = Path(root)
         args = [
@@ -75,7 +93,8 @@ class OutputHelper:
                     str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
                 ]
             )
-        self.path = self.root.joinpath(*args) / tail
+
+        self.path = self.root.joinpath(*args) / self.arch_config_hash(arch_config) / tail
 
     def __repr__(self) -> str:
         return self.path.as_posix()
@@ -136,3 +155,8 @@ class OutputHelper:
 
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
+
+    def arch_config_hash(self, arch_config: Optional[dict]) -> str:
+        if not arch_config:
+            return ""
+        return str(hash(tuple(sorted(arch_config.items()))))
