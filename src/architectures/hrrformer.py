@@ -176,7 +176,7 @@ class HRRConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
         self.superpositions_to_bf = superpositions_to_bf
-        self.tensor_log_path = tensor_log_path
+        self.tensor_log_path = tensor_log_path.as_posix() if isinstance(tensor_log_path, Path) else tensor_log_path
 
         if isinstance(superposition_scale_factor, (float, int)):
             self.superposition_scale_factor = float(superposition_scale_factor)
