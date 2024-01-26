@@ -83,7 +83,7 @@ from ray import tune
 from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune import TuneError
 
-from src.cfg import BR, OUTPUT_PATH
+from src.cfg import BR
 from src.utils import (
     count_parameters,
     get_highest_path,
@@ -124,6 +124,7 @@ from src.data.loaders_pt import (
     preprocess_fn_add_cls_token,
     BinaryDataset,
 )
+from src.learn.helpers import Args, OutputHelper
 from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics
 from src.learn.tuning import (
     tuned_configs,
@@ -157,7 +158,7 @@ get_bodmas_dataset = get_bodmas_dataset_pt
 
 PAD_TO = 8
 
-SUBSET = None  # 80000 # tune_hrrformer
+SUBSET = 1000
 KEEP_IN_MEMORY = False
 MOVE_IN_MEMORY = False
 BODMAS_TOP_K = 10
@@ -183,6 +184,53 @@ TUNE_RESOURCES_PER_TRIAL = {
     "gpu": 1,
 }
 RAISE_ON_FAILED_TRIAL = False
+
+
+MODEL_NAMES = [
+    "longformer",
+    "reformer",
+    "nystromformer",
+    "fnet",
+    "malconv",
+    "malconvgct",
+    "mymalconv",
+    "hrrformer",
+    "rwkv",
+    "mamba",
+]
+
+RETURN_ATTENTION_MASK = {
+    "longformer": True,
+    "reformer": True,
+    "nystromformer": True,
+    "fnet": False,
+    "malconv": False,
+    "malconvgct": False,
+    "mymalconv": False,
+    "hrrformer": True,
+    "rwkv": False,
+    "mamba": False,
+}
+
+
+# This is the technical details of which models need BERT-like sequence processing, but for
+# simplicity, we'll just use it for all of the models because it doesn't really make a difference.
+APPLY_BERT_PROCESSING = {
+    "longformer": True,
+    "reformer": False,
+    "nystromformer": False,
+    "fnet": True,
+    "malconv": False,
+    "malconvgct": False,
+    "mymalconv": False,
+    "hrrformer": True,
+    "rwkv": False,
+    "mamba": False,
+}
+
+
+def APPLY_BERT_PROCESSING(model_name: str) -> bool:
+    return True
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -263,53 +311,6 @@ def hp_model_init(
 
 def hp_compute_objective(metrics: dict[str, float]) -> float:
     return metrics["eval_loss"]
-
-
-MODEL_NAMES = [
-    "longformer",
-    "reformer",
-    "nystromformer",
-    "fnet",
-    "malconv",
-    "malconvgct",
-    "mymalconv",
-    "hrrformer",
-    "rwkv",
-    "mamba",
-]
-
-RETURN_ATTENTION_MASK = {
-    "longformer": True,
-    "reformer": True,
-    "nystromformer": True,
-    "fnet": False,
-    "malconv": False,
-    "malconvgct": False,
-    "mymalconv": False,
-    "hrrformer": True,
-    "rwkv": False,
-    "mamba": False,
-}
-
-
-# This is the technical details of which models need BERT-like sequence processing, but for
-# simplicity, we'll just use it for all of the models because it doesn't really make a difference.
-APPLY_BERT_PROCESSING = {
-    "longformer": True,
-    "reformer": False,
-    "nystromformer": False,
-    "fnet": True,
-    "malconv": False,
-    "malconvgct": False,
-    "mymalconv": False,
-    "hrrformer": True,
-    "rwkv": False,
-    "mamba": False,
-}
-
-
-def APPLY_BERT_PROCESSING(model_name: str) -> bool:
-    return True
 
 
 # TODO: add support for passing in a PreTrainedModel object.
@@ -461,120 +462,6 @@ def modify_positional_embeddings_allowed(model: Any) -> bool:
     if isinstance(model, PreTrainedModel):
         return True
     return False
-
-
-@dataclass
-class Args:
-
-    model_name_or_path: str = field()
-    max_length: int = field()
-    task: str = field()
-    depth: int = field(default=1)
-    streaming: bool = field(default=True)
-    exit_after_map: bool = field(default=False)
-    ft_freeze_positional_embeddings: bool = field(default=False)
-    ft_duplicate_positional_embeddings: bool = field(default=False)
-    ft_initialize_positional_embeddings: bool = field(default=False)
-    root: Path = field(default=OUTPUT_PATH)
-    do_tune: bool = field(default=False)
-
-    def __post_init__(self) -> None:
-        self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
-        self.ft_duplicate_positional_embeddings = str_or_bool_to_str(self.ft_duplicate_positional_embeddings)
-        self.ft_initialize_positional_embeddings = str_or_bool_to_str(self.ft_initialize_positional_embeddings)
-        self.streaming = str_or_bool_to_str(self.streaming)
-        self.exit_after_map = str_or_bool_to_str(self.exit_after_map)
-        self.do_tune = str_or_bool_to_str(self.do_tune)
-
-
-class OutputHelper:
-    def __init__(
-        self,
-        model_name_or_path: str,
-        max_length: int,
-        task: str,
-        depth: int,
-        ft_freeze_positional_embeddings: bool | str,
-        ft_duplicate_positional_embeddings: bool | str,
-        ft_initialize_positional_embeddings: bool | str,
-        root: Path,
-    ) -> None:
-        self.root = Path(root)
-        args = [
-            model_name_or_path,
-            str(max_length),
-            task,
-            str(depth),
-        ]
-        if task == "clf":
-            args.extend(
-                [
-                    str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
-                    str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
-                    str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
-                ]
-            )
-        self.path = self.root.joinpath(*args)
-
-    def __repr__(self) -> str:
-        return self.path.as_posix()
-
-    def __str__(self) -> str:
-        return self.path.as_posix()
-
-    @property
-    def best_model_dir(self) -> Path:
-        with open(self.last_checkpoint / "trainer_state.json") as fp:
-            state = json.load(fp)
-        best_model_checkpoint = state["best_model_checkpoint"]
-        return Path(best_model_checkpoint)
-
-    @property
-    def checkpoints_dir(self) -> Path:
-        return self.path / "checkpoints"
-
-    @property
-    def config_file(self) -> Path:
-        return self.path / "config.json"
-
-    @property
-    def test_results_dir(self) -> Path:
-        return self.path / "test_results"
-
-    @property
-    def test_results_file(self) -> Path:
-        return self.test_results_dir / "results.json"
-
-    @property
-    def test_predictions_file(self) -> Path:
-        return self.test_results_dir / "predictions.txt"
-
-    @property
-    def test_probas_file(self) -> Path:
-        return self.test_results_dir / "probas.txt"
-
-    @property
-    def test_labels_file(self) -> Path:
-        return self.test_results_dir / "labels.txt"
-
-    @property
-    def test_confusion_matrix_file(self) -> Path:
-        return self.test_results_dir / "confusion_matrix.png"
-
-    @property
-    def tuning_results_dir(self) -> Path:
-        return self.path / "tuning_results"
-
-    @property
-    def last_checkpoint(self) -> Path:
-        return get_highest_path(self.checkpoints_dir, lstrip="checkpoint-")
-
-    @property
-    def superpositions_log_path(self) -> Path:
-        return self.path / "superpositions_log_path"
-
-    def mkdir(self) -> None:
-        self.path.mkdir(exist_ok=True, parents=True)
 
 
 def get_config(
@@ -839,7 +726,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dist: Optional[Counter[str, int]] = None
 
     if args.task in ("mlm", "clm"):
-        dataset: DatasetDict = get_sorel_dataset(SUBSET)
+        dataset: DatasetDict = get_sorel_dataset(
+            subset=SUBSET,
+            max_length=args.max_length,
+            preprocess_fn=partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
+            keep_in_memory=not args.streaming,
+        )
     elif args.task == "clf":
         dataset, dist = get_bodmas_dataset(
             subset=SUBSET,
