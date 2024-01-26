@@ -35,14 +35,14 @@ from src.data.loaders_hf import get_sorel_dataset as get_sorel_dataset_hf
 from src.data.prepare_datasets import s3_dataset_generator
 
 
-def read_binary_file(f: Path, max_length: int = -1, dtype: np.dtype = np.uint8) -> np.ndarray:
+def read_binary_file(f: Path, max_length: Optional[int] = None, dtype: np.dtype = np.uint8) -> np.ndarray:
     with open(f, "rb") as fp:
         b = fp.read(max_length)
     x = np.frombuffer(b, dtype=dtype)
     return x
 
 
-async def read_binary_file_async(f: Path, max_length: int = -1, dtype: np.dtype = np.uint8) -> np.ndarray:
+async def read_binary_file_async(f: Path, max_length: Optional[int] = None, dtype: np.dtype = np.uint8) -> np.ndarray:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, read_binary_file, f, max_length, dtype)
 
@@ -67,7 +67,7 @@ class BinaryDataset(Dataset):
         self,
         files: list[Path],
         labels: Optional[list[int] | int] = None,
-        max_length: int = -1,
+        max_length: Optional[int] = None,
         keep_in_memory: bool = True,
         preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
         id2label: Optional[dict[int, str]] = None,
@@ -169,7 +169,7 @@ class StreamingBinaryDataset(BinaryDataset):
         self,
         hashes: list[str],
         labels: Optional[list[int] | int] = None,
-        max_length: int = -1,
+        max_length: Optional[int] = None,
         keep_in_memory: bool = True,  # pylint: disable=unused-argument
         preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
         id2label: Optional[dict[int, str]] = None,
@@ -212,7 +212,7 @@ class StaticBinaryDataset(BinaryDataset):
         files: list[str],
         x: list[np.ndarray],
         labels: Optional[list[int] | int] = None,
-        max_length: int = -1,
+        max_length: Optional[int] = None,
         keep_in_memory: bool = True,  # pylint: disable=unused-argument
         preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
         id2label: Optional[dict[int, str]] = None,
@@ -278,6 +278,7 @@ def get_sorel_dataset(
     subset: Optional[int] = None,
     vl_size: int | float = None,
     ts_size: int | float = None,
+    max_length: Optional[int] = None,
     **kwds,
 ) -> dict[Literal["tr", "vl", "ts"], BinaryDataset]:
     if vl_size is None:
@@ -292,9 +293,9 @@ def get_sorel_dataset(
     for s in ["tr", "vl", "ts"]:
         for d in dataset[s].iter(batch_size=1024):
             files.extend(d["name"])
-            x.extend([np.frombuffer(b, dtype=np.uint8) for b in d["bytes"][:kwds.pop("max_length", None)]])
+            x.extend([np.frombuffer(b[:max_length], dtype=np.uint8) for b in d["bytes"]])
 
-    dataset = StaticBinaryDataset(files, x=x, **kwds)
+    dataset = StaticBinaryDataset(files, x=x, max_length=max_length, **kwds)
 
     return tr_vl_ts_split(dataset, vl_size=vl_size, ts_size=ts_size)
 
