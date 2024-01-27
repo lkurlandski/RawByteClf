@@ -158,7 +158,6 @@ get_bodmas_dataset = get_bodmas_dataset_pt
 
 PAD_TO = 8
 
-SUBSET = 1000
 KEEP_IN_MEMORY = False
 MOVE_IN_MEMORY = False
 BODMAS_TOP_K = 10
@@ -754,14 +753,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(
-            subset=SUBSET,
+            subset=args.subset,
             max_length=args.max_length,
             preprocess_fn=partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
             keep_in_memory=not args.streaming,
+            vl_size=15360,
+            ts_size=15360,
         )
     elif args.task == "clf":
         dataset, dist = get_bodmas_dataset(
-            subset=SUBSET,
+            subset=args.subset,
             min_freq=BODMAS_MIN_FREQ,
             top_k=BODMAS_TOP_K,
             max_length=args.max_length,

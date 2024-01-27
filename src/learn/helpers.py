@@ -46,6 +46,7 @@ class Args:
         default=None,
         metadata={"help": "Configuration dict to use for the architecture. Mutally exclusive with arch_config_file."},
     )
+    subset: Optional[int] = field(default=None)
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
