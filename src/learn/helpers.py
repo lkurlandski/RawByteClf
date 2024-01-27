@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Optional
+from typing import Any, Hashable, Optional
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
@@ -174,15 +174,13 @@ class OutputHelper:
     def arch_config_hash(self) -> str:
         if not self.arch_config:
             return ""
-        s = hex(hash(tuple(sorted(self.arch_config.items()))))
-        return s[s.index("x") + 1:]
+        return self.get_hash(self.arch_config)
 
     @property
     def trainer_config_hash(self) -> str:
         if not self.trainer_config:
             return ""
-        s = hex(hash(tuple(sorted(self.trainer_config.items()))))
-        return s[s.index("x") + 1:]
+        return self.get_hash(self.trainer_config)
 
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
@@ -192,3 +190,15 @@ class OutputHelper:
         if self.trainer_config:
             with open(self.trainer_config_file) as fp:
                 json.dump(self.trainer_config, fp)
+
+    @staticmethod
+    def get_hash(d: dict[str, Any]) -> str:
+        """
+        Tries to convert not hashable values to hashable values then returns a
+        hash of the hashable items in the dict.
+        """
+        x = [(k, v) if isinstance(v, Hashable) else (k, tuple(v)) for k, v in d.items()]
+        x = [(k, v) for k, v in x if (isinstance(k, Hashable) and isinstance(v, Hashable))]
+        x = tuple(sorted(x))
+        s = hex(hash(x))
+        return s[s.index("x") + 1:]
