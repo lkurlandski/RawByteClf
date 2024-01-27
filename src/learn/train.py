@@ -226,10 +226,7 @@ APPLY_BERT_PROCESSING = {
     "rwkv": False,
     "mamba": False,
 }
-
-
-def APPLY_BERT_PROCESSING(model_name: str) -> bool:
-    return True
+APPLY_BERT_PROCESSING = {k: True for k in APPLY_BERT_PROCESSING}
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -515,8 +512,10 @@ def get_config(
     vocab_size = pad_to_multiple_of_fn(len(tokenizer), PAD_TO)
     max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
-    arch_config = dict() if arch_config is None else arch_config
+    arch_config = {} if arch_config is None else arch_config
     kwds = tuned_configs(model_name_or_path.lower(), max_length) | arch_config | kwds
+
+    # pylint: disable=use-dict-literal
 
     if model_name_or_path.lower() == "longformer":
         kwds = kwds | dict(
@@ -616,6 +615,8 @@ def get_config(
             max_length=max_posititional_embeddings,
         )
         return MyMalConvConfig(**kwds)
+
+    # pylint: enable=use-dict-literal
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
 
@@ -739,7 +740,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     tokenizer = get_tokenizer(
-        model_requires_cls_token=APPLY_BERT_PROCESSING(MODEL_NAME),
+        model_requires_cls_token=APPLY_BERT_PROCESSING[MODEL_NAME],
         model_max_length=args.max_length,
     )
     print(f"{tokenizer=}")

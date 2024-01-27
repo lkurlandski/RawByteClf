@@ -108,6 +108,8 @@ def find_two_largest_factors(number: int) -> tuple[int, int]:
             if len(factors) >= 2:
                 return factors
 
+    raise RuntimeError()
+
 
 def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
     q, r = divmod(val, pad_to_multiple_of)
