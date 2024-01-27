@@ -205,7 +205,7 @@ def main() -> None:
         if "sorel" in d and args.shard != -1:
             files = list(islice((s.sha256 for s in stream_sorel_meta() if s.is_malware), args.num))
             files = sorted(files)
-            if args.shard:
+            if args.shard > -1:
                 shard_size = (len(files) // args.n_shards) + 1
                 files = files[args.shard * shard_size : (args.shard + 1) * shard_size]
             generator = callable_generator(
