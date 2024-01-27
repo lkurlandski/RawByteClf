@@ -287,12 +287,25 @@ def get_sorel_dataset(
         ts_size = 10000 if subset is None else 0.1
 
     print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...", flush=True)
-    dataset = get_sorel_dataset_hf(subset, 1, 1)
 
+    files = list(sorted(DATASET_TO_FILES["binaries"]["sorel_pe"]()))
+    if files:
+        print(f"Found SOREL binaries on disk. Loading from binaries...", flush=True)
+        dataset = BinaryDataset(files, **kwds)
+        dataset = tr_vl_ts_split(dataset, vl_size, ts_size)
+        return dataset
+
+    BATCH_SIZE = 1024
+    print(
+        f"Could not locate SOREL binaries on disk. Loading from HF dataset with {BATCH_SIZE=}. "
+        f"Note that this can will take a long time...",
+        flush=True,
+    )
+    dataset = get_sorel_dataset_hf(subset, 1, 1)
     files = []
     x = []
     for s in ["tr", "vl", "ts"]:
-        for d in dataset[s].iter(batch_size=1024):
+        for d in tqdm(dataset[s].iter(batch_size=BATCH_SIZE), total=len(dataset[s]) / BATCH_SIZE):
             files.extend(d["name"])
             x.extend([np.frombuffer(b[:max_length], dtype=np.uint8) for b in d["bytes"]])
 
