@@ -286,6 +286,7 @@ def get_sorel_dataset(
     if ts_size is None:
         ts_size = 10000 if subset is None else 0.1
 
+    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...", flush=True)
     dataset = get_sorel_dataset_hf(subset, 1, 1)
 
     files = []
