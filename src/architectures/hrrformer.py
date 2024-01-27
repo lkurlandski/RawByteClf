@@ -16,7 +16,6 @@ import torch.nn.functional as F
 from transformers import PreTrainedModel, PretrainedConfig
 from transformers.models.bert.modeling_bert import (
     BertEmbeddings,
-    BertConfig,
     BertSelfOutput,
     BertIntermediate,
     BertOutput,
@@ -24,7 +23,6 @@ from transformers.models.bert.modeling_bert import (
     BertOnlyMLMHead,
     BertOnlyNSPHead,
     BertPreTrainingHeads,
-    BertPreTrainedModel,
     BertForPreTrainingOutput,
 )
 from transformers.modeling_outputs import (
@@ -50,9 +48,8 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from transformers.models.bert.configuration_bert import BertConfig
 
-from src.utils import log_tensor, stable_softmax
+from src.utils import log_tensor
 
 
 __all__ = [
@@ -62,65 +59,12 @@ __all__ = [
     "HRRLayer",
     "HRREncoder",
     "HRRModel",
-    "HRRForPreTraining",
-    "HRRForCLM",
-    "HRRForMLM",
+    "HRRForMaskedLM",
     "HRRForSequenceClassification",
-    "HRRForMultipleChoice",
-    "HRRForTokenClassification",
-    "HRRForQuestionAnswering",
 ]
 
 
 logger = logging.get_logger(__name__)
-
-_CHECKPOINT_FOR_DOC = "bert-base-uncased"
-_CONFIG_FOR_DOC = "BertConfig"
-
-# TokenClassification docstring
-_CHECKPOINT_FOR_TOKEN_CLASSIFICATION = "dbmdz/bert-large-cased-finetuned-conll03-english"
-_TOKEN_CLASS_EXPECTED_OUTPUT = (
-    "['O', 'I-ORG', 'I-ORG', 'I-ORG', 'O', 'O', 'O', 'O', 'O', 'I-LOC', 'O', 'I-LOC', 'I-LOC'] "
-)
-_TOKEN_CLASS_EXPECTED_LOSS = 0.01
-
-# QuestionAnswering docstring
-_CHECKPOINT_FOR_QA = "deepset/bert-base-cased-squad2"
-_QA_EXPECTED_OUTPUT = "'a nice puppet'"
-_QA_EXPECTED_LOSS = 7.41
-_QA_TARGET_START_INDEX = 14
-_QA_TARGET_END_INDEX = 15
-
-# SequenceClassification docstring
-_CHECKPOINT_FOR_SEQUENCE_CLASSIFICATION = "textattack/bert-base-uncased-yelp-polarity"
-_SEQ_CLASS_EXPECTED_OUTPUT = "'LABEL_1'"
-_SEQ_CLASS_EXPECTED_LOSS = 0.01
-
-
-BERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "bert-base-uncased",
-    "bert-large-uncased",
-    "bert-base-cased",
-    "bert-large-cased",
-    "bert-base-multilingual-uncased",
-    "bert-base-multilingual-cased",
-    "bert-base-chinese",
-    "bert-base-german-cased",
-    "bert-large-uncased-whole-word-masking",
-    "bert-large-cased-whole-word-masking",
-    "bert-large-uncased-whole-word-masking-finetuned-squad",
-    "bert-large-cased-whole-word-masking-finetuned-squad",
-    "bert-base-cased-finetuned-mrpc",
-    "bert-base-german-dbmdz-cased",
-    "bert-base-german-dbmdz-uncased",
-    "cl-tohoku/bert-base-japanese",
-    "cl-tohoku/bert-base-japanese-whole-word-masking",
-    "cl-tohoku/bert-base-japanese-char",
-    "cl-tohoku/bert-base-japanese-char-whole-word-masking",
-    "TurkuNLP/bert-base-finnish-cased-v1",
-    "TurkuNLP/bert-base-finnish-uncased-v1",
-    "wietsedv/bert-base-dutch-cased",
-]
 
 
 class HRRConfig(PretrainedConfig):
@@ -145,8 +89,8 @@ class HRRConfig(PretrainedConfig):
         position_embedding_type: str = "absolute",
         use_cache: bool = True,
         classifier_dropout: Optional[float] = None,
-        superposition_scale_factor: float | Literal["max", "mean", "log", "norm"] = 1.0,
-        superpositions_to_bf: bool = False,
+        superposition_scale_factor: Optional[float | Literal["max", "mean", "log", "norm"]] = None,
+        attention_score_scale_factor: Optional[float] = None,
         tensor_log_path: Optional[str] = None,
         tensor_logging: bool = False,
         **kwargs,
@@ -157,7 +101,9 @@ class HRRConfig(PretrainedConfig):
             summation. This can be a scalar floating point value, `max`, which will scale by the
             square root of the maximum possible value for the sequence length for this model,
             `mean`, which will scale by the length of the input sequence, or `log`, which perform
-            the summation in a more stable log space.
+            the summation in a more stable log space. If None, defaults to 1.0.
+          attention_score_scale_factor: A scaling factor to apply to the attention scores before.
+            If None, defaults to 1 / sqrt(attention_head_size), as done in the original Transformer.
         """
         super().__init__(pad_token_id=pad_token_id, **kwargs)
 
@@ -176,7 +122,6 @@ class HRRConfig(PretrainedConfig):
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
-        self.superpositions_to_bf = superpositions_to_bf
         self.tensor_log_path = None
         if tensor_logging:
             self.tensor_log_path = tensor_log_path.as_posix() if isinstance(tensor_log_path, Path) else tensor_log_path
@@ -187,11 +132,17 @@ class HRRConfig(PretrainedConfig):
             self.superposition_scale_factor = 1.0 / math.sqrt(max_position_embeddings)
         elif superposition_scale_factor in ("mean", "log", "norm"):
             self.superposition_scale_factor = superposition_scale_factor
+        elif superposition_scale_factor is None:
+            self.superposition_scale_factor = 1.0
         else:
             raise ValueError(f"Invalid value {superposition_scale_factor=}")
 
-        if superpositions_to_bf:
-            raise NotImplementedError("This needs some more careful work to ensure correctedness.")
+        if isinstance(attention_score_scale_factor, (float, int)):
+            self.attention_score_scale_factor = float(attention_score_scale_factor)
+        elif attention_score_scale_factor is None:
+            self.attention_score_scale_factor = 1 / math.sqrt(int(self.hidden_size / self.num_attention_heads))
+        else:
+            raise ValueError(f"Invalid value {attention_score_scale_factor=}")
 
 
 class HRRSelfAttention(nn.Module):
@@ -227,8 +178,9 @@ class HRRSelfAttention(nn.Module):
             )
 
         self.is_decoder = config.is_decoder
+
         self.superposition_scale_factor = config.superposition_scale_factor
-        self.superpositions_to_bf = config.superpositions_to_bf
+        self.attention_score_scale_factor = config.attention_score_scale_factor
         self.tensor_log_path = config.tensor_log_path
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
@@ -298,7 +250,7 @@ class HRRSelfAttention(nn.Module):
                 key_layer,
                 value_layer,
                 dim=-1,
-            ).to(torch.float16)  # (B, h, T, H')
+            )  # (B, h, T, H')
         except RuntimeError:  # TODO: hyperparameter tuning can sometimes induce this error...why?
             print(f"{key_layer.shape=}")
             print(f"{value_layer.shape=}")
@@ -311,10 +263,6 @@ class HRRSelfAttention(nn.Module):
         # of the sum does not seem to impact learning and can also be used to avoid overflow.
         # so we use the mean. torch.mean() also causes overflow, so we compute it manually instead.
         superposition: torch.Tensor  # (B, h, 1, H')
-        if self.superpositions_to_bf:
-            if key_layer.dtype == torch.float16:
-                superpositions = superpositions.to(torch.bfloat16)
-
         if self.superposition_scale_factor == "mean":
             superposition = torch.sum(torch.div(superpositions, superpositions.size(-2)), dim=-2, keepdim=True)
         elif self.superposition_scale_factor == "log":
@@ -357,7 +305,7 @@ class HRRSelfAttention(nn.Module):
             #     relative_position_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
             #     attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
 
-        # attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        attention_scores = attention_scores * self.attention_score_scale_factor
         # Apply the attention mask.
         # TODO: for causal language modeling, the attention mask has shape (B, 1, T, T).
         if attention_mask is not None:
@@ -389,98 +337,11 @@ class HRRSelfAttention(nn.Module):
         return outputs
 
 
-################################################################################
-###################################### HRRFormer ###############################
-################################################################################
-
-
 def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
-    """Load tf checkpoints in a pytorch model."""
-    try:
-        import re
-
-        import numpy as np
-        import tensorflow as tf
-    except ImportError:
-        logger.error(
-            "Loading a TensorFlow model in PyTorch, requires TensorFlow to be installed. Please see "
-            "https://www.tensorflow.org/install/ for installation instructions."
-        )
-        raise
-    tf_path = os.path.abspath(tf_checkpoint_path)
-    logger.info(f"Converting TensorFlow checkpoint from {tf_path}")
-    # Load weights from TF model
-    init_vars = tf.train.list_variables(tf_path)
-    names = []
-    arrays = []
-    for name, shape in init_vars:
-        logger.info(f"Loading TF weight {name} with shape {shape}")
-        array = tf.train.load_variable(tf_path, name)
-        names.append(name)
-        arrays.append(array)
-
-    for name, array in zip(names, arrays):
-        name = name.split("/")
-        # adam_v and adam_m are variables used in AdamWeightDecayOptimizer to calculated m and v
-        # which are not required for using pretrained model
-        if any(
-            n
-            in [
-                "adam_v",
-                "adam_m",
-                "AdamWeightDecayOptimizer",
-                "AdamWeightDecayOptimizer_1",
-                "global_step",
-            ]
-            for n in name
-        ):
-            logger.info(f"Skipping {'/'.join(name)}")
-            continue
-        pointer = model
-        for m_name in name:
-            if re.fullmatch(r"[A-Za-z]+_\d+", m_name):
-                scope_names = re.split(r"_(\d+)", m_name)
-            else:
-                scope_names = [m_name]
-            if scope_names[0] == "kernel" or scope_names[0] == "gamma":
-                pointer = getattr(pointer, "weight")
-            elif scope_names[0] == "output_bias" or scope_names[0] == "beta":
-                pointer = getattr(pointer, "bias")
-            elif scope_names[0] == "output_weights":
-                pointer = getattr(pointer, "weight")
-            elif scope_names[0] == "squad":
-                pointer = getattr(pointer, "classifier")
-            else:
-                try:
-                    pointer = getattr(pointer, scope_names[0])
-                except AttributeError:
-                    logger.info(f"Skipping {'/'.join(name)}")
-                    continue
-            if len(scope_names) >= 2:
-                num = int(scope_names[1])
-                pointer = pointer[num]
-        if m_name[-11:] == "_embeddings":
-            pointer = getattr(pointer, "weight")
-        elif m_name == "kernel":
-            array = np.transpose(array)
-        try:
-            if pointer.shape != array.shape:
-                raise ValueError(
-                    f"Pointer shape {pointer.shape} and array shape {array.shape} mismatched"
-                )
-        except ValueError as e:
-            e.args += (pointer.shape, array.shape)
-            raise
-        logger.info(f"Initialize PyTorch weight {name}")
-        pointer.data = torch.from_numpy(array)
-    return model
+    raise NotImplementedError()
 
 
 class HRRPreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
-    models.
-    """
 
     config_class = HRRConfig
     load_tf_weights = load_tf_weights_in_bert
@@ -741,76 +602,6 @@ class HRREncoder(nn.Module):
         )
 
 
-BERT_START_DOCSTRING = r"""
-
-    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-
-    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
-    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
-    and behavior.
-
-    Parameters:
-        config ([`BertConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-BERT_INPUTS_DOCSTRING = r"""
-    Args:
-        input_ids (`torch.LongTensor` of shape `({0})`):
-            Indices of input sequence tokens in the vocabulary.
-
-            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
-            [`PreTrainedTokenizer.__call__`] for details.
-
-            [What are input IDs?](../glossary#input-ids)
-        attention_mask (`torch.FloatTensor` of shape `({0})`, *optional*):
-            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-
-            [What are attention masks?](../glossary#attention-mask)
-        token_type_ids (`torch.LongTensor` of shape `({0})`, *optional*):
-            Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
-            1]`:
-
-            - 0 corresponds to a *sentence A* token,
-            - 1 corresponds to a *sentence B* token.
-
-            [What are token type IDs?](../glossary#token-type-ids)
-        position_ids (`torch.LongTensor` of shape `({0})`, *optional*):
-            Indices of positions of each input sequence tokens in the position embeddings. Selected in the range `[0,
-            config.max_position_embeddings - 1]`.
-
-            [What are position IDs?](../glossary#position-ids)
-        head_mask (`torch.FloatTensor` of shape `(num_heads,)` or `(num_layers, num_heads)`, *optional*):
-            Mask to nullify selected heads of the self-attention modules. Mask values selected in `[0, 1]`:
-
-            - 1 indicates the head is **not masked**,
-            - 0 indicates the head is **masked**.
-
-        inputs_embeds (`torch.FloatTensor` of shape `({0}, hidden_size)`, *optional*):
-            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
-            is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
-            model's internal embedding lookup matrix.
-        output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
-
-
-@add_start_docstrings(
-    "The bare Bert Model transformer outputting raw hidden-states without any specific head on top.",
-    BERT_START_DOCSTRING,
-)
 class HRRModel(HRRPreTrainedModel):
     """
 
@@ -850,14 +641,6 @@ class HRRModel(HRRPreTrainedModel):
         for layer, heads in heads_to_prune.items():
             self.encoder.layer[layer].attention.prune_heads(heads)
 
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPoolingAndCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -972,7 +755,6 @@ class HRRModel(HRRPreTrainedModel):
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
-        # FIXME: debug
         # TODO: sometimes token_type_ids has dtype int32, which raises exceptions.
         # if hasattr(input_ids, "dtype"):
         #     print(f"{input_ids.dtype=}")
@@ -1017,287 +799,6 @@ class HRRModel(HRRPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
-    Bert Model with two heads on top as done during the pretraining: a `masked language modeling` head and a `next
-    sentence prediction (classification)` head.
-    """,
-    BERT_START_DOCSTRING,
-)
-class HRRForPreTraining(HRRPreTrainedModel):
-    _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
-
-    def __init__(self, config):
-        super().__init__(config)
-
-        self.bert = HRRModel(config)
-        self.cls = BertPreTrainingHeads(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_output_embeddings(self):
-        return self.cls.predictions.decoder
-
-    def set_output_embeddings(self, new_embeddings):
-        self.cls.predictions.decoder = new_embeddings
-
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @replace_return_docstrings(output_type=BertForPreTrainingOutput, config_class=_CONFIG_FOR_DOC)
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        next_sentence_label: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor], BertForPreTrainingOutput]:
-        r"""
-            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Labels for computing the masked language modeling loss. Indices should be in `[-100, 0, ...,
-                config.vocab_size]` (see `input_ids` docstring) Tokens with indices set to `-100` are ignored (masked),
-                the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`
-            next_sentence_label (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-                Labels for computing the next sequence prediction (classification) loss. Input should be a sequence
-                pair (see `input_ids` docstring) Indices should be in `[0, 1]`:
-
-                - 0 indicates sequence B is a continuation of sequence A,
-                - 1 indicates sequence B is a random sequence.
-            kwargs (`Dict[str, any]`, optional, defaults to *{}*):
-                Used to hide legacy arguments that have been deprecated.
-
-        Returns:
-
-        Example:
-
-        ```python
-        >>> from transformers import AutoTokenizer, BertForPreTraining
-        >>> import torch
-
-        >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        >>> model = BertForPreTraining.from_pretrained("bert-base-uncased")
-
-        >>> inputs = tokenizer("Hello, my dog is cute", return_tensors="pt")
-        >>> outputs = model(**inputs)
-
-        >>> prediction_logits = outputs.prediction_logits
-        >>> seq_relationship_logits = outputs.seq_relationship_logits
-        ```
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-
-        sequence_output, pooled_output = outputs[:2]
-        prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
-
-        total_loss = None
-        if labels is not None and next_sentence_label is not None:
-            loss_fct = CrossEntropyLoss()
-            masked_lm_loss = loss_fct(
-                prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
-            )
-            next_sentence_loss = loss_fct(
-                seq_relationship_score.view(-1, 2), next_sentence_label.view(-1)
-            )
-            total_loss = masked_lm_loss + next_sentence_loss
-
-        if not return_dict:
-            output = (prediction_scores, seq_relationship_score) + outputs[2:]
-            return ((total_loss,) + output) if total_loss is not None else output
-
-        return BertForPreTrainingOutput(
-            loss=total_loss,
-            prediction_logits=prediction_scores,
-            seq_relationship_logits=seq_relationship_score,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """Bert Model with a `language modeling` head on top for CLM fine-tuning.""",
-    BERT_START_DOCSTRING,
-)
-class HRRLMHeadModel(HRRPreTrainedModel):
-    _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
-
-    def __init__(self, config):
-        super().__init__(config)
-
-        if not config.is_decoder:
-            logger.warning(
-                "If you want to use `BertLMHeadModel` as a standalone, add `is_decoder=True.`"
-            )
-
-        self.bert = HRRModel(config, add_pooling_layer=False)
-        self.cls = BertOnlyMLMHead(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_output_embeddings(self):
-        return self.cls.predictions.decoder
-
-    def set_output_embeddings(self, new_embeddings):
-        self.cls.predictions.decoder = new_embeddings
-
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=CausalLMOutputWithCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[torch.Tensor]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor], CausalLMOutputWithCrossAttentions]:
-        r"""
-        encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
-            the model is configured as a decoder.
-        encoder_attention_mask (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
-            the cross-attention if the model is configured as a decoder. Mask values selected in `[0, 1]`:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for computing the left-to-right language modeling loss (next word prediction). Indices should be in
-            `[-100, 0, ..., config.vocab_size]` (see `input_ids` docstring) Tokens with indices set to `-100` are
-            ignored (masked), the loss is only computed for the tokens with labels n `[0, ..., config.vocab_size]`
-        past_key_values (`tuple(tuple(torch.FloatTensor))` of length `config.n_layers` with each tuple having 4 tensors of shape `(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
-            Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
-
-            If `past_key_values` are used, the user can optionally input only the last `decoder_input_ids` (those that
-            don't have their past key value states given to this model) of shape `(batch_size, 1)` instead of all
-            `decoder_input_ids` of shape `(batch_size, sequence_length)`.
-        use_cache (`bool`, *optional*):
-            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
-            `past_key_values`).
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        if labels is not None:
-            use_cache = False
-
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-
-        sequence_output = outputs[0]
-        prediction_scores = self.cls(sequence_output)
-
-        lm_loss = None
-        if labels is not None:
-            # we are doing next-token prediction; shift prediction scores and input ids by one
-            shifted_prediction_scores = prediction_scores[:, :-1, :].contiguous()
-            labels = labels[:, 1:].contiguous()
-            loss_fct = CrossEntropyLoss()
-            lm_loss = loss_fct(
-                shifted_prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
-            )
-
-        if not return_dict:
-            output = (prediction_scores,) + outputs[2:]
-            return ((lm_loss,) + output) if lm_loss is not None else output
-
-        return CausalLMOutputWithCrossAttentions(
-            loss=lm_loss,
-            logits=prediction_scores,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-            cross_attentions=outputs.cross_attentions,
-        )
-
-    def prepare_inputs_for_generation(
-        self, input_ids, past_key_values=None, attention_mask=None, use_cache=True, **model_kwargs
-    ):
-        input_shape = input_ids.shape
-        # if model is used as a decoder in encoder-decoder model, the decoder attention mask is created on the fly
-        if attention_mask is None:
-            attention_mask = input_ids.new_ones(input_shape)
-
-        # cut decoder_input_ids if past_key_values is used
-        if past_key_values is not None:
-            past_length = past_key_values[0][0].shape[2]
-
-            # Some generation methods already pass only the last input ID
-            if input_ids.shape[1] > past_length:
-                remove_prefix_length = past_length
-            else:
-                # Default to old behavior: keep only final ID
-                remove_prefix_length = input_ids.shape[1] - 1
-
-            input_ids = input_ids[:, remove_prefix_length:]
-
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "past_key_values": past_key_values,
-            "use_cache": use_cache,
-        }
-
-    def _reorder_cache(self, past_key_values, beam_idx):
-        reordered_past = ()
-        for layer_past in past_key_values:
-            reordered_past += (
-                tuple(
-                    past_state.index_select(0, beam_idx.to(past_state.device))
-                    for past_state in layer_past
-                ),
-            )
-        return reordered_past
-
-
-@add_start_docstrings(
-    """Bert Model with a `language modeling` head on top.""", BERT_START_DOCSTRING
-)
 class HRRForMaskedLM(HRRPreTrainedModel):
     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
@@ -1322,16 +823,6 @@ class HRRForMaskedLM(HRRPreTrainedModel):
     def set_output_embeddings(self, new_embeddings):
         self.cls.predictions.decoder = new_embeddings
 
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=MaskedLMOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output="'paris'",
-        expected_loss=0.88,
-    )
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -1413,119 +904,6 @@ class HRRForMaskedLM(HRRPreTrainedModel):
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
-@add_start_docstrings(
-    """Bert Model with a `next sentence prediction (classification)` head on top.""",
-    BERT_START_DOCSTRING,
-)
-class HRRForNextSentencePrediction(HRRPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-
-        self.bert = HRRModel(config)
-        self.cls = BertOnlyNSPHead(config)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @replace_return_docstrings(
-        output_type=NextSentencePredictorOutput, config_class=_CONFIG_FOR_DOC
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        **kwargs,
-    ) -> Union[Tuple[torch.Tensor], NextSentencePredictorOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the next sequence prediction (classification) loss. Input should be a sequence pair
-            (see `input_ids` docstring). Indices should be in `[0, 1]`:
-
-            - 0 indicates sequence B is a continuation of sequence A,
-            - 1 indicates sequence B is a random sequence.
-
-        Returns:
-
-        Example:
-
-        ```python
-        >>> from transformers import AutoTokenizer, BertForNextSentencePrediction
-        >>> import torch
-
-        >>> tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-        >>> model = BertForNextSentencePrediction.from_pretrained("bert-base-uncased")
-
-        >>> prompt = "In Italy, pizza served in formal settings, such as at a restaurant, is presented unsliced."
-        >>> next_sentence = "The sky is blue due to the shorter wavelength of blue light."
-        >>> encoding = tokenizer(prompt, next_sentence, return_tensors="pt")
-
-        >>> outputs = model(**encoding, labels=torch.LongTensor([1]))
-        >>> logits = outputs.logits
-        >>> assert logits[0, 0] < logits[0, 1]  # next sentence was random
-        ```
-        """
-
-        if "next_sentence_label" in kwargs:
-            warnings.warn(
-                "The `next_sentence_label` argument is deprecated and will be removed in a future version, use"
-                " `labels` instead.",
-                FutureWarning,
-            )
-            labels = kwargs.pop("next_sentence_label")
-
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-
-        pooled_output = outputs[1]
-
-        seq_relationship_scores = self.cls(pooled_output)
-
-        next_sentence_loss = None
-        if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            next_sentence_loss = loss_fct(seq_relationship_scores.view(-1, 2), labels.view(-1))
-
-        if not return_dict:
-            output = (seq_relationship_scores,) + outputs[2:]
-            return ((next_sentence_loss,) + output) if next_sentence_loss is not None else output
-
-        return NextSentencePredictorOutput(
-            loss=next_sentence_loss,
-            logits=seq_relationship_scores,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-
-@add_start_docstrings(
-    """
-    Bert Model transformer with a sequence classification/regression head on top (a linear layer on top of the pooled
-    output) e.g. for GLUE tasks.
-    """,
-    BERT_START_DOCSTRING,
-)
 class HRRForSequenceClassification(HRRPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
@@ -1544,16 +922,6 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_SEQUENCE_CLASSIFICATION,
-        output_type=SequenceClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output=_SEQ_CLASS_EXPECTED_OUTPUT,
-        expected_loss=_SEQ_CLASS_EXPECTED_LOSS,
-    )
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -1628,297 +996,270 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
-    Bert Model with a multiple choice classification head on top (a linear layer on top of the pooled output and a
-    softmax) e.g. for RocStories/SWAG tasks.
-    """,
-    BERT_START_DOCSTRING,
-)
-class HRRForMultipleChoice(HRRPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
+# class HRRLMHeadModel(HRRPreTrainedModel):
+#     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
 
-        self.bert = HRRModel(config)
-        classifier_dropout = (
-            config.classifier_dropout
-            if config.classifier_dropout is not None
-            else config.hidden_dropout_prob
-        )
-        self.dropout = nn.Dropout(classifier_dropout)
-        self.classifier = nn.Linear(config.hidden_size, 1)
+#     def __init__(self, config):
+#         super().__init__(config)
 
-        # Initialize weights and apply final processing
-        self.post_init()
+#         if not config.is_decoder:
+#             logger.warning(
+#                 "If you want to use `BertLMHeadModel` as a standalone, add `is_decoder=True.`"
+#             )
 
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, num_choices, sequence_length")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=MultipleChoiceModelOutput,
-        config_class=_CONFIG_FOR_DOC,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor], MultipleChoiceModelOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the multiple choice classification loss. Indices should be in `[0, ...,
-            num_choices-1]` where `num_choices` is the size of the second dimension of the input tensors. (See
-            `input_ids` above)
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        num_choices = input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1]
+#         self.bert = HRRModel(config, add_pooling_layer=False)
+#         self.cls = BertOnlyMLMHead(config)
 
-        input_ids = input_ids.view(-1, input_ids.size(-1)) if input_ids is not None else None
-        attention_mask = (
-            attention_mask.view(-1, attention_mask.size(-1)) if attention_mask is not None else None
-        )
-        token_type_ids = (
-            token_type_ids.view(-1, token_type_ids.size(-1)) if token_type_ids is not None else None
-        )
-        position_ids = (
-            position_ids.view(-1, position_ids.size(-1)) if position_ids is not None else None
-        )
-        inputs_embeds = (
-            inputs_embeds.view(-1, inputs_embeds.size(-2), inputs_embeds.size(-1))
-            if inputs_embeds is not None
-            else None
-        )
+#         # Initialize weights and apply final processing
+#         self.post_init()
 
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
+#     def get_output_embeddings(self):
+#         return self.cls.predictions.decoder
 
-        pooled_output = outputs[1]
+#     def set_output_embeddings(self, new_embeddings):
+#         self.cls.predictions.decoder = new_embeddings
 
-        pooled_output = self.dropout(pooled_output)
-        logits = self.classifier(pooled_output)
-        reshaped_logits = logits.view(-1, num_choices)
+#     def forward(
+#         self,
+#         input_ids: Optional[torch.Tensor] = None,
+#         attention_mask: Optional[torch.Tensor] = None,
+#         token_type_ids: Optional[torch.Tensor] = None,
+#         position_ids: Optional[torch.Tensor] = None,
+#         head_mask: Optional[torch.Tensor] = None,
+#         inputs_embeds: Optional[torch.Tensor] = None,
+#         encoder_hidden_states: Optional[torch.Tensor] = None,
+#         encoder_attention_mask: Optional[torch.Tensor] = None,
+#         labels: Optional[torch.Tensor] = None,
+#         past_key_values: Optional[List[torch.Tensor]] = None,
+#         use_cache: Optional[bool] = None,
+#         output_attentions: Optional[bool] = None,
+#         output_hidden_states: Optional[bool] = None,
+#         return_dict: Optional[bool] = None,
+#     ) -> Union[Tuple[torch.Tensor], CausalLMOutputWithCrossAttentions]:
 
-        loss = None
-        if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(reshaped_logits, labels)
+#         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+#         if labels is not None:
+#             use_cache = False
 
-        if not return_dict:
-            output = (reshaped_logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
+#         outputs = self.bert(
+#             input_ids,
+#             attention_mask=attention_mask,
+#             token_type_ids=token_type_ids,
+#             position_ids=position_ids,
+#             head_mask=head_mask,
+#             inputs_embeds=inputs_embeds,
+#             encoder_hidden_states=encoder_hidden_states,
+#             encoder_attention_mask=encoder_attention_mask,
+#             past_key_values=past_key_values,
+#             use_cache=use_cache,
+#             output_attentions=output_attentions,
+#             output_hidden_states=output_hidden_states,
+#             return_dict=return_dict,
+#         )
 
-        return MultipleChoiceModelOutput(
-            loss=loss,
-            logits=reshaped_logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+#         sequence_output = outputs[0]
+#         prediction_scores = self.cls(sequence_output)
 
+#         lm_loss = None
+#         if labels is not None:
+#             # we are doing next-token prediction; shift prediction scores and input ids by one
+#             shifted_prediction_scores = prediction_scores[:, :-1, :].contiguous()
+#             labels = labels[:, 1:].contiguous()
+#             loss_fct = CrossEntropyLoss()
+#             lm_loss = loss_fct(
+#                 shifted_prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
+#             )
 
-@add_start_docstrings(
-    """
-    Bert Model with a token classification head on top (a linear layer on top of the hidden-states output) e.g. for
-    Named-Entity-Recognition (NER) tasks.
-    """,
-    BERT_START_DOCSTRING,
-)
-class HRRForTokenClassification(HRRPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.num_labels = config.num_labels
+#         if not return_dict:
+#             output = (prediction_scores,) + outputs[2:]
+#             return ((lm_loss,) + output) if lm_loss is not None else output
 
-        self.bert = HRRModel(config, add_pooling_layer=False)
-        classifier_dropout = (
-            config.classifier_dropout
-            if config.classifier_dropout is not None
-            else config.hidden_dropout_prob
-        )
-        self.dropout = nn.Dropout(classifier_dropout)
-        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+#         return CausalLMOutputWithCrossAttentions(
+#             loss=lm_loss,
+#             logits=prediction_scores,
+#             past_key_values=outputs.past_key_values,
+#             hidden_states=outputs.hidden_states,
+#             attentions=outputs.attentions,
+#             cross_attentions=outputs.cross_attentions,
+#         )
 
-        # Initialize weights and apply final processing
-        self.post_init()
+#     def prepare_inputs_for_generation(
+#         self, input_ids, past_key_values=None, attention_mask=None, use_cache=True, **model_kwargs
+#     ):
+#         input_shape = input_ids.shape
+#         # if model is used as a decoder in encoder-decoder model, the decoder attention mask is created on the fly
+#         if attention_mask is None:
+#             attention_mask = input_ids.new_ones(input_shape)
 
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_TOKEN_CLASSIFICATION,
-        output_type=TokenClassifierOutput,
-        config_class=_CONFIG_FOR_DOC,
-        expected_output=_TOKEN_CLASS_EXPECTED_OUTPUT,
-        expected_loss=_TOKEN_CLASS_EXPECTED_LOSS,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor], TokenClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+#         # cut decoder_input_ids if past_key_values is used
+#         if past_key_values is not None:
+#             past_length = past_key_values[0][0].shape[2]
 
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
+#             # Some generation methods already pass only the last input ID
+#             if input_ids.shape[1] > past_length:
+#                 remove_prefix_length = past_length
+#             else:
+#                 # Default to old behavior: keep only final ID
+#                 remove_prefix_length = input_ids.shape[1] - 1
 
-        sequence_output = outputs[0]
+#             input_ids = input_ids[:, remove_prefix_length:]
 
-        sequence_output = self.dropout(sequence_output)
-        logits = self.classifier(sequence_output)
+#         return {
+#             "input_ids": input_ids,
+#             "attention_mask": attention_mask,
+#             "past_key_values": past_key_values,
+#             "use_cache": use_cache,
+#         }
 
-        loss = None
-        if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-
-        if not return_dict:
-            output = (logits,) + outputs[2:]
-            return ((loss,) + output) if loss is not None else output
-
-        return TokenClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+#     def _reorder_cache(self, past_key_values, beam_idx):
+#         reordered_past = ()
+#         for layer_past in past_key_values:
+#             reordered_past += (
+#                 tuple(
+#                     past_state.index_select(0, beam_idx.to(past_state.device))
+#                     for past_state in layer_past
+#                 ),
+#             )
+#         return reordered_past
 
 
-@add_start_docstrings(
-    """
-    Bert Model with a span classification head on top for extractive question-answering tasks like SQuAD (a linear
-    layers on top of the hidden-states output to compute `span start logits` and `span end logits`).
-    """,
-    BERT_START_DOCSTRING,
-)
-class HRRForQuestionAnswering(HRRPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.num_labels = config.num_labels
+# class HRRForNextSentencePrediction(HRRPreTrainedModel):
+#     def __init__(self, config):
+#         super().__init__(config)
 
-        self.bert = HRRModel(config, add_pooling_layer=False)
-        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
+#         self.bert = HRRModel(config)
+#         self.cls = BertOnlyNSPHead(config)
 
-        # Initialize weights and apply final processing
-        self.post_init()
+#         # Initialize weights and apply final processing
+#         self.post_init()
 
-    @add_start_docstrings_to_model_forward(
-        BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
-    )
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_QA,
-        output_type=QuestionAnsweringModelOutput,
-        config_class=_CONFIG_FOR_DOC,
-        qa_target_start_index=_QA_TARGET_START_INDEX,
-        qa_target_end_index=_QA_TARGET_END_INDEX,
-        expected_output=_QA_EXPECTED_OUTPUT,
-        expected_loss=_QA_EXPECTED_LOSS,
-    )
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        start_positions: Optional[torch.Tensor] = None,
-        end_positions: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor], QuestionAnsweringModelOutput]:
-        r"""
-        start_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for position (index) of the start of the labelled span for computing the token classification loss.
-            Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
-            are not taken into account for computing the loss.
-        end_positions (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for position (index) of the end of the labelled span for computing the token classification loss.
-            Positions are clamped to the length of the sequence (`sequence_length`). Position outside of the sequence
-            are not taken into account for computing the loss.
-        """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+#     def forward(
+#         self,
+#         input_ids: Optional[torch.Tensor] = None,
+#         attention_mask: Optional[torch.Tensor] = None,
+#         token_type_ids: Optional[torch.Tensor] = None,
+#         position_ids: Optional[torch.Tensor] = None,
+#         head_mask: Optional[torch.Tensor] = None,
+#         inputs_embeds: Optional[torch.Tensor] = None,
+#         labels: Optional[torch.Tensor] = None,
+#         output_attentions: Optional[bool] = None,
+#         output_hidden_states: Optional[bool] = None,
+#         return_dict: Optional[bool] = None,
+#         **kwargs,
+#     ) -> Union[Tuple[torch.Tensor], NextSentencePredictorOutput]:
 
-        outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
+#         if "next_sentence_label" in kwargs:
+#             warnings.warn(
+#                 "The `next_sentence_label` argument is deprecated and will be removed in a future version, use"
+#                 " `labels` instead.",
+#                 FutureWarning,
+#             )
+#             labels = kwargs.pop("next_sentence_label")
 
-        sequence_output = outputs[0]
+#         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        logits = self.qa_outputs(sequence_output)
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1).contiguous()
-        end_logits = end_logits.squeeze(-1).contiguous()
+#         outputs = self.bert(
+#             input_ids,
+#             attention_mask=attention_mask,
+#             token_type_ids=token_type_ids,
+#             position_ids=position_ids,
+#             head_mask=head_mask,
+#             inputs_embeds=inputs_embeds,
+#             output_attentions=output_attentions,
+#             output_hidden_states=output_hidden_states,
+#             return_dict=return_dict,
+#         )
 
-        total_loss = None
-        if start_positions is not None and end_positions is not None:
-            # If we are on multi-GPU, split add a dimension
-            if len(start_positions.size()) > 1:
-                start_positions = start_positions.squeeze(-1)
-            if len(end_positions.size()) > 1:
-                end_positions = end_positions.squeeze(-1)
-            # sometimes the start/end positions are outside our model inputs, we ignore these terms
-            ignored_index = start_logits.size(1)
-            start_positions = start_positions.clamp(0, ignored_index)
-            end_positions = end_positions.clamp(0, ignored_index)
+#         pooled_output = outputs[1]
 
-            loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
-            start_loss = loss_fct(start_logits, start_positions)
-            end_loss = loss_fct(end_logits, end_positions)
-            total_loss = (start_loss + end_loss) / 2
+#         seq_relationship_scores = self.cls(pooled_output)
 
-        if not return_dict:
-            output = (start_logits, end_logits) + outputs[2:]
-            return ((total_loss,) + output) if total_loss is not None else output
+#         next_sentence_loss = None
+#         if labels is not None:
+#             loss_fct = CrossEntropyLoss()
+#             next_sentence_loss = loss_fct(seq_relationship_scores.view(-1, 2), labels.view(-1))
 
-        return QuestionAnsweringModelOutput(
-            loss=total_loss,
-            start_logits=start_logits,
-            end_logits=end_logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+#         if not return_dict:
+#             output = (seq_relationship_scores,) + outputs[2:]
+#             return ((next_sentence_loss,) + output) if next_sentence_loss is not None else output
+
+#         return NextSentencePredictorOutput(
+#             loss=next_sentence_loss,
+#             logits=seq_relationship_scores,
+#             hidden_states=outputs.hidden_states,
+#             attentions=outputs.attentions,
+#         )
+
+
+# class HRRForPreTraining(HRRPreTrainedModel):
+#     _tied_weights_keys = ["predictions.decoder.bias", "cls.predictions.decoder.weight"]
+
+#     def __init__(self, config):
+#         super().__init__(config)
+
+#         self.bert = HRRModel(config)
+#         self.cls = BertPreTrainingHeads(config)
+
+#         # Initialize weights and apply final processing
+#         self.post_init()
+
+#     def get_output_embeddings(self):
+#         return self.cls.predictions.decoder
+
+#     def set_output_embeddings(self, new_embeddings):
+#         self.cls.predictions.decoder = new_embeddings
+
+#     def forward(
+#         self,
+#         input_ids: Optional[torch.Tensor] = None,
+#         attention_mask: Optional[torch.Tensor] = None,
+#         token_type_ids: Optional[torch.Tensor] = None,
+#         position_ids: Optional[torch.Tensor] = None,
+#         head_mask: Optional[torch.Tensor] = None,
+#         inputs_embeds: Optional[torch.Tensor] = None,
+#         labels: Optional[torch.Tensor] = None,
+#         next_sentence_label: Optional[torch.Tensor] = None,
+#         output_attentions: Optional[bool] = None,
+#         output_hidden_states: Optional[bool] = None,
+#         return_dict: Optional[bool] = None,
+#     ) -> Union[Tuple[torch.Tensor], BertForPreTrainingOutput]:
+
+#         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+#         outputs = self.bert(
+#             input_ids,
+#             attention_mask=attention_mask,
+#             token_type_ids=token_type_ids,
+#             position_ids=position_ids,
+#             head_mask=head_mask,
+#             inputs_embeds=inputs_embeds,
+#             output_attentions=output_attentions,
+#             output_hidden_states=output_hidden_states,
+#             return_dict=return_dict,
+#         )
+
+#         sequence_output, pooled_output = outputs[:2]
+#         prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
+
+#         total_loss = None
+#         if labels is not None and next_sentence_label is not None:
+#             loss_fct = CrossEntropyLoss()
+#             masked_lm_loss = loss_fct(
+#                 prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
+#             )
+#             next_sentence_loss = loss_fct(
+#                 seq_relationship_score.view(-1, 2), next_sentence_label.view(-1)
+#             )
+#             total_loss = masked_lm_loss + next_sentence_loss
+
+#         if not return_dict:
+#             output = (prediction_scores, seq_relationship_score) + outputs[2:]
+#             return ((total_loss,) + output) if total_loss is not None else output
+
+#         return BertForPreTrainingOutput(
+#             loss=total_loss,
+#             prediction_logits=prediction_scores,
+#             seq_relationship_logits=seq_relationship_score,
+#             hidden_states=outputs.hidden_states,
+#             attentions=outputs.attentions,
+#         )
