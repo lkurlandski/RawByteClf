@@ -2,10 +2,13 @@
 Useful functions for the project.
 """
 
+import asyncio
 from collections.abc import Collection
+from concurrent.futures import ThreadPoolExecutor
 import inspect
 import os
 from pathlib import Path
+import time
 from typing import Any, Callable
 
 import psutil
@@ -200,6 +203,69 @@ def stable_softmax(x: Tensor, dim: int = 0):
     sum_exp_scores = torch.sum(exp_scores, dim=dim, keepdim=True)
     softmax_result = exp_scores / sum_exp_scores
     return softmax_result
+
+
+async def _process_files_asynch(files: list[Path], fn: Callable[[Path], Any], *args) -> list[Any]:
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        tasks = [loop.run_in_executor(pool, fn, file, *args) for file in files]
+    return await asyncio.gather(*tasks)
+
+
+def process_files_asynch(files: list[Path], fn: Callable[[Path], Any], *args) -> list[Any]:
+    return asyncio.run(_process_files_asynch(files, fn, *args))
+
+
+def test_process_files_async():
+
+    # For 10000 BODMAS binaries & LENGTH=None
+    # ASYNC: 2.79, 2.69, 2.57
+    # NO ASYNC: 5.94, 5.49, 5.49
+
+    # For 10000 BODMAS binaries & LENGTH=1024
+    # ASYNC: 1.20, 1.16, 1.16
+    # NO ASYNC: 0.14, 0.13, 0.14,
+
+    # For 15-30GB cache files
+        #    29.1 GiB [##############]  cache-6c21e812d4159e7f.arrow
+        #    29.1 GiB [############# ]  cache-cba03356c8bf06ef.arrow
+        #    29.1 GiB [############# ]  cache-218c715b5470901d.arrow
+        #    26.6 GiB [############  ]  cache-ebafa8e80277b572.arrow
+        #    23.2 GiB [###########   ]  cache-c0a754467bb8bb59.arrow
+        #    23.1 GiB [###########   ]  cache-55c2f24a66955904.arrow
+        #    23.0 GiB [###########   ]  cache-1f6cdf7dabe09db3.arrow
+        #    15.6 GiB [#######       ]  cache-26956f6b1ff4c778.arrow
+
+    ASYNC = True
+    LENGTH = None
+    BODMAS = True
+
+    fn = lambda f, s: f.open("rb").read(s)
+
+    if BODMAS:
+        files = list(Path("/home/lk3591/Documents/datasets/BODMAS/binaries").iterdir())[0:10000]
+    else:
+        files = [
+            Path("./input/bodmas_pe") / p for p in [
+                "cache-6c21e812d4159e7f.arrow",
+                "cache-cba03356c8bf06ef.arrow",
+                "cache-218c715b5470901d.arrow",
+                "cache-ebafa8e80277b572.arrow",
+                # "cache-c0a754467bb8bb59.arrow",
+                # "cache-55c2f24a66955904.arrow",
+                # "cache-1f6cdf7dabe09db3.arrow",
+                # "cache-26956f6b1ff4c778.arrow",
+            ]
+        ]
+
+    t = time.time()
+
+    if ASYNC:
+        content = process_files_asynch(files, fn, LENGTH)
+    else:
+        content = [fn(f, LENGTH) for f in files]
+
+    print(time.time() - t)
 
 
 if __name__ == "__main__":

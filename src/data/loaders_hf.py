@@ -22,8 +22,9 @@ from datasets import (
 )
 import numpy as np
 
-from src.data.utils import balance_imbalanced_dataset, _tr_vl_ts_split_with_guarentees
 from src.cfg import INPUT_PATH
+from src.utils import process_files_asynch
+from src.data.utils import balance_imbalanced_dataset, _tr_vl_ts_split_with_guarentees
 
 
 ITER_SIZE = 1024
@@ -67,7 +68,10 @@ def tr_vl_ts_split(dataset: Dataset, vl_size: float | int, ts_size: float | int)
 
 
 def get_sorel_dataset(
-    subset: Optional[int] = None, vl_size: int | float = None, ts_size: int | float = None
+    subset: Optional[int] = None,
+    vl_size: int | float = None,
+    ts_size: int | float = None,
+    asynchronous: bool = False,
 ) -> DatasetDict:
     files = [INPUT_PATH / f"sorel_pe_{i}" for i in range(0, 32)]
     if vl_size is None:
@@ -75,20 +79,27 @@ def get_sorel_dataset(
     if ts_size is None:
         ts_size = 10000 if subset is None else 0.1
 
-    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...", flush=True)
-    i = 0
-    print(i, flush=True, end="...")
-    dataset = Dataset.load_from_disk(files.pop(0))
-    while (subset is None or len(dataset) < subset) and files:
-        i += 1
+    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=} {asynchronous=})...", flush=True)
+
+    if not asynchronous:
+        i = 0
         print(i, flush=True, end="...")
-        try:
-            dataset = concatenate_datasets([dataset, Dataset.load_from_disk(files.pop(0))])
-        except FileNotFoundError as err:
-            print(err)
-        except IndexError:
-            break
-    print(flush=True)
+        dataset = Dataset.load_from_disk(files.pop(0))
+        while (subset is None or len(dataset) < subset) and files:
+            i += 1
+            print(i, flush=True, end="...")
+            try:
+                dataset = concatenate_datasets([dataset, Dataset.load_from_disk(files.pop(0))])
+            except FileNotFoundError as err:
+                print(err)
+            except IndexError:
+                break
+        print(flush=True)
+
+    else:
+        files = [f for f in files if f.exists()]
+        datasets = process_files_asynch(files, lambda f: Dataset.load_from_disk(f))
+        dataset = concatenate_datasets(datasets)
 
     if subset:
         dataset = dataset.select(range(subset))
