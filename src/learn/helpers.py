@@ -78,6 +78,7 @@ class OutputHelper:
         root: Path,
         tail: str,
         arch_config: Optional[dict] = None,
+        trainer_config: Optional[dict] = None,
     ) -> None:
         self.root = Path(root)
         args = [
@@ -94,8 +95,15 @@ class OutputHelper:
                     str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
                 ]
             )
+        self.arch_config = arch_config
+        self.trainer_config = trainer_config
 
-        self.path = self.root.joinpath(*args) / self.arch_config_hash(arch_config) / tail
+        self.path = (
+            self.root.joinpath(*args) /
+            self.arch_config_hash /
+            self.trainer_config_hash /
+            tail
+        )
 
     def __repr__(self) -> str:
         return self.path.as_posix()
@@ -117,6 +125,14 @@ class OutputHelper:
     @property
     def config_file(self) -> Path:
         return self.path / "config.json"
+
+    @property
+    def arch_config_file(self) -> Path:
+        return self.path / "arch_config.json"
+
+    @property
+    def trainer_config_file(self) -> Path:
+        return self.path / "trainer_config.json"
 
     @property
     def test_results_dir(self) -> Path:
@@ -154,10 +170,25 @@ class OutputHelper:
     def tensor_log_path(self) -> Path:
         return self.path / "tensor_log_path"
 
+    @property
+    def arch_config_hash(self) -> str:
+        if not self.arch_config:
+            return ""
+        s = hex(hash(tuple(sorted(self.arch_config.items()))))
+        return s[s.index("x") + 1:]
+
+    @property
+    def trainer_config_hash(self) -> str:
+        if not self.trainer_config:
+            return ""
+        s = hex(hash(tuple(sorted(self.trainer_config.items()))))
+        return s[s.index("x") + 1:]
+
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
-
-    def arch_config_hash(self, arch_config: Optional[dict]) -> str:
-        if not arch_config:
-            return ""
-        return str(hash(tuple(sorted(arch_config.items()))))
+        if self.arch_config:
+            with open(self.arch_config_file) as fp:
+                json.dump(self.arch_config, fp)
+        if self.trainer_config:
+            with open(self.trainer_config_file) as fp:
+                json.dump(self.trainer_config, fp)

@@ -729,6 +729,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.root,
         args.tail,
         args.arch_config,
+        training_arguments.__dict__,
     )
     print(f"{oh=}")
     print(BR, flush=True)
