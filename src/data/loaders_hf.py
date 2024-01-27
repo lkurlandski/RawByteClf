@@ -99,7 +99,7 @@ def get_sorel_dataset(
     else:
         files = [f for f in files if f.exists()]
         datasets = process_files_asynch(files, lambda f: Dataset.load_from_disk(f))
-        dataset = concatenate_datasets(datasets)
+        dataset = concatenate_datasets(datasets).select(range(subset))
 
     if subset:
         dataset = dataset.select(range(subset))
@@ -178,5 +178,17 @@ def test_balance_imbalanced_dataset() -> None:
     print(f"{test_iteration_time(dataset, B, N)=}")
 
 
+def test_sorel_loading_speed():
+    asynchronous = int(sys.argv[1]) == 1
+    subset = int(sys.argv[2]) if len(sys.argv) > 2 else None
+
+    t_0 = time.time()
+    get_sorel_dataset(subset=subset, asynchronous=asynchronous)
+    t_1 = time.time()
+
+    with open("./tmp/sorel_loading_speed.txt", "a") as f:
+        f.write(f"{asynchronous=} {subset=} {t_1 - t_0=}\n")
+
+
 if __name__ == "__main__":
-    ...
+    test_sorel_loading_speed()
