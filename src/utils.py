@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Collection
 from concurrent.futures import ThreadPoolExecutor
 import inspect
+import json
 import os
 from pathlib import Path
 import time
@@ -268,5 +269,23 @@ def test_process_files_async():
     print(time.time() - t)
 
 
+def compose_functions(*funcs):
+    raise NotImplementedError("Untested.")
+    def inner(arg):
+        result = arg
+        for func in reversed(funcs):
+            result = func(result)
+        return result
+    return inner
+
+
+def is_jsonable(x: Any) -> bool:
+    try:
+        json.dumps(x)
+        return True
+    except (TypeError, OverflowError):
+        return False
+
+
 if __name__ == "__main__":
-    print(bash_file_to_vscode_debug_str(Path("run/hrr_train_65536_false_none.sh")))
+    print(bash_file_to_vscode_debug_str(Path("run/top10/hrr_pretrain.sh")))
