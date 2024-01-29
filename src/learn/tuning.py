@@ -1,5 +1,8 @@
 """
 Hyperparameter tuning stuff.
+
+TODO: after logging the eval_losses, remove the tuned_config business, as it
+causes major confusion.
 """
 
 from collections import defaultdict
@@ -9,92 +12,92 @@ from typing import Any, Optional
 from ray import tune
 
 
-def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str, int]:
-    if model_name == "malconv":
-        if max_length == 65536:  # eval_loss = 5.778996
-            return {
-                "channels": 64,
-                "chunk_size": 1024,
-                "overlap": 256,
-                "stride": 448,
-                "window_size": 64,
-            }
+# def tuned_configs(model_name: str, max_length: Optional[int] = None) -> dict[str, int]:
+#     if model_name == "malconv":
+#         if max_length == 65536:  # eval_loss = 5.778996
+#             return {
+#                 "channels": 64,
+#                 "chunk_size": 1024,
+#                 "overlap": 256,
+#                 "stride": 448,
+#                 "window_size": 64,
+#             }
 
-    if model_name == "malconvgct":  # eval_loss = 5.777025
-        if max_length == 65536:
-            return {
-                "channels": 64,
-                "chunk_size": 2048,
-                "overlap": 768,
-                "stride": 512,
-                "window_size": 192,
-            }
+#     if model_name == "malconvgct":  # eval_loss = 5.777025
+#         if max_length == 65536:
+#             return {
+#                 "channels": 64,
+#                 "chunk_size": 2048,
+#                 "overlap": 768,
+#                 "stride": 512,
+#                 "window_size": 192,
+#             }
 
-    if model_name == "mymalconv":  # eval_loss = 5.396931
-        if max_length == 65536:
-            return {
-                "channels": 192,
-                "hidden_size": 128,
-                "stride": 512,
-                "window_size": 512,
-            }
+#     if model_name == "mymalconv":  # eval_loss = 5.396931
+#         if max_length == 65536:
+#             return {
+#                 "channels": 192,
+#                 "hidden_size": 128,
+#                 "stride": 512,
+#                 "window_size": 512,
+#             }
 
-    if model_name == "hrrformer":
-        return {
-            "hidden_size": 512,
-            "intermediate_size": 2048,
-            "num_hidden_layers": 2,
-            "num_attention_heads": 8,
-            "superposition_scale_factor": "norm",
-            # "tensor_log_path": f"./tmp/hrr_log_path/log/{max_length}"
-        }
+#     if model_name == "hrrformer":
+#         return {
+#             "hidden_size": 512,
+#             "intermediate_size": 2048,
+#             "num_hidden_layers": 2,
+#             "num_attention_heads": 8,
+#             "superposition_scale_factor": "norm",
+#             # "tensor_log_path": f"./tmp/hrr_log_path/log/{max_length}"
+#         }
 
-    if model_name == "rwkv":
-        return {
-            "hidden_size": 512,
-            "intermediate_size": 1024,
-            "num_hidden_layers": 2,
-        }
+#     if model_name == "rwkv":
+#         return {
+#             "hidden_size": 512,
+#             "intermediate_size": 1024,
+#             "num_hidden_layers": 2,
+#         }
 
-    if model_name == "longformer":
-        if max_length == 16384:  # eval_loss = 5.124239 (MLM task)
-            return {
-                "hidden_size": 1024,
-                "intermediate_size": 1024,
-                "num_hidden_layers": 1,
-                "num_attention_heads": 4,
-                "attention_window": 128,
-            }
-        if max_length == 65536:
-            return {
-                "hidden_size": 1024,
-                "intermediate_size": 1024,
-                "num_hidden_layers": 1,
-                "num_attention_heads": 4,
-                "attention_window": 128,
-            }
-        return {
-            "hidden_size": 512,
-            "intermediate_size": 2048,
-            "num_hidden_layers": 4,
-            "num_attention_heads": 8,
-            "attention_window": 128,
-        }
+#     if model_name == "longformer":
+#         if max_length == 16384:  # eval_loss = 5.124239 (MLM task)
+#             return {
+#                 "hidden_size": 1024,
+#                 "intermediate_size": 1024,
+#                 "num_hidden_layers": 1,
+#                 "num_attention_heads": 4,
+#                 "attention_window": 128,
+#             }
+#         if max_length == 65536:
+#             return {
+#                 "hidden_size": 1024,
+#                 "intermediate_size": 1024,
+#                 "num_hidden_layers": 1,
+#                 "num_attention_heads": 4,
+#                 "attention_window": 128,
+#             }
+#         return {
+#             "hidden_size": 512,
+#             "intermediate_size": 2048,
+#             "num_hidden_layers": 4,
+#             "num_attention_heads": 8,
+#             "attention_window": 128,
+#         }
 
-    if model_name == "mamba":
-        return {
-            "hidden_size": 512,
-            "num_hidden_layers": 2,
-            "d_state": 12,
-            "expand": 2,
-            "dt_rank": "auto",
-            "d_conv": 4,
-            "conv_bias": True,
-            "bias": False,
-            "intermediate_size": 1024,
-        }
+#     if model_name == "mamba":
+#         return {
+#             "hidden_size": 512,
+#             "num_hidden_layers": 2,
+#             "d_state": 12,
+#             "expand": 2,
+#             "dt_rank": "auto",
+#             "d_conv": 4,
+#             "conv_bias": True,
+#             "bias": False,
+#             "intermediate_size": 1024,
+#         }
 
-    return {}
+#     return {}
 
 
 def hp_space_hrrformer(trial: Any) -> dict[str, float | int]:  # pylint: disable=unused-argument

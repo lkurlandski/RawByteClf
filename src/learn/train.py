@@ -125,7 +125,6 @@ from src.learn.collators import DataCollator, DataCollatorForMLM, DataCollatorFo
 from src.learn.helpers import Args, OutputHelper
 from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics
 from src.learn.tuning import (
-    tuned_configs,
     hp_space_mymalconv,
     hp_space_malconv,
     hp_space_malconvgct,
@@ -480,7 +479,6 @@ def get_config(
         - config from the tokenizer, max_length, and tensor_log_path args
         - kwds
         - arch_config
-        - config from from tuning
         - default config from the architecture itself
 
     Args:
@@ -511,7 +509,7 @@ def get_config(
     max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
 
     arch_config = {} if arch_config is None else arch_config
-    kwds = tuned_configs(model_name_or_path.lower(), max_length) | arch_config | kwds
+    kwds = arch_config | kwds
 
     # pylint: disable=use-dict-literal
 
