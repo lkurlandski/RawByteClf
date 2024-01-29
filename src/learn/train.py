@@ -39,14 +39,10 @@ from datasets import (
     Dataset,
     IterableDataset,
     IterableDatasetDict,
-    concatenate_datasets,
 )
-import evaluate
-import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 import torch
-from torch import tensor, Tensor
+from torch import tensor, BoolTensor, LongTensor, Tensor
 from torch.nn import CrossEntropyLoss, Embedding
 import transformers
 from transformers import (
@@ -122,8 +118,10 @@ from src.data.loaders_pt import (
     get_sorel_dataset as get_sorel_dataset_pt,
     get_bodmas_dataset as get_bodmas_dataset_pt,
     preprocess_fn_add_cls_token,
+    preprocess_fn_shift_token_idx,
     BinaryDataset,
 )
+# from src.learn.collators import DataCollatorWithPadding, DataCollatorForMLM, DataCollatorForCLM
 from src.learn.helpers import Args, OutputHelper
 from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics
 from src.learn.tuning import (
@@ -753,12 +751,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dataset: DatasetDict | dict[Literal["tr", "vl", "ts"], BinaryDataset] = None
     dist: Optional[Counter[str, int]] = None
 
+    fn_1 = partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids))
+    fn_2 = partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id)
+    preprocess_fn = lambda x: fn_2(fn_1(x))
+
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(
             subset=args.subset,
             max_length=args.max_length,
-            preprocess_fn=partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
-            keep_in_memory=not args.streaming,
+            preprocess_fn=preprocess_fn,
+            streaming=args.streaming,
             vl_size=15360,
             ts_size=15360,
         )
@@ -768,8 +770,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             min_freq=BODMAS_MIN_FREQ,
             top_k=BODMAS_TOP_K,
             max_length=args.max_length,
-            preprocess_fn=partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
-            keep_in_memory=not args.streaming,
+            preprocess_fn=preprocess_fn,
+            streaming=args.streaming,
         )
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
@@ -797,6 +799,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 dataset["ts"] = dataset["ts"].select(range(TUNE_TS_N_SAMPLES))
 
     print(f"{dataset=}")
+    if DATASET_TYPE == "PT":
+        print(f"{dataset['tr'].dataset=}", flush=True)
+        print(f"{dataset['vl'].dataset=}", flush=True)
+        print(f"{dataset['ts'].dataset=}", flush=True)
+    else:
+        print(f"{dataset['tr'].info=}", flush=True)
+        print(f"{dataset['vl'].info=}", flush=True)
+        print(f"{dataset['ts'].info=}", flush=True)
     print(f"{dist=}")
     print(BR, flush=True)
 
