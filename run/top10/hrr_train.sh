@@ -45,12 +45,12 @@ src/learn/train.py \
 --max_grad_norm=1.0 \
 --save_total_limit=3 \
 --model_name_or_path="hrrformer" \
---max_length=4096 \
+--max_length=1024 \
 --ft_freeze_positional_embeddings=false \
 --ft_duplicate_positional_embeddings=false \
 --ft_initialize_positional_embeddings=false \
---per_device_train_batch_size=64 \
---per_device_eval_batch_size=64 \
+--per_device_train_batch_size=128 \
+--per_device_eval_batch_size=128 \
 --gradient_accumulation_steps=1 \
 --eval_accumulation_steps=16 \
 --fp16 \
