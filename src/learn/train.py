@@ -150,9 +150,12 @@ np.random.seed(0)
 torch.random.manual_seed(0)
 
 
+from src.data.loaders_pt_old import get_bodmas_dataset as get_bodmas_dataset_pt
+
 get_sorel_dataset = get_sorel_dataset_pt
 get_bodmas_dataset = get_bodmas_dataset_pt
-USE_HF_DATA_COLLATORS = False
+
+USE_HF_DATA_COLLATORS = True
 
 
 PAD_TO = 8
@@ -756,6 +759,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     fn_2 = partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id)
     preprocess_fn = lambda x: fn_2(fn_1(x))
 
+    preprocess_fn = partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id)
+
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(
             subset=args.subset,
@@ -772,7 +777,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             top_k=BODMAS_TOP_K,
             max_length=args.max_length,
             preprocess_fn=preprocess_fn,
-            streaming=args.streaming,
+            keep_in_memory=True,
         )
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
