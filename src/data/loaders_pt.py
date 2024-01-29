@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 import psutil
 import torch
+from torch import ByteTensor, LongTensor, Tensor
 from torch.utils.data import ConcatDataset, Dataset, Subset, random_split
 from tqdm import tqdm
 
@@ -45,7 +46,7 @@ def read_binary_file(
     f: Path,
     max_length: Optional[int] = None,
     dtype: Literal["bytes", "np", "pt"] = "bytes",
-) -> bytes | np.ndarray | torch.ByteTensor:
+) -> bytes | np.ndarray | ByteTensor:
     """
     Args:
         dtype: "UserWarning: The given buffer is not writable..."
@@ -67,16 +68,16 @@ async def read_binary_file_async(
     f: Path,
     max_length: Optional[int] = None,
     dtype: Literal["bytes", "np", "pt"] = "bytes",
-) -> bytes | np.ndarray | torch.ByteTensor:
+) -> bytes | np.ndarray | ByteTensor:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, read_binary_file, f, max_length, dtype)
 
 
-def preprocess_fn_add_cls_token(x: torch.LongTensor, cls_token_id: int) -> torch.LongTensor:
+def preprocess_fn_add_cls_token(x: LongTensor, cls_token_id: int) -> LongTensor:
     return torch.cat([torch.tensor([cls_token_id], dtype=torch.long), x])
 
 
-def preprocess_fn_shift_token_idx(x: torch.LongTensor, shift: int) -> torch.LongTensor:
+def preprocess_fn_shift_token_idx(x: LongTensor, shift: int) -> LongTensor:
     return x + shift
 
 
@@ -95,7 +96,7 @@ class BinaryDataset(Dataset):
     dtype:
         - "bytes" stores data as bytes
         - "np" stores data as a numpy.ndarray
-        - "pt" stores data as a torch.ByteTensor
+        - "pt" stores data as a ByteTensor
         For short sequences, "bytes" requires marginally less memory than "np" and "pt", e.g.,
         around 6% less for sequences of length 512. For long sequences, the overhead is negligible.
     """
@@ -105,7 +106,7 @@ class BinaryDataset(Dataset):
         files: Iterable[os.PathLike] | Sequence[os.PathLike],
         labels: Optional[Iterable[int] | Sequence[int]] = None,
         max_length: Optional[int] = None,
-        preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
+        preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
         id2label: Optional[dict[int, str]] = None,
         label2id: Optional[dict[str, int]] = None,
         streaming: bool = False,
@@ -141,7 +142,7 @@ class BinaryDataset(Dataset):
         self._id2label = id2label
         self._label2id = label2id
         self._dist = None
-        self.x: list[bytes | np.ndarray | torch.ByteTensor] = None
+        self.x: list[bytes | np.ndarray | ByteTensor] = None
 
         if not self.streaming:
             if asynch:
@@ -152,25 +153,28 @@ class BinaryDataset(Dataset):
 
         self.files = None
 
-    def __getitem__(self, i: int) -> dict[Literal["name", "labels", "input_ids"], str | torch.LongTensor]:
+    def __getitem__(self, i: int) -> dict[Literal["name", "labels", "input_ids"], str | LongTensor]:
         r = {}
 
         if isinstance(self.files, Sequence):
             r = {"name": str(self.files[i]).split("/")[-1]}
 
         if self.labels is not None:
-            r["labels"] = torch.tensor(self.labels[i], dtype=torch.long)
+            if isinstance(self.labels, Tensor):
+                r["labels"] = self.labels[i]
+            else:
+                r["labels"] = torch.tensor(self.labels[i], dtype=torch.long)
 
         if self.streaming:
-            x_i: torch.ByteTensor = read_binary_file(self.files[i], self.max_length, dtype="pt")
+            x_i: ByteTensor = read_binary_file(self.files[i], self.max_length, dtype="pt")
         else:
             x_i = self.x[i]
             if isinstance(x_i, bytes):
-                x_i: torch.ByteTensor = torch.frombuffer(x_i, dtype=torch.uint8)
+                x_i: ByteTensor = torch.frombuffer(x_i, dtype=torch.uint8)
             elif isinstance(x_i, np.ndarray):
-                x_i: torch.ByteTensor = torch.from_numpy(x_i)
+                x_i: ByteTensor = torch.from_numpy(x_i)
 
-        x_i: torch.LongTensor = x_i.to(torch.long)
+        x_i: LongTensor = x_i.to(torch.long)
         x_i = self.preprocess_fn(x_i)[0:self.max_length]
         r["input_ids"] = x_i
 
@@ -186,10 +190,12 @@ class BinaryDataset(Dataset):
         return (
             "BinaryDataset(\n"
             f"\t{len(self)=}\n"
+            f"\tlen(self.files)={len(self.files) if hasattr(self.files, '__len__') else None}\n"
+            f"\tlen(self.labels)={len(self.labels) if hasattr(self.labels, '__len__') else None}\n"
             f"\t{self.max_length=}\n"
             f"\t{self.preprocess_fn=}\n"
             f"\t{self.streaming=}\n"
-            f"\t{self.in_memory_dtype}\n"
+            f"\t{self.in_memory_dtype=}\n"
             ")"
         )
 
@@ -215,7 +221,9 @@ class BinaryDataset(Dataset):
     def dist(self) -> Counter[str, int]:
         if self._dist is not None:
             return self._dist
-        self._dist = Counter([self.id2label[i] for i in self.labels])
+        if isinstance(self.labels, (Tensor, np.ndarray)):
+            labels = self.labels.tolist()
+        self._dist = Counter([self.id2label[i] for i in labels])
         return self._dist
 
     @property
@@ -244,7 +252,7 @@ class StaticBinaryDataset(BinaryDataset):
         labels: Optional[list[int] | int] = None,
         max_length: Optional[int] = None,
         keep_in_memory: bool = True,  # pylint: disable=unused-argument
-        preprocess_fn: Callable[[torch.LongTensor], torch.LongTensor] = lambda x: x,
+        preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
         id2label: Optional[dict[int, str]] = None,
         label2id: Optional[dict[str, int]] = None,
         asyncronous_loading: bool = True,  # pylint: disable=unused-argument
