@@ -27,6 +27,7 @@ python \
 src/learn/train.py \
 --root="./output/top10" \
 --task="clf" \
+--arch_config_file="./config/hrrformer.json" \
 --streaming=false \
 --depth=1 \
 --do_train \
