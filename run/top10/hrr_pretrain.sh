@@ -1,14 +1,14 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=top10_hrr_131072
+#SBATCH --job-name=pretrain_hrr_512
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=02-00:00:00
+#SBATCH --time=00-06:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks=5
-#SBATCH --mem=32G
+#SBATCH --ntasks=9
+#SBATCH --mem=64G
 #SBATCH --gres=gpu:a100:1
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -26,20 +26,19 @@ conda activate RawByteClf
 python \
 src/learn/train.py \
 --root="./output/" \
---tail="linear" \
 --arch_config_file="./config/hrrformer.json" \
 --task="mlm" \
 --streaming=false \
 --depth=1 \
 --do_train \
 --output_dir=tmp \
---save_strategy="steps" \
---evaluation_strategy="steps" \
---save_steps=100 \
---eval_steps=100 \
---logging_steps=10 \
---dataloader_num_workers=4 \
---max_steps=1000 \
+--save_strategy="epoch" \
+--evaluation_strategy="epoch" \
+--save_steps=2 \
+--eval_steps=2 \
+--logging_steps=100 \
+--dataloader_num_workers=8 \
+--num_train_epochs=20 \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
 --lr_scheduler_type="linear" \
@@ -52,11 +51,9 @@ src/learn/train.py \
 --ft_freeze_positional_embeddings=false \
 --ft_duplicate_positional_embeddings=false \
 --ft_initialize_positional_embeddings=false \
---per_device_train_batch_size=512 \
---per_device_eval_batch_size=512 \
---gradient_accumulation_steps=1 \
+--per_device_train_batch_size=1536 \
+--per_device_eval_batch_size=1536 \
+--gradient_accumulation_steps=2 \
 --fp16 \
 --fp16_full_eval \
---debug=underflow_overflow #\
-#--resume_from_checkpoint="/home/lk3591/Documents/code/RawByteClf/output/hrrformer/512/mlm/1/checkpoints/checkpoint-700" # \
-# --tf32=true --eval_accumulation_steps=16  \   \
+--tf32=true 
