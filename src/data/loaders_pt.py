@@ -330,7 +330,7 @@ def get_sorel_dataset(
 
     mem = psutil.virtual_memory()
     print(f"MEM: {round(mem.used / (1024 ** 2), 2)} / {round(mem.total / (1024 ** 2), 2)} MB")
-    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=}) with ", flush=True)
+    print(f"Loading SOREL ({subset=} {vl_size=} {ts_size=})...", flush=True)
 
     # Paths are usually ~100 characters long, so as a str take ~269 bytes of memory.
     # For 10M files, this equates to ~2.69GB of memory for the paths alone, which is
