@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+from pprint import pprint
 import sys
 from typing import Any, Hashable, Optional
 
@@ -19,7 +20,7 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from src.cfg import BR, OUTPUT_PATH
-from src.utils import get_highest_path
+from src.utils import get_highest_path, is_jsonable
 from src.learn.utils import str_or_bool_to_str
 
 
@@ -185,11 +186,12 @@ class OutputHelper:
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
         if self.arch_config:
-            with open(self.arch_config_file) as fp:
-                json.dump(self.arch_config, fp)
+            with open(self.arch_config_file, "w") as fp:
+                json.dump(self.arch_config, fp, indent=4)
         if self.trainer_config:
-            with open(self.trainer_config_file) as fp:
-                json.dump(self.trainer_config, fp)
+            d = {k: v if is_jsonable(v) else str(v) for k, v in self.trainer_config.items()}
+            with open(self.trainer_config_file, "w") as fp:
+                json.dump(d, fp, indent=4)
 
     @staticmethod
     def get_hash(d: dict[str, Any]) -> str:
