@@ -121,7 +121,7 @@ from src.data.loaders_pt import (
     preprocess_fn_shift_token_idx,
     BinaryDataset,
 )
-# from src.learn.collators import DataCollatorWithPadding, DataCollatorForMLM, DataCollatorForCLM
+from src.learn.collators import DataCollator, DataCollatorForMLM, DataCollatorForCLM
 from src.learn.helpers import Args, OutputHelper
 from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics
 from src.learn.tuning import (
@@ -152,6 +152,7 @@ torch.random.manual_seed(0)
 
 get_sorel_dataset = get_sorel_dataset_pt
 get_bodmas_dataset = get_bodmas_dataset_pt
+USE_HF_DATA_COLLATORS = False
 
 
 PAD_TO = 8
@@ -914,22 +915,51 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         tokenizer.model_input_names.remove("attention_mask")
 
     if args.task == "clf":
-        if PREPROCESS_AS_INPUT_IDS and PREPROCESS_AS_INPUT_IDS_DO_PAD:
-            data_collator = DefaultDataCollator()
+        if USE_HF_DATA_COLLATORS:
+            if PREPROCESS_AS_INPUT_IDS and PREPROCESS_AS_INPUT_IDS_DO_PAD:
+                data_collator = DefaultDataCollator()
+            else:
+                data_collator = DataCollatorWithPadding(
+                    tokenizer=tokenizer,
+                    padding=True,
+                    pad_to_multiple_of=pad_to_multiple_of,
+                )
         else:
-            data_collator = DataCollatorWithPadding(
-                tokenizer=tokenizer, padding=True, pad_to_multiple_of=pad_to_multiple_of
+            data_collator = DataCollator(
+                tokenizer.pad_token_id,
+                tokenizer.all_special_ids,
+                pad_to_multiple_of=pad_to_multiple_of,
             )
         compute_metrics = clf_compute_metrics
     elif args.task == "mlm":
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer, mlm=True, pad_to_multiple_of=pad_to_multiple_of
-        )
+        if USE_HF_DATA_COLLATORS:
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=tokenizer,
+                mlm=True,
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
+        else:
+            data_collator = DataCollatorForMLM(
+                tokenizer.pad_token_id,
+                tokenizer.all_special_ids,
+                tokenizer.mask_token_id,
+                len(tokenizer),
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
         compute_metrics = mlm_compute_metrics
     elif args.task == "clm":
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer, mlm=False, pad_to_multiple_of=pad_to_multiple_of
-        )
+        if USE_HF_DATA_COLLATORS:
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=tokenizer,
+                mlm=False,
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
+        else:
+            data_collator = DataCollatorForCLM(
+                tokenizer=tokenizer,
+                padding=True,
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
         compute_metrics = None
 
     print(f"{data_collator=}")
