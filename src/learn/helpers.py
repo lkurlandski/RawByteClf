@@ -181,7 +181,8 @@ class OutputHelper:
     def trainer_config_hash(self) -> str:
         if not self.trainer_config:
             return ""
-        return self.get_hash(self.trainer_config)
+        ignore_keys = ["logging_dir", "output_dir"]
+        return self.get_hash({k: v for k, v in self.trainer_config.items() if k not in ignore_keys})
 
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
