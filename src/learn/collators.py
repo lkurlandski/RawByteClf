@@ -1,9 +1,16 @@
 """
 Group examples together.
+
+TODO: inserting the CLS token should take place here?
 """
 
 import math
+import os
+import sys
 from typing import Any, Literal
+
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import torch
 from torch import BoolTensor, LongTensor, tensor
@@ -12,12 +19,23 @@ from torch.nn.utils.rnn import pad_sequence
 
 class DataCollator:
 
-    def __init__(self, pad_token_id: int, special_ids: tuple[int] = tuple(), pad_to_multiple_of: int = 1) -> None:
+    def __init__(
+        self,
+        pad_token_id: int,
+        special_ids: tuple[int] = tuple(),
+        pad_to_multiple_of: int = 1,
+        return_token_type_ids: bool = False,
+        return_attention_mask: bool = False,
+        return_special_tokens_mask: bool = False,
+    ) -> None:
         self.pad_to_multiple_of = pad_to_multiple_of
         self.special_ids = special_ids
+        self.return_token_type_ids = return_token_type_ids
+        self.return_attention_mask = return_attention_mask
+        self.return_special_tokens_mask = return_special_tokens_mask
         self.pad_token_id = pad_token_id
 
-    def __call__(self, examples: list[dict[Literal["input_ids"], LongTensor]]) -> dict[str, LongTensor]:
+    def __call__(self, examples: list[dict[Literal["input_ids", "labels"], LongTensor]]) -> dict[str, LongTensor]:
         # Pad the longest sequence to a multiple of self.pad_to_multiple_of if necessary.
         if self.pad_to_multiple_of is not None:
             lengths = [len(e["input_ids"]) for e in examples]
@@ -36,11 +54,20 @@ class DataCollator:
                 padding_value=self.pad_token_id,
             )
         }
+        if "labels" in examples[0]:
+            batch["labels"] = torch.stack([e["labels"] for e in examples])
+        if self.return_attention_mask:
+            batch["attention_mask"] = self.get_special_tokens_mask(
+                batch["input_ids"], (self.pad_token_id,),
+            )
 
         return batch
 
     @staticmethod
     def get_special_tokens_mask(x: LongTensor, specials: list[int]) -> BoolTensor:
+        """
+        Mask is True (1) if token is special, else False (0).
+        """
         m = torch.any(
             torch.eq(x.unsqueeze(-1), torch.tensor(specials).unsqueeze(0).unsqueeze(0)),
             dim=-1,
@@ -51,8 +78,8 @@ class DataCollator:
 
 class DataCollatorForCLM(DataCollator):
 
-    def __call__(self, batch: list[dict[Literal["input_ids"], LongTensor]]) -> Any:
-        batch = super().__call__(batch)
+    def __call__(self, examples: list[dict[Literal["input_ids"], LongTensor]]) -> Any:
+        batch = super().__call__(examples)
         labels: LongTensor = batch["input_ids"].clone()
         if self.pad_token_id is not None:
             labels[labels == self.pad_token_id] = -100
@@ -70,14 +97,24 @@ class DataCollatorForMLM(DataCollator):
         vocab_size: int,
         mlm_probability: float = 0.15,
         pad_to_multiple_of: int = 1,
+        return_token_type_ids: bool = False,
+        return_attention_mask: bool = False,
+        return_special_tokens_mask: bool = False,
     ) -> None:
-        super().__init__(pad_token_id, specials, pad_to_multiple_of)
+        super().__init__(
+            pad_token_id,
+            specials,
+            pad_to_multiple_of,
+            return_token_type_ids,
+            return_attention_mask,
+            return_special_tokens_mask,
+        )
         self.mask_token_id = mask_token_id
         self.vocab_size = vocab_size
         self.mlm_probability = mlm_probability
 
-    def __call__(self, batch: list[dict[Literal["input_ids"], LongTensor]]) -> Any:
-        batch = super().__call__(batch)
+    def __call__(self, examples: list[dict[Literal["input_ids"], LongTensor]]) -> Any:
+        batch = super().__call__(examples)
         batch["input_ids"], batch["labels"] = self.mask_tokens(
             batch["input_ids"],
             special_tokens_mask=self.get_special_tokens_mask(batch["input_ids"], self.special_ids),
@@ -106,3 +143,60 @@ class DataCollatorForMLM(DataCollator):
 
         # The rest of the time (10% of the time) we keep the masked input tokens unchanged
         return inputs, labels
+
+
+def test() -> None:
+    from datasets import DatasetDict
+    from transformers import (
+        BertTokenizerFast,
+        PreTrainedModel,
+        PreTrainedTokenizerFast,
+        PretrainedConfig,
+        DataCollatorWithPadding,
+        DataCollatorForLanguageModeling,
+        Trainer,
+    )
+
+    from src.architectures.test import (
+        get_dataset, get_config, get_model, get_compute_metrics, get_training_arguments
+    )
+
+    task = "clf"
+
+    tokenizer: PreTrainedTokenizerFast = BertTokenizerFast.from_pretrained("bert-base-cased")
+    print(f"{tokenizer=}")
+    print(f"{tokenizer.model_input_names=}")
+    print(f"{tokenizer.all_special_ids=}")
+    print(f"{tokenizer.all_special_tokens=}")
+
+    dataset: DatasetDict = get_dataset(task, tokenizer)
+    print(f"{dataset=}")
+
+    config: PretrainedConfig = get_config(task, "bert", tokenizer, dataset)
+    print(f"{config=}")
+
+    model: PreTrainedModel = get_model(task, "bert", config)
+    print(f"{model=}")
+
+    data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8)
+    data_collator = DataCollator(
+        tokenizer.pad_token_id,
+        special_ids=tokenizer.all_special_ids,
+        pad_to_multiple_of=8,
+        return_attention_mask=True,
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=get_training_arguments(f"./tmp/collators/hf"),
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
+        data_collator=data_collator,
+        compute_metrics=get_compute_metrics(task),
+    )
+
+    trainer.train()
+
+
+if __name__ == "__main__":
+    test()
