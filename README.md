@@ -19,3 +19,13 @@ pip install bayesian-optimization
 pip install hyperopt
 
 pip install ninja
+
+## Useful
+
+Memory analysis:
+	- mprof run python {SCRIPT.py}
+	- mprof plot --output={PLOT.png}
+
+Time analysis
+	- python -m cProfile -o {STATS.pstats} {SCRIPT.py}
+	- gprof2dot --colour-nodes-by-selftime -f pstats {STATS.pstats} | dot -Tpng -o {PLOT.png}
