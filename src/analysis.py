@@ -36,7 +36,7 @@ def process_trainer_state(path: Path) -> tuple[list[dict], list[dict]]:
 def overflow_analysis(path: Path) -> dict[str, pd.DataFrame]:
     data: dict[tuple] = defaultdict(dict)
     for f in path.iterdir():
-        df = pd.read_csv(f)
+        df = pd.read_csv(f, index_col=False)
         data[f.stem] = df
     return data
 
