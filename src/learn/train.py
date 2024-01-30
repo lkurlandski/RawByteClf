@@ -996,7 +996,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print(f"{count_parameters(model, requires_grad=True)=}")
             print(BR, flush=True)
 
-        oh.mkdir()
+        oh.mkdir(arch_config=config.__dict__)
         trainer = ModelTrainer(
             model=model,
             args=training_arguments,
@@ -1008,6 +1008,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             compute_metrics=compute_metrics,
         )
         gc.collect()
+
+        if not args.skip_eval_check:
+            print("Initial Evaluation...")
+            output: PredictionOutput = trainer.predict(dataset["vl"])
+            print(f"{output.metrics=}")
 
         print("Training...")
         print(BR, flush=True)

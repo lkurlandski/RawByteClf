@@ -48,6 +48,7 @@ class Args:
         metadata={"help": "Configuration dict to use for the architecture. Mutally exclusive with arch_config_file."},
     )
     subset: Optional[int] = field(default=None)
+    skip_eval_check: bool = field(default=False)
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -56,6 +57,7 @@ class Args:
         self.streaming = str_or_bool_to_str(self.streaming)
         self.exit_after_map = str_or_bool_to_str(self.exit_after_map)
         self.do_tune = str_or_bool_to_str(self.do_tune)
+        self.skip_eval_check = str_or_bool_to_str(self.skip_eval_check)
 
         if self.arch_config_file and self.arch_config:
             raise ValueError("Cannot specify both arch_config_file and arch_config.")
@@ -184,13 +186,22 @@ class OutputHelper:
         ignore_keys = ["logging_dir", "output_dir"]
         return self.get_hash({k: v for k, v in self.trainer_config.items() if k not in ignore_keys})
 
-    def mkdir(self) -> None:
+    def mkdir(
+        self,
+        arch_config: Optional[dict[str, Any]] = None,
+        trainer_config: Optional[dict[str, Any]] = None,
+    ) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
-        if self.arch_config:
+
+        arch_config = arch_config if self.arch_config is not None else self.arch_config
+        if arch_config:
+            d = {k: v if is_jsonable(v) else str(v) for k, v in arch_config.items()}
             with open(self.arch_config_file, "w") as fp:
-                json.dump(self.arch_config, fp, indent=4)
-        if self.trainer_config:
-            d = {k: v if is_jsonable(v) else str(v) for k, v in self.trainer_config.items()}
+                json.dump(arch_config, fp, indent=4)
+
+        trainer_config = trainer_config if self.trainer_config is not None else self.trainer_config
+        if trainer_config:
+            d = {k: v if is_jsonable(v) else str(v) for k, v in trainer_config.items()}
             with open(self.trainer_config_file, "w") as fp:
                 json.dump(d, fp, indent=4)
 
