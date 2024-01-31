@@ -353,7 +353,8 @@ class HRRSelfAttention(nn.Module):
             f"{query_layer.dtype=}\t"
             f"{superpositions.dtype=}\t"
             f"{superposition.dtype=}\t"
-            f"{value_approx.dtype=}\t"
+            f"{value_approx.dtype=}\t",
+            flush=True,
         )
 
         return outputs
