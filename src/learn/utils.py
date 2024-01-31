@@ -15,11 +15,12 @@ import os
 from pprint import pprint
 import random
 import sys
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 from accelerate.utils.memory import should_reduce_batch_size
 from accelerate.utils import is_xpu_available
 import numpy as np
+import psutil
 import torch
 from transformers import PreTrainedTokenizerFast
 
@@ -259,3 +260,27 @@ def test_oversample_based_on_label():
         # dist = sorted(Counter(oversampled_examples["labels"]).items(), key=lambda x: x[0])
         # print("new distribution:", dist, "\n")
         # print("new probabilities:", round_list(prob_norm([d[1] for d in dist])), "\n")
+
+
+def print_mem(unit: Literal["KB", "MB", "GB"] = "MB", f: Optional[int] = None, p: Optional[str] = None):
+    if f is None:
+        unit = unit.lower()
+        if "kb" in unit:
+            f = 1024 ** 1
+            p = "KB"
+        elif "mb" in unit:
+            f = 1024 ** 2
+            p = "MB"
+        elif "gb" in unit:
+            f = 1024 ** 3
+            p = "GB"
+        elif "b" in unit:
+            f = 1024 ** 0
+            p = "B"
+        else:
+            f = 1
+            p = "B"
+    else:
+        p = "??" if p is None else p
+    mem = psutil.virtual_memory()
+    print(f"MEM: {round(mem.used / f, 2)} / {round(mem.total / f, 2)} {p}")
