@@ -7,7 +7,6 @@ import sys
 import warnings
 from typing import List, Literal, Optional, Tuple, Union
 
-from HRR.with_pytorch import binding, unbinding, cosine_similarity
 import torch
 import torch.utils.checkpoint
 from torch import nn
@@ -50,6 +49,9 @@ from transformers.utils import (
 )
 
 from src.utils import log_tensor
+from src.architectures.utils import binding, unbinding, cosine_similarity
+
+# from HRR.with_pytorch import binding, unbinding, cosine_similarity
 
 
 __all__ = [
@@ -93,6 +95,7 @@ class HRRConfig(PretrainedConfig):
         attention_score_scale_factor: Optional[float] = None,
         tensor_log_path: Optional[str] = None,
         tensor_logging: bool = False,
+        norm: Literal["forward", "backward", "norm"] = "norm",
         **kwargs,
     ):
         """
@@ -122,6 +125,7 @@ class HRRConfig(PretrainedConfig):
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
+        self.norm = norm
         self.tensor_log_path = None
         if tensor_logging:
             self.tensor_log_path = tensor_log_path.as_posix() if isinstance(tensor_log_path, Path) else tensor_log_path
@@ -182,6 +186,7 @@ class HRRSelfAttention(nn.Module):
         self.superposition_scale_factor = config.superposition_scale_factor
         self.attention_score_scale_factor = config.attention_score_scale_factor
         self.tensor_log_path = config.tensor_log_path
+        self.norm = config.norm
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -250,6 +255,7 @@ class HRRSelfAttention(nn.Module):
                 key_layer,
                 value_layer,
                 dim=-1,
+                norm=self.norm,
             )  # (B, h, T, H')
         except RuntimeError:  # TODO: hyperparameter tuning can sometimes induce this error...why?
             print(f"{key_layer.shape=}")
@@ -274,7 +280,12 @@ class HRRSelfAttention(nn.Module):
         else:
             superposition = torch.sum(superpositions * self.superposition_scale_factor, dim=-2, keepdims=True)
 
-        value_approx = unbinding(superposition, query_layer, dim=-1)  # (B, h, T, H')
+        value_approx = unbinding(
+            superposition,
+            query_layer,
+            dim=-1,
+            norm=self.norm,
+        )  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
         if self.tensor_log_path:
