@@ -69,6 +69,27 @@ class Args:
 
 
 class OutputHelper:
+
+    # The values from the TrainingArguments thats will be hashed.
+    trainer_config_relevant_keys = [
+        "adam_beta1",
+        "adam_beta2",
+        "adam_epsilon",
+        "fp16",
+        "gradient_accumulation_steps",
+        "learning_rate",
+        "lr_scheduler_type",
+        "max_grad_norm",
+        "optim",
+        "optim_args",
+        "per_device_train_batch_size",
+        "resume_from_checkpoint",
+        "tf32",
+        "warmup_ratio",
+        "warmup_steps",
+        "weight_decay",
+    ]
+
     def __init__(
         self,
         model_name_or_path: str,
@@ -183,8 +204,8 @@ class OutputHelper:
     def trainer_config_hash(self) -> str:
         if not self.trainer_config:
             return ""
-        ignore_keys = ["logging_dir", "output_dir"]
-        return self.get_hash({k: v for k, v in self.trainer_config.items() if k not in ignore_keys})
+        d = {k: v for k, v in self.trainer_config.items() if k in self.trainer_config_relevant_keys}
+        return self.get_hash(d)
 
     def mkdir(
         self,
