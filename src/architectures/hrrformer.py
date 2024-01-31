@@ -95,7 +95,7 @@ class HRRConfig(PretrainedConfig):
         attention_score_scale_factor: Optional[float] = None,
         tensor_log_path: Optional[str] = None,
         tensor_logging: bool = False,
-        norm: Literal["forward", "backward", "norm"] = "norm",
+        norm: Literal["forward", "backward", "ortho"] = "backward",
         **kwargs,
     ):
         """
@@ -346,16 +346,6 @@ class HRRSelfAttention(nn.Module):
         if self.is_decoder:
             raise NotImplementedError()
             # outputs = outputs + (past_key_value,)
-
-        print(
-            f"{key_layer.dtype=}\t"
-            f"{value_layer.dtype=}\t"
-            f"{query_layer.dtype=}\t"
-            f"{superpositions.dtype=}\t"
-            f"{superposition.dtype=}\t"
-            f"{value_approx.dtype=}\t",
-            flush=True,
-        )
 
         return outputs
 
