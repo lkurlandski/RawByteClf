@@ -317,6 +317,8 @@ class HRRSelfAttention(nn.Module):
             #     attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
 
         attention_scores = attention_scores * self.attention_score_scale_factor
+        if self.tensor_log_path:
+            log_tensor(self.tensor_log_path, attention_scores, "attention_scores")
         # Apply the attention mask.
         # TODO: for causal language modeling, the attention mask has shape (B, 1, T, T).
         if attention_mask is not None:
