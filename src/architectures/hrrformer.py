@@ -347,6 +347,15 @@ class HRRSelfAttention(nn.Module):
             raise NotImplementedError()
             # outputs = outputs + (past_key_value,)
 
+        print(
+            f"{key_layer.dtype=}\t"
+            f"{value_layer.dtype=}\t"
+            f"{query_layer.dtype=}\t"
+            f"{superpositions.dtype=}\t"
+            f"{superposition.dtype=}\t"
+            f"{value_approx.dtype=}\t"
+        )
+
         return outputs
 
 
