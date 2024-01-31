@@ -1,5 +1,43 @@
 """
 Test HRRFormer implementation and compare to BERT.
+
+BERT:
+    fp16=True: {
+        'train_runtime': 95.1242,
+        'train_samples_per_second': 1261.509,
+        'train_steps_per_second': 19.711,
+        'train_loss': 0.6013813252766927,
+        'epoch': 1.0
+    }
+
+    fp16=False: {
+        'train_runtime': 179.7081,
+        'train_samples_per_second': 667.75,
+        'train_steps_per_second': 10.434,
+        'train_loss': 0.6013398605346679,
+        'epoch': 1.0
+    }
+
+    1.889x speedup
+
+HRRFormer:
+    fp16=True: {
+        'train_runtime': 122.8494,
+        'train_samples_per_second': 976.805,
+        'train_steps_per_second': 15.263,
+        'train_loss': 1.3885760131835938,
+        'epoch': 1.0
+    }
+
+    fp16=False: {
+        'train_runtime': 210.8922,
+        'train_samples_per_second': 569.011,
+        'train_steps_per_second': 8.891,
+        'train_loss': 1.3885322387695314,
+        'epoch': 1.0
+    }
+
+    1.717x speedup
 """
 
 from argparse import ArgumentParser
@@ -40,13 +78,13 @@ class CannotPerformDueToImportError:
 try:
     from src.architectures.hrrformer import (
         HRRConfig,
-        HRRLMHeadModel as HRRForCausalLM,
+        # HRRLMHeadModel as HRRForCausalLM,
         HRRForMaskedLM,
         HRRForSequenceClassification,
     )
 except ImportError:
     HRRConfig = CannotPerformDueToImportError
-    HRRForCausalLM = CannotPerformDueToImportError
+    # HRRForCausalLM = CannotPerformDueToImportError
     HRRForMaskedLM = CannotPerformDueToImportError
     HRRForSequenceClassification = CannotPerformDueToImportError
 
@@ -252,6 +290,7 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
         save_total_limit=3,
         # debug="underflow_overflow",
         # use_cpu=True,
+        fp16=True,
     )
 
 
