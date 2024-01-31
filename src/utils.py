@@ -147,6 +147,8 @@ def log_tensor(path: str | Path, x: Tensor, name: str) -> None:
             neg_max: The maximum value of the negative elements of the tensor.
             neg_mean: The mean value of the negative elements of the tensor.
             neg_stdev: The standard deviation of the negative elements of the tensor.
+            dtype: The dtype of the tensor.
+            shape: The shape of the tensor.
         If the tensor is all zero, each field will be 0.
         If the tensor contains NaN, each field will be NaN.
     """
@@ -158,16 +160,19 @@ def log_tensor(path: str | Path, x: Tensor, name: str) -> None:
 
     if not p.exists():
         with open(p, "w") as fp:
-            fp.write("pos_min,pos_max,pos_mean,pos_stdev,neg_min,neg_max,neg_mean,neg_stdev\n")
+            fp.write("pos_min,pos_max,pos_mean,pos_stdev,neg_min,neg_max,neg_mean,neg_stdev,dtype,shape\n")
+
+    dtype = str(x.dtype)
+    shape = "_".join(str(s) for s in x.shape)
 
     if torch.any(torch.isnan(x)):
         with open(p, "a") as fp:
-            fp.write("NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN\n")
+            fp.write(f"NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN,{dtype},{shape}\n")
         return
 
     if torch.all(x == 0):
         with open(p, "a") as fp:
-            fp.write("0,0,0,0,0,0,0,0\n")
+            fp.write(f"0,0,0,0,0,0,0,0,{dtype},{shape}\n")
         return
 
     pos: Tensor = x[(x > 0) & (x != 0)]
@@ -191,11 +196,11 @@ def log_tensor(path: str | Path, x: Tensor, name: str) -> None:
                 f"{neg.min().item()},"
                 f"{neg.max().item()},"
                 f"{neg.mean().item()},"
-                f"{neg.std().item()}"
+                f"{neg.std().item()},"
             )
 
     with open(p, "a") as fp:
-        fp.write("\n")
+        fp.write(f"{dtype},{shape}\n")
 
 
 def stable_softmax(x: Tensor, dim: int = 0):
@@ -288,4 +293,4 @@ def is_jsonable(x: Any) -> bool:
 
 
 if __name__ == "__main__":
-    print(bash_file_to_vscode_debug_str(Path("run/top10/hrr_pretrain.sh")))
+    print(bash_file_to_vscode_debug_str(Path("run/top10/hrr_train.sh")))
