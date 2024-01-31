@@ -1013,6 +1013,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print("Initial Evaluation...")
             output: PredictionOutput = trainer.predict(dataset["vl"])
             print(f"{output.metrics=}")
+            # Put the model back on the CPU and let the Trainer start fresh.
+            model = model.to("cpu").to(torch.float32)
 
         print("Training...")
         print(BR, flush=True)
