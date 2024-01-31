@@ -1,14 +1,14 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=top10_hrr_131072
+#SBATCH --job-name=top10_hrr_262144_norm
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=02-00:00:00
+#SBATCH --time=04-00:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks=5
-#SBATCH --mem=32G
+#SBATCH --ntasks=3
+#SBATCH --mem=64G
 #SBATCH --gres=gpu:a100:1
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -17,6 +17,7 @@ conda activate RawByteClf
 # README:
 # Balance gradient accumulation steps to make logical batch size 64.
 # Per-device batch sizes are:
+# T = 262144 -- 2
 # T = 131072 -- 4
 # T = 65536 -- 8
 # T = 32768 -- 16
@@ -25,7 +26,7 @@ conda activate RawByteClf
 
 python \
 src/learn/train.py \
---root="./output/top10" \
+--root="./output/top10/norm" \
 --task="clf" \
 --arch_config_file="./config/hrrformer.json" \
 --streaming=false \
@@ -36,7 +37,7 @@ src/learn/train.py \
 --save_strategy="epoch" \
 --evaluation_strategy="epoch" \
 --logging_steps=10 \
---dataloader_num_workers=4 \
+--dataloader_num_workers=2 \
 --num_train_epochs=25 \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
@@ -46,13 +47,14 @@ src/learn/train.py \
 --max_grad_norm=1.0 \
 --save_total_limit=3 \
 --model_name_or_path="hrrformer" \
---max_length=131072 \
+--max_length=262144 \
 --ft_freeze_positional_embeddings=false \
 --ft_duplicate_positional_embeddings=false \
 --ft_initialize_positional_embeddings=false \
---per_device_train_batch_size=4 \
---per_device_eval_batch_size=4 \
---gradient_accumulation_steps=16 \
+--per_device_train_batch_size=2 \
+--per_device_eval_batch_size=2 \
+--gradient_accumulation_steps=32 \
 --eval_accumulation_steps=16 \
 --fp16 \
---fp16_full_eval
+--fp16_full_eval \
+--tf32=true
