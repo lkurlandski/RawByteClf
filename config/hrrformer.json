@@ -6,5 +6,5 @@
 	"superposition_scale_factor": 1.0,
 	"tensor_logging": true,
 	"attention_score_scale_factor": 1.0,
-        "norm": "forward"
+	"norm": "forward"
 }
