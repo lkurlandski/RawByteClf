@@ -996,6 +996,22 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print(f"{count_parameters(model, requires_grad=True)=}")
             print(BR, flush=True)
 
+        if not args.skip_eval_check:
+            print("Initial Evaluation...")
+            trainer = ModelTrainer(
+                model=model,
+                args=training_arguments,
+                train_dataset=dataset["tr"],
+                eval_dataset=dataset["vl"],
+                data_collator=data_collator,
+                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+            gc.collect()
+            output: PredictionOutput = trainer.predict(dataset["vl"])
+            print(f"{output.metrics=}")
+
         oh.mkdir(arch_config=config.__dict__)
         trainer = ModelTrainer(
             model=model,
@@ -1008,14 +1024,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             compute_metrics=compute_metrics,
         )
         gc.collect()
-
-        if not args.skip_eval_check:
-            print("Initial Evaluation...")
-            output: PredictionOutput = trainer.predict(dataset["vl"])
-            print(f"{output.metrics=}")
-            # Put the model back on the CPU and let the Trainer start fresh.
-            model = model.to("cpu").to(torch.float32)
-
         print("Training...")
         print(BR, flush=True)
         trainer.train(training_arguments.resume_from_checkpoint)
