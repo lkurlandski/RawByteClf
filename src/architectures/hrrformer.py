@@ -92,9 +92,10 @@ class HRRConfig(PretrainedConfig):
         use_cache: bool = True,
         classifier_dropout: Optional[float] = None,
         superposition_scale_factor: Optional[float | Literal["max", "mean", "log", "norm"]] = None,
-        attention_score_scale_factor: Optional[float] = None,
+        attention_score_scale_factor: Optional[float | Literal["ortho"]] = None,
         tensor_log_path: Optional[str] = None,
         tensor_logging: bool = False,
+        tensor_log_freq: float = 1.0,
         norm: Literal["forward", "backward", "ortho"] = "backward",
         **kwargs,
     ):
@@ -126,6 +127,7 @@ class HRRConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
         self.norm = norm
+        self.tensor_log_freq = tensor_log_freq
         self.tensor_log_path = None
         if tensor_logging:
             self.tensor_log_path = tensor_log_path.as_posix() if isinstance(tensor_log_path, Path) else tensor_log_path
@@ -143,8 +145,10 @@ class HRRConfig(PretrainedConfig):
 
         if isinstance(attention_score_scale_factor, (float, int)):
             self.attention_score_scale_factor = float(attention_score_scale_factor)
-        elif attention_score_scale_factor is None:
+        elif attention_score_scale_factor == "ortho":
             self.attention_score_scale_factor = 1 / math.sqrt(int(self.hidden_size / self.num_attention_heads))
+        elif attention_score_scale_factor is None:
+            self.attention_score_scale_factor = 1.0
         else:
             raise ValueError(f"Invalid value {attention_score_scale_factor=}")
 
@@ -186,6 +190,7 @@ class HRRSelfAttention(nn.Module):
         self.superposition_scale_factor = config.superposition_scale_factor
         self.attention_score_scale_factor = config.attention_score_scale_factor
         self.tensor_log_path = config.tensor_log_path
+        self.tensor_log_freq = config.tensor_log_freq
         self.norm = config.norm
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
@@ -203,6 +208,9 @@ class HRRSelfAttention(nn.Module):
         past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
     ) -> Tuple[torch.Tensor]:
+
+        SHOULD_LOG = self.tensor_log_path and torch.rand(1).item() <= self.tensor_log_freq
+
         mixed_query_layer = self.query(hidden_states)
 
         # If this is instantiated as a cross-attention module, the keys
@@ -243,7 +251,7 @@ class HRRSelfAttention(nn.Module):
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         # attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        if self.tensor_log_path:
+        if SHOULD_LOG:
             log_tensor(self.tensor_log_path, key_layer, "key_layer")
             log_tensor(self.tensor_log_path, value_layer, "value_layer")
             log_tensor(self.tensor_log_path, query_layer, "query_layer")
@@ -288,7 +296,7 @@ class HRRSelfAttention(nn.Module):
         )  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
-        if self.tensor_log_path:
+        if SHOULD_LOG:
             log_tensor(self.tensor_log_path, superpositions, "superpositions")
             log_tensor(self.tensor_log_path, superposition, "superposition")
             log_tensor(self.tensor_log_path, value_approx, "value_approx")
@@ -317,7 +325,7 @@ class HRRSelfAttention(nn.Module):
             #     attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
 
         attention_scores = attention_scores * self.attention_score_scale_factor
-        if self.tensor_log_path:
+        if SHOULD_LOG:
             log_tensor(self.tensor_log_path, attention_scores, "attention_scores")
         # Apply the attention mask.
         # TODO: for causal language modeling, the attention mask has shape (B, 1, T, T).
@@ -326,10 +334,10 @@ class HRRSelfAttention(nn.Module):
 
         # Normalize the attention scores to probabilities.
         attention_probs = F.softmax(attention_scores, dim=-2)
-        if self.tensor_log_path:
+        if SHOULD_LOG:
             log_tensor(self.tensor_log_path, attention_probs, "attention_probs")
         attention_probs = self.dropout(attention_probs)
-        if self.tensor_log_path:
+        if SHOULD_LOG:
             log_tensor(self.tensor_log_path, attention_probs, "attention_probs_post_dropout")
 
         # Mask heads if we want to
