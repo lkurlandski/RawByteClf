@@ -140,6 +140,7 @@ from src.learn.utils import (
     float_to_int,
     compute_total_steps,
     str_or_bool_to_str,
+    get_mem,
 )
 from src.learn.tokenization import get_tokenizer
 
@@ -259,6 +260,22 @@ class SaveConfigToCheckpointCallback(TrainerCallback):
         config["architectures"] = type(kwds["model"]).__name__
         with open(f"{checkpoint_folder}/{CONFIG_NAME}", "w") as fp:
             json.dump(config, fp, indent=4, sort_keys=True)
+
+
+class UtilCallback(TrainerCallback):
+
+    def __init__(self, do_print: bool = False, *args, **kwds) -> None:
+        super().__init__(*args, **kwds)
+        self.do_print = do_print
+
+    def on_log(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
+        m = get_mem(unit="B")
+        d = {"mem_used": m[2], "mem_avail": m[1], "mem_total": m[0]}
+        state.log_history[-1].update(d)
+        # even if this is added to the log_history, the ProgressCallback will not print it, so we
+        # need to print it manually. Also, end="" doesn't seem to work for some reason.
+        if self.do_print:
+            print(d, end="\n", flush=True)
 
 
 def hp_model_init(
@@ -940,7 +957,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{compute_metrics=}")
     print(BR, flush=True)
 
-    callbacks = []
+    callbacks = [UtilCallback(True)]
     if MODEL_TYPE == "MC":
         callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")

@@ -15,6 +15,7 @@ import os
 from pprint import pprint
 import random
 import sys
+import time
 from typing import Any, Optional, Literal
 
 from accelerate.utils.memory import should_reduce_batch_size
@@ -262,7 +263,10 @@ def test_oversample_based_on_label():
         # print("new probabilities:", round_list(prob_norm([d[1] for d in dist])), "\n")
 
 
-def print_mem(unit: Literal["KB", "MB", "GB"] = "MB", f: Optional[int] = None, p: Optional[str] = None):
+def get_mem(unit: Literal["KB", "MB", "GB"] = "MB", f: Optional[int] = None, p: Optional[str] = None):
+    """
+    Single call takes ~6e-05 seconds.
+    """
     if f is None:
         unit = unit.lower()
         if "kb" in unit:
@@ -283,4 +287,18 @@ def print_mem(unit: Literal["KB", "MB", "GB"] = "MB", f: Optional[int] = None, p
     else:
         p = "??" if p is None else p
     mem = psutil.virtual_memory()
-    print(f"MEM: {round(mem.used / f, 2)} / {round(mem.total / f, 2)} {p}")
+
+    return mem.total / f, mem.available / f, mem.used / f
+
+
+def time_get_mem():
+    start = time.time()
+    for _ in range(1000):
+        print(get_mem("MB"))
+    end = time.time()
+    print(f"{end - start=}")
+    print(f"{(end - start) / 1000=}")
+
+
+if __name__ == "__main__":
+    time_get_mem()
