@@ -420,28 +420,37 @@ def get_bodmas_dataset(
     return dataset, dist
 
 
-def get_goodware_vs_malware_dataset():
-    raise NotImplementedError()
+def get_goodware_vs_malware_dataset(
+    n_ben: Optional[int] = None,
+    n_mal: Optional[int] = None,
+    mal_to_ben_ratio: Optional[float] = None,
+    ts_size: int | float = 0.1,
+    vl_size: int | float = 0.1,
+    **kwds,
+):
+    """
+    n_mal: 9030
+    """
 
-    dataset_mal = BinaryDataset(
-        list(filter(filter_fn, DATASET_TO_FILES["binaries"]["bodmas_pe"]()))[0:9030],
-        1,
-        args.max_length,
-        False,
-        partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
-    )
-    print(f"{dataset_mal=}")
-    dataset_ben = BinaryDataset(
-        list(filter(filter_fn, DATASET_TO_FILES["binaries"]["local_pe"]())),
-        0,
-        args.max_length,
-        False,
-        partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id),
-    )
-    print(f"{dataset_ben=}")
+    def filter_fn(f: Path) -> bool:
+        return f.stat().st_size >= 2 ** 14 and f.suffix == ".exe"
+
+    mal_files = list(filter(filter_fn, DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
+    ben_files = list(filter(filter_fn, DATASET_TO_FILES["binaries"]["local_pe"]()))
+
+    if mal_to_ben_ratio is not None:
+        n_mal = len(mal_files)
+        n_ben = n_mal * mal_to_ben_ratio
+        ben_files = ben_files[0:n_ben]
+    else:
+        mal_files = mal_files[0:n_mal]
+        ben_files = ben_files[0:n_ben]
+
+    dataset_mal = BinaryDataset(mal_files, [1] * len(mal_files), **kwds)
+    dataset_ben = BinaryDataset(ben_files, [0] * len(ben_files), **kwds)
+
     dataset = ConcatDataset([dataset_mal, dataset_ben])
-    dataset = random_split(dataset, [0.8, 0.1, 0.1])
-    dataset = {"tr": dataset[0], "vl": dataset[1], "ts": dataset[2]}
+    return tr_vl_ts_split(dataset, vl_size, ts_size)
 
 
 def test():
