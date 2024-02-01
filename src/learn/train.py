@@ -1010,6 +1010,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             gc.collect()
             output: PredictionOutput = trainer.predict(dataset["vl"])
+            model = model.to(torch.float32).to("cpu")
             print(f"{output.metrics=}")
 
         oh.mkdir(arch_config=config.__dict__)
