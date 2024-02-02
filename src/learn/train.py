@@ -726,7 +726,9 @@ def get_map_kwds_for_hf_datasets(
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
-    print(f"{args=}")
+    m = get_mem(unit="MB")
+    print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
+    print(f"{args=}", flush=True)
 
     DATASET_TYPE: Literal["HF", "PT"]
     MODEL_TYPE: Literal["HF", "MC"] = get_model_type(args.model_name_or_path)
@@ -1014,7 +1016,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print(BR, flush=True)
 
         if not args.skip_eval_check:
-            print("Initial Evaluation...")
+            print("Initial Evaluation...", flush=True)
+            m = get_mem(unit="MB")
+            print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
+            print(BR, flush=True)
             trainer = ModelTrainer(
                 model=model,
                 args=training_arguments,
@@ -1042,7 +1047,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             compute_metrics=compute_metrics,
         )
         gc.collect()
-        print("Training...")
+        print("Training...", flush=True)
+        m = get_mem(unit="MB")
+        print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
         print(BR, flush=True)
         trainer.train(training_arguments.resume_from_checkpoint)
 
@@ -1187,6 +1194,7 @@ def cli():
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{BR}", flush=True)
+    
     print(f"{torch.backends.cudnn.enabled=}")
     cli()
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
