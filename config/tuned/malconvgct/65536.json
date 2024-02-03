@@ -1,0 +1,7 @@
+{
+	"channels": 64,
+	"chunk_size": 2048,
+	"overlap": 768,
+	"stride": 512,
+	"window_size": 192
+}
