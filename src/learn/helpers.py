@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
 from src.cfg import OUTPUT_PATH
 from src.utils import get_highest_path, is_jsonable
-from src.learn.utils import str_or_bool_to_str
+from src.learn.utils import str_or_bool_to_str, float_to_int
 
 
 @dataclass
@@ -31,13 +31,15 @@ class Args:
     max_length: int = field()
     task: str = field()
     depth: int = field(default=1)
-    streaming: bool = field(default=True)
+    streaming: bool = field(default=False)
     exit_after_map: bool = field(default=False)
     ft_freeze_positional_embeddings: bool = field(default=False)
     ft_duplicate_positional_embeddings: bool = field(default=False)
     ft_initialize_positional_embeddings: bool = field(default=False)
     root: Path = field(default=OUTPUT_PATH)
     do_tune: bool = field(default=False)
+    bodmas_min_freq: Optional[int] = field(default=None)
+    bodmas_top_k: Optional[int] = field(default=None)
     arch_config_file: Optional[Path] = field(
         default=None,
         metadata={"help": "Location of a configuration file to use for the architecture."},
@@ -47,6 +49,8 @@ class Args:
         metadata={"help": "Configuration dict to use for the architecture. Mutally exclusive with arch_config_file."},
     )
     subset: Optional[int] = field(default=None)
+    vl_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
+    ts_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
     skip_eval_check: bool = field(default=False)
 
     def __post_init__(self) -> None:
@@ -65,6 +69,9 @@ class Args:
         if self.arch_config_file:
             with open(self.arch_config_file) as fp:
                 self.arch_config = json.load(fp)
+
+        self.vl_size = float_to_int(self.vl_size) if self.vl_size > 1 else self.vl_size
+        self.ts_size = float_to_int(self.ts_size) if self.ts_size > 1 else self.ts_size
 
 
 class OutputHelper:
@@ -96,6 +103,8 @@ class OutputHelper:
         max_length: int,
         task: str,
         depth: int,
+        bodmas_min_freq: Optional[int],
+        bodmas_top_k: Optional[int],
         ft_freeze_positional_embeddings: bool | str,
         ft_duplicate_positional_embeddings: bool | str,
         ft_initialize_positional_embeddings: bool | str,
@@ -108,14 +117,21 @@ class OutputHelper:
         args = [
             str(max_length),
             task,
-            str(depth),
         ]
         if task == "clf":
             args.extend(
                 [
+                    str(bodmas_min_freq),
+                    str(bodmas_top_k),
                     str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
                     str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
                     str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
+                ]
+            )
+        elif task in ("mlm", "clm"):
+            args.extend(
+                [
+                    str(depth),
                 ]
             )
         self.arch_config = arch_config

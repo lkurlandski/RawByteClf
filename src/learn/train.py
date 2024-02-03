@@ -157,8 +157,6 @@ PAD_TO = 8
 
 KEEP_IN_MEMORY = False
 MOVE_IN_MEMORY = False
-BODMAS_TOP_K = 10
-BODMAS_MIN_FREQ = None
 PREPROCESS_AS_TEXT = True
 PREPROCESS_AS_INPUT_IDS = False
 PREPROCESS_AS_INPUT_IDS_DO_PAD = True
@@ -844,6 +842,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.max_length,
         args.task,
         args.depth,
+        args.bodmas_min_freq,
+        args.bodmas_top_k,
         args.ft_freeze_positional_embeddings,
         args.ft_duplicate_positional_embeddings,
         args.ft_initialize_positional_embeddings,
@@ -885,17 +885,19 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             max_length=args.max_length,
             preprocess_fn=preprocess_fn,
             streaming=args.streaming,
-            vl_size=15360,
-            ts_size=15360,
+            vl_size=args.vl_size,
+            ts_size=args.ts_size,
         )
     elif args.task == "clf":
         dataset, dist = get_bodmas_dataset(
             subset=args.subset,
-            min_freq=BODMAS_MIN_FREQ,
-            top_k=BODMAS_TOP_K,
+            min_freq=args.bodmas_min_freq,
+            top_k=args.bodmas_top_k,
+            vl_size=args.vl_size,
+            ts_size=args.ts_size,
             max_length=args.max_length,
             preprocess_fn=preprocess_fn,
-            streaming=False,
+            streaming=args.streaming,
         )
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
