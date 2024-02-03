@@ -102,8 +102,7 @@ from src.architectures.hrrformer import (
 from src.architectures.mamba import (
     MambaConfig,
     MambaForSequenceClassification,
-    MambaForMaskedLM,
-    MambaForCausalLM,
+    MambaLMHeadModel as MambaForCausalLM,
     MambaPreTrainedModel,
 )
 from src.architectures.rwkv import (
@@ -210,8 +209,6 @@ RETURN_ATTENTION_MASK = {
 }
 
 
-# This is the technical details of which models need BERT-like sequence processing, but for
-# simplicity, we'll just use it for all of the models because it doesn't really make a difference.
 APPLY_BERT_PROCESSING = {
     "longformer": True,
     "reformer": False,
@@ -224,7 +221,19 @@ APPLY_BERT_PROCESSING = {
     "rwkv": False,
     "mamba": False,
 }
-APPLY_BERT_PROCESSING = {k: True for k in APPLY_BERT_PROCESSING}
+
+MODEL_NAME_TO_CONFIG_CLASS = {
+    "longformer": LongformerConfig,
+    "reformer": ReformerConfig,
+    "nystromformer": NystromformerConfig,
+    "fnet": FNetConfig,
+    "malconv": MalConvConfig,
+    "malconvgct": MalConvGCTConfig,
+    "mymalconv": MyMalConvConfig,
+    "hrrformer": HRRConfig,
+    "rwkv": RwkvConfig,
+    "mamba": MambaConfig,
+}
 
 
 class TrainingArguments(HfTrainingArguments):
@@ -355,8 +364,21 @@ def object_to_model_name(obj: PretrainedConfig | str | Path) -> str:
     if isinstance(obj, (MyMalConvConfig,)):
         return "mymalconv"
     if isinstance(obj, (str, Path)) and Path(obj).exists():
-        return object_to_model_name(AutoConfig.from_pretrained(str(obj)))
-    raise RuntimeError()
+        try:
+            return object_to_model_name(AutoConfig.from_pretrained(str(obj)))
+        except ValueError:
+            pass
+
+    possible_model_names = []
+    for model_name in MODEL_NAMES:
+        if model_name in str(obj).lower():
+            possible_model_names.append(model_name)
+    if len(possible_model_names) == 1:
+        return possible_model_names[0]
+    elif len(possible_model_names) > 1:
+        raise RuntimeError(f"Multiple possible model names: {possible_model_names} for {obj=}")
+
+    raise RuntimeError(f"Could not determine a model name for {obj=}")
 
 
 def get_model_type(model_name_or_path: str | Path) -> Literal["HF", "MC"]:
@@ -481,6 +503,72 @@ def modify_positional_embeddings_allowed(model: Any) -> bool:
     return False
 
 
+def get_config_from_path(model_name_or_path: str | Path, **kwds) -> PretrainedConfig:
+    # The code below doesn't work because the PretrainedConfig will simply do its best to construct
+    # an object with whatever config file is passed to it, therefore, nothing raises exceptions.
+
+    # try:
+    #     return AutoConfig.from_pretrained(model_name_or_path, **kwds)
+    # except ValueError:
+    #     pass
+
+    # config_classes: list[PretrainedConfig] = [
+    #     LongformerConfig,
+    #     ReformerConfig,
+    #     NystromformerConfig,
+    #     FNetConfig,
+    #     MalConvConfig,
+    #     MalConvGCTConfig,
+    #     MyMalConvConfig,
+    #     HRRConfig,
+    #     RwkvConfig,
+    #     MambaConfig,
+    # ]
+    # possible = []
+    # for c in config_classes:  # FIXME: remove print statements and improve error handling.
+    #     print(f"{c.__name__=}")
+    #     try:
+    #         possible.append(c.from_pretrained(str(model_name_or_path), **kwds))
+    #     except Exception as e:
+    #         if c.__name__ == "MambaConfig":
+    #             raise
+    #         print(f"{e=}")
+
+    # if len(possible) == 1:
+    #     return possible[0]
+    # elif len(possible) > 1:
+    #     raise RuntimeError(f"Multiple possible config classes {possible} for {model_name_or_path=}")
+    # raise RuntimeError(f"Could not determine a config class for {model_name_or_path=}")
+    config_file = f"{model_name_or_path}/{CONFIG_NAME}"
+    with open(config_file, "r") as fp:
+        config = json.load(fp)
+    architecture = config["architectures"][0]
+
+    possible = []
+    for m in MODEL_NAMES:
+        if m in architecture.lower():
+            possible.append(m)
+        # TODO: rename HRRForMaskedLM and HRRForSequenceClassification then remove this. 
+        # Or rename the `model_name` key from "hrrformer" to "hrr".
+        elif m == "hrrformer" and "hrr" in architecture.lower():
+            possible.append(m)
+
+    if len(possible) == 1:
+        return MODEL_NAME_TO_CONFIG_CLASS[possible[0]](**(config | kwds))
+    elif len(possible) > 1:
+        raise RuntimeError(
+            f"Tried to associate the {architecture=} from the {config_file=} with a model_name."
+            f"Multiple possibilities were found, so we cannot proceed: {possible=}."
+        )
+    elif len(possible) == 0:
+        raise RuntimeError(
+            f"Tried to associate the {architecture=} from the {config_file=} with a model_name."
+            f"No possibilities were found, so we cannot proceed: {possible=}."
+        )
+
+    raise RuntimeError()
+
+
 def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
@@ -507,8 +595,13 @@ def get_config(
         label2id (dict[str, int]): use for classification
         num_labels (int): use for classification
     """
+    # PretrainedConfig doesn't like None values for num_labels id2label and label2id.
+    for k in ["num_labels", "id2label", "label2id"]:
+        if k in kwds and kwds[k] is None:
+            kwds.pop(k)
+
     if Path(model_name_or_path).exists():
-        return AutoConfig.from_pretrained(model_name_or_path, **kwds)
+        return get_config_from_path(model_name_or_path, **kwds)
 
     # Handle float values when hyperparameter tuning.
     # FIXME: this probably gets broken...
@@ -645,21 +738,32 @@ def get_model(
     if model_name_or_path is not None and not Path(model_name_or_path).exists():
         raise FileNotFoundError(f"Invalid model name or path: {model_name_or_path}.")
 
+    # PreTrainedModel doesn't like None values for num_labels id2label and label2id.
+    for k in ["num_labels", "id2label", "label2id"]:
+        if k in kwds and kwds[k] is None:
+            kwds.pop(k)
+
     # Get model from disk
     if model_name_or_path:
+        model_name = object_to_model_name(model_name_or_path)
         if task == "clf":
+            if model_name == "hrrformer":
+                return HRRForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+            if model_name == "rwkv":
+                return RwkvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+            if model_name == "mamba":
+                return MambaForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
             if get_model_type(model_name_or_path) == "HF":
-                return AutoModelForSequenceClassification.from_pretrained(
-                    model_name_or_path, **kwds
-                )
+                return AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
             if get_model_type(model_name_or_path) == "MC":
-                return AutoMalConvForSequenceClassification.from_pretrained(
-                    model_name_or_path,
-                    **kwds,
-                )
+                return AutoMalConvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
         if task == "mlm":
+            if model_name == "hrrformer":
+                return HRRForMaskedLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
         if task == "clm":
+            if model_name == "mamba":
+                return MambaForCausalLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
 
     # Get model from config
@@ -686,7 +790,8 @@ def get_model(
             if isinstance(config, RwkvConfig):
                 raise NotImplementedError()
             if isinstance(config, MambaConfig):
-                return MambaForMaskedLM(config)
+                raise NotImplementedError()
+                # return MambaForMaskedLM(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForMaskedLM.from_config(config)
         if task == "clm":
@@ -743,7 +848,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.ft_duplicate_positional_embeddings,
         args.ft_initialize_positional_embeddings,
         args.root,
-        args.tail,
         args.arch_config,
         training_arguments.__dict__,
     )
@@ -770,7 +874,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     fn_1 = partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids))
     fn_2 = partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id)
-    preprocess_fn = lambda x: fn_2(fn_1(x))
+    if APPLY_BERT_PROCESSING[MODEL_NAME]:
+        preprocess_fn = lambda x: fn_2(fn_1(x))
+    else:
+        preprocess_fn = fn_1
 
     if args.task in ("mlm", "clm"):
         dataset: DatasetDict = get_sorel_dataset(
@@ -850,8 +957,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     # CLM/MLM heads ignore classification-specific arugments, so we can leave these as defaults.
     num_classes: Optional[int] = None
-    id2label: dict[int, str] = {}
-    label2id: dict[str, int] = {}
+    id2label: Optional[dict[int, str]] = None
+    label2id: Optional[dict[str, int]] = None
     if args.task == "clf":
         if DATASET_TYPE == "HF":
             num_classes = dataset["tr"].info.features["labels"].num_classes
@@ -1035,7 +1142,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             model = model.to(torch.float32).to("cpu")
             print(f"{output.metrics=}")
 
-        oh.mkdir(arch_config=config.__dict__)
+        oh.mkdir()  # only config specified in the config file will be incorporated into the path.
         trainer = ModelTrainer(
             model=model,
             args=training_arguments,
@@ -1054,22 +1161,31 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         trainer.train(training_arguments.resume_from_checkpoint)
 
     if training_arguments.do_eval:
-        model = get_model(
-            args.task,
-            oh.best_model_dir,
-            None,
-            num_labels=num_classes,
-            id2label=id2label,
-            label2id=label2id,
-        )
+        if not (training_arguments.do_train and training_arguments.load_best_model_at_end):
+            print("Getting model from disk for evaluation.")
+            if training_arguments.do_train:
+                print("Deleting current model from memory.")
+                model.to("cpu")
+                del model
+                torch.cuda.empty_cache()
+                gc.collect()
+            model = get_model(
+                args.task,
+                oh.best_model_dir,
+                None,
+                num_labels=num_classes,
+                id2label=id2label,
+                label2id=label2id,
+            )
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
 
-        single_shot_classes = [label2id[l] for l in dist if dist[l] == 3]
-        compute_metrics = partial(clf_compute_metrics, single_shot_classes=single_shot_classes)
-        print("single_shot_classes=")
-        pprint(single_shot_classes)
+        if args.task == "clf":
+            single_shot_classes = [label2id[l] for l in dist if dist[l] == 3]
+            compute_metrics = partial(clf_compute_metrics, single_shot_classes=single_shot_classes)
+            print("single_shot_classes=")
+            pprint(single_shot_classes)
 
         trainer = ModelTrainer(
             model=model,
