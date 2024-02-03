@@ -335,7 +335,7 @@ def get_sorel_dataset(
     # Paths are usually ~100 characters long, so as a str take ~269 bytes of memory.
     # For 10M files, this equates to ~2.69GB of memory for the paths alone, which is
     # why we convert them to str instead of using pathlib.Path objects.
-    files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
+    files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))[:subset]
     if files:
         print(f"Found SOREL binaries on disk. Loading from binaries...", flush=True)
         dataset = BinaryDataset(files, max_length=max_length, **kwds)
