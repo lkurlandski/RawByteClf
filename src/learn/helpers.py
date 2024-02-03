@@ -19,7 +19,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
-from src.cfg import BR, OUTPUT_PATH
+from src.cfg import OUTPUT_PATH
 from src.utils import get_highest_path, is_jsonable
 from src.learn.utils import str_or_bool_to_str
 
@@ -37,7 +37,6 @@ class Args:
     ft_duplicate_positional_embeddings: bool = field(default=False)
     ft_initialize_positional_embeddings: bool = field(default=False)
     root: Path = field(default=OUTPUT_PATH)
-    tail: str = field(default="")
     do_tune: bool = field(default=False)
     arch_config_file: Optional[Path] = field(
         default=None,
@@ -72,22 +71,23 @@ class OutputHelper:
 
     # The values from the TrainingArguments thats will be hashed.
     trainer_config_relevant_keys = [
+        # Optimizer
         "adam_beta1",
         "adam_beta2",
         "adam_epsilon",
-        "fp16",
-        "gradient_accumulation_steps",
         "learning_rate",
         "lr_scheduler_type",
         "max_grad_norm",
         "optim",
-        "optim_args",
-        "per_device_train_batch_size",
-        "resume_from_checkpoint",
-        "tf32",
         "warmup_ratio",
-        "warmup_steps",
         "weight_decay",
+        # Batch size
+        "per_device_train_batch_size",
+        "gradient_accumulation_steps",
+        # Numeric types
+        "tf32",
+        "fp16",
+        "bf16",
     ]
 
     def __init__(
@@ -100,13 +100,12 @@ class OutputHelper:
         ft_duplicate_positional_embeddings: bool | str,
         ft_initialize_positional_embeddings: bool | str,
         root: Path,
-        tail: str,
         arch_config: Optional[dict] = None,
         trainer_config: Optional[dict] = None,
     ) -> None:
         self.root = Path(root)
+
         args = [
-            model_name_or_path,
             str(max_length),
             task,
             str(depth),
@@ -122,12 +121,16 @@ class OutputHelper:
         self.arch_config = arch_config
         self.trainer_config = trainer_config
 
-        self.path = (
-            self.root.joinpath(*args) /
-            self.arch_config_hash /
-            self.trainer_config_hash /
-            tail
-        )
+        # If model_name_or_path is a path and it exists, then we're finetuning something and
+        # we want to place the finetuned model within the checkpoint its being finetuned from.
+        # In this circumstance, we can assume that the architecture is the same, so we don't
+        # include that in the path construction. Otherwise, we assume we're training a model from
+        # scratch and we want the model_name_or_path (a name) as well as its architectural details.
+        if Path(model_name_or_path).exists():  # The case where we are finetuning something.
+            self.path = Path(model_name_or_path).joinpath(*args) / self.trainer_path()
+        else:
+            args.insert(0, model_name_or_path)
+            self.path = self.root.joinpath(*args) / self.arch_path() / self.trainer_path()
 
     def __repr__(self) -> str:
         return self.path.as_posix()
@@ -194,46 +197,56 @@ class OutputHelper:
     def tensor_log_path(self) -> Path:
         return self.path / "tensor_log_path"
 
-    @property
-    def arch_config_hash(self) -> str:
-        if not self.arch_config:
-            return ""
-        return self.get_hash(self.arch_config)
-
-    @property
-    def trainer_config_hash(self) -> str:
-        if not self.trainer_config:
-            return ""
-        d = {k: v for k, v in self.trainer_config.items() if k in self.trainer_config_relevant_keys}
-        return self.get_hash(d)
-
-    def mkdir(
-        self,
-        arch_config: Optional[dict[str, Any]] = None,
-        trainer_config: Optional[dict[str, Any]] = None,
-    ) -> None:
+    def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
 
-        arch_config = arch_config if self.arch_config is not None else self.arch_config
-        if arch_config:
-            d = {k: v if is_jsonable(v) else str(v) for k, v in arch_config.items()}
+        # Dump the architecture configuration to a file.
+        if self.arch_config:
+            d = {k: v if is_jsonable(v) else str(v) for k, v in self.arch_config.items()}
             with open(self.arch_config_file, "w") as fp:
-                json.dump(arch_config, fp, indent=4)
+                json.dump(d, fp, indent=4)
 
-        trainer_config = trainer_config if self.trainer_config is not None else self.trainer_config
-        if trainer_config:
-            d = {k: v if is_jsonable(v) else str(v) for k, v in trainer_config.items()}
+        # Dump the trainer configuration to a file.
+        if self.trainer_config:
+            d = {k: v if is_jsonable(v) else str(v) for k, v in self.trainer_config.items()}
             with open(self.trainer_config_file, "w") as fp:
                 json.dump(d, fp, indent=4)
 
-    @staticmethod
-    def get_hash(d: dict[str, Any]) -> str:
-        """
-        Tries to convert not hashable values to hashable values then returns a
-        hash of the hashable items in the dict.
-        """
-        x = [(k, v) if isinstance(v, Hashable) else (k, tuple(v)) for k, v in d.items()]
-        x = [(k, v) for k, v in x if (isinstance(k, Hashable) and isinstance(v, Hashable))]
-        x = tuple(sorted(x))
-        s = hex(hash(x))
-        return s[s.index("x") + 1:]
+    def arch_path(self, arch_config: Optional[dict[str, Any]] = None) -> Path:
+        arch_config = arch_config if arch_config is not None else self.arch_config
+        if arch_config is None:
+            return Path()
+        return Path().joinpath(*[f"{k}--{v}" for k, v in arch_config.items()])
+
+    def trainer_path(self, trainer_config: Optional[dict[str, Any]] = None) -> Path:
+        trainer_config = trainer_config if trainer_config is not None else self.trainer_config
+        if trainer_config is None:
+            return Path()
+        d = {k: v for k, v in trainer_config.items() if k in self.trainer_config_relevant_keys}
+        return Path().joinpath(*[f"{k}--{v}" for k, v in d.items()])
+
+    # @property
+    # def arch_config_hash(self) -> str:
+    #     raise DeprecationWarning("Hashing the arch config is depricated.")
+    #     if not self.arch_config:
+    #         return ""
+    #     return self.get_hash(self.arch_config)
+
+    # @property
+    # def trainer_config_hash(self) -> str:
+    #     if not self.trainer_config:
+    #         return ""
+    #     d = {k: v for k, v in self.trainer_config.items() if k in self.trainer_config_relevant_keys}
+    #     return self.get_hash(d)
+
+    # @staticmethod
+    # def get_hash(d: dict[str, Any]) -> str:
+    #     """
+    #     Tries to convert not hashable values to hashable values then returns a
+    #     hash of the hashable items in the dict.
+    #     """
+    #     x = [(k, v) if isinstance(v, Hashable) else (k, tuple(v)) for k, v in d.items()]
+    #     x = [(k, v) for k, v in x if (isinstance(k, Hashable) and isinstance(v, Hashable))]
+    #     x = tuple(sorted(x))
+    #     s = hex(hash(x))
+    #     return s[s.index("x") + 1:]
