@@ -105,7 +105,7 @@ def clf_compute_metrics(
         "f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
         "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
     }
-    if single_shot_classes is None:
+    if single_shot_classes is None or single_shot_classes == []:
         return metrics
 
     include = np.array([i for i, l in enumerate(labels) if l in single_shot_classes])
