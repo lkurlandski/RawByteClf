@@ -32,6 +32,10 @@ Time analysis
 
 ## Environment
 
+environment_0.yml - environment from some time ago...
+environment_1.yml - environment before integrating mamba into codebase
+environment_2.yml - environment after integrating mamba into codebase
+
 Create the environment and install cuda and torch with conda (cuda-nvcc is needed for mamba)
 
 ```
