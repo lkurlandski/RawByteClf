@@ -184,7 +184,8 @@ class MambaLMHeadModel(MambaPreTrainedModel):
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
         # Returning hidden_states can cause excessive memory build-up during evaluation
-        return CausalLMOutput(loss=loss, logits=logits, hidden_states=None)
+        # FIXME: for long sequences, the logits will be very large and cause build up.
+        return CausalLMOutput(loss=loss, logits=None, hidden_states=None)
 
 
 class MambaForSequenceClassification(MambaPreTrainedModel):
