@@ -9,6 +9,13 @@ Train and evaluate the models for malware family classification.
 # TODO: does the attention mask need to be handled by the tokenizer? Can it be
 # handled by the dataloader instead? If so, we could skip the entire second map 
 # process, which would greatly enhance the speed of the entire process...
+
+# TODO: figure out a more intelligent way for the models to return their
+# hidden states. This will probably entail overrriding the Trainer.eval_loop
+# to compute the metrics more frequently and free the logits from memory.
+
+# TODO: memory profiling is useless on the cluster as it is for the entire node,
+# not just me. Need to figure out a way to profile just one user.
 """
 
 # pylint: disable=wrong-import-position
@@ -250,6 +257,8 @@ class TrainingArguments(HfTrainingArguments):
                 kwds["resume_from_checkpoint"] = str_or_bool_to_str(kwds["resume_from_checkpoint"])
             except ValueError:
                 pass
+
+        kwds["metric_for_best_model"] = kwds.pop("metric_for_best_model", "eval_loss")
 
         super().__init__(**kwds)
         self.do_eval = do_eval
