@@ -2,17 +2,18 @@
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
+conda activate RawByteClf2
 
-MODELNAME="mamba"
-BATCHSIZE="512"
-FINETUNECHECKPOINT="./output/test/mamba/512/clm/1/d_model--512/n_layer--2/mlp_hidden_size--512/per_device_train_batch_size--512/gradient_accumulation_steps--1/learning_rate--0.0001/weight_decay--0.01/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_grad_norm--0.5/lr_scheduler_type--linear/warmup_ratio--0.05/bf16--False/fp16--True/tf32--None/optim--adamw_torch/checkpoints/checkpoint-6/"
+MODELNAME="longformer"
+BATCHSIZE="64"
+FINETUNECHECKPOINT="./output/test/longformer/512/mlm/1/hidden_size--1024/intermediate_size--1024/num_hidden_layers--1/num_attention_heads--4/attention_window--128/per_device_train_batch_size--64/gradient_accumulation_steps--1/learning_rate--0.0001/weight_decay--0.01/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_grad_norm--0.5/lr_scheduler_type--linear/warmup_ratio--0.05/bf16--False/fp16--True/tf32--None/optim--adamw_torch/checkpoints/checkpoint-6/"
 
 test="Training $MODELNAME for clf"
 echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --task="clf" \
 --bodmas_top_k=10 \
 --do_train \
@@ -52,7 +53,7 @@ echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --resume_from_checkpoint=true \
 --task="clf" \
 --bodmas_top_k=10 \
@@ -88,13 +89,13 @@ if [ $? -ne 0 ]; then
     exit 2
 fi
 
-test="Training $MODELNAME for clm"
+test="Training $MODELNAME for mlm"
 echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
---task="clm" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
+--task="mlm" \
 --subset=1000 \
 --depth=1 \
 --do_train \
@@ -129,14 +130,14 @@ if [ $? -ne 0 ]; then
     exit 3
 fi
 
-test="Resume training $MODELNAME for clm"
+test="Resume training $MODELNAME for mlm"
 echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --resume_from_checkpoint=true \
---task="clm" \
+--task="mlm" \
 --subset=1000 \
 --depth=1 \
 --do_train \
@@ -176,7 +177,7 @@ echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --task="clf" \
 --streaming=false \
 --depth=1 \

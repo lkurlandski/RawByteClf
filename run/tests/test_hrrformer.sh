@@ -2,6 +2,7 @@
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
+conda activate RawByteClf2
 
 MODELNAME="hrrformer"
 BATCHSIZE="512"
@@ -12,7 +13,7 @@ echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --task="clf" \
 --depth=1 \
 --bodmas_top_k=10 \
@@ -53,7 +54,7 @@ echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --resume_from_checkpoint=true \
 --task="clf" \
 --depth=1 \
@@ -95,7 +96,7 @@ echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --task="mlm" \
 --subset=1000 \
 --depth=1 \
@@ -136,7 +137,7 @@ echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --resume_from_checkpoint=true \
 --subset=1000 \
 --task="mlm" \
@@ -179,7 +180,7 @@ echo $test
 python \
 src/learn/train.py \
 --root="./output/test" \
---arch_config_file="./config/$MODELNAME.json" \
+--arch_config_file="./config/tests/$MODELNAME.json" \
 --task="clf" \
 --streaming=false \
 --depth=1 \
