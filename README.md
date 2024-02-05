@@ -51,7 +51,7 @@ transformers==4.35 \
 datasets==2.14 \
 tokenizers==0.14 \
 accelerate==0.22 \
-safetensors==0.3 \
+safetensors==0.3.1 \
 boto3==1.28 \
 psutil \
 pandas \
