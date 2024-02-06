@@ -186,6 +186,10 @@ class OutputHelper:
         return self.test_results_dir / "results.json"
 
     @property
+    def initial_validation_results_file(self) -> Path:
+        return self.path / "initial_validation_results.json"
+
+    @property
     def test_predictions_file(self) -> Path:
         return self.test_results_dir / "predictions.txt"
 

@@ -1142,6 +1142,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print(f"{count_parameters(model, requires_grad=True)=}")
             print(BR, flush=True)
 
+        oh.mkdir()  # only config specified in the config file will be incorporated into the path.
+
         if not args.skip_eval_check:
             print("Initial Evaluation...", flush=True)
             m = get_mem(unit="MB")
@@ -1159,10 +1161,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             gc.collect()
             output: PredictionOutput = trainer.predict(dataset["vl"])
+            with open(oh.initial_validation_results_file, "w") as fp:
+                json.dump(output.metrics, fp, indent=4)
             model = model.to(torch.float32).to("cpu")
             print(f"{output.metrics=}")
 
-        oh.mkdir()  # only config specified in the config file will be incorporated into the path.
         trainer = ModelTrainer(
             model=model,
             args=training_arguments,
