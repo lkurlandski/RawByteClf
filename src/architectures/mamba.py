@@ -183,9 +183,8 @@ class MambaLMHeadModel(MambaPreTrainedModel):
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
-        # Returning hidden_states can cause excessive memory build-up during evaluation
-        # FIXME: for long sequences, the logits will be very large and cause build up.
-        return CausalLMOutput(loss=loss, logits=None, hidden_states=None)
+        # use TrainingArguments.prediction_loss_only to prevent OOMs
+        return CausalLMOutput(loss=loss, logits=logits, hidden_states=hidden_states)
 
 
 class MambaForSequenceClassification(MambaPreTrainedModel):
@@ -237,4 +236,6 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
                 loss = loss_fct(pooled_logits, labels)
 
         # Returning hidden_states can cause excessive memory build-up during evaluation
+        # use TrainingArguments.prediction_loss_only to prevent OOMs is insufficient because
+        # we need the logits.
         return SequenceClassifierOutput(loss=loss, logits=pooled_logits, hidden_states=None)

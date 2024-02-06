@@ -294,6 +294,29 @@ class UtilCallback(TrainerCallback):
             print(d, end="\n", flush=True)
 
 
+class ImbalancedClassificationTrainer(Trainer):
+    def __init__(self, weight: Optional[Tensor] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.loss_fn = CrossEntropyLoss(weight=weight)
+        self.num_labels = self.model.config.num_labels
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        if self.label_smoother is not None or self.args.past_index >= 0:
+            raise NotImplementedError()
+
+        labels = inputs["labels"]
+        outputs = model(**inputs)
+        logits = outputs.logits
+
+        device = logits.device
+        if self.loss_fn.weight is not None and self.loss_fn.weight.device != device:
+            self.loss_fn.weight = self.loss_fn.weight.to(device)
+
+        # num_labels = unwrap_model(model).config.num_labels
+        loss = self.loss_fn(logits.view(-1, self.num_labels), labels.view(-1))
+        return (loss, outputs) if return_outputs else loss
+
+
 def hp_model_init(
     trial: Optional[dict[str, Any]],
     task: str,
@@ -393,29 +416,6 @@ def get_model_type(model_name_or_path: str | Path) -> Literal["HF", "MC"]:
     if "malconv" in model_name_or_path:
         return "MC"
     return "HF"
-
-
-class ImbalancedClassificationTrainer(Trainer):
-    def __init__(self, weight: Optional[Tensor] = None, **kwargs):
-        super().__init__(**kwargs)
-        self.loss_fn = CrossEntropyLoss(weight=weight)
-        self.num_labels = self.model.config.num_labels
-
-    def compute_loss(self, model, inputs, return_outputs=False):
-        if self.label_smoother is not None or self.args.past_index >= 0:
-            raise NotImplementedError()
-
-        labels = inputs["labels"]
-        outputs = model(**inputs)
-        logits = outputs.logits
-
-        device = logits.device
-        if self.loss_fn.weight is not None and self.loss_fn.weight.device != device:
-            self.loss_fn.weight = self.loss_fn.weight.to(device)
-
-        # num_labels = unwrap_model(model).config.num_labels
-        loss = self.loss_fn(logits.view(-1, self.num_labels), labels.view(-1))
-        return (loss, outputs) if return_outputs else loss
 
 
 def longformer_max_position_embeddings(max_length: int, attention_window: int) -> int:
@@ -863,7 +863,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{oh=}")
     print(BR, flush=True)
 
-    training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
+    training_arguments = replace(
+        training_arguments,
+        output_dir=oh.checkpoints_dir.as_posix(),
+        # storing token class probabilities for every token in a long input sequence requires
+        # an infeasible amount of memory (hundreds of GBs) for long sequences with a reasonbly-
+        # sized test dataset.
+        prediction_loss_only=args.task in ("mlm", "clm"),
+    )
     print(f"{training_arguments=}")
     print(BR, flush=True)
 
@@ -1064,13 +1071,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             mlm=True,
             pad_to_multiple_of=pad_to_multiple_of,
         )
-        compute_metrics = mlm_compute_metrics
+        # compute_metrics = mlm_compute_metrics
+        compute_metrics = None
     elif args.task == "clm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=False,
             pad_to_multiple_of=pad_to_multiple_of,
         )
+        # compute_metrics = clm_compute_metrics
         compute_metrics = None
 
     print(f"{data_collator=}")

@@ -896,11 +896,12 @@ class HRRForMaskedLM(HRRPreTrainedModel):
             output = (prediction_scores,) + outputs[2:]
             return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
 
+        # use TrainingArguments.prediction_loss_only to prevent OOMs
         return MaskedLMOutput(
             loss=masked_lm_loss,
             logits=prediction_scores,
-            hidden_states=None,  # outputs.hidden_states,
-            attentions=None,  # outputs.attentions,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **model_kwargs):
@@ -1009,6 +1010,9 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
+        # Returning hidden_states can cause excessive memory build-up during evaluation
+        # use TrainingArguments.prediction_loss_only to prevent OOMs is insufficient because
+        # we need the logits.
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
