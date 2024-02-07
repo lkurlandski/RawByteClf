@@ -52,15 +52,15 @@ def sample(
     name: str,
     bytes_: bytes,
     labels: Optional[tuple[str]] = None,
-    max_length: Optional[int] = None,
+    num_bytes: Optional[int] = None,
 ) -> dict[str, str | bytes | int]:
-    max_length = sys.maxsize if max_length is None else max_length
+    num_bytes = sys.maxsize if num_bytes is None else num_bytes
     return {
         "name": name,
-        "bytes": bytes_[0:max_length],
+        "bytes": bytes_[0:num_bytes],
         "size": len(bytes_),
         "labels": labels,
-        "length": min(len(bytes_), max_length),
+        "length": min(len(bytes_), num_bytes),
     }
 
 
@@ -72,6 +72,7 @@ class DatasetGenerator(Protocol):
 def disk_dataset_generator(
     files: Iterable[Path],
     labels: Iterable[Optional[str]] = repeat(None),
+    num_bytes: Optional[int] = None,
     max_length: Optional[int] = None,
     errors: int = 0,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
@@ -84,19 +85,23 @@ def disk_dataset_generator(
                 raise type(err)(msg)
             if errors == 1:
                 print(msg, file=ERRORS)
-                yield sample(f.stem, bytes(), l, max_length)
+                yield sample(f.stem, bytes(), l, num_bytes)
                 continue
             if errors == 2:
                 print(msg, file=ERRORS)
                 continue
             raise RuntimeError() from err
 
-        yield sample(f.stem, b, l, max_length)
+        if len(b) > max_length:
+            continue
+
+        yield sample(f.stem, b, l, num_bytes)
 
 
 def s3_dataset_generator(
     files: Iterable[str],
     labels: Optional[Iterable[Optional[str]]] = repeat(None),
+    num_bytes: Optional[int] = None,
     max_length: Optional[int] = None,
     bucket: str = SOREL_BUCKET,
     prefix: str = SOREL_PREFIX,
@@ -119,7 +124,7 @@ def s3_dataset_generator(
                 raise err
             if errors == 1:
                 print(msg, file=ERRORS)
-                yield sample(h, bytes(), l, max_length)
+                yield sample(h, bytes(), l, num_bytes)
                 continue
             if errors == 2:
                 print(msg, file=ERRORS)
@@ -135,14 +140,17 @@ def s3_dataset_generator(
                 raise err
             if errors == 1:
                 print(msg, file=ERRORS)
-                yield sample(h, bytes(), l, max_length)
+                yield sample(h, bytes(), l, num_bytes)
                 continue
             if errors == 2:
                 print(msg, file=ERRORS)
                 continue
             raise RuntimeError() from err
 
-        yield sample(h, b, l, max_length)
+        if len(b) > max_length:
+            continue
+
+        yield sample(h, b, l, num_bytes)
 
 
 class CallableDatasetGenerator(Protocol):
@@ -158,36 +166,27 @@ def main() -> None:
     parser = PerDatasetArgumentParser()
     parser.add_argument("--num", type=int, default=sys.maxsize, help="Number of samples to use.")
     parser.add_argument("--keep_cache", action="store_true", help="Do not delete cache files.")
-    parser.add_argument(
-        "--output_root", type=Path, default=INPUT_PATH, help="Where to save the datasets."
-    )
-    parser.add_argument(
-        "--max_length",
-        type=int,
-        default=sys.maxsize,
-        help="Keep the first `max_length` bytes; discard the rest.",
-    )
+    parser.add_argument("--output_root", type=Path, required=True)
+    parser.add_argument("--num_samples", type=int, default=sys.maxsize)
+    parser.add_argument("--num_bytes", type=int, default=sys.maxsize)
+    parser.add_argument("--max_length", type=int, default=sys.maxsize)
+    parser.add_argument("--shard_idx", type=int, default=None)
+    parser.add_argument("--num_shards", type=int, default=None)
     parser.add_argument(
         "--errors",
         type=int,
         default=0,
         choices=[0, 1, 2],
-        help="""How to handle specific errors. 0 raises exceptions.
-                1 returns empty samples when errors are encountered.
-                2 skips errd samples entirely.""",
-    )
-    parser.add_argument(
-        "--shard",
-        type=int,
-        default=None,
-        help="If sharding, refers to the shard idx. Use -1 to merge shards.",
-    )
-    parser.add_argument(
-        "--n_shards", type=int, default=None, help="Number of shards when sharding."
+        help=(
+            "How to handle specific errors. "
+            "0 raises exceptions. "
+            "1 returns empty samples when errors are encountered. "
+            "2 skips errd samples entirely."
+        ),
     )
     args = parser.parse_args()
 
-    if bool(args.shard) != bool(args.n_shards):
+    if bool(args.shard_idx) != bool(args.num_shards):
         raise ValueError("Both a shard idx and the number of shards required.")
 
     features = Features(
@@ -202,22 +201,23 @@ def main() -> None:
 
     for d in args.datasets:
         print(f"Processing {d} ...")
-        if "sorel" in d and args.shard != -1:
-            files = list(islice((s.sha256 for s in stream_sorel_meta() if s.is_malware), args.num))
+        if "sorel" in d and args.shard_idx != -1:
+            files = list(islice((s.sha256 for s in stream_sorel_meta() if s.is_malware), args.num_samples))
             files = sorted(files)
-            if args.shard > -1:
-                shard_size = (len(files) // args.n_shards) + 1
-                files = files[args.shard * shard_size : (args.shard + 1) * shard_size]
+            if args.shard_idx > -1:
+                shard_size = (len(files) // args.num_shards) + 1
+                files = files[args.shard_idx * shard_size : (args.shard_idx + 1) * shard_size]
             generator = callable_generator(
                 s3_dataset_generator,
                 files=files,
+                num_bytes=args.num_bytes,
                 max_length=args.max_length,
                 bucket=SOREL_BUCKET,
                 prefix=SOREL_PREFIX,
                 errors=args.errors,
             )
-        elif args.shard != -1:
-            files = list(islice(DATASET_TO_FILES["binaries"][d](), args.num))
+        elif args.shard_idx != -1:
+            files = list(islice(DATASET_TO_FILES["binaries"][d](), args.num_samples))
             generator = callable_generator(
                 disk_dataset_generator,
                 files=sorted(files),
@@ -225,8 +225,8 @@ def main() -> None:
                 errors=args.errors,
             )
 
-        if args.shard == -1:
-            dsets = [args.output_root / f"{d}_{i}" for i in range(args.n_shards)]
+        if args.shard_idx == -1:
+            dsets = [args.output_root / f"{d}_{i}" for i in range(args.num_shards)]
             print(f"Merging {d} {len(dsets)} shards...")
             dsets = [Dataset.load_from_disk(p.as_posix()) for p in dsets]
             dataset = concatenate_datasets(dsets)
@@ -238,8 +238,8 @@ def main() -> None:
             continue
 
         outpath = args.output_root / d
-        if args.shard and args.shard != -1:
-            outpath = args.output_root / f"{d}_{args.shard}"
+        if args.shard_idx and args.shard_idx != -1:
+            outpath = args.output_root / f"{d}_{args.shard_idx}"
         dataset.save_to_disk(outpath.as_posix(), max_shard_size=MAX_SHARD_SIZE)
         if not args.keep_cache:
             shutil.rmtree(Path(dataset.cache_files[0]["filename"]).parent)
