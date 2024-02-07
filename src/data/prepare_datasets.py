@@ -5,6 +5,7 @@ TODO:
     - Add fundamental metadata, such as `file_type`, etc.
 """
 
+import asyncio
 from collections.abc import Callable, Generator, Iterable
 from itertools import islice, repeat
 from io import BytesIO
@@ -12,7 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Literal, Optional, Protocol
+from typing import AsyncGenerator, Literal, Optional, Protocol
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -98,6 +99,71 @@ def disk_dataset_generator(
         yield sample(f.stem, b, l, num_bytes)
 
 
+async def s3_download_file(s3, bucket, key, buffer):
+    await asyncio.to_thread(s3.download_fileobj, bucket, key, buffer)
+
+
+async def s3_decompress(buffer):
+    return await asyncio.to_thread(decompress, buffer)
+
+
+async def s3_dataset_generator_async(
+    files: Iterable[str],
+    labels: Optional[Iterable[Optional[str]]] = repeat(None),
+    num_bytes: Optional[int] = None,
+    max_length: Optional[int] = None,
+    bucket: str = "your_bucket_name",
+    prefix: str = "your_prefix",
+    errors: int = 0,
+) -> AsyncGenerator[dict[str, str | bytes | int], None]:
+    """
+    files and labels must be pickle-able.
+    """
+    s3 = boto3.client("s3", config=BotocoreConfig(signature_version=UNSIGNED))
+
+    for f, l in zip(files, labels):
+        h = f.stem if isinstance(f, Path) else f
+        key = prefix + h
+        buffer = BytesIO()
+
+        try:
+            await s3_download_file(s3, bucket, key, buffer)
+        except botocore.exceptions.ClientError as err:
+            msg = f"{h} {str(err)}"
+            if errors == 0:
+                print(msg)
+                raise err
+            if errors == 1:
+                print(msg, file=ERRORS)
+                yield sample(h, bytes(), l, num_bytes)
+                continue
+            if errors == 2:
+                print(msg, file=ERRORS)
+                continue
+            raise RuntimeError() from err
+
+        try:
+            b = await s3_decompress(buffer)
+        except Exception as err:
+            msg = f"{h} {str(err)}"
+            if errors == 0:
+                print(msg)
+                raise err
+            if errors == 1:
+                print(msg, file=ERRORS)
+                yield sample(h, bytes(), l, num_bytes)
+                continue
+            if errors == 2:
+                print(msg, file=ERRORS)
+                continue
+            raise RuntimeError() from err
+
+        if len(b) > max_length:
+            continue
+
+        yield sample(h, b, l, num_bytes)
+
+
 def s3_dataset_generator(
     files: Iterable[str],
     labels: Optional[Iterable[Optional[str]]] = repeat(None),
@@ -113,10 +179,11 @@ def s3_dataset_generator(
     s3: boto3.Session = boto3.client("s3", config=BotocoreConfig(signature_version=UNSIGNED))
     for f, l in zip(files, labels):
         h: str = f.stem if isinstance(f, Path) else f
+        key = prefix + h
         buffer = BytesIO()
 
         try:
-            s3.download_fileobj(bucket, prefix + h, buffer)
+            s3.download_fileobj(bucket, key, buffer)
         except botocore.exceptions.ClientError as err:
             msg = f"{h} {str(err)}"
             if errors == 0:
