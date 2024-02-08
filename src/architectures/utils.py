@@ -5,20 +5,20 @@
 import torch
 
 
-def fft(x, dim, norm):
-    return torch.fft.fft(x, dim=dim, norm=norm)
+def fft(x, dim, norm, n):
+    return torch.fft.fft(x, dim=dim, norm=norm, n=n)
 
 
-def ifft(x, dim, norm):
-    return torch.fft.ifft(x, dim=dim, norm=norm)
+def ifft(x, dim, norm, n):
+    return torch.fft.ifft(x, dim=dim, norm=norm, n=n)
 
 
-def fft_2d(x, dim, norm):
-    return torch.fft.fft2(x, dim=dim, norm=norm)
+def fft_2d(x, dim, norm, n):
+    return torch.fft.fft2(x, dim=dim, norm=norm, n=n)
 
 
-def ifft_2d(x, dim, norm):
-    return torch.fft.ifft2(x, dim=dim, norm=norm)
+def ifft_2d(x, dim, norm, n):
+    return torch.fft.ifft2(x, dim=dim, norm=norm, n=n)
 
 
 def approx_inverse(x, dim):
@@ -31,46 +31,46 @@ def approx_inverse_2d(x, dim):
     return torch.roll(x, (1, 1), dims=dim)
 
 
-def inverse_2d(x, dim, norm):
-    x = ifft_2d(1. / fft_2d(x, dim, norm), dim, norm).real
+def inverse_2d(x, dim, norm, n):
+    x = ifft_2d(1. / fft_2d(x, dim, norm, n), dim, norm, n).real
     return torch.nan_to_num(x)
 
 
-def projection(x, dim, norm):
-    f = torch.abs(fft(x, dim))
-    p = ifft(fft(x, dim, norm) / f, dim, norm).real
+def projection(x, dim, norm, n):
+    f = torch.abs(fft(x, dim, norm, n))
+    p = ifft(fft(x, dim, norm, n) / f, dim, norm, n).real
     return torch.nan_to_num(p)
 
 
-def projection_2d(x, dim, norm):
-    f = torch.abs(fft_2d(x, dim, norm))
-    p = ifft_2d(fft_2d(x, dim) / f, dim, norm).real
+def projection_2d(x, dim, norm, n):
+    f = torch.abs(fft_2d(x, dim, norm, n))
+    p = ifft_2d(fft_2d(x, dim, norm, n) / f, dim, norm, n).real
     return torch.nan_to_num(p)
 
 
-def binding(x, y, dim, norm):
-    s = ifft(torch.multiply(fft(x, dim, norm), fft(y, dim, norm)), dim, norm)
+def binding(x, y, dim, norm, n):
+    s = ifft(torch.multiply(fft(x, dim, norm, n), fft(y, dim, norm, n)), dim, norm, n)
     return s.real
 
 
-def binding_2d(x, y, dim, norm):
-    b = ifft_2d(torch.multiply(fft_2d(x, dim, norm), fft_2d(y, dim, norm)), dim, norm)
+def binding_2d(x, y, dim, norm, n):
+    b = ifft_2d(torch.multiply(fft_2d(x, dim, norm, n), fft_2d(y, dim, norm, n)), dim, norm, n)
     return b.real
 
 
-def unbinding(b, y, dim, norm):
+def unbinding(b, y, dim, norm, n):
     yt = approx_inverse(y, dim)
-    return binding(b, yt, dim, norm)
+    return binding(b, yt, dim, norm, n)
 
 
-def unbinding_2d(b, y, dim, norm):
-    yt = inverse_2d(y, dim, norm)
-    return binding_2d(b, yt, dim, norm)
+def unbinding_2d(b, y, dim, norm, n):
+    yt = inverse_2d(y, dim, norm, n)
+    return binding_2d(b, yt, dim, norm, n)
 
 
-def unbinding_2d_approx(b, y, dim, norm):
-    yt = approx_inverse_2d(y, dim, norm)
-    return binding_2d(b, yt, dim, norm)
+def unbinding_2d_approx(b, y, dim, norm, n):
+    yt = approx_inverse_2d(y, dim)
+    return binding_2d(b, yt, dim, norm, n)
 
 
 def normal(shape, seed):

@@ -256,15 +256,26 @@ class HRRSelfAttention(nn.Module):
             log_tensor(self.tensor_log_path, value_layer, "value_layer")
             log_tensor(self.tensor_log_path, query_layer, "query_layer")
 
+        print(f"{query_layer.shape=}")# FIXME
+        print(f"{key_layer.shape=}")# FIXME
+        print(f"{value_layer.shape=}")# FIXME
+
         # HRR
         # H' = hidden_size / num_attention_heads  RuntimeError: cuFFT error: CUFFT_INVALID_SIZE
+        # zero padding
+        if key_layer.dtype != torch.float32 or value_layer.dtype != torch.float32:
+            n = 1 << (key_layer.shape[3] - 1).bit_length()  # nearest power of two
+        else:
+            n = None
+
         try:
             superpositions = binding(
                 key_layer,
                 value_layer,
                 dim=-1,
                 norm=self.norm,
-            )  # (B, h, T, H')
+                n=n,
+            )[:,:,:,0:key_layer.shape[3]]  # (B, h, T, H')
         except RuntimeError:  # TODO: hyperparameter tuning can sometimes induce this error...why?
             print(f"{key_layer.shape=}")
             print(f"{value_layer.shape=}")
@@ -293,7 +304,8 @@ class HRRSelfAttention(nn.Module):
             query_layer,
             dim=-1,
             norm=self.norm,
-        )  # (B, h, T, H')
+            n=n,
+        )[:,:,:,0:key_layer.shape[3]]  # (B, h, T, H')
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
 
         if SHOULD_LOG:
