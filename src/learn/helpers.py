@@ -7,10 +7,12 @@ print(f"Entered {__file__=}")
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import errno
 import json
 import os
 from pathlib import Path
 from pprint import pprint
+import shutil
 import sys
 from typing import Any, Hashable, Optional
 
@@ -52,6 +54,10 @@ class Args:
     vl_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
     ts_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
     skip_eval_check: bool = field(default=False)
+    auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
+    early_stopping: bool = field(default=False)
+    early_stopping_patience: int = field(default=1)
+    early_stopping_threshold: float = field(default=0.0)
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -61,6 +67,7 @@ class Args:
         self.exit_after_map = str_or_bool_to_str(self.exit_after_map)
         self.do_tune = str_or_bool_to_str(self.do_tune)
         self.skip_eval_check = str_or_bool_to_str(self.skip_eval_check)
+        self.auto_find_batch_size_and_gradient_accumulation_steps = str_or_bool_to_str(self.auto_find_batch_size_and_gradient_accumulation_steps)
 
         if self.arch_config_file and self.arch_config:
             raise ValueError("Cannot specify both arch_config_file and arch_config.")
@@ -137,22 +144,36 @@ class OutputHelper:
         self.arch_config = arch_config
         self.trainer_config = trainer_config
 
-        # If model_name_or_path is a path and it exists, then we're finetuning something and
-        # we want to place the finetuned model within the checkpoint its being finetuned from.
-        # In this circumstance, we can assume that the architecture is the same, so we don't
-        # include that in the path construction. Otherwise, we assume we're training a model from
-        # scratch and we want the model_name_or_path (a name) as well as its architectural details.
-        if Path(model_name_or_path).exists():  # The case where we are finetuning something.
-            self.path = Path(model_name_or_path).joinpath(*args) / self.trainer_path()
+        # If model_name_or_path is a path and it exists, then we're finetuning something.
+        # In this case the model_name_or_path is a path and it already contains the model name,
+        # so we don't need to include it in basepath Otherwise, its the firt part of basepath.
+        self.finetuning = Path(model_name_or_path).exists()
+        if self.finetuning:
+            self.basepath = Path(model_name_or_path).joinpath(*args)
         else:
             args.insert(0, model_name_or_path)
-            self.path = self.root.joinpath(*args) / self.arch_path() / self.trainer_path()
+            self.basepath = self.root.joinpath(*args)
 
     def __repr__(self) -> str:
         return self.path.as_posix()
 
     def __str__(self) -> str:
         return self.path.as_posix()
+
+    @property
+    def path(self) -> Path:
+        """
+        If finetuning, we want to place the finetuned model within the checkpoint its being
+        finetuned from. In this circumstance, we can assume that the architecture is the same,
+        so we don't include that in the path construction. Otherwise, we assume we're training a
+        model from scratch and we want the model_name_or_path as well as its architectural details.
+        """
+        if self.finetuning:
+            tail = self.trainer_path()
+        else:
+            tail = self.arch_path() / self.trainer_path()
+
+        return self.basepath / tail
 
     @property
     def best_model_dir(self) -> Path:
@@ -231,6 +252,32 @@ class OutputHelper:
             d = {k: v if is_jsonable(v) else str(v) for k, v in self.trainer_config.items()}
             with open(self.trainer_config_file, "w") as fp:
                 json.dump(d, fp, indent=4)
+
+    def rmdir(self, ignore_config: bool = False, force: bool = False) -> None:
+        """
+        Remove the output directory and all its contents. Default behaviour is to only remove the
+        directory if it is empty. If ignore_config is True, then will delete the directory if the
+        only two files found within it are the arch_config and trainer_config files. If force is
+        True, then will hard delete the directory and all its contents.
+        """
+        if not self.path.exists():
+            return
+
+        if force:
+            shutil.rmtree(self.path)
+            return
+
+        files = list(filter(lambda p: p.is_file(), self.path.glob("*")))
+        if len(files) == 0:
+            shutil.rmtree(self.path)
+            return
+
+        if ignore_config and len(files) == 2:
+            if {self.arch_config_file, self.trainer_config_file} == set(files):
+                shutil.rmtree(self.path)
+                return
+
+        raise OSError(errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY), self.path)
 
     def arch_path(self, arch_config: Optional[dict[str, Any]] = None) -> Path:
         arch_config = arch_config if arch_config is not None else self.arch_config

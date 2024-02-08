@@ -16,6 +16,10 @@ Train and evaluate the models for malware family classification.
 
 # TODO: memory profiling is useless on the cluster as it is for the entire node,
 # not just me. Need to figure out a way to profile just one user.
+
+# NOTE 0: storing token class probabilities for every token in a long input sequence requires
+    an infeasible amount of memory (hundreds of GBs) for long sequences with a reasonbly-
+    sized test dataset.
 """
 
 # pylint: disable=wrong-import-position
@@ -32,6 +36,7 @@ import math
 from pathlib import Path
 from pprint import pformat, pprint
 import random
+import time
 from typing import Any, Callable, Literal, Optional
 import os
 import sys
@@ -41,6 +46,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
+from accelerate import find_executable_batch_size
 from datasets import (
     DatasetDict,
     Dataset,
@@ -73,11 +79,13 @@ from transformers import (
     TrainerCallback,
     TrainerState,
     TrainerControl,
+    EarlyStoppingCallback,
 )
 from transformers import TrainingArguments as HfTrainingArguments
 from transformers.trainer_utils import (
     BestRun,
     PredictionOutput,
+    TrainOutput,
     PREFIX_CHECKPOINT_DIR,
 )
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
@@ -147,6 +155,7 @@ from src.learn.utils import (
     compute_total_steps,
     str_or_bool_to_str,
     get_mem,
+    find_executable_batch_size_and_gradient_accumulation_steps,
 )
 from src.learn.tokenization import get_tokenizer
 
@@ -283,6 +292,9 @@ class UtilCallback(TrainerCallback):
     def __init__(self, do_print: bool = False, *args, **kwds) -> None:
         super().__init__(*args, **kwds)
         self.do_print = do_print
+        self._time_step_start = -1.0
+        self._time_step_end = -1.0
+        self._time_step_deltas: list[float] = []
 
     def on_log(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
         m = get_mem(unit="B")
@@ -292,6 +304,18 @@ class UtilCallback(TrainerCallback):
         # need to print it manually. Also, end="" doesn't seem to work for some reason.
         if self.do_print:
             print(d, end="\n", flush=True)
+
+        if self._time_step_deltas != []:
+            d = {"mean_time_per_step": np.mean(np.array(self._time_step_deltas))}
+            state.log_history[-1].update(d)
+            self._time_step_deltas = []
+
+    def on_step_begin(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
+        self._time_step_start = time.time()
+
+    def on_step_end(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
+        self._time_step_end = time.time()
+        self._time_step_deltas.append(self._time_step_end - self._time_step_start)
 
 
 class ImbalancedClassificationTrainer(Trainer):
@@ -865,11 +889,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     training_arguments = replace(
         training_arguments,
-        output_dir=oh.checkpoints_dir.as_posix(),
-        # storing token class probabilities for every token in a long input sequence requires
-        # an infeasible amount of memory (hundreds of GBs) for long sequences with a reasonbly-
-        # sized test dataset.
-        prediction_loss_only=args.task in ("mlm", "clm"),
+        prediction_loss_only=args.task in ("mlm", "clm"),  # NOTE 0
     )
     print(f"{training_arguments=}")
     print(BR, flush=True)
@@ -1086,7 +1106,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{compute_metrics=}")
     print(BR, flush=True)
 
-    callbacks = [UtilCallback(True)]
+    callbacks = [UtilCallback(False)]
+    if args.early_stopping:
+        callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
     if MODEL_TYPE == "MC":
         callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")
@@ -1142,13 +1164,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print(f"{count_parameters(model, requires_grad=True)=}")
             print(BR, flush=True)
 
-        oh.mkdir()  # only config specified in the config file will be incorporated into the path.
 
-        if not args.skip_eval_check:
-            print("Initial Evaluation...", flush=True)
-            m = get_mem(unit="MB")
-            print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
-            print(BR, flush=True)
+        # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
+        @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
+        def _eval(batch_size: int) -> PredictionOutput:
+            nonlocal training_arguments  # access variables outside of this function.
+            training_arguments = replace(training_arguments, per_device_eval_batch_size=batch_size)
+            print(f"Evaluating with {batch_size=}...", flush=True)
             trainer = ModelTrainer(
                 model=model,
                 args=training_arguments,
@@ -1159,29 +1181,73 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
-            gc.collect()
-            output: PredictionOutput = trainer.predict(dataset["vl"])
-            with open(oh.initial_validation_results_file, "w") as fp:
-                json.dump(output.metrics, fp, indent=4)
-            model = model.to(torch.float32).to("cpu")
-            print(f"{output.metrics=}")
+            return trainer.predict(dataset["vl"])
 
-        trainer = ModelTrainer(
-            model=model,
-            args=training_arguments,
-            train_dataset=dataset["tr"],
-            eval_dataset=dataset["vl"],
-            data_collator=data_collator,
-            tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
-            callbacks=callbacks,
-            compute_metrics=compute_metrics,
-        )
+        print("Initial Evaluation...", flush=True)
+        initial_output = _eval()
+        model = model.to(torch.float32).to("cpu")
+        torch.cuda.empty_cache()
         gc.collect()
+        print(f"{initial_output.metrics=}", flush=True)
+
+
+        @find_executable_batch_size_and_gradient_accumulation_steps(
+            starting_batch_size=training_arguments.per_device_train_batch_size,
+            starting_gradient_accumulation_steps=training_arguments.gradient_accumulation_steps,
+        )
+        def _train(batch_size: int, gradient_accumulation_steps: int) -> TrainOutput:
+            nonlocal training_arguments, oh
+            print(f"Training with {batch_size=} and {gradient_accumulation_steps=}...", flush=True)
+            try:  # Try to remove a created, but empty directory from a previous attempt.
+                oh.rmdir(ignore_config=True)
+            except OSError:
+                pass
+
+            training_arguments = replace(
+                training_arguments,
+                per_device_train_batch_size=batch_size,
+                per_device_eval_batch_size=batch_size,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+            )
+            oh.trainer_config = training_arguments.__dict__
+            oh.mkdir()
+
+            training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
+            print(f"{training_arguments.per_device_train_batch_size=} {training_arguments.per_device_eval_batch_size=}")
+            trainer = ModelTrainer(
+                model=model,
+                args=training_arguments,
+                train_dataset=dataset["tr"],
+                eval_dataset=dataset["vl"],
+                data_collator=data_collator,
+                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+            return trainer.train(training_arguments.resume_from_checkpoint)
+
         print("Training...", flush=True)
-        m = get_mem(unit="MB")
-        print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
-        print(BR, flush=True)
-        trainer.train(training_arguments.resume_from_checkpoint)
+        if args.auto_find_batch_size_and_gradient_accumulation_steps:
+            _train()
+        else:
+            oh.mkdir()
+            training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
+            trainer = ModelTrainer(
+                model=model,
+                args=training_arguments,
+                train_dataset=dataset["tr"],
+                eval_dataset=dataset["vl"],
+                data_collator=data_collator,
+                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+            trainer.train(training_arguments.resume_from_checkpoint)
+
+
+        with open(oh.initial_validation_results_file, "w") as fp:
+            json.dump(initial_output.metrics, fp, indent=4)
+
 
     if training_arguments.do_eval:
         if not (training_arguments.do_train and training_arguments.load_best_model_at_end):
