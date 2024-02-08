@@ -256,10 +256,6 @@ class HRRSelfAttention(nn.Module):
             log_tensor(self.tensor_log_path, value_layer, "value_layer")
             log_tensor(self.tensor_log_path, query_layer, "query_layer")
 
-        print(f"{query_layer.shape=}")# FIXME
-        print(f"{key_layer.shape=}")# FIXME
-        print(f"{value_layer.shape=}")# FIXME
-
         # HRR
         # H' = hidden_size / num_attention_heads  RuntimeError: cuFFT error: CUFFT_INVALID_SIZE
         # zero padding
