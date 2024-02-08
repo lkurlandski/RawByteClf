@@ -2,8 +2,7 @@ import math
 from pathlib import Path
 
 
-BODY = """
-#!/bin/bash -l
+BODY = """#!/bin/bash -l
 
 #SBATCH --job-name=JOB_NAME
 #SBATCH --account=admalware
@@ -28,8 +27,8 @@ src/learn/train.py \\
 --metric_for_best_model="eval_loss" \\
 --task="clm" \\
 --streaming=false \\
---vl_size=16384 \\
---ts_size=16384 \\
+--vl_size=50000 \\
+--ts_size=50000 \\
 --depth=1 \\
 --do_train \\
 --do_eval \\
@@ -37,8 +36,8 @@ src/learn/train.py \\
 --save_strategy="steps" \\
 --evaluation_strategy="steps" \\
 --num_train_epochs=1 \\
---save_steps=8 \\
---eval_steps=8 \\
+--save_steps=100 \\
+--eval_steps=100 \\
 --logging_steps=10 \\
 --dataloader_num_workers=2 \\
 --optim="adamw_torch" \\
@@ -51,8 +50,8 @@ src/learn/train.py \\
 --save_total_limit=3 \\
 --model_name_or_path="mamba" \\
 --max_length=512 \\
---per_device_train_batch_size=1024 \\
---per_device_eval_batch_size=1024 \\
+--per_device_train_batch_size=2048 \\
+--per_device_eval_batch_size=2048 \\
 --gradient_accumulation_steps=1 \\
 --load_best_model_at_end \\
 --early_stopping=true \\
