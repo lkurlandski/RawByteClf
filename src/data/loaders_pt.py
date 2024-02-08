@@ -111,7 +111,7 @@ class BinaryDataset(Dataset):
         label2id: Optional[dict[str, int]] = None,
         streaming: bool = False,
         asynch: bool = True,
-        asynch_chunk_size: int = 100000,
+        asynch_chunk_size: int = 500000,
         in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
         length: Optional[int] = None,
     ) -> None:
