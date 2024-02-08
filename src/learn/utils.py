@@ -121,7 +121,9 @@ def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
 
 
 def find_executable_batch_size_sub(
-    function: callable = None, starting_batch_size: int = 128, subtract: int = 8
+    function: callable = None,
+    starting_batch_size: int = 128,
+    subtract: int = 8,
 ):
     """
     Monkey patch for accelerate.utils.memory.find_executable_batch_size to subtract from
@@ -171,6 +173,50 @@ def find_executable_batch_size_sub(
                         torch.xpu.empty_cache()
                     print(f"Failed with {batch_size=}. Trying batch_size={batch_size - subtract}.")
                     batch_size -= subtract
+                else:
+                    raise
+
+    return decorator
+
+
+def find_executable_batch_size_and_gradient_accumulation_steps(
+    function: callable = None,
+    starting_batch_size: int = 128,
+    starting_gradient_accumulation_steps: Optional[int] = 1,
+) -> None:
+    if function is None:
+        return functools.partial(
+            find_executable_batch_size_and_gradient_accumulation_steps,
+            starting_batch_size=starting_batch_size,
+            starting_gradient_accumulation_steps=starting_gradient_accumulation_steps,
+        )
+
+    batch_size = starting_batch_size
+    gradient_accumulation_steps = starting_gradient_accumulation_steps if starting_gradient_accumulation_steps else 1
+
+    def decorator(*args, **kwargs):
+        nonlocal batch_size, gradient_accumulation_steps
+        gc.collect()
+        torch.cuda.empty_cache()
+        params = list(inspect.signature(function).parameters.keys())
+        # Guard against user error
+        if len(params) < (len(args) + 1):
+            arg_str = ", ".join([f"{arg}={value}" for arg, value in zip(params[1:], args[1:])])
+            raise TypeError(
+                f"Batch size was passed into `{function.__name__}` as the first argument when called."
+                f"Remove this as the decorator already does so: `{function.__name__}({arg_str})`"
+            )
+        while True:
+            if batch_size == 0:
+                raise RuntimeError("No executable batch size found, reached zero.")
+            try:
+                return function(batch_size, gradient_accumulation_steps, *args, **kwargs)
+            except Exception as e:
+                if should_reduce_batch_size(e):
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    batch_size //= 2
+                    gradient_accumulation_steps *= 2
                 else:
                     raise
 
