@@ -5,6 +5,7 @@ High-level loading API for pytorch datasets.
 # pylint: disable=wrong-import-position
 print(f"Entered {__file__=}")
 
+from abc import ABC
 import asyncio
 from collections import Counter
 from collections.abc import Iterable, Sequence
@@ -27,7 +28,14 @@ import pandas as pd
 import psutil
 import torch
 from torch import ByteTensor, LongTensor, Tensor
-from torch.utils.data import ConcatDataset, Dataset, Subset, random_split
+from torch.utils.data import (
+    ConcatDataset,
+    Dataset,
+    IterableDataset,
+    Subset,
+    get_worker_info,
+    random_split,
+)
 from tqdm import tqdm
 
 from src.data.cfg import BODMAS_LABELS_FILE, DATASET_TO_FILES
@@ -73,12 +81,33 @@ async def read_binary_file_async(
     return await loop.run_in_executor(None, read_binary_file, f, max_length, dtype)
 
 
+async def load_into_memory_asynch(
+    files: list[str],
+    async_chunk_size: int,
+    max_length: Optional[int] = None,
+    dtype: Literal["bytes", "np", "pt"] = "bytes",
+) -> None:
+    file_chunks = batched(files, async_chunk_size)
+    n_chunks = math.ceil(len(files) / async_chunk_size)
+    desc = f"Asynchronously loading {len(files)} files in {n_chunks} chunks..."
+    x = []
+    for files in tqdm(file_chunks, desc=desc, total=n_chunks):
+        tasks = [read_binary_file_async(f, max_length, dtype) for f in files]
+        x_i = await asyncio.gather(*tasks)
+        x.extend(x_i)
+    return x
+
+
 def preprocess_fn_add_cls_token(x: LongTensor, cls_token_id: int) -> LongTensor:
     return torch.cat([torch.tensor([cls_token_id], dtype=torch.long), x])
 
 
 def preprocess_fn_shift_token_idx(x: LongTensor, shift: int) -> LongTensor:
     return x + shift
+
+
+class BinaryDataset(ABC):
+    ...
 
 
 class BinaryDataset(Dataset):
@@ -241,6 +270,95 @@ class BinaryDataset(Dataset):
     @property
     def num_classes(self) -> int:
         return len(self.dist)
+
+
+class IterableBinaryDataset(IterableDataset):
+
+    def __init__(self,
+        files: Sequence[os.PathLike],
+        labels: Optional[Sequence[int]] = None,
+        max_length: Optional[int] = None,
+        preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
+        id2label: Optional[dict[int, str]] = None,
+        label2id: Optional[dict[str, int]] = None,
+        chunk_size: int = 1,
+        asynch: bool = True,
+        asynch_chunk_size: int = 500000,
+        in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
+    ) -> None:
+
+        self.files = list(map(str, files))
+        self.labels = torch.tensor(labels, dtype=torch.long) if isinstance(labels, Sequence) else None
+        self.max_length = max_length
+        self.preprocess_fn = preprocess_fn
+        self.chunk_size = chunk_size
+        self.asynch = asynch
+        self.asynch_chunk_size = asynch_chunk_size
+        self.in_memory_dtype = in_memory_dtype
+        self._id2label = id2label
+        self._label2id = label2id
+        self._dist = None
+
+        # Initialized after call to __iter__. These are unique to each process when num_workers > 1.
+        # Each sequences will have the same length. Their meaning is self-evident.
+        # idx is used by each process to index specific value within the sequence.
+        self.myfiles: list[str] = None
+        self.mylabels: Optional[LongTensor] = None
+        self.x: list[Optional[bytes | np.ndarray | ByteTensor]] = None
+        self.idx: int = None
+
+    def __iter__(self):
+        worker_info = get_worker_info()
+
+        if worker_info is None:  # DataLoader.num_workers == 0
+            start = 0
+            end = len(self)
+        else:
+            per_worker = int(math.ceil((len(self) - 0) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            start = 0 + worker_id * per_worker
+            end = min(start + per_worker, len(self))
+
+        self.myfiles = self.files[start:end]
+        self.mylabels = self.labels[start:end] if self.labels else None
+        self.x = [None for _ in range(end - start)]
+        self.idx = 0
+        return self
+
+    def __len__(self) -> int:
+        return len(self.files)
+
+    def __next__(self):
+
+        r = {"name": str(self.myfiles[self.idx]).split("/")[-1]}
+        if self.mylabels is not None:
+            r["labels"] = self.mylabels[self.idx]
+
+        if self.x[self.idx] is None:
+            files = self.myfiles[self.idx : self.idx + self.chunk_size]
+            if self.asynch:
+                loop = asyncio.get_event_loop()
+                future = load_into_memory_asynch(
+                    files, self.asynch_chunk_size, self.max_length, self.in_memory_dtype
+                )
+                self.x = loop.run_until_complete(future)
+            else:
+                self.load_into_memory(files)
+        x_i = self.x[self.idx]
+
+        if isinstance(x_i, bytes):
+            x_i: ByteTensor = torch.frombuffer(x_i, dtype=torch.uint8)
+        elif isinstance(x_i, np.ndarray):
+            x_i: ByteTensor = torch.from_numpy(x_i)
+        x_i: LongTensor = x_i.to(torch.long)
+        x_i = self.preprocess_fn(x_i)[0:self.max_length]
+        r["input_ids"] = x_i
+
+        self.idx += 1
+        return r
+
+    def load_into_memory(self, files: list[str]) -> None:
+        self.x = [read_binary_file(f, self.max_length, self.in_memory_dtype) for f in files]
 
 
 class StaticBinaryDataset(BinaryDataset):
@@ -510,5 +628,23 @@ def test():
     print(f"{dataset=}")
 
 
+def test_iterable_binary_dataset():
+
+    files = sorted(list(DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
+    dataset = IterableBinaryDataset(
+        files,
+        labels=None,
+        max_length=4096,
+        chunk_size=50000,
+        asynch=True,
+        in_memory_dtype="pt",
+    )
+
+    for i, d in enumerate(dataset):
+        print(d)
+        if i > 2:
+            break
+
+
 if __name__ == "__main__":
-    test()
+    test_iterable_binary_dataset()
