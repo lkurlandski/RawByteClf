@@ -92,7 +92,7 @@ def dd_hh(p: int) -> str:
 
 OUTPUT = Path("run/scaling_hrrformer_mlm_512/")
 for num_hidden_layers, hidden_size, params in CONFIGS:
-    intermediate_size = num_hidden_layers * 4
+    intermediate_size = hidden_size * 4
     jobname = f"scl_hrr_{num_hidden_layers}-{hidden_size}"
     text = BODY \
         .replace("JOB_NAME", jobname) \
