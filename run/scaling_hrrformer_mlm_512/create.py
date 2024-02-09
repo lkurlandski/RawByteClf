@@ -20,7 +20,7 @@ conda activate RawByteClf
 conda activate RawByteClf2
 module unload blindfold
 
-python \\
+python -u \\
 src/learn/train.py \\
 --root="./output/scaling" \\
 --arch_config='{"hidden_size": HIDDEN_SIZE, "intermediate_size": INTERMEDIATE_SIZE, "num_hidden_layers": NUM_HIDDEN_LAYERS, "norm": "backward", "num_attention_heads": 8, "superposition_scale_factor": 1.0, "tensor_logging": false, "attention_score_scale_factor": 1.0}' \\
@@ -58,8 +58,6 @@ src/learn/train.py \\
 --early_stopping_patience=1 \\
 --early_stopping_threshold=0 \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
---bf16 \\
---bf16_full_eval \\
 --tf32=true
 """
 
@@ -95,7 +93,7 @@ def dd_hh(p: int) -> str:
 OUTPUT = Path("run/scaling_hrrformer_mlm_512/")
 for num_hidden_layers, hidden_size, params in CONFIGS:
     intermediate_size = num_hidden_layers * 4
-    jobname = f"scl_{num_hidden_layers}-{hidden_size}"
+    jobname = f"scl_hrr_{num_hidden_layers}-{hidden_size}"
     text = BODY \
         .replace("JOB_NAME", jobname) \
         .replace("HIDDEN_SIZE", str(hidden_size)) \

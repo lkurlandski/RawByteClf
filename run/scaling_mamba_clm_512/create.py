@@ -20,7 +20,7 @@ conda activate RawByteClf
 conda activate RawByteClf2
 module unload blindfold
 
-python \\
+python -u \\
 src/learn/train.py \\
 --root="./output/scaling" \\
 --arch_config='{"d_model": D_MODEL, "n_layer": N_LAYER, "mlp_hidden_size": 512}' \\
