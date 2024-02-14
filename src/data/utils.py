@@ -3,6 +3,7 @@ Utility functions.
 """
 
 from argparse import ArgumentParser, Namespace
+from collections.abc import Sequence
 from collections import Counter
 import csv
 import bz2
@@ -26,6 +27,7 @@ from datasets import (
 )
 from datasets.utils.logging import set_verbosity, disable_progress_bar, enable_progress_bar
 import numpy as np
+from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import py7zr
 
@@ -314,3 +316,19 @@ def _tr_vl_ts_split_with_guarentees(
                 tr_idx.append(i)
 
     return {"tr": np.array(tr_idx), "vl": np.array(vl_idx), "ts": np.array(ts_idx)}
+
+
+# TODO: support passing in multiple *arrays as the scikit-learn function offers.
+def _tr_vl_ts_split(
+    collection: Sequence,
+    vl_size: float | int,
+    ts_size: float | int,
+) -> dict[Literal["tr", "vl", "ts"], list]:
+    vl_size = int(round(vl_size * len(collection)), 0) if isinstance(vl_size, float) else vl_size
+    ts_size = int(round(ts_size * len(collection)), 0) if isinstance(ts_size, float) else ts_size
+    tr_size = len(collection) - vl_size - ts_size
+
+    tr_vl, ts = train_test_split(collection, test_size=ts_size, train_size=tr_size + vl_size)
+    tr, vl = train_test_split(tr_vl, test_size=vl_size, train_size=tr_size)
+
+    return {"tr": tr, "vl": vl, "ts": ts}
