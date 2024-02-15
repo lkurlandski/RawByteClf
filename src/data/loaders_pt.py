@@ -211,6 +211,8 @@ class BinaryDataset(ABC):
             f"\t{type(self.labels)}\n"
             f"\t{self.max_length=}\n"
             f"\t{self.preprocess_fn=}\n"
+            f"\t{self.asynch=}\n"
+            f"\t{self.asynch_chunk_size=}\n"
             f"\t{self.in_memory_dtype=}\n"
             ")"
         )
@@ -706,7 +708,7 @@ def test():
 
     MAX_LENGTH = 4096
     IN_MEMORY_DTYPE = "pt"
-    ASYNCH = False
+    ASYNCH = True
     N_SAMPLES = 1000
     ASYNCH_CHUNK_SIZE = 50
     CHUNK_SIZE = 100
