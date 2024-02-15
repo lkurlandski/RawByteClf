@@ -14,6 +14,7 @@ import lzma
 import math
 from pathlib import Path
 import random
+import sys
 from typing import ClassVar, Generator, NamedTuple, Literal, Optional
 import warnings
 import zlib
@@ -324,8 +325,8 @@ def _tr_vl_ts_split(
     vl_size: float | int,
     ts_size: float | int,
 ) -> dict[Literal["tr", "vl", "ts"], list]:
-    vl_size = int(round(vl_size * len(collection)), 0) if isinstance(vl_size, float) else vl_size
-    ts_size = int(round(ts_size * len(collection)), 0) if isinstance(ts_size, float) else ts_size
+    vl_size = int(round(vl_size * len(collection), 0)) if isinstance(vl_size, float) else vl_size
+    ts_size = int(round(ts_size * len(collection), 0)) if isinstance(ts_size, float) else ts_size
     tr_size = len(collection) - vl_size - ts_size
 
     tr_vl, ts = train_test_split(collection, test_size=ts_size, train_size=tr_size + vl_size)
