@@ -4,6 +4,9 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 conda activate RawByteClf2
 
+DATALOADER_NUM_WORKERS=$1
+STREAMING=$2
+
 MODELNAME="mamba"
 BATCHSIZE="512"
 FINETUNECHECKPOINT="./output/test/mamba/512/clm/1/d_model--512/n_layer--2/mlp_hidden_size--512/per_device_train_batch_size--512/gradient_accumulation_steps--1/learning_rate--0.0001/weight_decay--0.01/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_grad_norm--0.5/lr_scheduler_type--linear/warmup_ratio--0.05/bf16--False/fp16--True/tf32--None/optim--adamw_torch/checkpoints/checkpoint-6/"
@@ -15,6 +18,7 @@ src/learn/train.py \
 --root="./output/test" \
 --arch_config_file="./config/tests/$MODELNAME.json" \
 --task="clf" \
+--streaming=$STREAMING \
 --bodmas_top_k=10 \
 --do_train \
 --do_eval \
@@ -25,7 +29,7 @@ src/learn/train.py \
 --eval_steps=2 \
 --logging_steps=1 \
 --max_steps=4 \
---dataloader_num_workers=0 \
+--dataloader_num_workers=$DATALOADER_NUM_WORKERS \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
 --lr_scheduler_type="linear" \
@@ -56,6 +60,7 @@ src/learn/train.py \
 --arch_config_file="./config/tests/$MODELNAME.json" \
 --resume_from_checkpoint=true \
 --task="clf" \
+--streaming=$STREAMING \
 --bodmas_top_k=10 \
 --do_train \
 --do_eval \
@@ -66,7 +71,7 @@ src/learn/train.py \
 --eval_steps=2 \
 --logging_steps=1 \
 --max_steps=6 \
---dataloader_num_workers=0 \
+--dataloader_num_workers=$DATALOADER_NUM_WORKERS \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
 --lr_scheduler_type="linear" \
@@ -96,6 +101,7 @@ src/learn/train.py \
 --root="./output/test" \
 --arch_config_file="./config/tests/$MODELNAME.json" \
 --task="clm" \
+--streaming=$STREAMING \
 --subset=1000 \
 --depth=1 \
 --do_train \
@@ -107,7 +113,7 @@ src/learn/train.py \
 --eval_steps=2 \
 --logging_steps=1 \
 --max_steps=4 \
---dataloader_num_workers=0 \
+--dataloader_num_workers=$DATALOADER_NUM_WORKERS \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
 --lr_scheduler_type="linear" \
@@ -138,6 +144,7 @@ src/learn/train.py \
 --arch_config_file="./config/tests/$MODELNAME.json" \
 --resume_from_checkpoint=true \
 --task="clm" \
+--streaming=$STREAMING \
 --subset=1000 \
 --depth=1 \
 --do_train \
@@ -149,7 +156,7 @@ src/learn/train.py \
 --eval_steps=2 \
 --logging_steps=1 \
 --max_steps=6 \
---dataloader_num_workers=0 \
+--dataloader_num_workers=$DATALOADER_NUM_WORKERS \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
 --lr_scheduler_type="linear" \
@@ -179,7 +186,7 @@ src/learn/train.py \
 --root="./output/test" \
 --arch_config_file="./config/tests/$MODELNAME.json" \
 --task="clf" \
---streaming=false \
+--streaming=$STREAMING \
 --depth=1 \
 --bodmas_top_k=10 \
 --do_train \
@@ -191,7 +198,7 @@ src/learn/train.py \
 --eval_steps=2 \
 --logging_steps=1 \
 --max_steps=4 \
---dataloader_num_workers=0 \
+--dataloader_num_workers=$DATALOADER_NUM_WORKERS \
 --optim="adamw_torch" \
 --learning_rate="1e-4" \
 --lr_scheduler_type="linear" \
