@@ -754,26 +754,27 @@ def test():
 
     BATCH_SIZE = 4
     SHUFFLE = False
-    NUM_WORKERS = 0
+    NUM_WORKERS = 4
 
-    # print("Testing the Map-style Dataset")
-    # map_out = {}
-    # dataloader = DataLoader(map_dataset, BATCH_SIZE, SHUFFLE, num_workers=NUM_WORKERS)
-    # for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
-    #     for l, n in zip(inputs["labels"], inputs["name"]):
-    #         assert n not in map_out, f"{i=} {n=}"
-    #         map_out[n] = l.item()
+    print("Testing the Map-style Dataset")
+    map_out = {}
+    dataloader = DataLoader(map_dataset, BATCH_SIZE, SHUFFLE, num_workers=NUM_WORKERS)
+    for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
+        for l, n in zip(inputs["labels"], inputs["name"]):
+            assert n not in map_out, f"{i=} {n=}"
+            map_out[n] = l.item()
 
-    # print("Testing the Iterable-style Dataset")
-    # dataloader = DataLoader(iterable_dataset, BATCH_SIZE, num_workers=NUM_WORKERS)
-    # iterable_out = {}
-    # for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
-    #     for l, n in zip(inputs["labels"], inputs["name"]):
-    #         assert n not in iterable_out, f"{i=} {n=}"
-    #         iterable_out[n] = l.item()
+    print("Testing the Iterable-style Dataset")
+    dataloader = DataLoader(iterable_dataset, BATCH_SIZE, num_workers=NUM_WORKERS)
+    iterable_out = {}
+    for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
+        for l, n in zip(inputs["labels"], inputs["name"]):
+            assert n not in iterable_out, f"{i=} {n=}"
+            iterable_out[n] = l.item()
 
-    # assert map_out == iterable_out, "Outputs differ."
+    assert map_out == iterable_out, "Outputs differ."
 
+    sys.exit(0)
 
     map_dataset_tr, map_dataset_ts = random_split(map_dataset, lengths=[0.8, 0.2])
     iterable_dataset_tr, iterable_dataset_ts = random_split(iterable_dataset, lengths=[0.8, 0.2])

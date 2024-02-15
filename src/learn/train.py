@@ -917,7 +917,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         preprocess_fn = fn_1
 
     if args.task in ("mlm", "clm"):
-        dataset: DatasetDict = get_sorel_dataset(
+        dataset = get_sorel_dataset(
             subset=args.subset,
             max_length=args.max_length,
             preprocess_fn=preprocess_fn,
