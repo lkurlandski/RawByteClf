@@ -40,6 +40,7 @@ import time
 from typing import Any, Callable, Literal, Optional
 import os
 import sys
+import warnings
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
@@ -536,41 +537,7 @@ def modify_positional_embeddings_allowed(model: Any) -> bool:
 
 
 def get_config_from_path(model_name_or_path: str | Path, **kwds) -> PretrainedConfig:
-    # The code below doesn't work because the PretrainedConfig will simply do its best to construct
-    # an object with whatever config file is passed to it, therefore, nothing raises exceptions.
 
-    # try:
-    #     return AutoConfig.from_pretrained(model_name_or_path, **kwds)
-    # except ValueError:
-    #     pass
-
-    # config_classes: list[PretrainedConfig] = [
-    #     LongformerConfig,
-    #     ReformerConfig,
-    #     NystromformerConfig,
-    #     FNetConfig,
-    #     MalConvConfig,
-    #     MalConvGCTConfig,
-    #     MyMalConvConfig,
-    #     HRRConfig,
-    #     RwkvConfig,
-    #     MambaConfig,
-    # ]
-    # possible = []
-    # for c in config_classes:  # FIXME: remove print statements and improve error handling.
-    #     print(f"{c.__name__=}")
-    #     try:
-    #         possible.append(c.from_pretrained(str(model_name_or_path), **kwds))
-    #     except Exception as e:
-    #         if c.__name__ == "MambaConfig":
-    #             raise
-    #         print(f"{e=}")
-
-    # if len(possible) == 1:
-    #     return possible[0]
-    # elif len(possible) > 1:
-    #     raise RuntimeError(f"Multiple possible config classes {possible} for {model_name_or_path=}")
-    # raise RuntimeError(f"Could not determine a config class for {model_name_or_path=}")
     config_file = f"{model_name_or_path}/{CONFIG_NAME}"
     with open(config_file, "r") as fp:
         config = json.load(fp)
@@ -765,10 +732,13 @@ def get_model(
     config: Optional[PretrainedConfig] = None,
     **kwds,
 ) -> PreTrainedModel | MalConv | MalConvGCT:
+    if model_name_or_path is None and config is None:
+        raise ValueError("Must specify `model_name_or_path` or `config`.")
     if model_name_or_path is None == config is None:
-        raise ValueError("Must specify exactly one of `model_name_or_path` or `config`.")
-    if model_name_or_path is not None and not Path(model_name_or_path).exists():
-        raise FileNotFoundError(f"Invalid model name or path: {model_name_or_path}.")
+        warnings.warn(
+            f"Specified both `model_name_or_path` or `config`. {model_name_or_path=} will take "
+            f"precidence over {type(config)=} if its a path that exists."
+        )
 
     # PreTrainedModel doesn't like None values for num_labels id2label and label2id.
     for k in ["num_labels", "id2label", "label2id"]:
@@ -776,7 +746,7 @@ def get_model(
             kwds.pop(k)
 
     # Get model from disk
-    if model_name_or_path:
+    if model_name_or_path is not None and Path(model_name_or_path).exists():
         model_name = object_to_model_name(model_name_or_path)
         if task == "clf":
             if model_name == "hrrformer":
@@ -1130,7 +1100,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if training_arguments.do_train:
         model = get_model(
             args.task,
-            None,
+            args.model_name_or_path,
             config,
             num_labels=num_classes,
             id2label=id2label,
