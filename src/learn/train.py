@@ -55,8 +55,9 @@ from datasets import (
 )
 import numpy as np
 import torch
-from torch import tensor, BoolTensor, LongTensor, Tensor
+from torch import tensor, Tensor
 from torch.nn import CrossEntropyLoss, Embedding
+from torch.utils.data import Subset
 import transformers
 from transformers import (
     AutoConfig,
@@ -905,7 +906,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{tokenizer.model_input_names=}")
     print(BR, flush=True)
 
-    dataset: DatasetDict | dict[Literal["tr", "vl", "ts"], BinaryDataset] = None
+    dataset: DatasetDict | dict[Literal["tr", "vl", "ts"], BinaryDataset | Subset[BinaryDataset]] = None
     dist: Optional[Counter[str, int]] = None
 
     fn_1 = partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids))
@@ -916,7 +917,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         preprocess_fn = fn_1
 
     if args.task in ("mlm", "clm"):
-        dataset: DatasetDict = get_sorel_dataset(
+        dataset = get_sorel_dataset(
             subset=args.subset,
             max_length=args.max_length,
             preprocess_fn=preprocess_fn,
@@ -961,10 +962,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 dataset["ts"] = dataset["ts"].select(range(TUNE_TS_N_SAMPLES))
 
     print(f"{dataset=}")
-    if DATASET_TYPE == "PT":
+    if isinstance(dataset["tr"], Subset):
         print(f"{dataset['tr'].dataset=}", flush=True)
         print(f"{dataset['vl'].dataset=}", flush=True)
         print(f"{dataset['ts'].dataset=}", flush=True)
+    elif isinstance(dataset["tr"], BinaryDataset):
+        print(f"{dataset['tr']=}", flush=True)
+        print(f"{dataset['vl']=}", flush=True)
+        print(f"{dataset['ts']=}", flush=True)
     else:
         print(f"{dataset['tr'].info=}", flush=True)
         print(f"{dataset['vl'].info=}", flush=True)
