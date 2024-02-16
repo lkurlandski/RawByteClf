@@ -3,6 +3,7 @@ Apply labels to the malware datasets.
 """
 
 from __future__ import annotations
+import asyncio
 from collections.abc import Generator, Iterable
 from functools import partial
 import json
@@ -23,6 +24,7 @@ from datasets import Dataset, Features, Value
 from tqdm import tqdm
 
 from src.cfg import INPUT_PATH, TMP_DIR
+from src.utils import batched
 from src.data.cfg import MAX_SHARD_SIZE, BODMAS_LABELS_FILE, DATASET_TO_FILES
 from src.data.utils import PerDatasetArgumentParser
 
@@ -107,30 +109,64 @@ def get_label(
     extractor: ThreatLabelExtractor,
     refiner: ThreatLabelRefiner,
 ) -> tuple[str]:
-    with open(f) as fp:
-        d = json.load(fp)
-    labels = extractor(d)
+    try:
+        with open(f) as fp:
+            d = json.load(fp)
+    except json.decoder.JSONDecodeError:
+        return None
+
+    try:
+        labels = extractor(d)
+    except KeyError:
+        return None
+
     labels = refiner(labels)
     return labels
 
 
+async def get_label_asynch(
+    f: Path,
+    extractor: ThreatLabelExtractor,
+    refiner: ThreatLabelRefiner,
+) -> tuple[str]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, get_label, f, extractor, refiner)
+
+
 def get_labels(
     report_files: Iterable[Path],
-    extractor: ThreatLabelExtractor | str = "label",
-    refiner: ThreatLabelRefiner | str = "top",
+    extractor: ThreatLabelExtractor | str,
+    refiner: ThreatLabelRefiner | str,
 ) -> Generator[Optional[tuple[str]], None, None]:
     extractor = ThreatLabelExtractor.build(extractor)
     refiner = ThreatLabelRefiner.build(refiner)
 
     for i, f in enumerate(report_files):  # pylint: disable=unused-variable
-        try:
-            labels = get_label(f, extractor, refiner)
-        except KeyError:
-            labels = None
-        except json.decoder.JSONDecodeError:
-            labels = None
+        yield get_label(f, extractor, refiner)
 
-        yield labels
+
+async def get_labels_asynch(
+    report_files: Iterable[Path],
+    extractor: ThreatLabelExtractor | str = "label",
+    refiner: ThreatLabelRefiner | str = "top",
+    asynch_chunk_size: int = 500000
+) -> list[Optional[tuple[str]], None, None]:
+    extractor = ThreatLabelExtractor.build(extractor)
+    refiner = ThreatLabelRefiner.build(refiner)
+
+    chunks = list(batched(report_files, asynch_chunk_size))
+    iterable = tqdm(
+        chunks,
+        total=len(report_files) // asynch_chunk_size + 1,
+        desc=f"Reading {len(report_files)} files asynchronously in {len(chunks)} chunks..."
+    )
+
+    labels = []
+    for files in iterable:
+        tasks = [get_label_asynch(f, extractor, refiner) for f in files]
+        l = await asyncio.gather(*tasks)
+        labels.extend(l)
+    return labels
 
 
 class ApplyLabelsFn(Protocol):
@@ -150,18 +186,37 @@ def apply_labels_bodmas(dataset: Dataset) -> Dataset:
     return dataset.add_column("labels", labels)
 
 
+def get_label_mapping_virus_total_reports(
+    report_files: Iterable[os.PathLike],
+    extractor: ThreatLabelExtractor | str,
+    refiner: ThreatLabelRefiner | str,
+    asynch: bool = False,
+) -> dict[str, str]:
+    report_files = list(report_files)
+
+    if asynch:
+        loop = asyncio.get_event_loop()
+        future = get_labels_asynch(report_files, extractor, refiner)
+        labels: Iterable = loop.run_until_complete(future)
+    else:
+        labels: Iterable = get_labels(report_files, extractor, refiner)
+
+    iterable = zip(report_files, labels)
+    if not asynch:  # Wrap in tqdm if performing sequentially
+        iterable = tqdm(iterable, total=len(report_files))
+
+    labels: dict[str, tuple[str]] = {Path(file).stem: label for file, label in iterable}
+    return labels
+
+
 def apply_labels_virus_total_reports(
     dataset: Dataset,
     report_files: Iterable[Path],
     extractor: ThreatLabelExtractor | str,
     refiner: ThreatLabelRefiner | str,
 ) -> Dataset:
-    report_files = list(report_files)
-    iterable = zip(report_files, get_labels(report_files, extractor, refiner))
-    iterable = tqdm(iterable, total=len(report_files))
-    labels: dict[str, tuple[str]] = {file.stem: label for file, label in iterable}
+    labels = get_label_mapping_virus_total_reports(report_files, extractor, refiner)
     labels = [labels.get(d["name"], None) for d in dataset]
-
     dataset = dataset.add_column("labels", labels)
     return dataset
 

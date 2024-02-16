@@ -3,9 +3,10 @@ Useful functions for the project.
 """
 
 import asyncio
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 import inspect
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,12 @@ import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 import torch
 from torch import nn, Tensor
+
+
+def batched(iterable: Iterable, n: int):
+    it = iter(iterable)
+    while batch := tuple(islice(it, n)):
+        yield batch
 
 
 def process_mem(fmt: str = "G") -> str:
@@ -293,4 +300,4 @@ def is_jsonable(x: Any) -> bool:
 
 
 if __name__ == "__main__":
-    print(bash_file_to_vscode_debug_str(Path("run/top10/hrr_train.sh")))
+    print(bash_file_to_vscode_debug_str(Path("run/scaling_mamba_clm_512/test.sh")))

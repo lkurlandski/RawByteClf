@@ -59,7 +59,13 @@ from torch.utils.data import (
 from tqdm import tqdm
 import warnings
 
+from src.utils import batched
 from src.data.cfg import BODMAS_LABELS_FILE, DATASET_TO_FILES
+from src.data.label_datasets import (
+    get_label_mapping_virus_total_reports,
+    ThreatLabelExtractor,
+    ThreatLabelRefiner,
+)
 from src.data.utils import _tr_vl_ts_split, _tr_vl_ts_split_with_guarentees
 
 
@@ -73,16 +79,10 @@ def preprocess_fn_shift_token_idx(x: LongTensor, shift: int) -> LongTensor:
     return x + shift
 
 
-def batched(iterable: Iterable, n: int):
-    it = iter(iterable)
-    while batch := tuple(islice(it, n)):
-        yield batch
-
-
 DEFAULT_ASYNCH_CHUNK_SIZE = 500000
 DEFAULT_IN_MEMORY_DTYPE = "pt"
 DEFAULT_DISABLE_TQDM = True
-
+DEFAULT_MIN_SAMPLES_PER_CLASS = 1
 
 def read_binary_file(
     f: Path,
@@ -208,7 +208,7 @@ class BinaryDataset(ABC):
         return (
             f"{self.__class__.__name__}(\n"
             f"\t{len(self)=}\n"
-            f"\t{type(self.labels)}\n"
+            f"\tlen(self.labels)={len(self.labels) if self.labels is not None else None}\n"
             f"\t{self.max_length=}\n"
             f"\t{self.preprocess_fn=}\n"
             f"\t{self.asynch=}\n"
@@ -543,7 +543,8 @@ def get_sorel_dataset(
     return dataset
 
 
-def get_bodmas_dataset(
+def get_classification_dataset(
+    files_and_labels: dict[str, str],
     subset: Optional[int] = None,
     min_freq: Optional[int] = None,
     top_k: Optional[int] = None,
@@ -551,22 +552,16 @@ def get_bodmas_dataset(
     vl_size: int | float = 0.1,
     **kwds,
 ) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
+    print(
+        f"Loading classification dataset ({subset=} {vl_size=} {ts_size=} {min_freq=} {top_k=})...",
+        flush=True,
+    )
+
+    min_freq = DEFAULT_MIN_SAMPLES_PER_CLASS * 3 if min_freq is None else min_freq
+
+    # TODO: implement streaming by applying to split to the files themselves rather than the dataset.
     if kwds.pop("streaming", False):
-        warnings.warn("Streaming not supported.")
-
-    samples_per_class = 1
-    min_freq = samples_per_class * 3 if min_freq is None else min_freq
-
-    print(f"Loading BODMAS ({subset=} {vl_size=} {ts_size=} {min_freq=} {top_k=})...", flush=True)
-
-    # Get the files and labels, then create a mapping for each file to its label
-    files = list(sorted(DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
-    labels = pd.read_csv(BODMAS_LABELS_FILE).set_index("sha")["family"].to_dict()
-    files_and_labels = {
-        f : labels[f.stem] for f in files
-        if labels[f.stem] not in (np.NaN, "unknown", "Unknown")
-    }
-    del files, labels
+        warnings.warn("Streaming not supported")
 
     # Select a subset
     files_and_labels = {
@@ -594,10 +589,66 @@ def get_bodmas_dataset(
         label2id=label2id,
         **kwds,
     )
-    dataset = tr_vl_ts_split_with_guarentees(dataset, vl_size, ts_size, samples_per_class)
+    dataset = tr_vl_ts_split_with_guarentees(dataset, vl_size, ts_size, DEFAULT_MIN_SAMPLES_PER_CLASS)
     dist = Counter(files_and_labels.values())
 
     return dataset, dist
+
+
+def get_bodmas_dataset(
+    subset: Optional[int] = None,
+    min_freq: Optional[int] = None,
+    top_k: Optional[int] = None,
+    ts_size: int | float = 0.1,
+    vl_size: int | float = 0.1,
+    **kwds,
+) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
+
+    # Get the files and labels, then create a mapping for each file to its label
+    files = list(sorted(DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
+    labels = pd.read_csv(BODMAS_LABELS_FILE).set_index("sha")["family"].to_dict()
+    files_and_labels = {
+        f : labels[f.stem] for f in files
+        if labels[f.stem] not in (np.NaN, "unknown", "Unknown")
+    }
+    return get_classification_dataset(
+        files_and_labels, subset, min_freq, top_k, ts_size, vl_size, **kwds
+    )
+
+
+def get_sorel_dataset_clf(
+    subset: Optional[int] = None,
+    min_freq: Optional[int] = None,
+    top_k: Optional[int] = None,
+    ts_size: int | float = 0.1,
+    vl_size: int | float = 0.1,
+    **kwds,
+) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
+
+    # pseudo subset when getting the labels, as many of them will be None
+    files = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
+
+    t = time.time()
+    print("Getting labels from Virus Total reports...")
+    label_map = get_label_mapping_virus_total_reports(
+        files,
+        ThreatLabelExtractor.build("category"),
+        ThreatLabelRefiner.build("top", k=1),
+        True,
+    )
+    print(f"Acquired labels in {time.time() - t}")
+
+
+    def filter_fn(f: os.PathLike) -> bool:
+        f = Path(f)
+        return f.stat().st_size >= 2 ** 14 and label_map.get(f.stem, None) is not None
+
+
+    files = list(filter(filter_fn, files))[0:subset]
+    files_and_labels = {f: label_map[Path(f).stem][0] for f in files}
+    return get_classification_dataset(
+        files_and_labels, subset, min_freq, top_k, ts_size, vl_size, **kwds
+    )
 
 
 def get_goodware_vs_malware_dataset(
@@ -806,4 +857,16 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
+    dataset, dist = get_sorel_dataset_clf(subset=10000, max_length=512, top_k=10)
+    # dataset, dist = get_bodmas_dataset(top_k=10, max_length=512)
+
+    for s in dataset:
+        print(s)
+        print(f"{dataset[s].dataset}")
+        print(f"{dataset[s].dataset.labels}")
+        print(f'{dataset[s].dataset[0]["name"]}')
+        print(f'{dataset[s][0]["name"]}')
+
+    print(dataset["tr"].dataset.labels.tolist())
+
+    # test()
