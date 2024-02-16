@@ -11,6 +11,7 @@ import sys
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import numpy as np
 import pandas as pd
 
 
@@ -31,6 +32,31 @@ def process_trainer_state(path: Path) -> tuple[list[dict], list[dict]]:
     validation_reports = [d for d in log_history if "eval_loss" in d]
     train_reports = [d for d in log_history if "loss" in d]
     return validation_reports, train_reports
+
+
+def process_validation_reports(
+    reports: list[dict],
+    metrics: tuple[str] = ("eval_loss", "eval_accuracy", "eval_f1-macro"),
+    lower_is_betters: tuple[bool] = (True, False, False),
+) -> dict[tuple[float, int]]:
+    """
+    Returns a dict for each metric containing a tuple indicating the best value
+    along with the first index at which the value was found.
+    """
+    if len(metrics) != len(lower_is_betters):
+        raise ValueError()
+
+    results = {}
+    for metric, lower_is_better in zip(metrics, lower_is_betters):
+        values = np.array([r[metric] for r in reports])
+        if lower_is_better:
+            loc = np.argmin(values)
+        else:
+            loc = np.argmax(values)
+        best = values[loc]
+        results[metric] = (best, loc)
+
+    return results
 
 
 def overflow_analysis(path: Path) -> dict[str, pd.DataFrame]:
