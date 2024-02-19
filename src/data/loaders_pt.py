@@ -616,6 +616,51 @@ def get_bodmas_dataset(
     )
 
 
+def get_bodmas_dataset_slice(
+    tr_size: int,
+    vl_size: int,
+    ts_size: int,
+    min_freq: Optional[int] = None,
+    top_k: Optional[int] = None,
+    **kwds,
+) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
+    """Returns small slices of the BODMAS dataset with the same vl and ts sets.
+    """
+
+    min_freq = DEFAULT_MIN_SAMPLES_PER_CLASS * 3 if min_freq is None else min_freq
+
+    # Get the files and labels, then create a mapping for each file to its label
+    files: list[Path] = list(sorted(DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
+    labels: list[str] = pd.read_csv(BODMAS_LABELS_FILE).set_index("sha")["family"].to_dict()
+    files_and_labels: dict[Path, str] = {
+        f : labels[f.stem] for f in files
+        if labels[f.stem] not in (np.NaN, "unknown", "Unknown")
+    }
+    del files, labels  # delete to avoid confusion.
+
+    # Filter out the files that are not in the top_k most frequent labels
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    keep: list[str] = [l for l, n in dist.most_common(top_k) if (n >= min_freq)]
+    files_and_labels: dict[Path, str] = {f: l for f, l in files_and_labels.items() if l in keep}
+
+    # Final collection of data items
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    tr_vl_ts_files: dict[str, list[Path]] = _tr_vl_ts_split(list(files_and_labels.keys()), vl_size, ts_size)
+    tr_vl_ts_files["tr"] = tr_vl_ts_files["tr"][0:tr_size]
+
+    dataset = {}
+    for s in ["tr", "vl", "ts"]:
+        f = tr_vl_ts_files[s]
+        l = [label2id[files_and_labels[_f]] for _f in f]
+        d = MapBinaryDataset(f, l, id2label=id2label, label2id=label2id, **kwds)
+        dataset[s] = d
+
+    return dataset, dist
+
+
 def get_sorel_dataset_clf(
     subset: Optional[int] = None,
     min_freq: Optional[int] = None,
@@ -857,16 +902,30 @@ def test():
 
 
 if __name__ == "__main__":
-    dataset, dist = get_sorel_dataset_clf(subset=10000, max_length=512, top_k=10)
+    # dataset, dist = get_sorel_dataset_clf(subset=10000, max_length=512, top_k=10)
     # dataset, dist = get_bodmas_dataset(top_k=10, max_length=512)
 
-    for s in dataset:
-        print(s)
-        print(f"{dataset[s].dataset}")
-        print(f"{dataset[s].dataset.labels}")
-        print(f'{dataset[s].dataset[0]["name"]}')
-        print(f'{dataset[s][0]["name"]}')
+    # for s in dataset:
+    #     print(s)
+    #     print(f"{dataset[s].dataset}")
+    #     print(f"{dataset[s].dataset.labels}")
+    #     print(f'{dataset[s].dataset[0]["name"]}')
+    #     print(f'{dataset[s][0]["name"]}')
 
-    print(dataset["tr"].dataset.labels.tolist())
+    # print(dataset["tr"].dataset.labels.tolist())
 
-    # test()
+    dataset, _ = get_bodmas_dataset_slice(tr_size=10000, vl_size=1000, ts_size=1000, max_length=512)
+    print(f'{dataset["tr"].labels[0:64].tolist()=}')
+    print(f'{dataset["vl"].labels[0:64].tolist()=}')
+    print(f'{dataset["ts"].labels[0:64].tolist()=}')
+
+    sys.exit(0)
+    dataset_a, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
+    dataset_b, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
+
+    print(f'{torch.equal(dataset_a["tr"].labels, dataset_b["tr"].labels)=}')
+    print(f'{torch.equal(dataset_a["vl"].labels, dataset_b["vl"].labels)=}')
+    print(f'{torch.equal(dataset_a["ts"].labels, dataset_b["ts"].labels)=}')
+
+    print(f'{dataset_a["tr"]}')
+    print(f'{dataset_b["tr"]}')
