@@ -543,6 +543,7 @@ def get_sorel_dataset(
     return dataset
 
 
+# TODO: implement streaming by applying to split to the files themselves rather than the dataset.
 def get_classification_dataset(
     files_and_labels: dict[str, str],
     subset: Optional[int] = None,
@@ -558,10 +559,6 @@ def get_classification_dataset(
     )
 
     min_freq = DEFAULT_MIN_SAMPLES_PER_CLASS * 3 if min_freq is None else min_freq
-
-    # TODO: implement streaming by applying to split to the files themselves rather than the dataset.
-    if kwds.pop("streaming", False):
-        warnings.warn("Streaming not supported")
 
     # Select a subset
     files_and_labels = {
@@ -727,6 +724,19 @@ def get_goodware_vs_malware_dataset(
 
     dataset = ConcatDataset([dataset_mal, dataset_ben])
     return tr_vl_ts_split(dataset, vl_size, ts_size)
+
+
+def get_dataset_from_wrappers(
+    dataset: dict[str, BinaryDataset | Subset] | BinaryDataset | Subset
+) -> dict[str, BinaryDataset] | BinaryDataset:
+    if isinstance(dataset, dict):
+        return {k: get_dataset_from_wrappers(d) for k, d in dataset.items()}
+    if isinstance(dataset, Subset):
+        return dataset.dataset
+    if isinstance(dataset, BinaryDataset):
+        return dataset
+
+    raise TypeError(type(dataset))
 
 
 def test_timing():

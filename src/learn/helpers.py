@@ -51,6 +51,7 @@ class Args:
         metadata={"help": "Configuration dict to use for the architecture. Mutally exclusive with arch_config_file."},
     )
     subset: Optional[int] = field(default=None)
+    tr_size: float = field(default=0.8, metadata={"help": "If > 1, then it is the number of samples."})
     vl_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
     ts_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
     skip_eval_check: bool = field(default=False)
@@ -77,6 +78,7 @@ class Args:
             with open(self.arch_config_file) as fp:
                 self.arch_config = json.load(fp)
 
+        self.tr_size = float_to_int(self.tr_size) if self.tr_size > 1 else self.tr_size
         self.vl_size = float_to_int(self.vl_size) if self.vl_size > 1 else self.vl_size
         self.ts_size = float_to_int(self.ts_size) if self.ts_size > 1 else self.ts_size
 
@@ -109,6 +111,7 @@ class OutputHelper:
         model_name_or_path: str,
         max_length: int,
         task: str,
+        tr_size: int | float,
         depth: int,
         bodmas_min_freq: Optional[int],
         bodmas_top_k: Optional[int],
@@ -119,11 +122,19 @@ class OutputHelper:
         arch_config: Optional[dict] = None,
         trainer_config: Optional[dict] = None,
     ) -> None:
+        """
+        {max_length}/{task}/{tr_size}/{
+         {depth} |
+         {min_freq}/{top_k}/{freeze/{duplicate}/{initialize}
+        }/
+        """
+
         self.root = Path(root)
 
         args = [
             str(max_length),
             task,
+            str(tr_size),
         ]
         if task == "clf":
             args.extend(

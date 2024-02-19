@@ -133,8 +133,11 @@ from src.data.loaders_hf import (
 from src.data.loaders_pt import (
     get_sorel_dataset as get_sorel_dataset_pt,
     get_bodmas_dataset as get_bodmas_dataset_pt,
+    get_sorel_dataset_clf as get_sorel_dataset_clf_pt,
+    get_bodmas_dataset_slice,
     preprocess_fn_add_cls_token,
     preprocess_fn_shift_token_idx,
+    get_dataset_from_wrappers,
     BinaryDataset,
 )
 from src.learn.collators import DataCollator, DataCollatorForMLM, DataCollatorForCLM
@@ -169,6 +172,7 @@ torch.random.manual_seed(0)
 
 get_sorel_dataset = get_sorel_dataset_pt
 get_bodmas_dataset = get_bodmas_dataset_pt
+get_sorel_dataset_clf = get_sorel_dataset_clf_pt
 
 
 PAD_TO = 8
@@ -845,6 +849,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.model_name_or_path,
         args.max_length,
         args.task,
+        args.tr_size,
         args.depth,
         args.bodmas_min_freq,
         args.bodmas_top_k,
@@ -896,16 +901,34 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             ts_size=args.ts_size,
         )
     elif args.task == "clf":
-        dataset, dist = get_bodmas_dataset(
-            subset=args.subset,
-            min_freq=args.bodmas_min_freq,
-            top_k=args.bodmas_top_k,
+        # dataset, dist = get_bodmas_dataset(
+        #     subset=args.subset,
+        #     min_freq=args.bodmas_min_freq,
+        #     top_k=args.bodmas_top_k,
+        #     vl_size=args.vl_size,
+        #     ts_size=args.ts_size,
+        #     max_length=args.max_length,
+        #     preprocess_fn=preprocess_fn,
+        # )
+        # dataset, dist = get_sorel_dataset_clf(
+        #     subset=args.subset,
+        #     min_freq=args.bodmas_min_freq,
+        #     top_k=args.bodmas_top_k,
+        #     vl_size=args.vl_size,
+        #     ts_size=args.ts_size,
+        #     max_length=args.max_length,
+        #     preprocess_fn=preprocess_fn,
+        # )
+        dataset, dist = get_bodmas_dataset_slice(
+            tr_size=args.tr_size,
             vl_size=args.vl_size,
             ts_size=args.ts_size,
+            min_freq=args.bodmas_min_freq,
+            top_k=args.bodmas_top_k,
             max_length=args.max_length,
             preprocess_fn=preprocess_fn,
-            streaming=args.streaming,
         )
+
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
         DATASET_TYPE = "HF"
@@ -931,15 +954,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             else:
                 dataset["ts"] = dataset["ts"].select(range(TUNE_TS_N_SAMPLES))
 
-    print(f"{dataset=}")
-    if isinstance(dataset["tr"], Subset):
-        print(f"{dataset['tr'].dataset=}", flush=True)
-        print(f"{dataset['vl'].dataset=}", flush=True)
-        print(f"{dataset['ts'].dataset=}", flush=True)
-    elif isinstance(dataset["tr"], BinaryDataset):
-        print(f"{dataset['tr']=}", flush=True)
-        print(f"{dataset['vl']=}", flush=True)
-        print(f"{dataset['ts']=}", flush=True)
+    if DATASET_TYPE == "PT":
+        for k, d in dataset.items():
+            print(f"{k} -- {get_dataset_from_wrappers(d)}")
     else:
         print(f"{dataset['tr'].info=}", flush=True)
         print(f"{dataset['vl'].info=}", flush=True)
@@ -979,9 +996,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             label2id = {l: i for i, l in enumerate(id2label.values())}
             dataset = dataset.rename_column("labels", "label")
         elif DATASET_TYPE == "PT":
-            id2label = dataset["tr"].dataset.id2label
-            label2id = dataset["tr"].dataset.label2id
-            num_classes = dataset["tr"].dataset.num_classes
+            id2label = get_dataset_from_wrappers(dataset["tr"]).id2label
+            label2id = get_dataset_from_wrappers(dataset["tr"]).label2id
+            num_classes = get_dataset_from_wrappers(dataset["tr"]).num_classes
         print(f"{id2label=}")
         print(f"{label2id=}")
         print(f"{dist=}")
