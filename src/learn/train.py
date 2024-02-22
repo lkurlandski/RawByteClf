@@ -135,6 +135,7 @@ from src.data.loaders_pt import (
     get_bodmas_dataset as get_bodmas_dataset_pt,
     get_sorel_dataset_clf as get_sorel_dataset_clf_pt,
     get_bodmas_dataset_slice,
+    get_bodmas_dataset_balanced,
     preprocess_fn_add_cls_token,
     preprocess_fn_shift_token_idx,
     get_dataset_from_wrappers,
@@ -919,12 +920,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         #     max_length=args.max_length,
         #     preprocess_fn=preprocess_fn,
         # )
-        dataset, dist = get_bodmas_dataset_slice(
-            tr_size=args.tr_size,
-            vl_size=args.vl_size,
-            ts_size=args.ts_size,
-            min_freq=args.bodmas_min_freq,
-            top_k=args.bodmas_top_k,
+        # dataset, dist = get_bodmas_dataset_slice(
+        #     tr_size=args.tr_size,
+        #     vl_size=args.vl_size,
+        #     ts_size=args.ts_size,
+        #     min_freq=args.bodmas_min_freq,
+        #     top_k=args.bodmas_top_k,
+        #     max_length=args.max_length,
+        #     preprocess_fn=preprocess_fn,
+        # )
+        dataset, dist = get_bodmas_dataset_balanced(
+            samples_per_class=args.bodmas_min_freq,
             max_length=args.max_length,
             preprocess_fn=preprocess_fn,
         )

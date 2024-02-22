@@ -592,6 +592,24 @@ def get_classification_dataset(
     return dataset, dist
 
 
+def get_bodmas_file_label_map(
+    top_k: Optional[int] = None,
+    min_freq: Optional[int] = 1
+) -> dict[Path, str]:
+    files = list(sorted(DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
+    labels = pd.read_csv(BODMAS_LABELS_FILE).set_index("sha")["family"].to_dict()
+    files_and_labels = {
+        f : labels[f.stem] for f in files
+        if labels[f.stem] not in (np.NaN, "unknown", "Unknown")
+    }
+
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    keep: list[str] = [l for l, n in dist.most_common(top_k) if (n >= min_freq)]
+    files_and_labels: dict[Path, str] = {f: l for f, l in files_and_labels.items() if l in keep}    
+
+    return files_and_labels
+
+
 def get_bodmas_dataset(
     subset: Optional[int] = None,
     min_freq: Optional[int] = None,
@@ -611,6 +629,45 @@ def get_bodmas_dataset(
     return get_classification_dataset(
         files_and_labels, subset, min_freq, top_k, ts_size, vl_size, **kwds
     )
+
+
+def get_bodmas_dataset_balanced(
+    samples_per_class: int,
+    top_k: Optional[int] = None,
+    **kwds,
+) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
+    files_and_labels = get_bodmas_file_label_map(top_k=top_k, min_freq=samples_per_class + 1)
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    tr_idx = _select_k_for_each_class(list(files_and_labels.values()), k=samples_per_class)
+    vl_idx = [i for i in range(len(files_and_labels)) if i not in tr_idx]
+
+    dataset = {
+        "tr": MapBinaryDataset(
+            [f for i, f in enumerate(files_and_labels.keys()) if i in tr_idx],
+            [label2id[l] for i, l in enumerate(files_and_labels.values()) if i in tr_idx],
+            id2label=id2label,
+            label2id=label2id,
+            **kwds,
+        ),
+        "vl": MapBinaryDataset(
+            [f for i, f in enumerate(files_and_labels.keys()) if i in vl_idx],
+            [label2id[l] for i, l in enumerate(files_and_labels.values()) if i in vl_idx],
+            id2label=id2label,
+            label2id=label2id,
+            **kwds,
+        ),
+        "ts": MapBinaryDataset(
+            [],
+            [],
+            id2label=id2label,
+            label2id=label2id,
+            **kwds,
+        ),
+    }
+    return dataset, dist
 
 
 def get_bodmas_dataset_slice(
@@ -944,16 +1001,31 @@ if __name__ == "__main__":
 
     # print(dataset["tr"].dataset.labels.tolist())
 
-    dataset, _ = get_bodmas_dataset_slice(
-        tr_size=10000, vl_size=1000, ts_size=1000, max_length=512, top_k=10
-    )
-    print(f'{dataset["tr"].labels[0:64].tolist()=}')
-    print(f'{dataset["vl"].labels[0:64].tolist()=}')
-    print(f'{dataset["ts"].labels[0:64].tolist()=}')
 
-    print(f'{len(dataset["tr"])=}')
-    print(f'{len(dataset["vl"])=}')
-    print(f'{len(dataset["ts"])=}')
+    # dataset, _ = get_bodmas_dataset_slice(
+    #     tr_size=10000, vl_size=1000, ts_size=1000, max_length=512, top_k=10
+    # )
+
+    for samples_per_class in [1, 2, 10]:
+        dataset, _ = get_bodmas_dataset_balanced(samples_per_class=samples_per_class, max_length=128)
+
+        print(f'{dataset["tr"].labels[0:64].tolist()=}')
+        print(f'{dataset["vl"].labels[0:64].tolist()=}')
+        print(f'{dataset["ts"].labels[0:64].tolist()=}')
+
+        print(f'{len(dataset["tr"])=}')
+        print(f'{len(dataset["vl"])=}')
+        print(f'{len(dataset["ts"])=}')
+
+        tr_classes = set(dataset["tr"].labels.tolist())
+        vl_classes = set(dataset["vl"].labels.tolist())
+
+        print(f"{len(tr_classes)=}")
+        print(f"{len(vl_classes)=}")
+
+        assert tr_classes == vl_classes
+
+
 
     sys.exit(0)
     dataset_a, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
