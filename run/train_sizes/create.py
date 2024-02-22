@@ -11,8 +11,8 @@ BODY = """#!/bin/bash -l
 #SBATCH --time=DD-HH:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks=3
-#SBATCH --mem=32G
+#SBATCH --ntasks=1
+#SBATCH --mem=16G
 #SBATCH --gres=gpu:a100:1
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -48,7 +48,7 @@ src/learn/train.py \\
 --eval_steps=250 \\
 --max_steps=17625 \\
 --logging_steps=10 \\
---dataloader_num_workers=2 \\
+--dataloader_num_workers=0 \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
@@ -72,16 +72,20 @@ src/learn/train.py \\
 --tf32=true
 """
 
+# n_layers, d_model, n_params, time DD:HH
 CONFIGS = [
-    (4, 384, 3958656),
-    (6, 384, 5887104),
-    (8, 384, 7815552),
-    (12, 512, 20478464),
-    (16, 512, 27259392),
-    (24, 768, 90723072),
+    (8, 384,   7815552, "00-01"),
+    (12, 384, 11672448, "00-01"),
+    (12, 512, 20478464, "00-01"),
+    (16, 512, 27259392, "00-01"),
+    (24, 512, 40821248, "00-02"),
+    (24, 768, 90723072, "00-04"),
 ]
 
+
 TR_SIZES = [250, 500, 750, 1000, 2000, 4000, 8000, 12000, 16000, 20000]
+
+TR_SIZES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150, 175, 200, 250, 300, 450, 500, 600, 700, 800, 900, 1000]
 
 
 OUTPUT = Path("run/train_sizes")
@@ -125,9 +129,9 @@ def get_pretrained_model_path(d_model: int, n_layer: int) -> Path:
 outfiles = []
 
 
-for n_layer, d_model, params in CONFIGS:
+for n_layer, d_model, params, req_time in CONFIGS:
     for tr_size in TR_SIZES:
-        jobname = f"tr_size_{tr_size}_{n_layer}-{d_model}"
+        jobname = f"tr_sz_bl_{tr_size}_{n_layer}-{d_model}"
         print(jobname)
 
         pretrained_model_path = get_pretrained_model_path(d_model, n_layer)
@@ -139,7 +143,7 @@ for n_layer, d_model, params in CONFIGS:
             .replace("PRETRAINED_MODEL_PATH", pretrained_model_path.as_posix()) \
             .replace("D_MODEL", str(d_model)) \
             .replace("N_LAYER", str(n_layer)) \
-            .replace("DD-HH", dd_hh(params)) \
+            .replace("DD-HH", req_time) \
             .replace("TR_SIZE", str(tr_size)) \
             .replace("BODMAS_TOP_K", str(10))
 
@@ -150,7 +154,7 @@ for n_layer, d_model, params in CONFIGS:
 
 
 with open(OUTPUT / "run.sh", "w") as fp:
-    for outfile in sorted(outfiles, key=lambda p: int(p.as_posix().split("_")[3])):
+    for outfile in sorted(outfiles, key=lambda p: int(p.as_posix().split("_")[4])):
         fp.write(f"sbatch {outfile.as_posix()} clf\n")
         fp.write(f"sbatch {outfile.as_posix()} ftclf\n")
 
