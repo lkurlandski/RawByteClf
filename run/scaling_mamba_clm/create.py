@@ -102,6 +102,7 @@ def dd_hh(p: int) -> str:
 OUTPUT = Path(os.path.realpath(__file__)).parent
 
 
+outfiles = []
 for n_layer, d_model, params in CONFIGS:
     jobname = f"clm_{n_layer}-{d_model}"
     text = BODY \
@@ -110,5 +111,15 @@ for n_layer, d_model, params in CONFIGS:
         .replace("N_LAYER", str(n_layer)) \
         .replace("DD-HH", "05-00") \
         .replace("MAX_LENGTH", str(MAX_LENGTH))
-    with open(OUTPUT / f"{jobname}.sh", "w") as fp:
+    outfile = OUTPUT / f"{jobname}.sh"
+    outfiles.append(outfile)
+    with open(outfile, "w") as fp:
         fp.write(text)
+
+
+with open(OUTPUT / "run.sh", "w") as fp:
+    for outfile in outfiles:
+        fp.write(f"sbatch {outfile.as_posix()} \n")
+
+
+
