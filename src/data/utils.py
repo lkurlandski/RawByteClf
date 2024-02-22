@@ -276,6 +276,17 @@ def class_probabilities_with_smoothing(
     return {k: v / s for k, v in ratio.items()}
 
 
+def _select_k_for_each_class(labels: list[int | str], k: int) -> list[int]:
+    unique = set(labels)
+    count = {s : 0 for s in unique}
+    idx = []
+    for i, l in enumerate(labels):
+        if count[l] < k:
+            count[l] += 1
+            idx.append(i)
+    return idx
+
+
 def _tr_vl_ts_split_with_guarentees(
     y: np.ndarray,
     len_dataset: int,
