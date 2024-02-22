@@ -1176,7 +1176,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             return trainer.predict(dataset["vl"])
 
         print("Initial Evaluation...", flush=True)
-        initial_output = _eval()
+        initial_output: PredictionOutput = _eval()
         model = model.to(torch.float32).to("cpu")
         torch.cuda.empty_cache()
         gc.collect()
@@ -1220,7 +1220,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         print("Training...", flush=True)
         if args.auto_find_batch_size_and_gradient_accumulation_steps:
-            _train()
+            trainer_output: TrainOutput = _train()
         else:
             oh.mkdir()
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
@@ -1234,11 +1234,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
-            trainer.train(training_arguments.resume_from_checkpoint)
+            trainer_output: TrainOutput = trainer.train(training_arguments.resume_from_checkpoint)
 
 
         with open(oh.initial_validation_results_file, "w") as fp:
             json.dump(initial_output.metrics, fp, indent=4)
+        with open(oh.trainer_output_file, "w") as fp:
+            json.dump(trainer_output.metrics, fp, indent=4)
 
 
     if training_arguments.do_eval:

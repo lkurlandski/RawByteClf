@@ -222,6 +222,10 @@ class OutputHelper:
         return self.path / "initial_validation_results.json"
 
     @property
+    def trainer_output_file(self) -> Path:
+        return self.path / "trainer_output_file.json"
+
+    @property
     def test_predictions_file(self) -> Path:
         return self.test_results_dir / "predictions.txt"
 
