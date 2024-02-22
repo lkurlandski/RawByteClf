@@ -66,7 +66,7 @@ from src.data.label_datasets import (
     ThreatLabelExtractor,
     ThreatLabelRefiner,
 )
-from src.data.utils import _tr_vl_ts_split, _tr_vl_ts_split_with_guarentees
+from src.data.utils import _tr_vl_ts_split, _tr_vl_ts_split_with_guarentees, _select_k_for_each_class
 
 
 # TODO: move these functions somewhere else...
@@ -619,10 +619,16 @@ def get_bodmas_dataset_slice(
     ts_size: int,
     min_freq: Optional[int] = None,
     top_k: Optional[int] = None,
+    balance_tr_set: bool = True,
+    balance_ts_set: bool = False,
+    balance_vl_set: bool = False,
     **kwds,
 ) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
     """Returns small slices of the BODMAS dataset with the same vl and ts sets.
     """
+
+    if balance_vl_set or balance_ts_set:
+        raise NotImplementedError()
 
     min_freq = DEFAULT_MIN_SAMPLES_PER_CLASS * 3 if min_freq is None else min_freq
 
@@ -645,8 +651,22 @@ def get_bodmas_dataset_slice(
     label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
     id2label: dict[int, str] = {i: l for l, i in label2id.items()}
 
+    # Randomly split the train, test, and validation sets.
     tr_vl_ts_files: dict[str, list[Path]] = _tr_vl_ts_split(list(files_and_labels.keys()), vl_size, ts_size)
-    tr_vl_ts_files["tr"] = tr_vl_ts_files["tr"][0:tr_size]
+    # Balance the training set.
+    if balance_tr_set:
+        samples_per_cls = tr_size / len(dist)
+        if not samples_per_cls.is_integer():
+            raise ValueError("Cannot balance tr_set because train size is not divisible by number of classes")
+        tr_labels = [files_and_labels[f] for f in tr_vl_ts_files["tr"]]
+        tr_idx = _select_k_for_each_class(tr_labels, k=samples_per_cls)
+    else:
+        # The tr_set itself is already random, so we can just take the first ones
+        # tr_idx = sample(list(range(len(tr_vl_ts_files["tr"]))), tr_size)
+        tr_idx = list(range(tr_size))
+
+    assert len(tr_idx) == tr_size, "tr_size mismatch"
+    tr_vl_ts_files["tr"] = [f for i, f in enumerate(tr_vl_ts_files["tr"]) if i in tr_idx]
 
     dataset = {}
     for s in ["tr", "vl", "ts"]:
@@ -924,10 +944,16 @@ if __name__ == "__main__":
 
     # print(dataset["tr"].dataset.labels.tolist())
 
-    dataset, _ = get_bodmas_dataset_slice(tr_size=10000, vl_size=1000, ts_size=1000, max_length=512)
+    dataset, _ = get_bodmas_dataset_slice(
+        tr_size=10000, vl_size=1000, ts_size=1000, max_length=512, top_k=10
+    )
     print(f'{dataset["tr"].labels[0:64].tolist()=}')
     print(f'{dataset["vl"].labels[0:64].tolist()=}')
     print(f'{dataset["ts"].labels[0:64].tolist()=}')
+
+    print(f'{len(dataset["tr"])=}')
+    print(f'{len(dataset["vl"])=}')
+    print(f'{len(dataset["ts"])=}')
 
     sys.exit(0)
     dataset_a, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
