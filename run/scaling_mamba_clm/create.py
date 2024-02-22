@@ -52,8 +52,8 @@ src/learn/train.py \\
 --save_total_limit=3 \\
 --model_name_or_path="mamba" \\
 --max_length=MAX_LENGTH \\
---per_device_train_batch_size=1024 \\
---per_device_eval_batch_size=1024 \\
+--per_device_train_batch_size=256 \\
+--per_device_eval_batch_size=256 \\
 --gradient_accumulation_steps=1 \\
 --load_best_model_at_end \\
 --early_stopping=true \\
@@ -70,7 +70,7 @@ MAX_LENGTH = 16384
 
 
 CONFIGS = [
-    (4, 192, 1.057728),
+    (4, 192, 1.057728, ),
     (4, 256, 1.819904),
     (6, 192, 1.561152),
     (6, 256, 2.695936),
