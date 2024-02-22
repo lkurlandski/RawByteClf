@@ -21,11 +21,18 @@ conda activate RawByteClf2
 module unload blindfold
 
 
-if [ "$1" = "clf" ]; then
+if [ $# -eq 0 ]; then
+    echo "Error: No argument supplied."
+    exit 1
+elif [ "$1" != "clf" ] && [ "$1" != "ftclf" ]; then
+    echo "Error: Invalid argument. Argument must be 'clf' or 'ftclf'."
+    exit 1
+elif [ "$1" = "clf" ]; then
     MODEL_NAME_OR_PATH="mamba"
 elif [ "$1" = "ftclf" ]; then
     MODEL_NAME_OR_PATH="PRETRAINED_MODEL_PATH"
 fi
+
 
 python -u \\
 src/learn/train.py \\
@@ -44,8 +51,8 @@ src/learn/train.py \\
 --output_dir=tmp \\
 --save_strategy="steps" \\
 --evaluation_strategy="steps" \\
---save_steps=250 \\
---eval_steps=250 \\
+--save_steps=SAVE_EVAL_STEPS \\
+--eval_steps=SAVE_EVAL_STEPS \\
 --max_steps=17625 \\
 --logging_steps=10 \\
 --dataloader_num_workers=0 \\
@@ -63,8 +70,8 @@ src/learn/train.py \\
 --per_device_eval_batch_size=64 \\
 --gradient_accumulation_steps=1 \\
 --load_best_model_at_end \\
---early_stopping=false \\
---early_stopping_patience=2 \\
+--early_stopping=true \\
+--early_stopping_patience=EARLY_STOPPING_PATIENCE \\
 --early_stopping_threshold=0 \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
 --bf16 \\
@@ -102,6 +109,30 @@ def dd_hh(p: int) -> str:
         days = 5
         hours = 0
     return f"0{days}-{hours}"
+
+
+def save_eval_steps(size: int) -> int:
+    if size < 50:
+        return 5
+    if size < 100:
+        return 10
+    if size < 200:
+        return 50
+    if size < 500:
+        return 100
+    return 200
+
+
+def early_stopping_patience(size: int) -> int:
+    if size < 50:
+        return 25
+    if size < 100:
+        return 20
+    if size < 200:
+        return 15
+    if size < 500:
+        return 10
+    return 5
 
 
 def get_pretrained_model_path(d_model: int, n_layer: int) -> Path:
@@ -145,7 +176,9 @@ for n_layer, d_model, params, req_time in CONFIGS:
             .replace("N_LAYER", str(n_layer)) \
             .replace("DD-HH", req_time) \
             .replace("TR_SIZE", str(tr_size)) \
-            .replace("BODMAS_TOP_K", str(10))
+            .replace("BODMAS_TOP_K", str(10)) \
+            .replace("EARLY_STOPPING_PATIENCE", str(early_stopping_patience(tr_size))) \
+            .replace("SAVE_EVAL_STEPS", str(save_eval_steps(tr_size)))
 
         outfile = OUTPUT / f"{jobname}.sh"
         with open(outfile, "w") as fp:
