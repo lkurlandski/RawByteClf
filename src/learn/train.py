@@ -1176,11 +1176,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             return trainer.predict(dataset["vl"])
 
         print("Initial Evaluation...", flush=True)
-        initial_output: PredictionOutput = _eval()
-        model = model.to(torch.float32).to("cpu")
-        torch.cuda.empty_cache()
-        gc.collect()
-        print(f"{initial_output.metrics=}", flush=True)
+        if not args.skip_eval_check:
+            initial_output: PredictionOutput = _eval()
+            model = model.to(torch.float32).to("cpu")
+            torch.cuda.empty_cache()
+            gc.collect()
+            print(f"{initial_output.metrics=}", flush=True)
 
 
         @find_executable_batch_size_and_gradient_accumulation_steps(
@@ -1236,9 +1237,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             trainer_output: TrainOutput = trainer.train(training_arguments.resume_from_checkpoint)
 
-
-        with open(oh.initial_validation_results_file, "w") as fp:
-            json.dump(initial_output.metrics, fp, indent=4)
+        if not args.skip_eval_check:
+            with open(oh.initial_validation_results_file, "w") as fp:
+                json.dump(initial_output.metrics, fp, indent=4)
         with open(oh.trainer_output_file, "w") as fp:
             json.dump(trainer_output.metrics, fp, indent=4)
 
