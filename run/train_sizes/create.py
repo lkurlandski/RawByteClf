@@ -42,9 +42,11 @@ src/learn/train.py \\
 --do_train \\
 --do_eval \\
 --output_dir=tmp \\
---save_strategy="epoch" \\
---evaluation_strategy="epoch" \\
---num_train_epochs=50 \\
+--save_strategy="steps" \\
+--evaluation_strategy="steps" \\
+--save_steps=250 \\
+--eval_steps=250 \\
+--max_steps=17625 \\
 --logging_steps=10 \\
 --dataloader_num_workers=2 \\
 --optim="adamw_torch" \\
@@ -79,7 +81,7 @@ CONFIGS = [
     (24, 768, 90723072),
 ]
 
-TR_SIZES = [500, 1000, 2000, 4000, 8000, 12000, 16000, 20000]
+TR_SIZES = [250, 500, 750, 1000, 2000, 4000, 8000, 12000, 16000, 20000]
 
 
 OUTPUT = Path("run/train_sizes")
@@ -120,6 +122,9 @@ def get_pretrained_model_path(d_model: int, n_layer: int) -> Path:
     return pretrained_model_path
 
 
+outfiles = []
+
+
 for n_layer, d_model, params in CONFIGS:
     for tr_size in TR_SIZES:
         jobname = f"tr_size_{tr_size}_{n_layer}-{d_model}"
@@ -138,5 +143,14 @@ for n_layer, d_model, params in CONFIGS:
             .replace("TR_SIZE", str(tr_size)) \
             .replace("BODMAS_TOP_K", str(10))
 
-        with open(OUTPUT / f"{jobname}.sh", "w") as fp:
+        outfile = OUTPUT / f"{jobname}.sh"
+        with open(outfile, "w") as fp:
             fp.write(text)
+        outfiles.append(outfile)
+
+
+with open(OUTPUT / "run.sh", "w") as fp:
+    for outfile in sorted(outfiles, key=lambda p: int(p.as_posix().split("_")[3])):
+        fp.write(f"sbatch {outfile.as_posix()} clf\n")
+        fp.write(f"sbatch {outfile.as_posix()} ftclf\n")
+
