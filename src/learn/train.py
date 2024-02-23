@@ -1164,6 +1164,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
+        # This will also reduce the eval_batch size in the training_arguments variable.
         @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
         def _eval(batch_size: int) -> PredictionOutput:
             nonlocal training_arguments  # access variables outside of this function.
