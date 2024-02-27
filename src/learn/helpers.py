@@ -56,6 +56,8 @@ class Args:
     ts_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
     skip_eval_check: bool = field(default=False)
     auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
+    enforce_cutoff: Optional[bool] = field(default=None)
+    tr_length_cutoff: Optional[int] = field(default=None)
     early_stopping: bool = field(default=False)
     early_stopping_patience: int = field(default=1)
     early_stopping_threshold: float = field(default=0.0)
@@ -69,6 +71,7 @@ class Args:
         self.do_tune = str_or_bool_to_str(self.do_tune)
         self.skip_eval_check = str_or_bool_to_str(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_or_bool_to_str(self.auto_find_batch_size_and_gradient_accumulation_steps)
+        self.enforce_cutoff = str_or_bool_to_str(self.enforce_cutoff) if self.enforce_cutoff is not None else None
 
         if self.arch_config_file and self.arch_config:
             raise ValueError("Cannot specify both arch_config_file and arch_config.")
@@ -115,6 +118,8 @@ class OutputHelper:
         depth: int,
         bodmas_min_freq: Optional[int],
         bodmas_top_k: Optional[int],
+        enforce_cutoff: Optional[bool],
+        tr_length_cutoff: Optional[int],
         ft_freeze_positional_embeddings: bool | str,
         ft_duplicate_positional_embeddings: bool | str,
         ft_initialize_positional_embeddings: bool | str,
@@ -124,8 +129,9 @@ class OutputHelper:
     ) -> None:
         """
         {max_length}/{task}/{tr_size}/{
-         {depth} |
-         {min_freq}/{top_k}/{freeze/{duplicate}/{initialize}
+            {depth} |
+            {min_freq}/{top_k}/{freeze/{duplicate}/{initialize} |
+            {enforce_cutoff}/{tr_length_cutoff}
         }/
         """
 
@@ -137,15 +143,21 @@ class OutputHelper:
             str(tr_size),
         ]
         if task == "clf":
-            args.extend(
-                [
+            if isinstance(enforce_cutoff, bool):
+                args.extend([
+                    str(str_or_bool_to_str(enforce_cutoff)),
+                    str(tr_length_cutoff),
+                ])
+            else:
+                args.extend([
                     str(bodmas_min_freq),
                     str(bodmas_top_k),
-                    str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
-                    str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
-                    str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
-                ]
-            )
+                ])
+            args.extend([
+                str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
+                str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
+                str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
+            ])
         elif task in ("mlm", "clm"):
             args.extend(
                 [

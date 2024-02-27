@@ -136,6 +136,7 @@ from src.data.loaders_pt import (
     get_sorel_dataset_clf as get_sorel_dataset_clf_pt,
     get_bodmas_dataset_slice,
     get_bodmas_dataset_balanced,
+    get_length_extrapolation_dataset,
     preprocess_fn_add_cls_token,
     preprocess_fn_shift_token_idx,
     get_dataset_from_wrappers,
@@ -620,7 +621,7 @@ def get_config(
         kwds[k] = float_to_int(kwds[k])
 
     vocab_size = pad_to_multiple_of_fn(len(tokenizer), PAD_TO)
-    max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8)
+    max_posititional_embeddings = pad_to_multiple_of_fn(max_length, 8) if max_length else None
 
     arch_config = {} if arch_config is None else arch_config
     kwds = arch_config | kwds
@@ -854,6 +855,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.depth,
         args.bodmas_min_freq,
         args.bodmas_top_k,
+        args.enforce_cutoff,
+        args.tr_length_cutoff,
         args.ft_freeze_positional_embeddings,
         args.ft_duplicate_positional_embeddings,
         args.ft_initialize_positional_embeddings,
@@ -929,11 +932,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         #     max_length=args.max_length,
         #     preprocess_fn=preprocess_fn,
         # )
-        dataset, dist = get_bodmas_dataset_balanced(
-            samples_per_class=args.bodmas_min_freq,
-            max_length=args.max_length,
-            preprocess_fn=preprocess_fn,
-        )
+        # dataset, dist = get_bodmas_dataset_balanced(
+        #     samples_per_class=args.bodmas_min_freq,
+        #     max_length=args.max_length,
+        #     preprocess_fn=preprocess_fn,
+        # )
+
+        dataset, dist = get_length_extrapolation_dataset(args.tr_length_cutoff, args.enforce_cutoff)
 
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
@@ -1079,8 +1084,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         else:
             data_collator = DataCollatorWithPadding(
                 tokenizer=tokenizer,
-                padding=True,
+                padding="max_length" if MODEL_TYPE == "MC" else "longest",  # malconv needs padding to its max_length
                 pad_to_multiple_of=pad_to_multiple_of,
+                max_length=args.max_length,  # hopefully, the sequences were truncated before hand...
             )
         compute_metrics = clf_compute_metrics
     elif args.task == "mlm":
