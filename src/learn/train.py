@@ -1172,7 +1172,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
         # This will also reduce the eval_batch size in the training_arguments variable.
         @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
-        def _eval(batch_size: int) -> PredictionOutput:
+        def _eval(batch_size: int) -> tuple[PredictionOutput, int]:
             nonlocal training_arguments  # access variables outside of this function.
             training_arguments = replace(training_arguments, per_device_eval_batch_size=batch_size)
             print(f"Evaluating with {batch_size=}...", flush=True)
@@ -1186,11 +1186,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
-            return trainer.predict(dataset["vl"])
+            return trainer.predict(dataset["vl"]), batch_size
 
         print("Initial Evaluation...", flush=True)
+        initial_output: PredictionOutput = None
+        max_per_device_eval_batch_size: int = None
         if not args.skip_eval_check:
-            initial_output: PredictionOutput = _eval()
+            initial_output, max_per_device_eval_batch_size = _eval()
             model = model.to(torch.float32).to("cpu")
             torch.cuda.empty_cache()
             gc.collect()
@@ -1209,10 +1211,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             except OSError:
                 pass
 
+            # FIXME: if the OOM error arises during the evaluation loop while training, this could
+            # cause irresponsible and unessecary reduction of the training batch size when we really
+            # should be decrementing the evaluation batch size.
+            per_device_eval_batch_size = batch_size
+            if max_per_device_eval_batch_size is not None:
+                per_device_eval_batch_size = max_per_device_eval_batch_size
+
             training_arguments = replace(
                 training_arguments,
                 per_device_train_batch_size=batch_size,
-                per_device_eval_batch_size=batch_size,
+                per_device_eval_batch_size=per_device_eval_batch_size,
                 gradient_accumulation_steps=gradient_accumulation_steps,
             )
             oh.trainer_config = training_arguments.__dict__
