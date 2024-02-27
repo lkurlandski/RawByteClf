@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Literal
 
 
-SOREL_META_CSV = Path("/home/lk3591/Documents/datasets/Sorel/meta.csv")
-
 DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
 
 BODMAS_PATH = DATASETS_PATH / "BODMAS"
@@ -36,6 +34,9 @@ VIRUS_SHARE_ELF_COLLECTION_PATHS = {
     "VirusShare_ELF_20190212": VIRUS_SHARE_PATH / "VirusShare_ELF_20190212",
     # "VirusShare_Linux_20160715": VIRUS_SHARE_PATH / "VirusShare_Linux_20160715",  # THIS IS NOT ELF-only malware
 }
+
+SOREL_META_CSV = SOREL_PATH / "meta.csv"
+SOREL_LABEL_CACHE_DIR = SOREL_PATH / "labels"
 
 DATASET_NAMES = [
     "bodmas_pe",

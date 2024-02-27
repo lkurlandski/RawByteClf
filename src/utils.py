@@ -67,6 +67,19 @@ def count_parameters(model: nn.Module, requires_grad: bool = False) -> int:
     return sum(p.numel() for p in model.parameters() if (not requires_grad or p.requires_grad))
 
 
+def get_paths_sorted_numerically(
+    path: Collection[Path] | Path,
+    lstrip: str = "",
+    rstrip: str = "",
+    reverse: bool = False,
+) -> list[Path]:
+    def key(p: Path) -> int:
+        return int(p.stem.lstrip(lstrip).rstrip(rstrip))
+
+    files = Path(path).iterdir() if isinstance(path, (Path, str)) else path
+    return list(sorted(files, key=key, reverse=reverse))
+
+
 def get_highest_path(
     path: Collection[Path] | Path,
     lstrip: str = "",

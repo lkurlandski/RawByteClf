@@ -4,7 +4,7 @@ Apply labels to the malware datasets.
 
 from __future__ import annotations
 import asyncio
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable
 from functools import partial
 import json
 import os
@@ -13,6 +13,7 @@ from pprint import pprint
 import shutil
 import sys
 import tempfile
+import time
 from typing import Optional, Protocol
 
 if __name__ == "__main__":
@@ -25,7 +26,7 @@ from tqdm import tqdm
 
 from src.cfg import INPUT_PATH, TMP_DIR
 from src.utils import batched
-from src.data.cfg import MAX_SHARD_SIZE, BODMAS_LABELS_FILE, DATASET_TO_FILES
+from src.data.cfg import MAX_SHARD_SIZE, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_LABEL_CACHE_DIR
 from src.data.utils import PerDatasetArgumentParser
 
 
@@ -43,21 +44,7 @@ def threat_classification(d: dict) -> dict:
     return r
 
 
-class ThreatLabelExtractor(Protocol):
-    def __call__(self, report: dict) -> tuple[str, int]:
-        ...
-
-    @staticmethod
-    def build(extractor: str | ThreatLabelExtractor, *args, **kwds) -> ThreatLabelExtractor:
-        if callable(extractor):
-            return extractor
-        if extractor == "name":
-            return partial(threat_name, *args, **kwds)
-        if extractor == "category":
-            return partial(threat_category, *args, **kwds)
-        if extractor == "label":
-            return partial(threat_label, *args, **kwds)
-        raise ValueError(f"Unknown extractor: {extractor}")
+################################################################################
 
 
 def threat_name(report: dict) -> list[tuple[str, int]]:
@@ -77,7 +64,67 @@ def threat_label(report: dict) -> list[tuple[str, int]]:
     return [(r, sys.maxsize)]
 
 
+class ThreatLabelExtractor(Protocol):
+
+    str_func_map = {
+        "name": threat_name,
+        "category": threat_category,
+        "label": threat_label,
+    }
+    func_str_map = {
+        threat_name: "name",
+        threat_category: "category",
+        threat_label: "label",
+    }
+
+    def __call__(self, report: dict) -> tuple[str, int]:
+        ...
+
+    @staticmethod
+    def build(extractor: str | ThreatLabelExtractor, *args, **kwds) -> ThreatLabelExtractor:
+        if callable(extractor):
+            return extractor
+        if extractor == "name":
+            return partial(threat_name, *args, **kwds)
+        if extractor == "category":
+            return partial(threat_category, *args, **kwds)
+        if extractor == "label":
+            return partial(threat_label, *args, **kwds)
+        raise ValueError(f"Unknown extractor: {extractor}")
+
+    @staticmethod
+    def name(extractor: str | partial | ThreatLabelExtractor) -> str:
+        return _extractor_and_refiner_name(extractor, ThreatLabelExtractor.func_str_map)
+
+    @staticmethod
+    def descriptor(extractor: str | partial | ThreatLabelExtractor) -> str:
+        return _extractor_and_refiner_descriptor(extractor)
+
+
+def top_labels(labels: list[tuple[str, int]], k: int = sys.maxsize) -> tuple[str]:
+    """Returns the top k most popular labels."""
+    return tuple(labels[i][0] for i in range(min(k, len(labels))))
+
+
+def vote_labels(labels: list[tuple[str, int]], k: int = -sys.maxsize) -> tuple[str]:
+    """Returns labels with at least k votes."""
+    return tuple(labels[i][0] for i in range(len(labels)) if labels[i][1] >= k)
+
+
+################################################################################
+
+
 class ThreatLabelRefiner(Protocol):
+
+    str_func_map = {
+        "top": top_labels,
+        "vote": vote_labels,
+    }
+    func_str_map = {
+        top_labels: "top",
+        vote_labels: "vote",
+    }
+
     def __call__(self, labels: list[tuple[str, int]]) -> tuple[str]:
         ...
 
@@ -93,15 +140,47 @@ class ThreatLabelRefiner(Protocol):
             return partial(vote_labels, *args, **kwds)
         raise ValueError(f"Unknown refiner: {refiner}")
 
+    @staticmethod
+    def name(refiner: str | partial | ThreatLabelRefiner) -> str:
+        return _extractor_and_refiner_name(refiner, ThreatLabelRefiner.func_str_map)
 
-def top_labels(labels: list[tuple[str, int]], k: int = sys.maxsize) -> tuple[str]:
-    """Returns the top k most popular labels."""
-    return tuple(labels[i][0] for i in range(min(k, len(labels))))
+    @staticmethod
+    def descriptor(refiner: str | partial | ThreatLabelRefiner) -> str:
+        return _extractor_and_refiner_descriptor(refiner)
 
 
-def vote_labels(labels: list[tuple[str, int]], k: int = -sys.maxsize) -> tuple[str]:
-    """Returns labels with at least k votes."""
-    return tuple(labels[i][0] for i in range(len(labels)) if labels[i][1] >= k)
+################################################################################
+
+
+def _extractor_and_refiner_args_and_kwds(
+    f: str | partial | ThreatLabelExtractor | ThreatLabelRefiner,
+) -> tuple[tuple, dict]:
+    if isinstance(f, str):
+        return tuple(), dict()
+    if isinstance(f, partial):
+        return f.args, f.keywords
+    return tuple(), dict()
+
+
+def _extractor_and_refiner_descriptor(
+    f: str | partial | ThreatLabelExtractor | ThreatLabelRefiner,
+) -> str:
+    args, kwds = _extractor_and_refiner_args_and_kwds(f)
+    return "/".join([f"{a}" for a in args] + [f"{k}--{v}" for k, v in kwds.items()])
+
+
+def _extractor_and_refiner_name(
+    f: str | partial | ThreatLabelExtractor | ThreatLabelRefiner,
+    func_str_map: dict[Callable, str],
+) -> str:
+    if isinstance(f, str):
+        return f
+    if isinstance(f, partial):
+        return func_str_map[f.func]
+    return func_str_map[f.__name__]
+
+
+################################################################################
 
 
 def get_label(
@@ -207,6 +286,54 @@ def get_label_mapping_virus_total_reports(
 
     labels: dict[str, tuple[str]] = {Path(file).stem: label for file, label in iterable}
     return labels
+
+
+def get_label_mapping_virus_total_reports_sorel(
+    report_files: Iterable[os.PathLike],
+    extractor: ThreatLabelExtractor,
+    refiner: ThreatLabelRefiner,
+    asynch: bool = False,
+    use_cache: bool = True,
+    create_cache: bool = True,
+    overwrite_cache: bool = False,
+) -> dict[str, str]:
+
+    cache_file = Path(
+        SOREL_LABEL_CACHE_DIR,
+        f"extractor--{ThreatLabelExtractor.name(extractor)}",
+        ThreatLabelExtractor.descriptor(extractor),
+        f"refiner--{ThreatLabelRefiner.name(refiner)}",
+        ThreatLabelRefiner.descriptor(refiner),
+        "file_label_map.json"
+    )
+
+    if cache_file.exists() and not use_cache and not overwrite_cache:
+        raise ValueError()
+
+    if cache_file.exists() and use_cache:
+        print(f"Getting labels from cache: {cache_file=}", flush=True)
+        t = time.time()
+        with open(cache_file, "r") as fp:
+            files_and_labels = json.load(fp)
+        print(f"Acquired labels in {time.time() - t}")
+        files_and_labels = {k: tuple(v) if isinstance(v, list) else None for k, v in files_and_labels.items()}
+    else:
+        print("Getting labels from Virus Total reports...")
+        t = time.time()
+        files_and_labels = get_label_mapping_virus_total_reports(
+            report_files,
+            extractor,
+            refiner,
+            asynch,
+        )
+        print(f"Acquired labels in {time.time() - t}")
+        if create_cache:
+            if overwrite_cache or not cache_file.exists():
+                cache_file.parent.mkdir(exist_ok=True, parents=True)
+                print(f"Saving labels to cache: {cache_file=}", flush=True)
+                with open(cache_file, "w") as fp:
+                    json.dump(files_and_labels, fp, indent=4, sort_keys=True)
+    return files_and_labels
 
 
 def apply_labels_virus_total_reports(
@@ -315,5 +442,26 @@ def main() -> None:
         )
 
 
+def generate_sorel_label_caches():
+    files = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
+    extractors = [
+        ThreatLabelExtractor.build("category"),
+        ThreatLabelExtractor.build("name"),
+        ThreatLabelExtractor.build("label"),
+    ]
+    refiners = [
+        ThreatLabelRefiner.build("top", k=1),
+        ThreatLabelRefiner.build("top", k=2),
+        ThreatLabelRefiner.build("vote", k=8),
+    ]
+    for extractor in extractors:
+        for refiner in refiners:
+            get_label_mapping_virus_total_reports_sorel(
+                files, extractor, refiner, use_cache=False, asynch=False
+            )
+
+
 if __name__ == "__main__":
+    generate_sorel_label_caches()
+    sys.exit(0)
     main()
