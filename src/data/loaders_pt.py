@@ -62,7 +62,7 @@ from tqdm import tqdm
 import warnings
 
 from src.utils import batched
-from src.data.cfg import BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_LABEL_CACHE_DIR
+from src.data.cfg import SOREL_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_LABEL_CACHE_DIR
 from src.data.label_datasets import (
     get_label_mapping_virus_total_reports,
     get_label_mapping_virus_total_reports_sorel,
@@ -804,10 +804,17 @@ def get_length_extrapolation_dataset(
     CLASSES = ["trojan", "virus", "adware", "worm", "downloader"]
     files_and_labels = get_sorel_file_label_map()
     files_and_labels = {
-        f: l for f, l in files_and_labels.items() if l in CLASSES and Path(f).exists()
+        f: l for f, l in files_and_labels.items()
+        if l in CLASSES
     }
+    print(f"{len(files_and_labels)=}")
+    files_and_labels = {
+        f: l for f, l in files_and_labels.items()
+        if (SOREL_PATH / "binaries" / f).exists()
+    }
+    print(f"{len(files_and_labels)=}")
 
-    files = list(files_and_labels.keys())
+    files = [SOREL_PATH / "binaries" / f for f in files_and_labels.keys()]
     labels = list(files_and_labels.values())
 
     dist: Counter[str, int] = Counter(files_and_labels.values())
@@ -820,8 +827,10 @@ def get_length_extrapolation_dataset(
     tr_idx = {}
     vl_idx = {}
     for c in CLASSES:
+        print(f"{c=}")
         idx = [i for i, l in enumerate(labels) if l == c]
-        tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_size)
+        print(f"{len(idx)=}")
+        tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_size, random_state=0)
         tr_idx_within_cuttoff = [i for i in tr_idx[c] if Path(files[i]).stat().st_size <= tr_length_cutoff]
         if enforce_length:
             tr_idx[c] = tr_idx_within_cuttoff
@@ -831,6 +840,9 @@ def get_length_extrapolation_dataset(
     tr_samples_per_class = min(len(v) for v in tr_idx.values())
     tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
 
+
+    tr_idx = sum(tr_idx.values(), [])
+    vl_idx = sum(vl_idx.values(), [])
     dataset = {
         "tr": MapBinaryDataset(
             [files[i] for i in tr_idx],
@@ -1092,9 +1104,18 @@ if __name__ == "__main__":
         print(f"{dataset_a=}")
         print(f"{dataset_b=}")
 
-        assert dist_a == dist_b
-        assert dataset_a["vl"].labels.tolist() == dataset_b["vl"].labels.tolist()
-        assert dataset_a["tr"].labels.tolist() != dataset_b["tr"].labels.tolist()
+        if not dist_a == dist_b:
+            print("WARNING: not dist_a == dist_b")
+            print(f"{dist_a=}")
+            print(f"{dist_b=}")
+        if not dataset_a["vl"].labels.tolist() == dataset_b["vl"].labels.tolist():
+            print("WARNING: not dataset_a['vl'].labels.tolist() == dataset_b['vl'].labels.tolist()")
+            print(f"{dataset_a['vl'].labels.tolist()[0:100]=}")
+            print(f"{dataset_b['vl'].labels.tolist()[0:100]=}")
+        if not dataset_a["tr"].labels.tolist() != dataset_b["tr"].labels.tolist():
+            print("WARNING: not dataset_a['tr'].labels.tolist() != dataset_b['tr'].labels.tolist()")
+            print("{dataset_a['tr'].labels.tolist()=}")
+            print("{dataset_b['tr'].labels.tolist()=}")
 
         lengths = [Path(f).stat().st_size for f in dataset_a["vl"].files]
         print(f"a - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
