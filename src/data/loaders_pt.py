@@ -30,6 +30,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime
 import gc
 from itertools import cycle, islice
+import json
 import math
 import os
 from pathlib import Path
@@ -46,6 +47,7 @@ if __name__ == "__main__":
 import numpy as np
 import pandas as pd
 import psutil
+from sklearn.model_selection import train_test_split
 import torch
 from torch import ByteTensor, LongTensor, Tensor
 from torch.utils.data import (
@@ -60,9 +62,10 @@ from tqdm import tqdm
 import warnings
 
 from src.utils import batched
-from src.data.cfg import BODMAS_LABELS_FILE, DATASET_TO_FILES
+from src.data.cfg import BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_LABEL_CACHE_DIR
 from src.data.label_datasets import (
     get_label_mapping_virus_total_reports,
+    get_label_mapping_virus_total_reports_sorel,
     ThreatLabelExtractor,
     ThreatLabelRefiner,
 )
@@ -610,6 +613,22 @@ def get_bodmas_file_label_map(
     return files_and_labels
 
 
+def get_sorel_file_label_map(
+    top_k: Optional[int] = None,
+    min_freq: Optional[int] = 1,
+) -> dict[str, str]:
+    files = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
+    extractor = ThreatLabelExtractor.build("category")
+    refiner = ThreatLabelRefiner.build("top", k=1)
+    files_and_labels = get_label_mapping_virus_total_reports_sorel(files, extractor, refiner)
+    files_and_labels = {f: l[0] for f, l in files_and_labels.items() if isinstance(l, (list, tuple))}
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    keep: list[str] = [l for l, n in dist.most_common(top_k) if (n >= min_freq)]
+    files_and_labels: dict[Path, str] = {f: l for f, l in files_and_labels.items() if l in keep}
+
+    return files_and_labels
+
+
 def get_bodmas_dataset(
     subset: Optional[int] = None,
     min_freq: Optional[int] = None,
@@ -744,30 +763,92 @@ def get_sorel_dataset_clf(
     **kwds,
 ) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
 
-    # pseudo subset when getting the labels, as many of them will be None
-    files = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
-
-    t = time.time()
-    print("Getting labels from Virus Total reports...")
-    label_map = get_label_mapping_virus_total_reports(
-        files,
-        ThreatLabelExtractor.build("category"),
-        ThreatLabelRefiner.build("top", k=1),
-        True,
-    )
-    print(f"Acquired labels in {time.time() - t}")
+    files_and_labels = get_sorel_file_label_map(top_k, min_freq)
 
 
     def filter_fn(f: os.PathLike) -> bool:
         f = Path(f)
-        return f.stat().st_size >= 2 ** 14 and label_map.get(f.stem, None) is not None
-
+        return f.stat().st_size >= 2 ** 14 and files_and_labels.get(f.stem, None) is not None
 
     files = list(filter(filter_fn, files))[0:subset]
-    files_and_labels = {f: label_map[Path(f).stem][0] for f in files}
+    files_and_labels = {f: files_and_labels[Path(f).stem][0] for f in files}
     return get_classification_dataset(
         files_and_labels, subset, min_freq, top_k, ts_size, vl_size, **kwds
     )
+
+
+def get_length_extrapolation_dataset(
+    tr_length_cutoff: int,
+    enforce_length: bool,
+    ts_size: int = 1000,
+    **kwds,
+) -> tuple[dict[str, MapBinaryDataset], Counter]:
+    """
+        {
+            'trojan': 673535,
+            'virus': 182719,
+            'adware': 69798,
+            'worm': 55089,
+            'downloader': 26190,
+            'hacktool': 9258,
+            'pua': 4583,
+            'miner': 477,
+            'dropper': 476,
+            'ransomware': 297,
+            'banker': 32,
+            'spyware': 13,
+            'fakeav': 5,
+        }
+    """
+
+    CLASSES = ["trojan", "virus", "adware", "worm", "downloader"]
+    files_and_labels = get_sorel_file_label_map()
+    files_and_labels = {
+        f: l for f, l in files_and_labels.items() if l in CLASSES and Path(f).exists()
+    }
+
+    files = list(files_and_labels.keys())
+    labels = list(files_and_labels.values())
+
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    # Validation set is randomly selected from files of all length.
+    # Train set consists of files less than or equal to tr_length_cuttoff if enforce_length is True
+    # else is randomly selected but is the same size as the number of files that mean the cuttoff.
+    tr_idx = {}
+    vl_idx = {}
+    for c in CLASSES:
+        idx = [i for i, l in enumerate(labels) if l == c]
+        tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_size)
+        tr_idx_within_cuttoff = [i for i in tr_idx[c] if Path(files[i]).stat().st_size <= tr_length_cutoff]
+        if enforce_length:
+            tr_idx[c] = tr_idx_within_cuttoff
+        else:
+            tr_idx[c] = tr_idx[c][0:len(tr_idx_within_cuttoff)]
+
+    tr_samples_per_class = min(len(v) for v in tr_idx.values())
+    tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
+
+    dataset = {
+        "tr": MapBinaryDataset(
+            [files[i] for i in tr_idx],
+            [label2id[labels[i]] for i in tr_idx],
+            id2label=id2label,
+            label2id=label2id,
+            **kwds,
+        ),
+        "vl": MapBinaryDataset(
+            [files[i] for i in vl_idx],
+            [label2id[labels[i]] for i in vl_idx],
+            id2label=id2label,
+            label2id=label2id,
+            **kwds,
+        )
+    }
+
+    return dataset, Counter({c: tr_samples_per_class for c in CLASSES})
 
 
 def get_goodware_vs_malware_dataset(
@@ -989,6 +1070,49 @@ def test():
 
 
 if __name__ == "__main__":
+
+    from statistics import mean, median
+
+    for cuttoff in [2**16, 2**17]:
+        print("-" * 50)
+        print(cuttoff)
+        dataset_a, dist_a = get_length_extrapolation_dataset(
+            tr_length_cutoff=cuttoff,
+            ts_size=1000,
+            enforce_length=True,
+            asynch=True,
+        )
+        dataset_b, dist_b = get_length_extrapolation_dataset(
+            tr_length_cutoff=cuttoff,
+            ts_size=1000,
+            enforce_length=False,
+            asynch=True,
+        )
+
+        print(f"{dataset_a=}")
+        print(f"{dataset_b=}")
+
+        assert dist_a == dist_b
+        assert dataset_a["vl"].labels.tolist() == dataset_b["vl"].labels.tolist()
+        assert dataset_a["tr"].labels.tolist() != dataset_b["tr"].labels.tolist()
+
+        lengths = [Path(f).stat().st_size for f in dataset_a["vl"].files]
+        print(f"a - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+        lengths = [Path(f).stat().st_size for f in dataset_b["vl"].files]
+        print(f"b - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+
+        lengths = [Path(f).stat().st_size for f in dataset_a["tr"].files]
+        print(f"a - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+        lengths = [Path(f).stat().st_size for f in dataset_b["tr"].files]
+        print(f"b - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+
+        print("-" * 50)
+        print("\n\n")
+
+    sys.exit(0)
+
+    # get_sorel_file_label_map(asynch=True, use_cache=False)
+
     # dataset, dist = get_sorel_dataset_clf(subset=10000, max_length=512, top_k=10)
     # dataset, dist = get_bodmas_dataset(top_k=10, max_length=512)
 
