@@ -76,3 +76,10 @@ Install mamba locally
 pip install packaging
 pip install /path/to/mamba/repository
 ```
+
+
+
+
+find /path/to/directory -type d -path "*/None/10/*" -regex '.*/[0-9]+/None/10/.*'
+
+
