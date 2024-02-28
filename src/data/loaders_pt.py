@@ -1085,7 +1085,7 @@ if __name__ == "__main__":
 
     from statistics import mean, median
 
-    for cuttoff in [2**16, 2**17]:
+    for cuttoff in [2**16, 2**17, 2**18]:
         print("-" * 50)
         print(cuttoff)
         dataset_a, dist_a = get_length_extrapolation_dataset(
@@ -1112,10 +1112,6 @@ if __name__ == "__main__":
             print("WARNING: not dataset_a['vl'].labels.tolist() == dataset_b['vl'].labels.tolist()")
             print(f"{dataset_a['vl'].labels.tolist()[0:100]=}")
             print(f"{dataset_b['vl'].labels.tolist()[0:100]=}")
-        if not dataset_a["tr"].labels.tolist() != dataset_b["tr"].labels.tolist():
-            print("WARNING: not dataset_a['tr'].labels.tolist() != dataset_b['tr'].labels.tolist()")
-            print("{dataset_a['tr'].labels.tolist()=}")
-            print("{dataset_b['tr'].labels.tolist()=}")
 
         lengths = [Path(f).stat().st_size for f in dataset_a["vl"].files]
         print(f"a - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
