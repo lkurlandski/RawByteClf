@@ -18,8 +18,7 @@ import sys
 import time
 from typing import Any, Optional, Literal
 
-from accelerate.utils.memory import should_reduce_batch_size
-from accelerate.utils import is_xpu_available
+from accelerate.utils import is_xpu_available, is_npu_available
 import numpy as np
 import psutil
 import torch
@@ -120,20 +119,74 @@ def pad_to_multiple_of_fn(val: int, pad_to_multiple_of: int = 1) -> int:
     return (q + 1) * pad_to_multiple_of
 
 
+def should_reduce_batch_size(exception: Exception) -> bool:
+    """
+    Checks if `exception` relates to CUDA out-of-memory, CUDNN not supported, or CPU out-of-memory
+
+    Args:
+        exception (`Exception`):
+            An exception
+    """
+    _statements = [
+        "CUDA out of memory.",  # CUDA OOM
+        "cuDNN error: CUDNN_STATUS_NOT_SUPPORTED.",  # CUDNN SNAFU
+        "DefaultCPUAllocator: can't allocate memory",  # CPU OOM
+        "Triton Error [CUDA]: an illegal memory access was encountered",  # No idea whats going on here but its worth a shot.
+    ]
+    if isinstance(exception, RuntimeError) and len(exception.args) == 1:
+        return any(err in exception.args[0] for err in _statements)
+    return False
+
+
+def find_executable_batch_size(function: callable = None, starting_batch_size: int = 128):
+    if function is None:
+        return functools.partial(find_executable_batch_size, starting_batch_size=starting_batch_size)
+
+    batch_size = starting_batch_size
+
+    def decorator(*args, **kwargs):
+        nonlocal batch_size
+        gc.collect()
+        if is_xpu_available():
+            torch.xpu.empty_cache()
+        elif is_npu_available():
+            torch.npu.empty_cache()
+        else:
+            torch.cuda.empty_cache()
+        params = list(inspect.signature(function).parameters.keys())
+        # Guard against user error
+        if len(params) < (len(args) + 1):
+            arg_str = ", ".join([f"{arg}={value}" for arg, value in zip(params[1:], args[1:])])
+            raise TypeError(
+                f"Batch size was passed into `{function.__name__}` as the first argument when called."
+                f"Remove this as the decorator already does so: `{function.__name__}({arg_str})`"
+            )
+        while True:
+            if batch_size == 0:
+                raise RuntimeError("No executable batch size found, reached zero.")
+            try:
+                return function(batch_size, *args, **kwargs)
+            except Exception as e:
+                if should_reduce_batch_size(e):
+                    gc.collect()
+                    if is_xpu_available():
+                        torch.xpu.empty_cache()
+                    elif is_npu_available():
+                        torch.npu.empty_cache()
+                    else:
+                        torch.cuda.empty_cache()
+                    batch_size //= 2
+                else:
+                    raise
+
+    return decorator
+
+
 def find_executable_batch_size_sub(
     function: callable = None,
     starting_batch_size: int = 128,
     subtract: int = 8,
 ):
-    """
-    Monkey patch for accelerate.utils.memory.find_executable_batch_size to subtract from
-    the batch size rather than dividing by 2.
-
-    >>> from accelerate.utils.memory import find_executable_batch_size
-    >>> from src.learn.utils import find_executable_batch_size_sub
-    >>> find_executable_batch_size_sub_8 = functools.partial(f, subtract=8)
-    >>> accelerate.utils.memory.find_executable_batch_size = find_executable_batch_size_sub_8
-    """
 
     if function is None:
         return functools.partial(
