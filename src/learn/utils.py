@@ -168,6 +168,7 @@ def find_executable_batch_size(function: callable = None, starting_batch_size: i
                 return function(batch_size, *args, **kwargs)
             except Exception as e:
                 if should_reduce_batch_size(e):
+                    print(f"HANDLING --- {e}", flush=True)
                     gc.collect()
                     if is_xpu_available():
                         torch.xpu.empty_cache()
@@ -177,6 +178,7 @@ def find_executable_batch_size(function: callable = None, starting_batch_size: i
                         torch.cuda.empty_cache()
                     batch_size //= 2
                 else:
+                    print(f"RAISING --- {e}", flush=True)
                     raise
 
     return decorator
@@ -219,14 +221,15 @@ def find_executable_batch_size_sub(
                 return function(batch_size, *args, **kwargs)
             except Exception as e:
                 if should_reduce_batch_size(e):
+                    print(f"HANDLING --- {e}", flush=True)
                     gc.collect()
                     if not is_xpu_available():
                         torch.cuda.empty_cache()
                     else:
                         torch.xpu.empty_cache()
-                    print(f"Failed with {batch_size=}. Trying batch_size={batch_size - subtract}.")
                     batch_size -= subtract
                 else:
+                    print(f"RAISING --- {e}", flush=True)
                     raise
 
     return decorator
@@ -266,11 +269,13 @@ def find_executable_batch_size_and_gradient_accumulation_steps(
                 return function(batch_size, gradient_accumulation_steps, *args, **kwargs)
             except Exception as e:
                 if should_reduce_batch_size(e):
+                    print(f"HANDLING --- {e}", flush=True)
                     gc.collect()
                     torch.cuda.empty_cache()
                     batch_size //= 2
                     gradient_accumulation_steps *= 2
                 else:
+                    print(f"RAISING --- {e}", flush=True)
                     raise
 
     return decorator
