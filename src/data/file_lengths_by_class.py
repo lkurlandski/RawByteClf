@@ -13,7 +13,7 @@ from src.data.cfg import DATASET_TO_FILES, SOREL_LABEL_CACHE_DIR
 from src.utils import batched
 
 
-N_WORKERS = 16
+N_WORKERS = 32
 
 
 cache = (SOREL_LABEL_CACHE_DIR / f"extractor--category/refiner--top/k--{1}/file_label_map").with_suffix(".json")
