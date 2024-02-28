@@ -47,7 +47,6 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
-from accelerate import find_executable_batch_size
 from datasets import (
     DatasetDict,
     Dataset,
@@ -162,6 +161,7 @@ from src.learn.utils import (
     compute_total_steps,
     str_or_bool_to_str,
     get_mem,
+    find_executable_batch_size,
     find_executable_batch_size_and_gradient_accumulation_steps,
 )
 from src.learn.tokenization import get_tokenizer
