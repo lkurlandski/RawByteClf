@@ -126,12 +126,18 @@ def should_reduce_batch_size(exception: Exception) -> bool:
     Args:
         exception (`Exception`):
             An exception
+
+    00 - when CUDA_LAUNCH_BLOCKING=0, this can sometimes be raised
+    01 - when CUDA_LAUNCH_BLOCKING=1, the above error manifests as this. I have no idea
+        wtf this means, but lets give it a shot
     """
     _statements = [
         "CUDA out of memory.",  # CUDA OOM
         "cuDNN error: CUDNN_STATUS_NOT_SUPPORTED.",  # CUDNN SNAFU
         "DefaultCPUAllocator: can't allocate memory",  # CPU OOM
-        "Triton Error [CUDA]: an illegal memory access was encountered",  # No idea whats going on here but its worth a shot.
+        "CUDA error: an illegal memory access was encountered",  # 00
+        "Triton Error [CUDA]: an illegal memory access was encountered",  # 01
+        "an illegal memory access was encountered",
     ]
     if isinstance(exception, RuntimeError) and len(exception.args) == 1:
         return any(err in exception.args[0] for err in _statements)
