@@ -39,8 +39,7 @@ environment_2.yml - environment after integrating mamba into codebase
 Create the environment and install cuda and torch with conda (cuda-nvcc is needed for mamba)
 
 ```
-conda create -n RawByteClf python=3.10 \
-pytorch=2.0.1 torchtext=0.15.2 pytorch-cuda=11.8 cuda-nvcc -c pytorch -c nvidia
+conda create -n RawByteClf python=3.10 pytorch=2.0.1 torchtext=0.15.2 pytorch-cuda=11.8 cuda-nvcc -c pytorch -c nvidia
 ```
 
 Install everything else with pip (unless you want to wait 10 years for conda to resolve this). A very specific of ray tune is required for compatibility with transformers.
