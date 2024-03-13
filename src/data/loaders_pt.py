@@ -792,7 +792,8 @@ def get_sorel_dataset_clf(
 def get_length_extrapolation_dataset_sorel_original_labels(
     tr_length_cutoff: int,
     enforce_length: bool,
-    ts_size: int = 10000,
+    tr_size: int = 120000,
+    ts_size: int = 12000,
     tr_length_cutoffs: Optional[list[int]] = None,
     **kwds,
 ) -> tuple[dict[str, MapBinaryDataset], Counter]:
@@ -813,12 +814,12 @@ def get_length_extrapolation_dataset_sorel_original_labels(
 
     CLASSES = ["spyware", "worm", "dropper", "file_infector", "downloader", "adware"]
     files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
-    # print(f"{len(files_and_labels)=}")
+    print(f"{len(files_and_labels)=}")
     files_and_labels = {
         f: l for f, l in files_and_labels.items()
         if l in CLASSES and (SOREL_PATH / "binaries" / f).exists()
     }
-    # print(f"{len(files_and_labels)=}")
+    print(f"{len(files_and_labels)=}")
 
     files = [SOREL_PATH / "binaries" / f for f in files_and_labels.keys()]
     labels = list(files_and_labels.values())
@@ -834,9 +835,9 @@ def get_length_extrapolation_dataset_sorel_original_labels(
         tr_idx = {}
         vl_idx = {}
         for c in CLASSES:
-            # print(f"{c=}")
+            print(f"{c=}")
             idx = [i for i, l in enumerate(labels) if l == c]
-            # print(f"{len(idx)=}")
+            print(f"{len(idx)=}")
             tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_size, random_state=0)
             tr_idx_within_cuttoff = [i for i in tr_idx[c] if Path(files[i]).stat().st_size <= cutoff]
             if enforce_length:
@@ -857,7 +858,10 @@ def get_length_extrapolation_dataset_sorel_original_labels(
         min_training_size_per_class_across_cutoffs = None
 
     tr_idx, vl_idx = get_tr_and_ts_idx(tr_length_cutoff)
-    tr_idx = {c: x[0:min_training_size_per_class_across_cutoffs] for c, x in tr_idx.items()}
+    tr_idx = {
+        c: x[0:min_training_size_per_class_across_cutoffs][0:tr_size]
+        for c, x in tr_idx.items()
+    }
 
     tr_idx = sum(tr_idx.values(), [])
     vl_idx = sum(vl_idx.values(), [])
