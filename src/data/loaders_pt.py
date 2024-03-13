@@ -34,8 +34,9 @@ import json
 import math
 import os
 from pathlib import Path
-from pprint import pprint
+from pprint import pprint, pformat
 import sys
+from statistics import mean, median
 import time
 from typing import Callable, Literal, Optional
 
@@ -61,8 +62,8 @@ from torch.utils.data import (
 from tqdm import tqdm
 import warnings
 
-from src.utils import batched
-from src.data.cfg import SOREL_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_LABEL_CACHE_DIR
+from src.utils import batched, get_max_keys_from_dict
+from src.data.cfg import SOREL_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_META_CSV
 from src.data.label_datasets import (
     get_label_mapping_virus_total_reports,
     get_label_mapping_virus_total_reports_sorel,
@@ -629,6 +630,17 @@ def get_sorel_file_label_map(
     return files_and_labels
 
 
+def get_sorel_original_labels_file_label_map(**read_csv_kwds):
+    df = pd.read_csv(SOREL_META_CSV, **read_csv_kwds)
+    df = df[df["is_malware"] == 1]
+    df = df.drop(columns=["is_malware", "rl_fs_t", "rl_ls_const_positives"])
+    df = df.set_index("sha256")
+    d = df.to_dict(orient="index")
+    d = {sha: get_max_keys_from_dict(labels) for sha, labels in d.items()}
+    d = {sha: labels[0] for sha, labels in d.items() if len(labels) == 1}
+    return d
+
+
 def get_bodmas_dataset(
     subset: Optional[int] = None,
     min_freq: Optional[int] = None,
@@ -775,6 +787,103 @@ def get_sorel_dataset_clf(
     return get_classification_dataset(
         files_and_labels, subset, min_freq, top_k, ts_size, vl_size, **kwds
     )
+
+
+def get_length_extrapolation_dataset_sorel_original_labels(
+    tr_length_cutoff: int,
+    enforce_length: bool,
+    ts_size: int = 10000,
+    tr_length_cutoffs: Optional[list[int]] = None,
+    **kwds,
+) -> tuple[dict[str, MapBinaryDataset], Counter]:
+    """_summary_
+
+    Args:
+        tr_length_cutoff (int): _description_
+        enforce_length (bool): _description_
+        ts_size (int, optional): _description_. Defaults to 10000.
+        tr_length_cutoffs (Optional[list[int]], optional): If provided, will auto adjust the sizes
+            to ensure the train size is the same across all cuttoffs. Defaults to None.
+
+    Returns:
+        tuple[dict[str, MapBinaryDataset], Counter]: _description_
+    """
+    print("get_length_extrapolation_dataset_sorel_original_labels")
+    # TODO: uncomment print statements ?
+
+    CLASSES = ["spyware", "worm", "dropper", "file_infector", "downloader", "adware"]
+    files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
+    # print(f"{len(files_and_labels)=}")
+    files_and_labels = {
+        f: l for f, l in files_and_labels.items()
+        if l in CLASSES and (SOREL_PATH / "binaries" / f).exists()
+    }
+    # print(f"{len(files_and_labels)=}")
+
+    files = [SOREL_PATH / "binaries" / f for f in files_and_labels.keys()]
+    labels = list(files_and_labels.values())
+
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    # Validation set is randomly selected from files of all length.
+    # Train set consists of files less than or equal to tr_length_cuttoff if enforce_length is True
+    # else is randomly selected but is the same size as the number of files that mean the cuttoff.
+    def get_tr_and_ts_idx(cutoff: int) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+        tr_idx = {}
+        vl_idx = {}
+        for c in CLASSES:
+            # print(f"{c=}")
+            idx = [i for i, l in enumerate(labels) if l == c]
+            # print(f"{len(idx)=}")
+            tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_size, random_state=0)
+            tr_idx_within_cuttoff = [i for i in tr_idx[c] if Path(files[i]).stat().st_size <= cutoff]
+            if enforce_length:
+                tr_idx[c] = tr_idx_within_cuttoff
+            else:
+                tr_idx[c] = tr_idx[c][0:len(tr_idx_within_cuttoff)]
+
+        tr_samples_per_class = min(len(v) for v in tr_idx.values())
+        tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
+        return tr_idx, vl_idx
+
+    if tr_length_cutoffs:
+        tr_idx, _ = get_tr_and_ts_idx(min(tr_length_cutoffs))
+        min_training_size_per_class_across_cutoffs = [len(x) for x in tr_idx.values()]
+        assert len(set(min_training_size_per_class_across_cutoffs)) == 1, pformat(min_training_size_per_class_across_cutoffs)
+        min_training_size_per_class_across_cutoffs = min_training_size_per_class_across_cutoffs[0]
+    else:
+        min_training_size_per_class_across_cutoffs = None
+
+    tr_idx, vl_idx = get_tr_and_ts_idx(tr_length_cutoff)
+    tr_idx = {c: x[0:min_training_size_per_class_across_cutoffs] for c, x in tr_idx.items()}
+
+    tr_idx = sum(tr_idx.values(), [])
+    vl_idx = sum(vl_idx.values(), [])
+
+    BinaryDatasetClass = IterableBinaryDataset if kwds.pop("streaming", False) else MapBinaryDataset
+
+    print(f"Constructing dataset with {len(tr_idx)=} and {len(vl_idx)=}")
+
+    dataset = {
+        "tr": BinaryDatasetClass(
+            [files[i] for i in tr_idx],
+            [label2id[labels[i]] for i in tr_idx],
+            id2label=id2label,
+            label2id=label2id,
+            **kwds,
+        ),
+        "vl": BinaryDatasetClass(
+            [files[i] for i in vl_idx],
+            [label2id[labels[i]] for i in vl_idx],
+            id2label=id2label,
+            label2id=label2id,
+            **kwds,
+        )
+    }
+
+    return dataset, Counter({c: len(tr_idx) / len(CLASSES) for c in CLASSES})
 
 
 def get_length_extrapolation_dataset(
@@ -1081,9 +1190,68 @@ def test():
     assert map_out == iterable_out, "Outputs differ."
 
 
+def test_get_length_extrapolation_dataset_sorel_original_labels():
+
+    print("-" * 100)
+    print("STARTING TESTS")
+    print("-" * 100)
+
+    CUTOFFS = [2**16, 2**17, 2**18]
+    TS_SIZE = 100
+
+    # This should produce datasets with different train sizes, but the same validation set.
+    for tr_length_cutoffs in [None, CUTOFFS]:
+        for cutoff in CUTOFFS:
+            print("-" * 100)
+            print(f"{cutoff=}")
+            print(f"{tr_length_cutoffs=}")
+
+            dataset_enforce, dist_enforce = get_length_extrapolation_dataset_sorel_original_labels(
+                tr_length_cutoff=cutoff,
+                ts_size=TS_SIZE,
+                enforce_length=True,
+                tr_length_cutoffs=tr_length_cutoffs,
+                asynch=True,
+            )
+            dataset_noenforce, dist_noenforce = get_length_extrapolation_dataset_sorel_original_labels(
+                tr_length_cutoff=cutoff,
+                ts_size=TS_SIZE,
+                enforce_length=False,
+                tr_length_cutoffs=tr_length_cutoffs,
+                asynch=True,
+            )
+
+            print(f"{dataset_enforce=}")
+            print(f"{dataset_noenforce=}")
+
+            if not dist_enforce == dist_noenforce:
+                print("WARNING: not dist_a == dist_b")
+                print(f"{dist_enforce=}")
+                print(f"{dist_noenforce=}")
+            if not dataset_enforce["vl"].labels.tolist() == dataset_noenforce["vl"].labels.tolist():
+                print("WARNING: not dataset_a['vl'].labels.tolist() == dataset_b['vl'].labels.tolist()")
+                print(f"{dataset_enforce['vl'].labels.tolist()[0:100]=}")
+                print(f"{dataset_noenforce['vl'].labels.tolist()[0:100]=}")
+
+            lengths = [Path(f).stat().st_size for f in dataset_enforce["vl"].files]
+            print(f"enforce - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+            lengths = [Path(f).stat().st_size for f in dataset_noenforce["vl"].files]
+            print(f"noenforce - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+
+            lengths = [Path(f).stat().st_size for f in dataset_enforce["tr"].files]
+            print(f"enforce - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+            lengths = [Path(f).stat().st_size for f in dataset_noenforce["tr"].files]
+            print(f"noenforce - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+
+            print("-" * 50)
+            print("\n\n")
+
+
 if __name__ == "__main__":
 
-    from statistics import mean, median
+    test_get_length_extrapolation_dataset_sorel_original_labels()
+
+    sys.exit(0)
 
     for cuttoff in [2**16, 2**17, 2**18]:
         print("-" * 50)

@@ -304,6 +304,19 @@ def compose_functions(*funcs):
     return inner
 
 
+def get_max_keys_from_dict(d: dict[str, int]) -> tuple[str]:
+    keys = []
+    val = -1
+    for k, v in d.items():
+        if v >= val:
+            if v > val:
+                keys = []
+            keys.append(k)
+            val = v
+
+    return tuple(keys)
+
+
 def is_jsonable(x: Any) -> bool:
     try:
         json.dumps(x)
