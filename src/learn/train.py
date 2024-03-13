@@ -139,6 +139,7 @@ from src.data.loaders_pt import (
     preprocess_fn_add_cls_token,
     preprocess_fn_shift_token_idx,
     get_dataset_from_wrappers,
+    get_length_extrapolation_dataset_sorel_original_labels,
     BinaryDataset,
 )
 from src.learn.collators import DataCollator, DataCollatorForMLM, DataCollatorForCLM
@@ -938,7 +939,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         #     preprocess_fn=preprocess_fn,
         # )
 
-        dataset, dist = get_length_extrapolation_dataset(args.tr_length_cutoff, args.enforce_cutoff)
+        # dataset, dist = get_length_extrapolation_dataset(args.tr_length_cutoff, args.enforce_cutoff)
+        dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
+            tr_length_cutoff=args.tr_length_cutoff,
+            enforce_length=True,
+            ts_size=100,
+            tr_length_cutoffs=[
+                2 ** 17,
+                2 ** 18,
+                (2 ** 18) + (2 ** 17),
+                2 ** 19,
+                (2 ** 19) + (2 ** 17),
+                (2 ** 19) + (2 ** 18) + (2 ** 17),
+                (2 ** 20),
+            ],
+            max_length=args.max_length,
+            preprocess_fn=preprocess_fn,
+            streaming=args.streaming,
+        )
 
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
