@@ -812,12 +812,13 @@ def get_length_extrapolation_dataset_sorel_original_labels(
     print("get_length_extrapolation_dataset_sorel_original_labels")
     # TODO: uncomment print statements ?
 
-    CLASSES = ["spyware", "worm", "dropper", "file_infector", "downloader", "adware"]
+    CLASSES = ("spyware", "worm", "dropper", "file_infector", "downloader", "adware")
     files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
     print(f"{len(files_and_labels)=}")
+    sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
     files_and_labels = {
         f: l for f, l in files_and_labels.items()
-        if l in CLASSES and (SOREL_PATH / "binaries" / f).exists()
+        if l in CLASSES and os.path.exists(os.path.join(sorel_path, f))
     }
     print(f"{len(files_and_labels)=}")
 
@@ -828,6 +829,8 @@ def get_length_extrapolation_dataset_sorel_original_labels(
     label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
     id2label: dict[int, str] = {i: l for l, i in label2id.items()}
 
+    labels = np.array([label2id[l] for l in labels], dtype=np.int32)
+
     # Validation set is randomly selected from files of all length.
     # Train set consists of files less than or equal to tr_length_cuttoff if enforce_length is True
     # else is randomly selected but is the same size as the number of files that mean the cuttoff.
@@ -836,10 +839,11 @@ def get_length_extrapolation_dataset_sorel_original_labels(
         vl_idx = {}
         for c in CLASSES:
             print(f"{c=}")
-            idx = [i for i, l in enumerate(labels) if l == c]
+            c_encoded = label2id[c]
+            idx = np.where(labels == c_encoded)[0].tolist()
             print(f"{len(idx)=}")
             tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_size, random_state=0)
-            tr_idx_within_cuttoff = [i for i in tr_idx[c] if Path(files[i]).stat().st_size <= cutoff]
+            tr_idx_within_cuttoff = [i for i in tr_idx[c] if os.path.getsize(files[i]) <= cutoff]
             if enforce_length:
                 tr_idx[c] = tr_idx_within_cuttoff
             else:
@@ -859,7 +863,7 @@ def get_length_extrapolation_dataset_sorel_original_labels(
 
     tr_idx, vl_idx = get_tr_and_ts_idx(tr_length_cutoff)
     tr_idx = {
-        c: x[0:min_training_size_per_class_across_cutoffs][0:tr_size]
+        c: x[0:min_training_size_per_class_across_cutoffs][0:tr_size // len(CLASSES)]
         for c, x in tr_idx.items()
     }
 
@@ -873,14 +877,14 @@ def get_length_extrapolation_dataset_sorel_original_labels(
     dataset = {
         "tr": BinaryDatasetClass(
             [files[i] for i in tr_idx],
-            [label2id[labels[i]] for i in tr_idx],
+            labels[tr_idx],
             id2label=id2label,
             label2id=label2id,
             **kwds,
         ),
         "vl": BinaryDatasetClass(
             [files[i] for i in vl_idx],
-            [label2id[labels[i]] for i in vl_idx],
+            labels[vl_idx],
             id2label=id2label,
             label2id=label2id,
             **kwds,
