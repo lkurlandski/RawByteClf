@@ -57,8 +57,8 @@ src/learn/train.py \\
 --output_dir=tmp \\
 --save_strategy="steps" \\
 --evaluation_strategy="steps" \\
---save_steps=100 \\
---eval_steps=100 \\
+--save_steps=50 \\
+--eval_steps=50 \\
 --max_steps=30000 \\
 --logging_steps=10 \\
 --dataloader_num_workers=0 \\
@@ -73,7 +73,7 @@ src/learn/train.py \\
 --model_name_or_path=$MODEL_NAME_OR_PATH \\
 --max_length=512 \\
 --per_device_train_batch_size=128 \\
---per_device_eval_batch_size=4096 \\
+--per_device_eval_batch_size=2048 \\
 --gradient_accumulation_steps=1 \\
 --load_best_model_at_end \\
 --early_stopping=false \\
@@ -86,12 +86,12 @@ src/learn/train.py \\
 
 # n_layers, d_model, n_params, time DD:HH
 CONFIGS = [
-    (8, 384,   7815552, "00-01"),
-    (12, 384, 11672448, "00-01"),
-    (12, 512, 20478464, "00-01"),
-    (16, 512, 27259392, "00-01"),
-    (24, 512, 40821248, "00-02"),
-    (24, 768, 90723072, "00-04"),
+    (8, 384,   7815552, "06-00"),
+    (12, 384, 11672448, "06-00"),
+    (12, 512, 20478464, "12-00"),
+    (16, 512, 27259392, "12-00"),
+    (24, 512, 40821248, "01-00"),
+    (24, 768, 90723072, "01-00"),
 ]
 
 
