@@ -810,9 +810,12 @@ def get_length_extrapolation_dataset_sorel_original_labels(
         tuple[dict[str, MapBinaryDataset], Counter]: _description_
     """
     print("get_length_extrapolation_dataset_sorel_original_labels")
-    # TODO: uncomment print statements ?
 
     CLASSES = ("spyware", "worm", "dropper", "file_infector", "downloader", "adware")
+
+    tr_samples_per_class = int(tr_size // len(CLASSES))
+    ts_samples_per_class = int(ts_size // len(CLASSES))
+
     files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
     print(f"{len(files_and_labels)=}")
     sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
@@ -842,14 +845,14 @@ def get_length_extrapolation_dataset_sorel_original_labels(
             c_encoded = label2id[c]
             idx = np.where(labels == c_encoded)[0].tolist()
             print(f"{len(idx)=}")
-            tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_size, random_state=0)
+            tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_samples_per_class, random_state=0)
             tr_idx_within_cuttoff = [i for i in tr_idx[c] if os.path.getsize(files[i]) <= cutoff]
             if enforce_length:
                 tr_idx[c] = tr_idx_within_cuttoff
             else:
                 tr_idx[c] = tr_idx[c][0:len(tr_idx_within_cuttoff)]
 
-        tr_samples_per_class = min(len(v) for v in tr_idx.values())
+        tr_samples_per_class = min(min(len(v) for v in tr_idx.values()), tr_samples_per_class)
         tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
         return tr_idx, vl_idx
 
