@@ -13,7 +13,7 @@ BODY = """#!/bin/bash -l
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=4
-#SBATCH --mem=64G
+#SBATCH --mem=MEMORY
 #SBATCH --gres=gpu:a100:1
 
 
@@ -29,6 +29,8 @@ src/learn/train.py \\
 --arch_config=ARCH_CONFIG \\
 --metric_for_best_model="eval_accuracy" \\
 --task="clf" \\
+--tr_size=120000 \\
+--ts_size=12000 \\
 --streaming=false \\
 --group_by_length \\
 --tr_length_cutoff=TR_LENGTH_CUTOFF \\
@@ -56,7 +58,6 @@ src/learn/train.py \\
 --eval_accumulation_steps=EVAL_ACCUMULATION_STEPS \\
 --load_best_model_at_end \\
 --early_stopping=false \\
---auto_find_batch_size_and_gradient_accumulation_steps \\
 --bf16 \\
 --bf16_full_eval \\
 --tf32=true
@@ -69,9 +70,10 @@ class Config:
     arch_config: str
     threshold: int
     time: str
+    memory: str = "192G"
     per_device_train_batch_size: int = 64
-    per_device_eval_batch_size: int = 64
     gradient_accumulation_steps: int = 1
+    per_device_eval_batch_size: int = 64
     eval_accumulation_steps: int = 4096
 
 
@@ -81,6 +83,7 @@ ARCH_CONFIG = {
 }
 
 
+# [28.311552, 44.040192, 59.768832, 75.497472, 91.226112, 122.683392, 138.412032]
 THRESHOLDS = [
     2 ** 17,
     2 ** 18,
@@ -93,20 +96,21 @@ THRESHOLDS = [
 
 
 CONFIGS = [
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[0], "01-00"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[1], "01-00"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[2], "01-00"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[3], "01-00"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[4], "02-00"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[5], "02-00"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[6], "02-00"),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[0], "05-00"),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[1], "05-00"),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[2], "05-00"),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[3], "05-00"),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[4], "05-00"),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[5], "05-00"),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[6], "05-00"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[0], "05-00", "64G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[1], "05-00", "64G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[2], "05-00", "80G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[3], "05-00", "96G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[4], "05-00", "128G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[5], "05-00", "160G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[6], "05-00", "192G"),
+
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[0], "05-00", "64G", 32, 2, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[1], "05-00", "64G", 16, 4, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[2], "05-00", "80G", 8, 8, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[3], "05-00", "96G", 8, 8, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[4], "05-00", "128G", 4, 16, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[5], "05-00", "160G", 4, 16, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[6], "05-00", "192G", 4, 16, 8),
 ]
 
 
@@ -128,8 +132,8 @@ for config in CONFIGS:
         .replace("PER_DEVICE_EVAL_BATCH_SIZE", str(config.per_device_eval_batch_size)) \
         .replace("PER_DEVICE_TRAIN_BATCH_SIZE", str(config.per_device_train_batch_size)) \
         .replace("GRADIENT_ACCUMULATION_STEPS", str(config.gradient_accumulation_steps)) \
-        .replace("EVAL_ACCUMULATION_STEPS", str(config.eval_accumulation_steps))
-
+        .replace("EVAL_ACCUMULATION_STEPS", str(config.eval_accumulation_steps)) \
+        .replace("MEMORY", config.memory)
 
     outfile = OUTPUT / f"{jobname}.sh"
     with open(outfile, "w") as fp:
@@ -138,5 +142,5 @@ for config in CONFIGS:
 
 
 with open(OUTPUT / "run.sh", "w") as fp:
-    for outfile in sorted(outfiles):
+    for outfile in sorted(outfiles, key=lambda p: int(p.stem.split("_")[2]), reverse=True):
         fp.write(f"sbatch {outfile.as_posix()}\n")
