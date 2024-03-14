@@ -177,7 +177,7 @@ class BinaryDataset(ABC):
     def __init__(
         self,
         files: Sequence[os.PathLike],
-        labels: Optional[Sequence[int]] = None,
+        labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
         preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
         in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
@@ -188,7 +188,7 @@ class BinaryDataset(ABC):
     ) -> None:
 
         self.files = list(map(str, files))
-        self.labels = torch.tensor(labels, dtype=torch.long) if isinstance(labels, Sequence) else None
+        self.labels = torch.tensor(labels, dtype=torch.long) if isinstance(labels, (Sequence, np.ndarray)) else None
         self.max_length = max_length
         self.preprocess_fn = preprocess_fn
         self.asynch = asynch
@@ -257,7 +257,7 @@ class MapBinaryDataset(Dataset, BinaryDataset):
     def __init__(
         self,
         files: Sequence[os.PathLike],
-        labels: Optional[Sequence[int]] = None,
+        labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
         preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
         in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
@@ -314,7 +314,7 @@ class LazyMapBinaryDataset(Dataset, BinaryDataset):
     def __init__(
         self,
         files: Sequence[os.PathLike],
-        labels: Optional[Sequence[int]] = None,
+        labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
         preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
         in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
@@ -388,7 +388,7 @@ class IterableBinaryDataset(IterableDataset, BinaryDataset):
     def __init__(
         self,
         files: Sequence[os.PathLike],
-        labels: Optional[Sequence[int]] = None,
+        labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
         preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
         in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
