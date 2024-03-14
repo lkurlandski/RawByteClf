@@ -813,8 +813,8 @@ def get_length_extrapolation_dataset_sorel_original_labels(
 
     CLASSES = ("spyware", "worm", "dropper", "file_infector", "downloader", "adware")
 
-    tr_samples_per_class = int(tr_size // len(CLASSES))
-    ts_samples_per_class = int(ts_size // len(CLASSES))
+    TR_SAMPLES_PER_CLASS = int(tr_size // len(CLASSES))
+    TS_SAMPLES_PER_CLASS = int(ts_size // len(CLASSES))
 
     files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
     print(f"{len(files_and_labels)=}")
@@ -845,14 +845,14 @@ def get_length_extrapolation_dataset_sorel_original_labels(
             c_encoded = label2id[c]
             idx = np.where(labels == c_encoded)[0].tolist()
             print(f"{len(idx)=}")
-            tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=ts_samples_per_class, random_state=0)
+            tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=TS_SAMPLES_PER_CLASS, random_state=0)
             tr_idx_within_cuttoff = [i for i in tr_idx[c] if os.path.getsize(files[i]) <= cutoff]
             if enforce_length:
                 tr_idx[c] = tr_idx_within_cuttoff
             else:
                 tr_idx[c] = tr_idx[c][0:len(tr_idx_within_cuttoff)]
 
-        tr_samples_per_class = min(min(len(v) for v in tr_idx.values()), tr_samples_per_class)
+        tr_samples_per_class = min(min(len(v) for v in tr_idx.values()), TR_SAMPLES_PER_CLASS)
         tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
         return tr_idx, vl_idx
 
@@ -866,7 +866,7 @@ def get_length_extrapolation_dataset_sorel_original_labels(
 
     tr_idx, vl_idx = get_tr_and_ts_idx(tr_length_cutoff)
     tr_idx = {
-        c: x[0:min_training_size_per_class_across_cutoffs][0:tr_size // len(CLASSES)]
+        c: x[0:min_training_size_per_class_across_cutoffs][0:TR_SAMPLES_PER_CLASS]
         for c, x in tr_idx.items()
     }
 
@@ -1208,7 +1208,8 @@ def test_get_length_extrapolation_dataset_sorel_original_labels():
     print("-" * 100)
 
     CUTOFFS = [2**16, 2**17, 2**18]
-    TS_SIZE = 100
+    TR_SIZE = 1200
+    TS_SIZE = 120
 
     # This should produce datasets with different train sizes, but the same validation set.
     for tr_length_cutoffs in [None, CUTOFFS]:
@@ -1219,6 +1220,7 @@ def test_get_length_extrapolation_dataset_sorel_original_labels():
 
             dataset_enforce, dist_enforce = get_length_extrapolation_dataset_sorel_original_labels(
                 tr_length_cutoff=cutoff,
+                tr_size=TR_SIZE,
                 ts_size=TS_SIZE,
                 enforce_length=True,
                 tr_length_cutoffs=tr_length_cutoffs,
@@ -1226,6 +1228,7 @@ def test_get_length_extrapolation_dataset_sorel_original_labels():
             )
             dataset_noenforce, dist_noenforce = get_length_extrapolation_dataset_sorel_original_labels(
                 tr_length_cutoff=cutoff,
+                tr_size=TR_SIZE,
                 ts_size=TS_SIZE,
                 enforce_length=False,
                 tr_length_cutoffs=tr_length_cutoffs,
