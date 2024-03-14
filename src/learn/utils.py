@@ -410,5 +410,43 @@ def time_get_mem():
     print(f"{(end - start) / 1000=}")
 
 
+def interpret_bytes_as_integers(b: bytes, bits_in_byte: int = 12) -> np.ndarray:
+
+    if bits_in_byte != 12:
+        raise NotImplementedError("The computations are only for the 12-bit interpretation.")
+
+    # Pad bytes to a multiple of 12
+    f = int(math.lcm(8, bits_in_byte) / 8)
+    b = b + b'0x00' * (f - (len(b) % f))
+
+    if bits_in_byte > 8:
+        dtype = np.uint16
+    if bits_in_byte > 16:
+        dtype = np.uint32
+    if bits_in_byte > 32:
+        dtype = np.uint64
+    if bits_in_byte > 64:
+        dtype = np.uint128
+    if bits_in_byte > 128:
+        dtype = np.uint256
+    if bits_in_byte > 256:
+        raise ValueError()
+
+    # Get the 8-bit array representation
+    arr = np.frombuffer(b, dtype=np.uint8)
+    arr = arr.astype(dtype)
+    arr = arr.reshape(-1, f)
+
+    out = np.zeros((arr.shape[0], 2), dtype=np.uint16)
+    out[:,0] = (arr[:,0] << 4) + (arr[:,1] >> 4)
+    out[:,1] = (arr[:,1] << 8) + (arr[:,2])
+    out = out.flatten()
+    return out
+
+
 if __name__ == "__main__":
+    b = b'\x01\x02\x03\x04\x05\x06\x07\x08\x09'
+    arr = interpret_bytes_as_integers(b, 12)
+    print(arr)
+    sys.exit(0)
     time_get_mem()
