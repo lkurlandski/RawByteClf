@@ -943,7 +943,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
             tr_length_cutoff=args.tr_length_cutoff,
             enforce_length=True,
-            ts_size=100,
+            tr_size=args.tr_size,
+            ts_size=args.ts_size,
             tr_length_cutoffs=[
                 2 ** 17,
                 2 ** 18,
