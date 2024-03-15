@@ -166,7 +166,7 @@ def to_long_tensor(x: bytes | np.ndarray | ByteTensor) -> LongTensor:
     if isinstance(x, bytes):
         return torch.frombuffer(x, dtype=torch.uint8).to(torch.long)
     if isinstance(x, np.ndarray):
-        return torch.from_numpy(x).to(torch.long)
+        return torch.from_numpy(x.astype(np.int64)).to(torch.long)
     if isinstance(x, Tensor):
         return x.to(torch.long)
     raise TypeError(f"Unexpected type: {type(x)=}")
@@ -179,8 +179,8 @@ class BinaryDataset(ABC):
         files: Sequence[os.PathLike],
         labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
-        preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
-        in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
+        preprocess_fn: Callable[[LongTensor], LongTensor] = to_long_tensor,
+        in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
         asynch: bool = True,
         asynch_chunk_size: int = 500000,
         id2label: Optional[dict[int, str]] = None,
@@ -259,8 +259,8 @@ class MapBinaryDataset(Dataset, BinaryDataset):
         files: Sequence[os.PathLike],
         labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
-        preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
-        in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
+        preprocess_fn: Callable[[LongTensor], LongTensor] = to_long_tensor,
+        in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
         asynch: bool = True,
         asynch_chunk_size: int = 500000,
         id2label: Optional[dict[int, str]] = None,
@@ -292,11 +292,10 @@ class MapBinaryDataset(Dataset, BinaryDataset):
             self.x = read_binary_files(self.files, self.max_length, self.in_memory_dtype)
 
     def __getitem__(self, i: int) -> dict[Literal["name", "labels", "input_ids"], str | LongTensor]:
-        r = {"name": str(self.files[i]).split("/")[-1]}
-
-        x_i = to_long_tensor(self.x[i])
-        x_i = self.preprocess_fn(x_i)[0:self.max_length]
-        r["input_ids"] = x_i
+        r = {
+            "name": str(self.files[i]).split("/")[-1],
+            "input_ids": self.preprocess_fn(self.x[i]),
+        }
 
         if self.labels is not None:
             r["labels"] = self.labels[i]
@@ -316,8 +315,8 @@ class LazyMapBinaryDataset(Dataset, BinaryDataset):
         files: Sequence[os.PathLike],
         labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
-        preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
-        in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
+        preprocess_fn: Callable[[LongTensor], LongTensor] = to_long_tensor,
+        in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
         asynch: bool = True,
         asynch_chunk_size: int = 500000,
         id2label: Optional[dict[int, str]] = None,
@@ -364,9 +363,7 @@ class LazyMapBinaryDataset(Dataset, BinaryDataset):
                 x = read_binary_files(files, self.max_length, self.in_memory_dtype)
             self.x[i : i + self.chunk_size] = x
 
-        x_i = to_long_tensor(self.x[i])
-        x_i = self.preprocess_fn(x_i)[0:self.max_length]
-        r["input_ids"] = x_i
+        r["input_ids"] = self.preprocess_fn(self.x[i])
 
         return r
 
@@ -390,8 +387,8 @@ class IterableBinaryDataset(IterableDataset, BinaryDataset):
         files: Sequence[os.PathLike],
         labels: Optional[Sequence[int] | np.ndarray | Tensor] = None,
         max_length: Optional[int] = None,
-        preprocess_fn: Callable[[LongTensor], LongTensor] = lambda x: x,
-        in_memory_dtype: Literal["bytes", "np", "pt"] = "pt",
+        preprocess_fn: Callable[[LongTensor], LongTensor] = to_long_tensor,
+        in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
         asynch: bool = True,
         asynch_chunk_size: int = 500000,
         id2label: Optional[dict[int, str]] = None,
@@ -469,9 +466,7 @@ class IterableBinaryDataset(IterableDataset, BinaryDataset):
                 x = read_binary_files(files, self.max_length, self.in_memory_dtype)
             self.my_x[self.my_idx : self.my_idx + self.chunk_size] = x
 
-        x_i = to_long_tensor(self.my_x[self.my_idx])
-        x_i = self.preprocess_fn(x_i)[0:self.max_length]
-        r["input_ids"] = x_i
+        r["input_ids"] = self.preprocess_fn(self.my_x[self.my_idx])
 
         self.my_idx += 1
         return r
