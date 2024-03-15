@@ -410,15 +410,13 @@ def time_get_mem():
     print(f"{(end - start) / 1000=}")
 
 
-def interpret_bytes_as_integers(b: bytes, bits_in_byte: int = 12) -> np.ndarray:
+def is_power_of_two(n: int):
+    return n != 0 and (n & (n - 1)) == 0
 
-    if bits_in_byte != 12:
-        raise NotImplementedError("The computations are only for the 12-bit interpretation.")
 
-    # Pad bytes to a multiple of 12
-    f = int(math.lcm(8, bits_in_byte) / 8)
-    b = b + b'0x00' * (f - (len(b) % f))
+def interpret_bytes_as_integers(b: bytes, bits_in_byte: int = 8) -> np.ndarray:
 
+    dtype = np.uint8
     if bits_in_byte > 8:
         dtype = np.uint16
     if bits_in_byte > 16:
@@ -432,21 +430,42 @@ def interpret_bytes_as_integers(b: bytes, bits_in_byte: int = 12) -> np.ndarray:
     if bits_in_byte > 256:
         raise ValueError()
 
+    length_must_be_divisible_by = int(math.lcm(8, bits_in_byte) / 8)
+    if len(b) % length_must_be_divisible_by != 0:
+        pad = length_must_be_divisible_by - (len(b) % length_must_be_divisible_by)
+        b = b + (bytes([0]) * pad)
+
+    if is_power_of_two(bits_in_byte):
+        return np.frombuffer(b, dtype=dtype)
+
+    if bits_in_byte != 12:
+        raise NotImplementedError("The computations are only for the 12-bit interpretation.")
+
     # Get the 8-bit array representation
     arr = np.frombuffer(b, dtype=np.uint8)
     arr = arr.astype(dtype)
-    arr = arr.reshape(-1, f)
+    arr = arr.reshape(-1, 3)  # take three eight-bit numbers and represent them as two 12-bit ones
 
     out = np.zeros((arr.shape[0], 2), dtype=np.uint16)
     out[:,0] = (arr[:,0] << 4) + (arr[:,1] >> 4)
-    out[:,1] = (arr[:,1] << 8) + (arr[:,2])
+    # shift left by 12 to clear the most signfificant bits,
+    # then shift right by four to put in the correct place.
+    out[:,1] = ((arr[:,1] << 12) >> 4) + (arr[:,2])
     out = out.flatten()
+    assert out.max() < 2 ** bits_in_byte, out.max()  # FIXME: remove this once tested
     return out
 
 
 if __name__ == "__main__":
-    b = b'\x01\x02\x03\x04\x05\x06\x07\x08\x09'
+    b = bytes([random.randint(0, 255) for _ in range(53877)])
+    # b = b'\x01\x02\x03\x04\x05\x06\x07\x08\x09'
+
+
     arr = interpret_bytes_as_integers(b, 12)
     print(arr)
-    sys.exit(0)
-    time_get_mem()
+
+    b = b'\x01\x02\x03\x04\x05\x06\x07\x08\x09'
+    # arr = interpret_bytes_as_integers(b, 12)
+    # print(arr)
+    # sys.exit(0)
+    # time_get_mem()
