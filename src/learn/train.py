@@ -28,7 +28,7 @@ print(f"Entered {__file__=}")
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import partial
+from functools import partial, reduce
 import gc
 import inspect
 import json
@@ -140,6 +140,7 @@ from src.data.loaders_pt import (
     preprocess_fn_shift_token_idx,
     get_dataset_from_wrappers,
     get_length_extrapolation_dataset_sorel_original_labels,
+    to_long_tensor,
     BinaryDataset,
 )
 from src.learn.collators import DataCollator, DataCollatorForMLM, DataCollatorForCLM
@@ -164,6 +165,7 @@ from src.learn.utils import (
     get_mem,
     find_executable_batch_size,
     find_executable_batch_size_and_gradient_accumulation_steps,
+    interpret_bytes_as_integers,
 )
 from src.learn.tokenization import get_tokenizer
 
@@ -850,6 +852,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     oh = OutputHelper(
         args.model_name_or_path,
+        args.representation,
         args.max_length,
         args.task,
         args.tr_size,
@@ -877,6 +880,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     tokenizer = get_tokenizer(
         model_requires_cls_token=APPLY_BERT_PROCESSING[MODEL_NAME],
+        bit_representation=args.representation,
         model_max_length=args.max_length,
     )
     print(f"{tokenizer=}")
@@ -889,32 +893,34 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dataset: DatasetDict | dict[Literal["tr", "vl", "ts"], BinaryDataset | Subset[BinaryDataset]] = None
     dist: Optional[Counter[str, int]] = None
 
-    fn_1 = partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids))
-    fn_2 = partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id)
+    fns = [
+        partial(interpret_bytes_as_integers, bits_in_byte=int(args.representation)),
+        to_long_tensor,
+        partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids)),
+    ]
     if APPLY_BERT_PROCESSING[MODEL_NAME]:
-        preprocess_fn = lambda x: fn_2(fn_1(x))
-    else:
-        preprocess_fn = fn_1
+        fns.append(partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id))
+    preprocess_fn = lambda x: reduce(lambda y, func: func(y), fns, x)
 
     if args.task in ("mlm", "clm"):
         dataset = get_sorel_dataset(
             subset=args.subset,
-            max_length=args.max_length,
+            max_length=int(args.max_length * int(args.representation) / 8),
             preprocess_fn=preprocess_fn,
             streaming=args.streaming,
             vl_size=args.vl_size,
             ts_size=args.ts_size,
         )
     elif args.task == "clf":
-        # dataset, dist = get_bodmas_dataset(
-        #     subset=args.subset,
-        #     min_freq=args.bodmas_min_freq,
-        #     top_k=args.bodmas_top_k,
-        #     vl_size=args.vl_size,
-        #     ts_size=args.ts_size,
-        #     max_length=args.max_length,
-        #     preprocess_fn=preprocess_fn,
-        # )
+        dataset, dist = get_bodmas_dataset(
+            subset=args.subset,
+            min_freq=args.bodmas_min_freq,
+            top_k=args.bodmas_top_k,
+            vl_size=args.vl_size,
+            ts_size=args.ts_size,
+            max_length=int(args.max_length * int(args.representation) / 8),
+            preprocess_fn=preprocess_fn,
+        )
         # dataset, dist = get_sorel_dataset_clf(
         #     subset=args.subset,
         #     min_freq=args.bodmas_min_freq,
@@ -940,24 +946,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # )
 
         # dataset, dist = get_length_extrapolation_dataset(args.tr_length_cutoff, args.enforce_cutoff)
-        dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
-            tr_length_cutoff=args.tr_length_cutoff,
-            enforce_length=True,
-            tr_size=args.tr_size,
-            ts_size=args.ts_size,
-            tr_length_cutoffs=[
-                2 ** 17,
-                2 ** 18,
-                (2 ** 18) + (2 ** 17),
-                2 ** 19,
-                (2 ** 19) + (2 ** 17),
-                (2 ** 19) + (2 ** 18) + (2 ** 17),
-                (2 ** 20),
-            ],
-            max_length=args.max_length,
-            preprocess_fn=preprocess_fn,
-            streaming=args.streaming,
-        )
+        # dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
+        #     tr_length_cutoff=args.tr_length_cutoff,
+        #     enforce_length=True,
+        #     tr_size=args.tr_size,
+        #     ts_size=args.ts_size,
+        #     tr_length_cutoffs=[
+        #         2 ** 17,
+        #         2 ** 18,
+        #         (2 ** 18) + (2 ** 17),
+        #         2 ** 19,
+        #         (2 ** 19) + (2 ** 17),
+        #         (2 ** 19) + (2 ** 18) + (2 ** 17),
+        #         (2 ** 20),
+        #     ],
+        #     max_length=args.max_length,
+        #     preprocess_fn=preprocess_fn,
+        #     streaming=args.streaming,
+        # )
 
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
