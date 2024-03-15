@@ -8,6 +8,7 @@ print(f"Entered {__file__=}")
 
 from collections import OrderedDict
 from typing import Optional
+import warnings
 
 from tokenizers import models, pre_tokenizers, processors, Tokenizer, Regex
 from transformers import PreTrainedTokenizerFast
@@ -38,7 +39,7 @@ class FastTokenizerForModelsThatRequireCLSToken(PreTrainedTokenizerFast):
         return output
 
 
-def get_tokenizer_object(model_requires_cls_token: bool) -> Tokenizer:
+def get_tokenizer_object_8bit(model_requires_cls_token: bool) -> Tokenizer:
     alphabet = [bytes([i]).decode("latin1") for i in range(256)]
     vocab = {v: i for i, v in enumerate(SPECIALS.values())} | {
         v: i for i, v in enumerate(alphabet, start=len(SPECIALS))
@@ -64,12 +65,74 @@ def get_tokenizer_object(model_requires_cls_token: bool) -> Tokenizer:
     return tokenizer
 
 
-def get_tokenizer(model_requires_cls_token: bool, **kwds) -> PreTrainedTokenizerFast:
+def get_tokenizer_object_12bit(model_requires_cls_token: bool) -> Tokenizer:
+    warnings.warn("Warning: the full tokenizer functionality is not implemented for 12-bits!")
+    alphabet = [
+        bytes([i]).decode("latin1") + bytes([j]).decode("latin1")
+        for i in range(16)
+        for j in range(256)
+    ]
+    vocab = {v: i for i, v in enumerate(SPECIALS.values())} | {
+        v: i for i, v in enumerate(alphabet, start=len(SPECIALS))
+    }
+
+    model = models.WordLevel(vocab=vocab, unk_token=SPECIALS["unk_token"])
+    tokenizer = Tokenizer(model)
+    tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
+        [
+            pre_tokenizers.Split(Regex(r"[\s\S]{1,2}"), behavior="isolated"),
+        ]
+    )
+
+    if model_requires_cls_token:
+        tokenizer.post_processor = processors.BertProcessing(
+            sep=(SPECIALS["sep_token"], SPECIALS_IDS["sep_token"]),
+            cls=(SPECIALS["cls_token"], SPECIALS_IDS["cls_token"]),
+        )
+
+    return tokenizer
+
+
+def get_tokenizer_object_16bit(model_requires_cls_token: bool) -> Tokenizer:
+    alphabet = [
+        bytes([i]).decode("latin1") + bytes([j]).decode("latin1")
+        for i in range(256)
+        for j in range(256)
+    ]
+    vocab = {v: i for i, v in enumerate(SPECIALS.values())} | {
+        v: i for i, v in enumerate(alphabet, start=len(SPECIALS))
+    }
+
+    model = models.WordLevel(vocab=vocab, unk_token=SPECIALS["unk_token"])
+    tokenizer = Tokenizer(model)
+    tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
+        [
+            pre_tokenizers.Split(Regex(r"[\s\S]{1,2}"), behavior="isolated"),
+        ]
+    )
+
+    if model_requires_cls_token:
+        tokenizer.post_processor = processors.BertProcessing(
+            sep=(SPECIALS["sep_token"], SPECIALS_IDS["sep_token"]),
+            cls=(SPECIALS["cls_token"], SPECIALS_IDS["cls_token"]),
+        )
+
+    return tokenizer
+
+
+def get_tokenizer(model_requires_cls_token: bool, bit_representation: int = 8, **kwds) -> PreTrainedTokenizerFast:
     """
     kwds
        model_max_length: will caused the tokenizer to trim the tokenized input.
     """
-    tokenizer = get_tokenizer_object(model_requires_cls_token)
+    if int(bit_representation) == 8:
+        tokenizer = get_tokenizer_object_8bit(model_requires_cls_token)
+    elif int(bit_representation) == 12:
+        tokenizer = get_tokenizer_object_12bit(model_requires_cls_token)
+    elif int(bit_representation) == 16:
+        tokenizer = get_tokenizer_object_16bit(model_requires_cls_token)
+    else:
+        raise ValueError(bit_representation)
 
     if model_requires_cls_token:
         tokenizer = FastTokenizerForModelsThatRequireCLSToken(tokenizer_object=tokenizer, **(kwds | SPECIALS))
@@ -81,7 +144,13 @@ def get_tokenizer(model_requires_cls_token: bool, **kwds) -> PreTrainedTokenizer
 
 
 if __name__ == "__main__":
-    t = get_tokenizer(model_requires_cls_token=True, model_max_length=65536)
-    print(f"{t}\n{'-' * 80}")
-    t = get_tokenizer(model_requires_cls_token=False, model_max_length=65536)
-    print(f"{t}\n{'-' * 80}")
+
+    tokenizer = get_tokenizer_object_16bit(False)
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, **SPECIALS)
+
+    print(tokenizer)
+
+    # t = get_tokenizer(model_requires_cls_token=True, model_max_length=65536)
+    # print(f"{t}\n{'-' * 80}")
+    # t = get_tokenizer(model_requires_cls_token=False, model_max_length=65536)
+    # print(f"{t}\n{'-' * 80}")
