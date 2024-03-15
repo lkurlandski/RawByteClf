@@ -440,7 +440,7 @@ def object_to_model_name(obj: PretrainedConfig | str | Path) -> str:
             possible_model_names.append(model_name)
     if len(possible_model_names) == 1:
         return possible_model_names[0]
-    elif len(possible_model_names) > 1:
+    if len(possible_model_names) > 1:
         raise RuntimeError(f"Multiple possible model names: {possible_model_names} for {obj=}")
 
     raise RuntimeError(f"Could not determine a model name for {obj=}")
@@ -556,19 +556,19 @@ def get_config_from_path(model_name_or_path: str | Path, **kwds) -> PretrainedCo
     for m in MODEL_NAMES:
         if m in architecture.lower():
             possible.append(m)
-        # TODO: rename HRRForMaskedLM and HRRForSequenceClassification then remove this. 
+        # TODO: rename HRRForMaskedLM and HRRForSequenceClassification then remove this.
         # Or rename the `model_name` key from "hrrformer" to "hrr".
         elif m == "hrrformer" and "hrr" in architecture.lower():
             possible.append(m)
 
     if len(possible) == 1:
         return MODEL_NAME_TO_CONFIG_CLASS[possible[0]](**(config | kwds))
-    elif len(possible) > 1:
+    if len(possible) > 1:
         raise RuntimeError(
             f"Tried to associate the {architecture=} from the {config_file=} with a model_name."
             f"Multiple possibilities were found, so we cannot proceed: {possible=}."
         )
-    elif len(possible) == 0:
+    if len(possible) == 0:
         raise RuntimeError(
             f"Tried to associate the {architecture=} from the {config_file=} with a model_name."
             f"No possibilities were found, so we cannot proceed: {possible=}."
@@ -1217,7 +1217,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         initial_output: PredictionOutput = None
         max_per_device_eval_batch_size: int = None
         if not args.skip_eval_check:
-            initial_output, max_per_device_eval_batch_size = _eval()
+            initial_output, max_per_device_eval_batch_size = _eval()  # pylint: disable=no-value-for-parameter
             model = model.to(torch.float32).to("cpu")
             torch.cuda.empty_cache()
             gc.collect()
@@ -1268,7 +1268,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         print("Training...", flush=True)
         if args.auto_find_batch_size_and_gradient_accumulation_steps:
-            trainer_output: TrainOutput = _train()
+            trainer_output: TrainOutput = _train()  # pylint: disable=no-value-for-parameter
         else:
             oh.mkdir()
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
@@ -1441,7 +1441,7 @@ def cli():
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{BR}", flush=True)
-    
+
     print(f"{torch.backends.cudnn.enabled=}")
     cli()
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)

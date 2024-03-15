@@ -9,8 +9,10 @@ import os
 import sys
 from typing import Any, Literal
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
 
 import torch
 from torch import BoolTensor, LongTensor, tensor
@@ -146,6 +148,7 @@ class DataCollatorForMLM(DataCollator):
 
 
 def test() -> None:
+    # pylint: disable=wrong-import-position
     from datasets import DatasetDict
     from transformers import (
         BertTokenizerFast,
@@ -160,6 +163,7 @@ def test() -> None:
     from src.architectures.test import (
         get_dataset, get_config, get_model, get_compute_metrics, get_training_arguments
     )
+    # pylint: enable=wrong-import-position
 
     task = "clf"
 
@@ -188,7 +192,7 @@ def test() -> None:
 
     trainer = Trainer(
         model=model,
-        args=get_training_arguments(f"./tmp/collators/hf"),
+        args=get_training_arguments("./tmp/collators/hf"),
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
         data_collator=data_collator,

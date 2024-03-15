@@ -172,7 +172,7 @@ def find_executable_batch_size(function: callable = None, starting_batch_size: i
                 raise RuntimeError("No executable batch size found, reached zero.")
             try:
                 return function(batch_size, *args, **kwargs)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 if should_reduce_batch_size(e):
                     print(f"HANDLING --- {e}", flush=True)
                     gc.collect()
@@ -225,7 +225,7 @@ def find_executable_batch_size_sub(
                 raise RuntimeError("No executable batch size found, reached zero.")
             try:
                 return function(batch_size, *args, **kwargs)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 if should_reduce_batch_size(e):
                     print(f"HANDLING --- {e}", flush=True)
                     gc.collect()
@@ -273,7 +273,7 @@ def find_executable_batch_size_and_gradient_accumulation_steps(
                 raise RuntimeError("No executable batch size found, reached zero.")
             try:
                 return function(batch_size, gradient_accumulation_steps, *args, **kwargs)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 if should_reduce_batch_size(e):
                     print(f"HANDLING --- {e}", flush=True)
                     gc.collect()
@@ -452,11 +452,12 @@ def interpret_bytes_as_integers(b: bytes, bits_in_byte: int = 8) -> np.ndarray:
     # then shift right by four to put in the correct place.
     out[:,1] = ((arr[:,1] << 12) >> 4) + (arr[:,2])
     out = out.flatten()
-    assert out.max() < 2 ** bits_in_byte, out.max()  # FIXME: remove this once tested
+    # assert out.max() < 2 ** bits_in_byte, out.max()
     return out
 
 
-if __name__ == "__main__":
+def test_interpret_bytes_as_integers():
+
     b = bytes([random.randint(0, 255) for _ in range(53877)])
     # b = b'\x01\x02\x03\x04\x05\x06\x07\x08\x09'
 
@@ -469,3 +470,7 @@ if __name__ == "__main__":
     # print(arr)
     # sys.exit(0)
     # time_get_mem()
+
+
+if __name__ == "__main__":
+    test_interpret_bytes_as_integers()

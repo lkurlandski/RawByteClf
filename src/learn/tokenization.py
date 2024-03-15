@@ -143,8 +143,7 @@ def get_tokenizer(model_requires_cls_token: bool, bit_representation: int = 8, *
     return tokenizer
 
 
-if __name__ == "__main__":
-
+def test():
     tokenizer = get_tokenizer_object_16bit(False)
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, **SPECIALS)
 
@@ -154,3 +153,7 @@ if __name__ == "__main__":
     # print(f"{t}\n{'-' * 80}")
     # t = get_tokenizer(model_requires_cls_token=False, model_max_length=65536)
     # print(f"{t}\n{'-' * 80}")
+
+
+if __name__ == "__main__":
+    test()
