@@ -156,10 +156,10 @@ def _extractor_and_refiner_args_and_kwds(
     f: str | partial | ThreatLabelExtractor | ThreatLabelRefiner,
 ) -> tuple[tuple, dict]:
     if isinstance(f, str):
-        return tuple(), dict()
+        return tuple(), {}
     if isinstance(f, partial):
         return f.args, f.keywords
-    return tuple(), dict()
+    return tuple(), {}
 
 
 def _extractor_and_refiner_descriptor(
@@ -462,6 +462,5 @@ def generate_sorel_label_caches():
 
 
 if __name__ == "__main__":
-    generate_sorel_label_caches()
-    sys.exit(0)
     main()
+    # generate_sorel_label_caches()

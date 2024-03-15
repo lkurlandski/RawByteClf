@@ -23,11 +23,13 @@ dtype:
 # pylint: disable=wrong-import-position
 print(f"Entered {__file__=}")
 
+from argparse import ArgumentParser
 from abc import ABC
 import asyncio
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from datetime import datetime
+from functools import partial
 import gc
 from itertools import cycle, islice
 import json
@@ -35,10 +37,12 @@ import math
 import os
 from pathlib import Path
 from pprint import pprint, pformat
+import random
 import sys
 from statistics import mean, median
 import time
 from typing import Callable, Literal, Optional
+import warnings
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
@@ -50,6 +54,7 @@ import pandas as pd
 import psutil
 from sklearn.model_selection import train_test_split
 import torch
+from torch.utils.data import DataLoader
 from torch import ByteTensor, LongTensor, Tensor
 from torch.utils.data import (
     ConcatDataset,
@@ -60,7 +65,6 @@ from torch.utils.data import (
     random_split,
 )
 from tqdm import tqdm
-import warnings
 
 from src.utils import batched, get_max_keys_from_dict
 from src.data.cfg import SOREL_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_META_CSV
@@ -102,9 +106,9 @@ def read_binary_file(
 
     if in_memory_dtype == "bytes":
         return b
-    elif in_memory_dtype == "np":
+    if in_memory_dtype == "np":
         return np.frombuffer(b, dtype=np.uint8)
-    elif in_memory_dtype == "pt":
+    if in_memory_dtype == "pt":
         return torch.frombuffer(b, dtype=torch.uint8)
 
     raise ValueError(f"Unknown {in_memory_dtype=}")
@@ -138,8 +142,8 @@ async def read_binary_files_asynch(
         )
 
     x = []
-    for files in iterable:
-        tasks = [read_binary_file_asynch(f, max_length, in_memory_dtype) for f in files]
+    for batch_files in iterable:
+        tasks = [read_binary_file_asynch(f, max_length, in_memory_dtype) for f in batch_files]
         x_i = await asyncio.gather(*tasks)
         x.extend(x_i)
     return x
@@ -199,7 +203,7 @@ class BinaryDataset(ABC):
         self._dist = self.get_dist()
 
     # TODO: if the IterableBinaryDataset has __len__, could this interfere with
-    # how third-party code treats the dataset? We want them to treat it as a 
+    # how third-party code treats the dataset? We want them to treat it as a
     # subclass of IterableDataset, but third party code might only check for
     # structural subtypes.
     def __len__(self) -> int:
@@ -411,6 +415,7 @@ class IterableBinaryDataset(IterableDataset, BinaryDataset):
         # Initialized after call to __iter__. These are unique to each process when num_workers > 1.
         # Each sequences will have the same length. Their meaning is self-evident.
         # idx is used by each process to index specific value within the sequence.
+        self.my_length: int = None
         self.my_files: list[str] = None
         self.my_labels: Optional[LongTensor] = None
         self.my_x: list[Optional[bytes | np.ndarray | ByteTensor]] = None
@@ -567,7 +572,7 @@ def get_classification_dataset(
 
     # Filter out the files that are not in the top_k most frequent labels
     dist: Counter[str, int] = Counter(files_and_labels.values())
-    keep = [l for l, n in dist.most_common(top_k) if (n >= min_freq)]
+    keep = [l for l, n in dist.most_common(top_k) if n >= min_freq]
     files_and_labels = {f: l for f, l in files_and_labels.items() if l in keep}
 
     # Final collection of data items
@@ -603,8 +608,8 @@ def get_bodmas_file_label_map(
     }
 
     dist: Counter[str, int] = Counter(files_and_labels.values())
-    keep: list[str] = [l for l, n in dist.most_common(top_k) if (n >= min_freq)]
-    files_and_labels: dict[Path, str] = {f: l for f, l in files_and_labels.items() if l in keep}    
+    keep: list[str] = [l for l, n in dist.most_common(top_k) if n >= min_freq]
+    files_and_labels: dict[Path, str] = {f: l for f, l in files_and_labels.items() if l in keep}
 
     return files_and_labels
 
@@ -619,7 +624,7 @@ def get_sorel_file_label_map(
     files_and_labels = get_label_mapping_virus_total_reports_sorel(files, extractor, refiner)
     files_and_labels = {f: l[0] for f, l in files_and_labels.items() if isinstance(l, (list, tuple))}
     dist: Counter[str, int] = Counter(files_and_labels.values())
-    keep: list[str] = [l for l, n in dist.most_common(top_k) if (n >= min_freq)]
+    keep: list[str] = [l for l, n in dist.most_common(top_k) if n >= min_freq]
     files_and_labels: dict[Path, str] = {f: l for f, l in files_and_labels.items() if l in keep}
 
     return files_and_labels
@@ -726,7 +731,7 @@ def get_bodmas_dataset_slice(
 
     # Filter out the files that are not in the top_k most frequent labels
     dist: Counter[str, int] = Counter(files_and_labels.values())
-    keep: list[str] = [l for l, n in dist.most_common(top_k) if (n >= min_freq)]
+    keep: list[str] = [l for l, n in dist.most_common(top_k) if n >= min_freq]
     files_and_labels: dict[Path, str] = {f: l for f, l in files_and_labels.items() if l in keep}
 
     # Final collection of data items
@@ -769,6 +774,8 @@ def get_sorel_dataset_clf(
     vl_size: int | float = 0.1,
     **kwds,
 ) -> tuple[dict[Literal["tr", "vl", "ts"], BinaryDataset], Counter[str, int]]:
+
+    raise NotImplementedError("There is a bug in here that needs to be addressed before usage.")
 
     files_and_labels = get_sorel_file_label_map(top_k, min_freq)
 
@@ -854,7 +861,8 @@ def get_length_extrapolation_dataset_sorel_original_labels(
     if tr_length_cutoffs:
         tr_idx, _ = get_tr_and_ts_idx(min(tr_length_cutoffs))
         min_training_size_per_class_across_cutoffs = [len(x) for x in tr_idx.values()]
-        assert len(set(min_training_size_per_class_across_cutoffs)) == 1, pformat(min_training_size_per_class_across_cutoffs)
+        if len(set(min_training_size_per_class_across_cutoffs)) != 1:
+            raise ValueError(pformat(min_training_size_per_class_across_cutoffs))
         min_training_size_per_class_across_cutoffs = min_training_size_per_class_across_cutoffs[0]
     else:
         min_training_size_per_class_across_cutoffs = None
@@ -1031,8 +1039,6 @@ def test_timing():
         mprof plot --output={PLOT.png}
     """
 
-    from argparse import ArgumentParser
-
     parser = ArgumentParser()
     parser.add_argument("--n_files", type=int, default=None)
     parser.add_argument("--max_length", type=int, default=None)
@@ -1051,14 +1057,12 @@ def test_timing():
 
     files = sorted(list(DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
     files = islice(cycle(files), args.n_files if isinstance(args.n_files, int) else len(files))
-    dataset = BinaryDataset(
+    dataset = MapBinaryDataset(
         files,
         labels=None,
         max_length=args.max_length,
-        keep_in_memory=True,
-        asyncronous_loading=args.asynch,
+        asynch=args.asynch,
         in_memory_dtype=args.dtype,
-        length=args.n_files,
     )
 
     m_f = psutil.virtual_memory()
@@ -1081,18 +1085,11 @@ def test_timing():
     print(f"{dataset=}")
 
 
-def test():
-
-    from functools import partial
-    import random
-
-    from torch.utils.data import DataLoader
-
+def test_pytorch_style_datasets():
 
     random.seed(0)
     np.random.seed(0)
     torch.random.manual_seed(0)
-
 
     global DEFAULT_DISABLE_TQDM
     DEFAULT_DISABLE_TQDM = False
@@ -1167,33 +1164,33 @@ def test():
 
     assert map_out == iterable_out, "Outputs differ."
 
-    sys.exit(0)
+    # sys.exit(0)
 
-    map_dataset_tr, map_dataset_ts = random_split(map_dataset, lengths=[0.8, 0.2])
-    iterable_dataset_tr, iterable_dataset_ts = random_split(iterable_dataset, lengths=[0.8, 0.2])
+    # map_dataset_tr, map_dataset_ts = random_split(map_dataset, lengths=[0.8, 0.2])
+    # iterable_dataset_tr, iterable_dataset_ts = random_split(iterable_dataset, lengths=[0.8, 0.2])
 
-    print(f"{map_dataset_tr=}")
-    print(f"{map_dataset_ts=}")
-    print(f"{iterable_dataset_tr=}")
-    print(f"{iterable_dataset_ts=}")
+    # print(f"{map_dataset_tr=}")
+    # print(f"{map_dataset_ts=}")
+    # print(f"{iterable_dataset_tr=}")
+    # print(f"{iterable_dataset_ts=}")
 
-    print("Testing the Map-style Dataset")
-    map_out = {}
-    dataloader = DataLoader(map_dataset_tr, BATCH_SIZE, SHUFFLE, num_workers=NUM_WORKERS)
-    for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
-        for l, n in zip(inputs["labels"], inputs["name"]):
-            assert n not in map_out, f"{i=} {n=}"
-            map_out[n] = l.item()
+    # print("Testing the Map-style Dataset")
+    # map_out = {}
+    # dataloader = DataLoader(map_dataset_tr, BATCH_SIZE, SHUFFLE, num_workers=NUM_WORKERS)
+    # for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
+    #     for l, n in zip(inputs["labels"], inputs["name"]):
+    #         assert n not in map_out, f"{i=} {n=}"
+    #         map_out[n] = l.item()
 
-    print("Testing the Iterable-style Dataset")
-    dataloader = DataLoader(iterable_dataset_tr, BATCH_SIZE, num_workers=NUM_WORKERS)
-    iterable_out = {}
-    for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
-        for l, n in zip(inputs["labels"], inputs["name"]):
-            assert n not in iterable_out, f"{i=} {n=}"
-            iterable_out[n] = l.item()
+    # print("Testing the Iterable-style Dataset")
+    # dataloader = DataLoader(iterable_dataset_tr, BATCH_SIZE, num_workers=NUM_WORKERS)
+    # iterable_out = {}
+    # for i, inputs in tqdm(enumerate(dataloader), total=N_SAMPLES // BATCH_SIZE):
+    #     for l, n in zip(inputs["labels"], inputs["name"]):
+    #         assert n not in iterable_out, f"{i=} {n=}"
+    #         iterable_out[n] = l.item()
 
-    assert map_out == iterable_out, "Outputs differ."
+    # assert map_out == iterable_out, "Outputs differ."
 
 
 def test_get_length_extrapolation_dataset_sorel_original_labels():
@@ -1260,50 +1257,50 @@ if __name__ == "__main__":
 
     test_get_length_extrapolation_dataset_sorel_original_labels()
 
-    sys.exit(0)
+    # sys.exit(0)
 
-    for cuttoff in [2**16, 2**17, 2**18]:
-        print("-" * 50)
-        print(cuttoff)
-        dataset_a, dist_a = get_length_extrapolation_dataset(
-            tr_length_cutoff=cuttoff,
-            ts_size=1000,
-            enforce_length=True,
-            asynch=True,
-        )
-        dataset_b, dist_b = get_length_extrapolation_dataset(
-            tr_length_cutoff=cuttoff,
-            ts_size=1000,
-            enforce_length=False,
-            asynch=True,
-        )
+    # for cuttoff in [2**16, 2**17, 2**18]:
+    #     print("-" * 50)
+    #     print(cuttoff)
+    #     dataset_a, dist_a = get_length_extrapolation_dataset(
+    #         tr_length_cutoff=cuttoff,
+    #         ts_size=1000,
+    #         enforce_length=True,
+    #         asynch=True,
+    #     )
+    #     dataset_b, dist_b = get_length_extrapolation_dataset(
+    #         tr_length_cutoff=cuttoff,
+    #         ts_size=1000,
+    #         enforce_length=False,
+    #         asynch=True,
+    #     )
 
-        print(f"{dataset_a=}")
-        print(f"{dataset_b=}")
+    #     print(f"{dataset_a=}")
+    #     print(f"{dataset_b=}")
 
-        if not dist_a == dist_b:
-            print("WARNING: not dist_a == dist_b")
-            print(f"{dist_a=}")
-            print(f"{dist_b=}")
-        if not dataset_a["vl"].labels.tolist() == dataset_b["vl"].labels.tolist():
-            print("WARNING: not dataset_a['vl'].labels.tolist() == dataset_b['vl'].labels.tolist()")
-            print(f"{dataset_a['vl'].labels.tolist()[0:100]=}")
-            print(f"{dataset_b['vl'].labels.tolist()[0:100]=}")
+    #     if not dist_a == dist_b:
+    #         print("WARNING: not dist_a == dist_b")
+    #         print(f"{dist_a=}")
+    #         print(f"{dist_b=}")
+    #     if not dataset_a["vl"].labels.tolist() == dataset_b["vl"].labels.tolist():
+    #         print("WARNING: not dataset_a['vl'].labels.tolist() == dataset_b['vl'].labels.tolist()")
+    #         print(f"{dataset_a['vl'].labels.tolist()[0:100]=}")
+    #         print(f"{dataset_b['vl'].labels.tolist()[0:100]=}")
 
-        lengths = [Path(f).stat().st_size for f in dataset_a["vl"].files]
-        print(f"a - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
-        lengths = [Path(f).stat().st_size for f in dataset_b["vl"].files]
-        print(f"b - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+    #     lengths = [Path(f).stat().st_size for f in dataset_a["vl"].files]
+    #     print(f"a - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+    #     lengths = [Path(f).stat().st_size for f in dataset_b["vl"].files]
+    #     print(f"b - vl: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
 
-        lengths = [Path(f).stat().st_size for f in dataset_a["tr"].files]
-        print(f"a - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
-        lengths = [Path(f).stat().st_size for f in dataset_b["tr"].files]
-        print(f"b - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+    #     lengths = [Path(f).stat().st_size for f in dataset_a["tr"].files]
+    #     print(f"a - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
+    #     lengths = [Path(f).stat().st_size for f in dataset_b["tr"].files]
+    #     print(f"b - tr: min-{min(lengths)}, max-{max(lengths)}, median-{median(lengths)}, mean-{mean(lengths)}")
 
-        print("-" * 50)
-        print("\n\n")
+    #     print("-" * 50)
+    #     print("\n\n")
 
-    sys.exit(0)
+    # sys.exit(0)
 
     # get_sorel_file_label_map(asynch=True, use_cache=False)
 
@@ -1324,34 +1321,34 @@ if __name__ == "__main__":
     #     tr_size=10000, vl_size=1000, ts_size=1000, max_length=512, top_k=10
     # )
 
-    for samples_per_class in [1, 2, 10]:
-        dataset, _ = get_bodmas_dataset_balanced(samples_per_class=samples_per_class, max_length=128)
+    # for samples_per_class in [1, 2, 10]:
+    #     dataset, _ = get_bodmas_dataset_balanced(samples_per_class=samples_per_class, max_length=128)
 
-        print(f'{dataset["tr"].labels[0:64].tolist()=}')
-        print(f'{dataset["vl"].labels[0:64].tolist()=}')
-        print(f'{dataset["ts"].labels[0:64].tolist()=}')
+    #     print(f'{dataset["tr"].labels[0:64].tolist()=}')
+    #     print(f'{dataset["vl"].labels[0:64].tolist()=}')
+    #     print(f'{dataset["ts"].labels[0:64].tolist()=}')
 
-        print(f'{len(dataset["tr"])=}')
-        print(f'{len(dataset["vl"])=}')
-        print(f'{len(dataset["ts"])=}')
+    #     print(f'{len(dataset["tr"])=}')
+    #     print(f'{len(dataset["vl"])=}')
+    #     print(f'{len(dataset["ts"])=}')
 
-        tr_classes = set(dataset["tr"].labels.tolist())
-        vl_classes = set(dataset["vl"].labels.tolist())
+    #     tr_classes = set(dataset["tr"].labels.tolist())
+    #     vl_classes = set(dataset["vl"].labels.tolist())
 
-        print(f"{len(tr_classes)=}")
-        print(f"{len(vl_classes)=}")
+    #     print(f"{len(tr_classes)=}")
+    #     print(f"{len(vl_classes)=}")
 
-        assert tr_classes == vl_classes
+    #     assert tr_classes == vl_classes
 
 
 
-    sys.exit(0)
-    dataset_a, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
-    dataset_b, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
+    # sys.exit(0)
+    # dataset_a, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
+    # dataset_b, _ = get_bodmas_dataset_slice(tr_size=1000, vl_size=1000, ts_size=1000, max_length=512)
 
-    print(f'{torch.equal(dataset_a["tr"].labels, dataset_b["tr"].labels)=}')
-    print(f'{torch.equal(dataset_a["vl"].labels, dataset_b["vl"].labels)=}')
-    print(f'{torch.equal(dataset_a["ts"].labels, dataset_b["ts"].labels)=}')
+    # print(f'{torch.equal(dataset_a["tr"].labels, dataset_b["tr"].labels)=}')
+    # print(f'{torch.equal(dataset_a["vl"].labels, dataset_b["vl"].labels)=}')
+    # print(f'{torch.equal(dataset_a["ts"].labels, dataset_b["ts"].labels)=}')
 
-    print(f'{dataset_a["tr"]}')
-    print(f'{dataset_b["tr"]}')
+    # print(f'{dataset_a["tr"]}')
+    # print(f'{dataset_b["tr"]}')

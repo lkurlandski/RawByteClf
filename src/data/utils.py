@@ -49,7 +49,7 @@ def print_dataset(
                 break
             print(f"{d['name']=}|{d['size']=}|{d['length']}|{d['labels']=}")
 
-    if isinstance(dataset, DatasetDict) or isinstance(dataset, IterableDatasetDict):
+    if isinstance(dataset, (DatasetDict, IterableDatasetDict)):
         for ds in dataset:
             f(dataset[ds])
     else:
@@ -232,8 +232,8 @@ def balance_imbalanced_dataset(
     if not isinstance(dataset, IterableDataset):
         warnings.warn("The dataset is not an IterableDataset, so this might take a long time...")
 
-    id2label = {i: l for i, l in enumerate(dataset.info.features["labels"].names)}
-    label2id = {l: i for i, l in enumerate(id2label.values())}
+    id2label = dict(enumerate(dataset.info.features["labels"].names))
+    label2id = dict(enumerate(id2label.values()))
 
     # Extract one dataset for each class
     # It is critical for the datasets to have non null features, otherwise the
@@ -262,7 +262,7 @@ def balance_imbalanced_dataset(
     f = max(dist.values()) / max(probabilities)
     new_dist = Counter({l: int(v * p * f) for (l, v), p in zip(dist.items(), probabilities)})
 
-    print(f"Interleaving...")
+    print("Interleaving...")
     dataset = interleave_datasets(datasets, probabilities, stopping_strategy="all_exhausted")
 
     return dataset, new_dist

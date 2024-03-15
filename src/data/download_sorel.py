@@ -10,8 +10,10 @@ from pathlib import Path
 import sys
 import time
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
 
 from tqdm import tqdm
 
@@ -21,6 +23,7 @@ from src.data.cfg import (
     SOREL_PREFIX,
 )
 from src.data.utils import stream_sorel_meta
+
 
 
 async def download_samples_async(files, output_root: Path, num_bytes: int, max_length: int, errors: int):
