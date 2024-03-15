@@ -30,6 +30,7 @@ from src.learn.utils import str_or_bool_to_str, float_to_int
 class Args:
 
     model_name_or_path: str = field()
+    representation: str = field()
     max_length: int = field()
     task: str = field()
     depth: int = field(default=1)
@@ -112,6 +113,7 @@ class OutputHelper:
     def __init__(
         self,
         model_name_or_path: str,
+        representation: str,
         max_length: int,
         task: str,
         tr_size: int | float,
@@ -128,7 +130,7 @@ class OutputHelper:
         trainer_config: Optional[dict] = None,
     ) -> None:
         """
-        {max_length}/{task}/{tr_size}/{
+        {representation}{max_length}/{task}/{tr_size}/{
             {depth} |
             {min_freq}/{top_k}/{freeze/{duplicate}/{initialize} |
             {enforce_cutoff}/{tr_length_cutoff}
@@ -138,30 +140,31 @@ class OutputHelper:
         self.root = Path(root)
 
         args = [
-            str(max_length),
-            task,
-            str(tr_size),
+            f"representation--{representation}",
+            f"max_length--{str(max_length)}",
+            f"task--{task}",
+            f"tr_size--{str(tr_size)}",
         ]
         if task == "clf":
             if isinstance(enforce_cutoff, bool):
                 args.extend([
-                    str(str_or_bool_to_str(enforce_cutoff)),
-                    str(tr_length_cutoff),
+                    f"enforce_cutoff--{str(str_or_bool_to_str(enforce_cutoff))}",
+                    f"tr_length_cutoff--{str(tr_length_cutoff)}",
                 ])
             else:
                 args.extend([
-                    str(bodmas_min_freq),
-                    str(bodmas_top_k),
+                    f"min_freq--{str(bodmas_min_freq)}",
+                    f"top_k--{str(bodmas_top_k)}",
                 ])
             args.extend([
-                str(str_or_bool_to_str(ft_freeze_positional_embeddings)),
-                str(str_or_bool_to_str(ft_duplicate_positional_embeddings)),
-                str(str_or_bool_to_str(ft_initialize_positional_embeddings)),
+                f"freeze--{str(str_or_bool_to_str(ft_freeze_positional_embeddings))}",
+                f"duplicate--{str(str_or_bool_to_str(ft_duplicate_positional_embeddings))}",
+                f"initialize--{str(str_or_bool_to_str(ft_initialize_positional_embeddings))}",
             ])
         elif task in ("mlm", "clm"):
             args.extend(
                 [
-                    str(depth),
+                    f"depth--{str(depth)}",
                 ]
             )
         self.arch_config = arch_config
