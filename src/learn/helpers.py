@@ -146,9 +146,9 @@ class OutputHelper:
             f"tr_size--{str(tr_size)}",
         ]
         if task == "clf":
-            if isinstance(enforce_cutoff, bool):
+            if isinstance(tr_length_cutoff, int):
                 args.extend([
-                    f"enforce_cutoff--{str(str_or_bool_to_str(enforce_cutoff))}",
+                    f"enforce_cutoff--{str(str_or_bool_to_str(enforce_cutoff)) if isinstance(enforce_cutoff, bool) else None}",
                     f"tr_length_cutoff--{str(tr_length_cutoff)}",
                 ])
             else:

@@ -29,6 +29,7 @@ src/learn/train.py \\
 --arch_config=ARCH_CONFIG \\
 --metric_for_best_model="eval_accuracy" \\
 --task="clf" \\
+--representation=8 \\
 --tr_size=120000 \\
 --ts_size=12000 \\
 --streaming=false \\

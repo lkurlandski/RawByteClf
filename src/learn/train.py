@@ -912,15 +912,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             ts_size=args.ts_size,
         )
     elif args.task == "clf":
-        dataset, dist = get_bodmas_dataset(
-            subset=args.subset,
-            min_freq=args.bodmas_min_freq,
-            top_k=args.bodmas_top_k,
-            vl_size=args.vl_size,
-            ts_size=args.ts_size,
-            max_length=int(args.max_length * int(args.representation) / 8),
-            preprocess_fn=preprocess_fn,
-        )
+        # dataset, dist = get_bodmas_dataset(
+        #     subset=args.subset,
+        #     min_freq=args.bodmas_min_freq,
+        #     top_k=args.bodmas_top_k,
+        #     vl_size=args.vl_size,
+        #     ts_size=args.ts_size,
+        #     max_length=int(args.max_length * int(args.representation) / 8),
+        #     preprocess_fn=preprocess_fn,
+        # )
         # dataset, dist = get_sorel_dataset_clf(
         #     subset=args.subset,
         #     min_freq=args.bodmas_min_freq,
@@ -946,24 +946,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # )
 
         # dataset, dist = get_length_extrapolation_dataset(args.tr_length_cutoff, args.enforce_cutoff)
-        # dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
-        #     tr_length_cutoff=args.tr_length_cutoff,
-        #     enforce_length=True,
-        #     tr_size=args.tr_size,
-        #     ts_size=args.ts_size,
-        #     tr_length_cutoffs=[
-        #         2 ** 17,
-        #         2 ** 18,
-        #         (2 ** 18) + (2 ** 17),
-        #         2 ** 19,
-        #         (2 ** 19) + (2 ** 17),
-        #         (2 ** 19) + (2 ** 18) + (2 ** 17),
-        #         (2 ** 20),
-        #     ],
-        #     max_length=args.max_length,
-        #     preprocess_fn=preprocess_fn,
-        #     streaming=args.streaming,
-        # )
+        dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
+            tr_length_cutoff=args.tr_length_cutoff,
+            enforce_length=True,
+            tr_size=args.tr_size,
+            ts_size=args.ts_size,
+            tr_length_cutoffs=[
+                2 ** 17,
+                2 ** 18,
+                (2 ** 18) + (2 ** 17),
+                2 ** 19,
+                (2 ** 19) + (2 ** 17),
+                (2 ** 19) + (2 ** 18) + (2 ** 17),
+                (2 ** 20),
+            ],
+            max_length=args.max_length,
+            preprocess_fn=preprocess_fn,
+            streaming=args.streaming,
+        )
 
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
