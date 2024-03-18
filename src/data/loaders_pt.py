@@ -777,18 +777,18 @@ def get_sorel_dataset_clf(
 
     raise NotImplementedError("There is a bug in here that needs to be addressed before usage.")
 
-    files_and_labels = get_sorel_file_label_map(top_k, min_freq)
+    # files_and_labels = get_sorel_file_label_map(top_k, min_freq)
 
 
-    def filter_fn(f: os.PathLike) -> bool:
-        f = Path(f)
-        return f.stat().st_size >= 2 ** 14 and files_and_labels.get(f.stem, None) is not None
+    # def filter_fn(f: os.PathLike) -> bool:
+    #     f = Path(f)
+    #     return f.stat().st_size >= 2 ** 14 and files_and_labels.get(f.stem, None) is not None
 
-    files = list(filter(filter_fn, files))[0:subset]
-    files_and_labels = {f: files_and_labels[Path(f).stem][0] for f in files}
-    return get_classification_dataset(
-        files_and_labels, subset, min_freq, top_k, ts_size, vl_size, **kwds
-    )
+    # files = list(filter(filter_fn, files))[0:subset]
+    # files_and_labels = {f: files_and_labels[Path(f).stem][0] for f in files}
+    # return get_classification_dataset(
+    #     files_and_labels, subset, min_freq, top_k, ts_size, vl_size, **kwds
+    # )
 
 
 def get_length_extrapolation_dataset_sorel_original_labels(
@@ -814,90 +814,115 @@ def get_length_extrapolation_dataset_sorel_original_labels(
     print("get_length_extrapolation_dataset_sorel_original_labels")
 
     CLASSES = ("spyware", "worm", "dropper", "file_infector", "downloader", "adware")
-
     TR_SAMPLES_PER_CLASS = int(tr_size // len(CLASSES))
     TS_SAMPLES_PER_CLASS = int(ts_size // len(CLASSES))
 
-    files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
-    print(f"{len(files_and_labels)=}")
-    sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
-    files_and_labels = {
-        f: l for f, l in files_and_labels.items()
-        if l in CLASSES and os.path.exists(os.path.join(sorel_path, f))
-    }
-    print(f"{len(files_and_labels)=}")
+    CACHE = Path(
+        f"./cache/length_extrapolation_dataset_sorel_original_labels/"
+        f"tr_length_cutoff--{tr_length_cutoff}/enforce_length/{enforce_length}/tr_size--{tr_size}/"
+        f"ts_size--{ts_size}/tr_length_cutoffs--{'_'.join(sorted(map(str, tr_length_cutoffs)))}"
+    )
+    TR_CACHE = CACHE / "tr.csv"
+    VL_CACHE = CACHE / "vl.csv"
+    ID2LABEL_CACHE = CACHE / "id2label.json"
+    LABEL2ID_CACHE = CACHE / "label2id.json"
+    if CACHE.exists():
+        print(f"Getting SOREL length extrapolcation dataset from cache file: {CACHE.as_posix()}")
+        df = pd.read_csv(TR_CACHE, index_col=None)
+        tr_files = df["files"].tolist()
+        tr_labels = df["labels"].tolist()
+        df = pd.read_csv(VL_CACHE, index_col=None)
+        vl_files = df["files"].tolist()
+        vl_labels = df["labels"].tolist()
+        with open(ID2LABEL_CACHE, "r") as fp:
+            id2label = json.load(fp)
+        with open(LABEL2ID_CACHE, "r") as fp:
+            label2id = json.load(fp)
 
-    files = [SOREL_PATH / "binaries" / f for f in files_and_labels.keys()]
-    labels = list(files_and_labels.values())
-
-    dist: Counter[str, int] = Counter(files_and_labels.values())
-    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
-    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
-
-    labels = np.array([label2id[l] for l in labels], dtype=np.int32)
-
-    # Validation set is randomly selected from files of all length.
-    # Train set consists of files less than or equal to tr_length_cuttoff if enforce_length is True
-    # else is randomly selected but is the same size as the number of files that mean the cuttoff.
-    def get_tr_and_ts_idx(cutoff: int) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
-        tr_idx = {}
-        vl_idx = {}
-        for c in CLASSES:
-            print(f"{c=}")
-            c_encoded = label2id[c]
-            idx = np.where(labels == c_encoded)[0].tolist()
-            print(f"{len(idx)=}")
-            tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=TS_SAMPLES_PER_CLASS, random_state=0)
-            tr_idx_within_cuttoff = [i for i in tr_idx[c] if os.path.getsize(files[i]) <= cutoff]
-            if enforce_length:
-                tr_idx[c] = tr_idx_within_cuttoff
-            else:
-                tr_idx[c] = tr_idx[c][0:len(tr_idx_within_cuttoff)]
-
-        tr_samples_per_class = min(min(len(v) for v in tr_idx.values()), TR_SAMPLES_PER_CLASS)
-        tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
-        return tr_idx, vl_idx
-
-    if tr_length_cutoffs:
-        tr_idx, _ = get_tr_and_ts_idx(min(tr_length_cutoffs))
-        min_training_size_per_class_across_cutoffs = [len(x) for x in tr_idx.values()]
-        if len(set(min_training_size_per_class_across_cutoffs)) != 1:
-            raise ValueError(pformat(min_training_size_per_class_across_cutoffs))
-        min_training_size_per_class_across_cutoffs = min_training_size_per_class_across_cutoffs[0]
     else:
-        min_training_size_per_class_across_cutoffs = None
+        print(f"Building SOREL length extrapolcation dataset {CACHE.as_posix()}")
 
-    tr_idx, vl_idx = get_tr_and_ts_idx(tr_length_cutoff)
-    tr_idx = {
-        c: x[0:min_training_size_per_class_across_cutoffs][0:TR_SAMPLES_PER_CLASS]
-        for c, x in tr_idx.items()
-    }
+        files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
+        print(f"{len(files_and_labels)=}")
+        sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
+        files_and_labels = {
+            f: l for f, l in files_and_labels.items()
+            if l in CLASSES and os.path.exists(os.path.join(sorel_path, f))
+        }
+        print(f"{len(files_and_labels)=}")
 
-    tr_idx = sum(tr_idx.values(), [])
-    vl_idx = sum(vl_idx.values(), [])
+        files = [SOREL_PATH / "binaries" / f for f in files_and_labels.keys()]
+        labels = list(files_and_labels.values())
 
+        dist: Counter[str, int] = Counter(files_and_labels.values())
+        label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+        id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+        labels = np.array([label2id[l] for l in labels], dtype=np.int32)
+
+        # Validation set is randomly selected from files of all length.
+        # Train set consists of files less than or equal to tr_length_cuttoff if enforce_length is True
+        # else is randomly selected but is the same size as the number of files that mean the cuttoff.
+        def get_tr_and_ts_idx(cutoff: int) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+            tr_idx = {}
+            vl_idx = {}
+            for c in CLASSES:
+                print(f"{c=}")
+                c_encoded = label2id[c]
+                idx = np.where(labels == c_encoded)[0].tolist()
+                print(f"{len(idx)=}")
+                tr_idx[c], vl_idx[c] = train_test_split(idx, test_size=TS_SAMPLES_PER_CLASS, random_state=0)
+                tr_idx_within_cuttoff = [i for i in tr_idx[c] if os.path.getsize(files[i]) <= cutoff]
+                if enforce_length:
+                    tr_idx[c] = tr_idx_within_cuttoff
+                else:
+                    tr_idx[c] = tr_idx[c][0:len(tr_idx_within_cuttoff)]
+
+            tr_samples_per_class = min(min(len(v) for v in tr_idx.values()), TR_SAMPLES_PER_CLASS)
+            tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
+            return tr_idx, vl_idx
+
+        if tr_length_cutoffs:
+            tr_idx, _ = get_tr_and_ts_idx(min(tr_length_cutoffs))
+            min_training_size_per_class_across_cutoffs = [len(x) for x in tr_idx.values()]
+            if len(set(min_training_size_per_class_across_cutoffs)) != 1:
+                raise ValueError(pformat(min_training_size_per_class_across_cutoffs))
+            min_training_size_per_class_across_cutoffs = min_training_size_per_class_across_cutoffs[0]
+        else:
+            min_training_size_per_class_across_cutoffs = None
+
+        tr_idx, vl_idx = get_tr_and_ts_idx(tr_length_cutoff)
+        tr_idx = {
+            c: x[0:min_training_size_per_class_across_cutoffs][0:TR_SAMPLES_PER_CLASS]
+            for c, x in tr_idx.items()
+        }
+
+        # Finally, get the files and labels for the train and validation sets.
+        tr_idx = sum(tr_idx.values(), [])
+        tr_files = [files[i] for i in tr_idx]
+        tr_labels = labels[tr_idx]
+        vl_idx = sum(vl_idx.values(), [])
+        vl_files = [files[i] for i in vl_idx]
+        vl_labels = labels[vl_idx]
+
+        # Save to the cache file.
+        CACHE.mkdir(exist_ok=True, parents=True)
+        pd.DataFrame({"files": tr_files, "labels": tr_labels.tolist()}).to_csv(TR_CACHE, index=None)
+        pd.DataFrame({"files": vl_files, "labels": vl_labels.tolist()}).to_csv(VL_CACHE, index=None)
+        with open(ID2LABEL_CACHE, "w") as fp:
+            json.dump(id2label, fp)
+        with open(LABEL2ID_CACHE, "w") as fp:
+            json.dump(label2id, fp)
+
+
+    print(f"Constructing dataset with {len(tr_files)=} and {len(vl_files)=}")
     BinaryDatasetClass = IterableBinaryDataset if kwds.pop("streaming", False) else MapBinaryDataset
-
-    print(f"Constructing dataset with {len(tr_idx)=} and {len(vl_idx)=}")
-
     dataset = {
-        "tr": BinaryDatasetClass(
-            [files[i] for i in tr_idx],
-            labels[tr_idx],
-            id2label=id2label,
-            label2id=label2id,
-            **kwds,
-        ),
-        "vl": BinaryDatasetClass(
-            [files[i] for i in vl_idx],
-            labels[vl_idx],
-            id2label=id2label,
-            label2id=label2id,
-            **kwds,
-        )
+        "tr": BinaryDatasetClass(tr_files, tr_labels, id2label=id2label, label2id=label2id, **kwds),
+        "vl": BinaryDatasetClass(vl_files, vl_labels, id2label=id2label, label2id=label2id, **kwds),
     }
 
-    return dataset, Counter({c: len(tr_idx) / len(CLASSES) for c in CLASSES})
+    return dataset, Counter({c: len(tr_files) / len(CLASSES) for c in CLASSES})
 
 
 def get_length_extrapolation_dataset(
@@ -1253,9 +1278,36 @@ def test_get_length_extrapolation_dataset_sorel_original_labels():
             print("\n\n")
 
 
+def build_length_extrap_cache_file(tr_length_cutoff: int):
+
+    print(tr_length_cutoff)
+
+    tr_length_cutoffs = [
+        2 ** 17,
+        2 ** 18,
+        (2 ** 18) + (2 ** 17),
+        2 ** 19,
+        (2 ** 19) + (2 ** 17),
+        (2 ** 19) + (2 ** 18) + (2 ** 17),
+        (2 ** 20),
+    ]
+
+    dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
+        tr_length_cutoff=tr_length_cutoff,
+        enforce_length=True,
+        tr_size=120000,
+        ts_size=12000,
+        tr_length_cutoffs=tr_length_cutoffs,
+        max_length=512,  # irrelevant
+        streaming=False,  # irrelevant
+    )
+
+
 if __name__ == "__main__":
 
-    test_get_length_extrapolation_dataset_sorel_original_labels()
+    build_length_extrap_cache_file(sys.argv[1])
+
+    # test_get_length_extrapolation_dataset_sorel_original_labels()
 
     # sys.exit(0)
 
