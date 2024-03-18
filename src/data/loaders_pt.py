@@ -819,8 +819,11 @@ def get_length_extrapolation_dataset_sorel_original_labels(
 
     CACHE = Path(
         f"./cache/length_extrapolation_dataset_sorel_original_labels/"
-        f"tr_length_cutoff--{tr_length_cutoff}/enforce_length/{enforce_length}/tr_size--{tr_size}/"
-        f"ts_size--{ts_size}/tr_length_cutoffs--{'_'.join(sorted(map(str, tr_length_cutoffs)))}"
+        f"tr_length_cutoffs--{'_'.join(list(map(str, sorted(tr_length_cutoffs))))}/"
+        f"tr_size--{tr_size}/"
+        f"ts_size--{ts_size}/"
+        f"tr_length_cutoff--{tr_length_cutoff}/"
+        f"enforce_length--{enforce_length}/"
     )
     TR_CACHE = CACHE / "tr.csv"
     VL_CACHE = CACHE / "vl.csv"
@@ -836,6 +839,7 @@ def get_length_extrapolation_dataset_sorel_original_labels(
         vl_labels = df["labels"].tolist()
         with open(ID2LABEL_CACHE, "r") as fp:
             id2label = json.load(fp)
+            id2label = {int(i) : l for i, l in id2label.items()}
         with open(LABEL2ID_CACHE, "r") as fp:
             label2id = json.load(fp)
 
@@ -1305,7 +1309,7 @@ def build_length_extrap_cache_file(tr_length_cutoff: int):
 
 if __name__ == "__main__":
 
-    build_length_extrap_cache_file(sys.argv[1])
+    build_length_extrap_cache_file(int(sys.argv[1]))
 
     # test_get_length_extrapolation_dataset_sorel_original_labels()
 
