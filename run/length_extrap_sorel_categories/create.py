@@ -96,18 +96,18 @@ THRESHOLDS = [
 
 
 CONFIGS = [
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[0], "05-00", "64G"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[1], "05-00", "64G"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[2], "05-00", "80G"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[3], "05-00", "96G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[0], "05-00", "96G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[1], "05-00", "96G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[2], "05-00", "128G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[3], "05-00", "128G"),
     Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[4], "05-00", "128G"),
     Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[5], "05-00", "160G"),
     Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[6], "05-00", "192G"),
 
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[0], "05-00", "64G", 32, 2, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[1], "05-00", "64G", 16, 4, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[2], "05-00", "80G", 8, 8, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[3], "05-00", "96G", 8, 8, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[0], "05-00", "96G", 32, 2, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[1], "05-00", "96G", 16, 4, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[2], "05-00", "128G", 8, 8, 8),
+    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[3], "05-00", "128G", 8, 8, 8),
     Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[4], "05-00", "128G", 4, 16, 8),
     Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[5], "05-00", "160G", 4, 16, 8),
     Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[6], "05-00", "192G", 4, 16, 8),
