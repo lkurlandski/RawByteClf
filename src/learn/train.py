@@ -125,6 +125,7 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
+from src.data.cfg import BYTE_TO_UTF8
 from src.data.loaders_hf import (
     get_sorel_dataset as get_sorel_dataset_hf,
     get_bodmas_dataset as get_bodmas_dataset_hf,
@@ -853,6 +854,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     oh = OutputHelper(
         args.model_name_or_path,
         args.representation,
+        args.algorithm,
+        args.vocab_size,
         args.max_length,
         args.task,
         args.tr_size,
@@ -880,7 +883,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     tokenizer = get_tokenizer(
         model_requires_cls_token=APPLY_BERT_PROCESSING[MODEL_NAME],
-        bit_representation=args.representation,
+        representation=args.representation,
+        algorithm=args.algorithm,
+        vocab_size=args.vocab_size,
         model_max_length=args.max_length,
     )
     print(f"{tokenizer=}")
@@ -893,13 +898,29 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     dataset: DatasetDict | dict[Literal["tr", "vl", "ts"], BinaryDataset | Subset[BinaryDataset]] = None
     dist: Optional[Counter[str, int]] = None
 
-    fns = [
-        partial(interpret_bytes_as_integers, bits_in_byte=int(args.representation)),
-        to_long_tensor,
-        partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids)),
-    ]
-    if APPLY_BERT_PROCESSING[MODEL_NAME]:
-        fns.append(partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id))
+    if args.algorithm == "Raw":  # Numeric representation
+        fns = [
+            partial(interpret_bytes_as_integers, bits_in_byte=int(args.representation)),
+            to_long_tensor,
+            partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids)),
+        ]
+        if APPLY_BERT_PROCESSING[MODEL_NAME]:
+            fns.append(partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id))
+    else:  # Tokenization
+        fns = [
+            lambda sample: "".join([BYTE_TO_UTF8[byte] for byte in sample]),
+            lambda text: tokenizer(
+                text,
+                padding=False,
+                truncation=True,
+                max_length=args.max_length,
+                return_attention_mask=False,
+                return_token_type_ids=False,
+            ),
+            lambda batch_encoding: batch_encoding.data["input_ids"],
+        ]
+
+
     preprocess_fn = lambda x: reduce(lambda y, func: func(y), fns, x)
 
     if args.task in ("mlm", "clm"):
@@ -912,15 +933,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             ts_size=args.ts_size,
         )
     elif args.task == "clf":
-        # dataset, dist = get_bodmas_dataset(
-        #     subset=args.subset,
-        #     min_freq=args.bodmas_min_freq,
-        #     top_k=args.bodmas_top_k,
-        #     vl_size=args.vl_size,
-        #     ts_size=args.ts_size,
-        #     max_length=int(args.max_length * int(args.representation) / 8),
-        #     preprocess_fn=preprocess_fn,
-        # )
+        dataset, dist = get_bodmas_dataset(
+            subset=args.subset,
+            min_freq=args.bodmas_min_freq,
+            top_k=args.bodmas_top_k,
+            vl_size=args.vl_size,
+            ts_size=args.ts_size,
+            max_length=int(args.max_length * int(args.representation) / 8),
+            preprocess_fn=preprocess_fn,
+        )
         # dataset, dist = get_sorel_dataset_clf(
         #     subset=args.subset,
         #     min_freq=args.bodmas_min_freq,
@@ -946,24 +967,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # )
 
         # dataset, dist = get_length_extrapolation_dataset(args.tr_length_cutoff, args.enforce_cutoff)
-        dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
-            tr_length_cutoff=args.tr_length_cutoff,
-            enforce_length=True,
-            tr_size=args.tr_size,
-            ts_size=args.ts_size,
-            tr_length_cutoffs=[
-                2 ** 17,
-                2 ** 18,
-                (2 ** 18) + (2 ** 17),
-                2 ** 19,
-                (2 ** 19) + (2 ** 17),
-                (2 ** 19) + (2 ** 18) + (2 ** 17),
-                (2 ** 20),
-            ],
-            max_length=args.max_length,
-            preprocess_fn=preprocess_fn,
-            streaming=args.streaming,
-        )
+        # dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
+        #     tr_length_cutoff=args.tr_length_cutoff,
+        #     enforce_length=True,
+        #     tr_size=args.tr_size,
+        #     ts_size=args.ts_size,
+        #     tr_length_cutoffs=[
+        #         2 ** 17,
+        #         2 ** 18,
+        #         (2 ** 18) + (2 ** 17),
+        #         2 ** 19,
+        #         (2 ** 19) + (2 ** 17),
+        #         (2 ** 19) + (2 ** 18) + (2 ** 17),
+        #         (2 ** 20),
+        #     ],
+        #     max_length=args.max_length,
+        #     preprocess_fn=preprocess_fn,
+        #     streaming=args.streaming,
+        # )
 
 
     if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
@@ -1207,7 +1228,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 train_dataset=dataset["tr"],
                 eval_dataset=dataset["vl"],
                 data_collator=data_collator,
-                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
+                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,  # TODO: args.algorithm.lower() != "raw"
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
