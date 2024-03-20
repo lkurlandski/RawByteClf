@@ -1,43 +1,5 @@
 """
-Test HRRFormer implementation and compare to BERT.
-
-BERT:
-    fp16=True: {
-        'train_runtime': 95.1242,
-        'train_samples_per_second': 1261.509,
-        'train_steps_per_second': 19.711,
-        'train_loss': 0.6013813252766927,
-        'epoch': 1.0
-    }
-
-    fp16=False: {
-        'train_runtime': 179.7081,
-        'train_samples_per_second': 667.75,
-        'train_steps_per_second': 10.434,
-        'train_loss': 0.6013398605346679,
-        'epoch': 1.0
-    }
-
-    1.889x speedup
-
-HRRFormer:
-    fp16=True: {
-        'train_runtime': 122.8494,
-        'train_samples_per_second': 976.805,
-        'train_steps_per_second': 15.263,
-        'train_loss': 1.3885760131835938,
-        'epoch': 1.0
-    }
-
-    fp16=False: {
-        'train_runtime': 210.8922,
-        'train_samples_per_second': 569.011,
-        'train_steps_per_second': 8.891,
-        'train_loss': 1.3885322387695314,
-        'epoch': 1.0
-    }
-
-    1.717x speedup
+Test architectures on language modeling tasks.
 """
 
 from argparse import ArgumentParser
@@ -71,48 +33,23 @@ from transformers import (
     PreTrainedModel,
 )
 
-class CannotPerformDueToImportError:
-    def __init__(self, *args, **kwargs):
-        raise ImportError()
-
-try:
-    from src.architectures.hrrformer import (
-        HRRConfig,
-        # HRRLMHeadModel as HRRForCausalLM,
-        HRRForMaskedLM,
-        HRRForSequenceClassification,
-    )
-except ImportError:
-    HRRConfig = CannotPerformDueToImportError
-    # HRRForCausalLM = CannotPerformDueToImportError
-    HRRForMaskedLM = CannotPerformDueToImportError
-    HRRForSequenceClassification = CannotPerformDueToImportError
-
-try:
-    from src.architectures.mamba import (
-        MambaConfig,
-        MambaForCausalLM,
-        MambaForMaskedLM,
-        MambaForSequenceClassification,
-    )
-except ImportError:
-    MambaConfig = CannotPerformDueToImportError
-    MambaForCausalLM = CannotPerformDueToImportError
-    MambaForMaskedLM = CannotPerformDueToImportError
-    MambaForSequenceClassification = CannotPerformDueToImportError
-
-try:
-    from src.architectures.rwkv import (
-        RwkvConfig,
-        RwkvForSequenceClassification,
-        RwkvForMaskedLM,
-    )
-except ImportError:
-    RwkvConfig = CannotPerformDueToImportError
-    RwkvForSequenceClassification = CannotPerformDueToImportError
-    RwkvForMaskedLM = CannotPerformDueToImportError
-
 from src.utils import count_parameters
+from src.architectures.hrrformer import (
+    HRRConfig,
+    HRRForMaskedLM,
+    HRRForSequenceClassification,
+)
+from src.architectures.mamba import (
+    MambaConfig,
+    MambaLMHeadModel,
+    MambaForMaskedLM,
+    MambaForSequenceClassification,
+)
+from src.architectures.rwkv import (
+    RwkvConfig,
+    RwkvForSequenceClassification,
+    RwkvForMaskedLM,
+)
 
 
 HIDDEN_SIZE = 512
@@ -196,6 +133,14 @@ def get_config(
         kwds.update({"superposition_scale_factor": "log"})
         return HRRConfig(**kwds)
     elif model == "mamba":
+        kwds["pad_token_id"] = tokenizer.pad_token_id
+        kwds["bos_token_id"] = tokenizer.cls_token_id
+        kwds["eos_token_id"] = tokenizer.sep_token_id
+        kwds["d_model"] = kwds.pop("hidden_size")
+        kwds["n_layer"] = kwds.pop("num_hidden_layers")
+        kwds["mode"] = "bi"
+        for k in ["max_position_embeddings", "intermediate_size", "num_attention_heads"]:
+            kwds.pop(k)
         return MambaConfig(**kwds)
     elif model == "rwkv":
         kwds["context_length"] = kwds.pop("max_position_embeddings")
@@ -209,11 +154,11 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
         if model == "bert":
             return BertForCausalLM(config)
         elif model == "lng":
-            return LongformerForCausalLM(config)
+            raise NotImplementedError()
         elif model == "hrr":
-            return HRRForCausalLM(config)
+            raise NotImplementedError()
         elif model == "mamba":
-            return MambaForCausalLM(config)
+            return MambaLMHeadModel(config)
         elif model == "rwkv":
             return RwkvForCausalLM(config)
     elif task == "mlm":
@@ -277,12 +222,12 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
     return TrainingArguments(
         output_dir=output_dir,
         overwrite_output_dir=True,
-        evaluation_strategy="steps",
-        save_strategy="steps",
-        save_steps=250,
-        eval_steps=250,
+        evaluation_strategy="epoch",
+        save_strategy="epoch",
+        save_steps=100,
+        eval_steps=100,
         logging_steps=50,
-        learning_rate=2e-5,
+        learning_rate=1e-3,
         num_train_epochs=NUM_TRAIN_EPOCHS,
         weight_decay=0.01,
         per_device_train_batch_size=BATCH_SIZE,
