@@ -1,0 +1,668 @@
+"""
+Core file operations to construct labeled datasets for classification tasks.
+"""
+
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass
+import json
+import math
+import os
+from pathlib import Path
+from pprint import pprint, pformat
+import random
+import sys
+from statistics import mean, median
+from typing import Callable, Literal, Optional
+
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
+
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.utils import shuffle
+from tqdm import tqdm
+
+from src.utils import get_max_keys_from_dict
+from src.data.cfg import SOREL_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_META_CSV
+from src.data.label_datasets import (
+    get_label_mapping_virus_total_reports_sorel,
+    ThreatLabelExtractor,
+    ThreatLabelRefiner,
+)
+from src.data.utils import _select_k_for_each_class
+
+
+MIN_SAMPLES_PER_CLASS_PER_SPLIT = 1
+
+
+SplitNames = Literal["tr", "vl", "ts"]
+FilesAndLabels = tuple[list[os.PathLike], Optional[Sequence[int]]]
+
+
+@dataclass
+class ClfMaterials:
+    tr_vl_ts_files_and_labels: dict[SplitNames, FilesAndLabels]
+    id2label: dict[int, str]
+    label2id: dict[str, int]
+    dist: Counter[str, int]
+
+    def __repr__(self):
+        return (
+            f"len(tr)={len(self.tr_vl_ts_files_and_labels['tr'][0])}\n"
+            f"len(vl)={len(self.tr_vl_ts_files_and_labels['vl'][0])}\n"
+            f"len(ts)={len(self.tr_vl_ts_files_and_labels['ts'][0])}\n"
+            f"num_classes={len(self.id2label)}\n"
+            f"dist={pformat(self.dist)}\n"
+        )
+
+
+def compute_integer_sizes(
+    total: int,
+    tr_size: int | float = 0.8,
+    vl_size: int | float = 0.1,
+    ts_size: int | float = 0.1,
+) -> tuple[int, int, int]:
+    """
+    Given float or integer sizes for a train/test/validation split, returns the integer sizes of
+    each split.
+    """
+    types = [type(x) for x in (tr_size, vl_size, ts_size)]
+    if len(set(types)) != 1:
+        raise TypeError("The semantics of using both float and int is not well defined.")
+
+    if types[0] == int:
+        return tr_size, vl_size, ts_size
+
+    tr_size = math.floor(total * tr_size)
+    vl_size = math.floor(total * vl_size)
+    ts_size = math.floor(total * ts_size)
+    ts_size += (total - tr_size - vl_size - ts_size)
+
+    return tr_size, vl_size, ts_size
+
+
+def compute_float_sizes(
+    total: int,
+    tr_size: int | float = 0.8,
+    vl_size: int | float = 0.1,
+    ts_size: int | float = 0.1,
+) -> tuple[int, int, int]:
+    """
+    Given float or integer sizes for a train/test/validation split, returns the float proportions
+    of each split.
+    """
+    types = [type(x) for x in (tr_size, vl_size, ts_size)]
+    if len(set(types)) != 1:
+        raise TypeError("The semantics of using both float and int is not well defined.")
+
+    if types[0] == float:
+        return tr_size, vl_size, ts_size
+    
+    return tr_size / total, vl_size / total, ts_size / total
+
+
+def tr_vl_ts_split_idx(
+    total: int,
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+) -> dict[SplitNames, np.ndarray]:
+    """
+    Returns train/validation/test indices for a collection with `total` elements.
+    """
+    types = [type(x) for x in (tr_size, vl_size, ts_size)]
+    if len(set(types)) != 1:
+        raise TypeError("The semantics of using both float and int is not well defined.")
+
+    tr_size, vl_size, ts_size = compute_integer_sizes(total, tr_size, vl_size, ts_size)
+    collection = np.array(list(range(total)))
+
+    if ts_size > 0:
+        tr_vl, ts = train_test_split(collection, test_size=ts_size, train_size=tr_size + vl_size)
+    else:
+        tr_vl = collection
+
+    if vl_size > 0:
+        tr, vl = train_test_split(tr_vl, test_size=vl_size, train_size=tr_size)
+    else:
+        tr = tr_vl
+
+    return {"tr": tr[0:tr_size], "vl": vl, "ts": ts}
+
+
+def tr_vl_ts_split(
+    collection: Sequence,
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+) -> dict[SplitNames, Sequence]:
+    """
+    Returns train/validation/test sets for a collection.
+    """
+
+    idx = tr_vl_ts_split_idx(len(collection), tr_size, ts_size, vl_size)
+    try:  # Try to slice with a numpy array
+        return {s: collection[indices] for s, indices in idx.items()}
+    except TypeError:  # If that fails, use list comprehension
+        return {s: [collection[i] for i in indices] for s, indices in idx.items()}
+
+
+def tr_vl_ts_split_idx_guarentee(
+    labels: Sequence[int],
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    samples_per_class: int = 1,
+) -> dict[SplitNames, np.ndarray]:
+    """
+    Returns train/validation/test indices for a collection, with guarentees that at least
+    `samples_per_class` samples from each class are present in each split.
+    """
+
+    num_splits = 2 if vl_size == 0 or tr_size == 0 else 3
+    values, counts = np.unique(labels, return_counts=True)
+
+    # Verify there are enough samples per class to guarentee each split has representative samples.
+    if any(counts < (samples_per_class * num_splits)):
+        raise ValueError(
+            f"Not enough samples per class to create {num_splits} splits."
+            f"dist={pformat(Counter(labels))}"
+        )
+
+    # Get both integer and floating point representations of the size of the splits.
+    if any(isinstance(x, float) for x in (tr_size, vl_size, ts_size)):
+        tr_size, vl_size, ts_size = compute_integer_sizes(len(labels), tr_size, vl_size, ts_size)
+    total = tr_size + vl_size + ts_size
+    tr_prop, vl_prop, ts_prop = compute_float_sizes(total, tr_size, vl_size, ts_size)
+
+    # Verify that the splits are large enough to contain `samples_per_class` samples for each class.
+    for split, size in zip(["tr", "vl", "ts"], [tr_size, vl_size, ts_size]):
+        if size > 0 and len(values) * samples_per_class > size:
+            raise ValueError(
+                f"The {split=} set with {size=} is too small to contain {samples_per_class} samples"
+                f" per class for {len(values)} classes."
+            )
+
+    # For each element in the collection, assign it to a particular split if that split has not
+    # reached its quota for that class.
+    tr_dist, tr_idx = {v: 0 for v in values}, []
+    vl_dist, vl_idx = {v: 0 for v in values}, []
+    ts_dist, ts_idx = {v: 0 for v in values}, []
+    for i, l in enumerate(labels):
+        if tr_size > 0 and tr_dist[l] < samples_per_class:
+            tr_dist[l] += 1
+            tr_idx.append(i)
+        elif vl_size > 0 and vl_dist[l] < samples_per_class:
+            vl_dist[l] += 1
+            vl_idx.append(i)
+        elif ts_size > 0 and tr_dist[l] < samples_per_class:
+            ts_dist[l] += 1
+            ts_idx.append(i)
+
+    # Add the remaining samples to the splits if they have not already been added.
+    added = set(tr_idx) | set(vl_idx) | set(ts_idx)
+    for i, l in enumerate(labels):
+        if i in added:
+            continue
+
+        r = random.uniform(0, sum((tr_prop, vl_prop, ts_prop)))
+        if (0 <= r < ts_prop) and (len(ts_idx) < ts_size):
+            ts_dist[l] += 1
+            ts_idx.append(i)
+        elif (ts_prop <= r < vl_prop + ts_prop) and (len(vl_idx) < vl_size):
+            vl_dist[l] += 1
+            vl_idx.append(i)
+        elif (ts_prop + vl_prop <= r < tr_prop + vl_prop + ts_prop) and (len(tr_idx) < tr_size):
+            tr_dist[l] += 1
+            tr_idx.append(i)
+
+    assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
+
+    tr_idx = np.array(tr_idx, dtype=np.int32)
+    vl_idx = np.array(vl_idx, dtype=np.int32)
+    ts_idx = np.array(ts_idx, dtype=np.int32)
+    return {"tr": tr_idx, "vl": vl_idx, "ts": ts_idx}
+
+
+def tr_vl_ts_split_guarentee(
+    collection: Sequence,
+    labels: Sequence[int],
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    samples_per_class: int = 1,
+) -> dict[SplitNames, np.ndarray]:
+    """
+    Returns train/validation/test indices for a collection, with guarentees that at least
+    `samples_per_class` samples from each class are present in each split.
+    """
+
+    collection, labels = shuffle(collection, labels)
+    idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, samples_per_class)
+    try:  # Try to slice with a numpy array
+        return {s: collection[indices] for s, indices in idx.items()}
+    except TypeError:  # If that fails, use list comprehension
+        return {s: [collection[i] for i in indices] for s, indices in idx.items()}
+
+
+def get_tr_vl_ts_files_and_labels(
+    files: list[os.PathLike],
+    labels: np.ndarray,
+    tr_idx: Sequence[int],
+    vl_idx: Sequence[int],
+    ts_idx: Sequence[int],
+) -> dict[SplitNames, FilesAndLabels]:
+
+    labels = np.array(labels) if isinstance(labels, list) else labels
+    return {
+        "tr": ([files[i] for i in tr_idx], labels[tr_idx]),
+        "vl": ([files[i] for i in vl_idx], labels[vl_idx]),
+        "ts": ([files[i] for i in ts_idx], labels[ts_idx]),
+    }
+
+
+def filter_file_label_map(
+    files_and_labels: dict[os.PathLike, str],
+    top_k: Optional[int] = None,
+    min_freq: int = 1,
+    min_size: int = 0,
+) -> dict[os.PathLike, str]:
+    """
+    Remove samples from the file label map whose labels are not in the top_k most frequent labels
+    or whose frequency is less than min_freq. The default values do not filter at all.
+    """
+
+    files_and_labels = {
+        f: l for f, l in files_and_labels.items()
+        if os.path.exists(f) and os.path.getsize(f) >= min_size
+    }
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    keep: list[str] = [l for l, n in dist.most_common(top_k) if n >= min_freq]
+    files_and_labels: dict[Path, str] = {
+        f: l for f, l in files_and_labels.items()
+        if l in keep
+    }
+    return files_and_labels
+
+
+def get_bodmas_file_label_map() -> dict[os.PathLike, str]:
+    """
+    Get the files and labels associated with the BODMAS corpus.
+    """
+
+    files = list(sorted(DATASET_TO_FILES["binaries"]["bodmas_pe"]()))
+    labels = pd.read_csv(BODMAS_LABELS_FILE).set_index("sha")["family"].to_dict()
+    files_and_labels = {
+        f.as_posix() : labels[f.stem] for f in files
+        if labels[f.stem] not in (np.NaN, "unknown", "Unknown")
+    }
+    return files_and_labels
+
+
+def get_sorel_virus_total_file_label_map() -> dict[os.PathLike, str]:
+    """
+    Get the files and labels from VirusTotal reports for the SOREL dataset.
+    """
+
+    files = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
+    extractor = ThreatLabelExtractor.build("category")
+    refiner = ThreatLabelRefiner.build("top", k=1)
+    files_and_labels = get_label_mapping_virus_total_reports_sorel(files, extractor, refiner)
+    files_and_labels = {
+        f: l[0] for f, l in files_and_labels.items()
+        if isinstance(l, (list, tuple))
+    }
+    sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
+    files_and_labels = {os.path.join(sorel_path, sha): l for sha, l in files_and_labels.items()}
+    return files_and_labels
+
+
+def get_sorel_original_labels_file_label_map(**kwds) -> dict[os.PathLike, str]:
+    df = pd.read_csv(SOREL_META_CSV, **kwds)
+    df = df[df["is_malware"] == 1]
+    df = df.drop(columns=["is_malware", "rl_fs_t", "rl_ls_const_positives"])
+    df = df.set_index("sha256")
+    d = df.to_dict(orient="index")
+    d = {sha: get_max_keys_from_dict(labels) for sha, labels in d.items()}
+    d = {sha: labels[0] for sha, labels in d.items() if len(labels) == 1}
+    sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
+    files_and_labels = {os.path.join(sorel_path, sha): l for sha, l in d.items()}
+    return files_and_labels
+
+
+def get_sorel_dataset_pretraining(
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+) -> dict[SplitNames, list[os.PathLike]]:
+    files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
+    return tr_vl_ts_split(files, tr_size, vl_size, ts_size)
+
+
+def get_classification_dataset(
+    files_and_labels: dict[str, str],
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    top_k: Optional[int] = None,
+    min_freq: Optional[int] = None,
+    min_size: int = 0,
+    **kwds,
+) -> ClfMaterials:
+
+    num_splits = 2 if vl_size == 0 or tr_size == 0 else 3
+    min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * num_splits if min_freq is None else min_freq
+
+    # Filter out the files that are not in the top_k most frequent labels
+    files_and_labels = filter_file_label_map(files_and_labels, top_k, min_freq, min_size)
+
+    # Final collection of data items
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    label2id = {l: i for i, l in enumerate(dist.keys())}
+    id2label = {i: l for l, i in label2id.items()}
+
+    files = list(files_and_labels.keys())
+    labels = np.array([label2id[files_and_labels[f]] for f in files])
+
+    idx = tr_vl_ts_split_idx_guarentee(
+        labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT
+    )
+    tr_vl_ts_files_and_labels = {
+        "tr": ([files[i] for i in idx["tr"]], labels[idx["tr"]]),
+        "vl": ([files[i] for i in idx["vl"]], labels[idx["vl"]]),
+        "ts": ([files[i] for i in idx["ts"]], labels[idx["ts"]]),
+    }
+    return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+
+
+def get_bodmas_dataset(
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    **kwds,
+) -> ClfMaterials:
+
+    files_and_labels = get_bodmas_file_label_map()
+    return get_classification_dataset(files_and_labels, tr_size, vl_size, ts_size, **kwds)
+
+
+def get_bodmas_dataset_with_k_samples_per_class_in_train_set(
+    samples_per_class: int,
+    top_k: Optional[int] = None,
+) -> ClfMaterials:
+    """
+    Returns a balanced BODMAS dataset with the same number of samples for each class in the
+    train set. The remainder of the samples are allocated to the validation set.
+    """
+
+    files_and_labels = get_bodmas_file_label_map()
+    files_and_labels = filter_file_label_map(
+        files_and_labels, top_k=top_k, min_freq=samples_per_class + 1
+    )
+
+    files = list(files_and_labels.keys())
+    labels = list(files_and_labels.values())
+
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    tr_idx = _select_k_for_each_class(labels, k=samples_per_class)
+    vl_idx = [i for i in range(len(files_and_labels)) if i not in tr_idx]
+    ts_idx = []
+
+    tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, tr_idx, vl_idx, ts_idx)
+    return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+
+
+def get_bodmas_dataset_balanced_slice(
+    tr_size: int,
+    vl_size: int,
+    min_freq: Optional[int] = None,
+    top_k: Optional[int] = None,
+    balance_tr_set: bool = True,
+) -> ClfMaterials:
+    """Returns small slices for the BODMAS training dataset. The validation set is consistent
+    accross all slices.
+    """
+
+    num_splits = 2
+    min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * num_splits if min_freq is None else min_freq
+
+    files_and_labels = get_bodmas_file_label_map()
+    files_and_labels = filter_file_label_map(files_and_labels, top_k=top_k, min_freq=min_freq)
+
+    files = files_and_labels.keys()
+    labels = files_and_labels.values()
+
+    dist: Counter[str, int] = Counter(labels)
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    # Forces the validation set to be consistent across slices of various sizes.
+    idx = tr_vl_ts_split_idx(len(files_and_labels), len(files_and_labels) - vl_size, vl_size, 0)
+
+    # Balance the training set so that each class has the same number of samples.
+    if balance_tr_set:
+        samples_per_cls = tr_size / len(dist)
+        if not samples_per_cls.is_integer():
+            raise ValueError("Cannot balance tr_set because train size is not divisible by number of classes")
+        tr_sub_idx = _select_k_for_each_class([labels[i] for i in idx["tr"]], k=samples_per_cls)
+    # The tr_set itself is already random, so we can just take the first ones.
+    else:
+        tr_sub_idx = list(range(tr_size))
+
+    assert len(tr_sub_idx) == tr_size
+    idx["tr"] = idx["tr"][tr_sub_idx]
+
+    tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, idx["tr"], idx["vl"], [])
+    return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+
+
+def get_sorel_dataset_clf(
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    **kwds,
+) -> ClfMaterials:
+
+    files_and_labels = get_sorel_original_labels_file_label_map()
+    return get_classification_dataset(files_and_labels, tr_size, vl_size, ts_size, **kwds)
+
+
+class GetLengthExtrapolationDataset:
+
+    def __init__(
+        self,
+        classes: list[str],
+        tr_size: int,
+        vl_size: int,
+        tr_length_cutoffs: list[int],
+        cache_root: Path = None,
+    ) -> None:
+        self.classes = classes
+        self.tr_size = tr_size
+        self.vl_size = vl_size
+        self.tr_length_cutoffs = tr_length_cutoffs
+        self.cache_root = cache_root
+
+        self.tr_samples_per_class = int(tr_size // len(classes))
+        self.vl_samples_per_class = int(vl_size // len(classes))
+
+    def cache_path(self, tr_length_cutoff: int) -> Path:
+        return (
+            self.cache_root /
+            f"tr_length_cutoffs--{'_'.join(map(str, sorted(self.tr_length_cutoffs)))}" /
+            f"tr_size--{self.tr_size}" /
+            f"vl_size--{self.vl_size}" /
+            f"tr_length_cutoff--{tr_length_cutoff}"
+        )
+
+    def tr_cache_path(self, tr_length_cutoff: int) -> Path:
+        return self.cache_path(tr_length_cutoff) / "tr.csv"
+
+    def vl_cache_path(self, tr_length_cutoff: int) -> Path:
+        return self.cache_path(tr_length_cutoff) / "vl.csv"
+
+    def id2label_cache_path(self, tr_length_cutoff: int) -> Path:
+        return self.cache_path(tr_length_cutoff) / "id2label.json"
+
+    def label2id_cache_path(self, tr_length_cutoff: int) -> Path:
+        return self.cache_path(tr_length_cutoff) / "label2id.json"
+
+    def dist_cache_path(self, tr_length_cutoff: int) -> Path:
+        return self.cache_path(tr_length_cutoff) / "dist.json"
+
+    def load_from_cache(self, tr_length_cutoff: int):
+        if not self.cache_path(tr_length_cutoff).exists():
+            return None
+
+        print("Getting length extrapolcation dataset from cache file.")
+        df = pd.read_csv(self.tr_cache_path(tr_length_cutoff), index_col=None)
+        tr_files = df["files"].tolist()
+        tr_labels = df["labels"].tolist()
+        df = pd.read_csv(self.vl_cache_path(tr_length_cutoff), index_col=None)
+        vl_files = df["files"].tolist()
+        vl_labels = df["labels"].tolist()
+        with open(self.id2label_cache_path(tr_length_cutoff), "r") as fp:
+            id2label = json.load(fp)
+            id2label = {int(i) : l for i, l in id2label.items()}
+        with open(self.label2id_cache_path(tr_length_cutoff), "r") as fp:
+            label2id = json.load(fp)
+        with open(self.dist_cache_path(tr_length_cutoff), "r") as fp:
+            dist = Counter(json.load(fp))
+
+        return ClfMaterials(
+            {"tr": (tr_files, tr_labels), "vl": (vl_files, vl_labels)},
+            id2label,
+            label2id,
+            dist,
+        )
+
+    def get_tr_and_ts_idx(
+        self,
+        tr_cutoff: int,
+        files: list[os.PathLike],
+        labels: np.ndarray,
+        label2id: dict[str, int],
+    ) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
+        tr_idx = {}
+        vl_idx = {}
+        for c in tqdm(self.classes, desc="Getting tr and vl idx for each class"):
+            c_encoded = label2id[c]
+            idx = np.where(labels == c_encoded)[0].tolist()
+            tr_idx[c], vl_idx[c] = train_test_split(
+                idx, test_size=self.vl_samples_per_class, random_state=0
+            )
+            tr_idx_within_cuttoff = [i for i in tr_idx[c] if os.path.getsize(files[i]) <= tr_cutoff]
+            tr_idx[c] = tr_idx_within_cuttoff
+
+        tr_samples_per_class = min(min(len(v) for v in tr_idx.values()), self.tr_samples_per_class)
+        tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
+        return tr_idx, vl_idx
+
+    def __call__(self, tr_length_cutoff: int) -> ClfMaterials:
+        if (materials := self.load_from_cache(tr_length_cutoff)) is not None:
+            return materials
+
+        print("Building length extrapolcation dataset and saving to cache file.")
+        files_and_labels = get_sorel_original_labels_file_label_map(nrows=None)
+        files_and_labels = {
+            f: l for f, l in files_and_labels.items()
+            if l in self.classes and os.path.exists(f)
+        }
+
+        dist: Counter[str, int] = Counter(files_and_labels.values())
+        label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+        id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+        files = list(files_and_labels.keys())
+        labels = list(files_and_labels.values())
+        labels = np.array([label2id[l] for l in labels], dtype=np.int32)
+
+        # Calculate the split for the smallest length cutoff, then use this number of samples
+        # for the larger splits to ensure the training size is consistent across all splits.
+        tr_idx, _ = self.get_tr_and_ts_idx(min(self.tr_length_cutoffs), files, labels, label2id)
+        min_training_sizes_per_class_across_cutoffs = [len(x) for x in tr_idx.values()]
+        assert len(set(min_training_sizes_per_class_across_cutoffs)) == 1
+        min_training_size_per_class_across_cutoffs = min_training_sizes_per_class_across_cutoffs[0]
+
+        tr_idx, vl_idx = self.get_tr_and_ts_idx(tr_length_cutoff, files, labels, label2id)
+        tr_idx = {
+            c: x[0:min(min_training_size_per_class_across_cutoffs, self.tr_samples_per_class)]
+            for c, x in tr_idx.items()
+        }
+
+        # Finally, get the files and labels for the train and validation sets.
+        tr_idx = sum(tr_idx.values(), [])
+        tr_files = [files[i] for i in tr_idx]
+        tr_labels = labels[tr_idx]
+        vl_idx = sum(vl_idx.values(), [])
+        vl_files = [files[i] for i in vl_idx]
+        vl_labels = labels[vl_idx]
+
+        # Save to the cache file.
+        self.cache_path(tr_length_cutoff).mkdir(exist_ok=True, parents=True)
+        pd.DataFrame(
+            {"files": tr_files, "labels": tr_labels.tolist()}
+        ).to_csv(self.tr_cache_path(tr_length_cutoff), index=None)
+        pd.DataFrame(
+            {"files": vl_files, "labels": vl_labels.tolist()}
+        ).to_csv(self.vl_cache_path(tr_length_cutoff), index=None)
+        with open(self.id2label_cache_path(tr_length_cutoff), "w") as fp:
+            json.dump(id2label, fp)
+        with open(self.label2id_cache_path(tr_length_cutoff), "w") as fp:
+            json.dump(label2id, fp)
+
+        tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, tr_idx, vl_idx, [])
+        dist = Counter({c: len(tr_files) / len(self.classes) for c in self.classes})
+        return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+
+
+def get_length_extrapolation_dataset_sorel_original_labels(
+    tr_length_cutoff: int,
+    tr_size: int = 120000,
+    vl_size: int = 12000,
+    tr_length_cutoffs: list[int] = tuple(list(range(2**17, 2**20 + 1, 2**17))),
+) -> ClfMaterials:
+
+    classes = ("spyware", "worm", "dropper", "file_infector", "downloader", "adware")
+    cache_root = Path("./cache/length_extrapolation_dataset_sorel_original_labels/")
+    getter = GetLengthExtrapolationDataset(classes, tr_size, vl_size, tr_length_cutoffs, cache_root)
+    return getter(tr_length_cutoff)
+
+
+def test():
+
+    # for f in [get_bodmas_file_label_map, get_sorel_virus_total_file_label_map, get_sorel_original_labels_file_label_map]:
+    #     print(f.__name__)
+    #     files_and_labels = f()
+    #     print(f"{len(files_and_labels)=} {next(iter(files_and_labels.items()))=}")
+
+    # materials = get_bodmas_dataset(0.8, 0.2, 0.0, top_k=10)
+    # print(materials)
+
+    # materials = get_bodmas_dataset(25000, 5000, 5000)
+    # print(materials)
+
+    # materials = get_bodmas_dataset(25000, 5000, 0, min_freq=20)
+    # print(materials)
+
+
+
+    materials = get_bodmas_dataset_balanced_slice()
+
+
+
+    # materials = get_bodmas_dataset_with_k_samples_per_class_in_train_set()
+
+    # materials = get_length_extrapolation_dataset_sorel_original_labels(2**17, tr_size=100, ts_size=10)
+    # materials = get_length_extrapolation_dataset_sorel_original_labels(2**18, tr_size=100, ts_size=10)
+
+
+if __name__ == "__main__":
+    test()
