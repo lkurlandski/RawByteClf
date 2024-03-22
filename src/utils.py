@@ -10,6 +10,7 @@ from itertools import islice
 import json
 import os
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable
 
@@ -326,4 +327,4 @@ def is_jsonable(x: Any) -> bool:
 
 
 if __name__ == "__main__":
-    print(bash_file_to_vscode_debug_str(Path("run/scaling_mamba_clm_512/test.sh")))
+    print(bash_file_to_vscode_debug_str(Path(sys.argv[1])))
