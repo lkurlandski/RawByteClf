@@ -3,6 +3,7 @@ Functions to process bytes into a representation suitable for learning.
 """
 
 from functools import reduce, partial
+import re
 from typing import Callable, Optional
 
 import torch
@@ -24,6 +25,12 @@ def bytes_to_str_utf8(b: bytes) -> str:
 # .00031 of a seconds to convert 2 ** 20 bytes to a str.
 def bytes_to_str_ascii(b: bytes) -> str:
     return b.decode("latin1")
+
+
+def replace_consecutive_bytes_with_singular_byte(bs: bytes, num_consecutive: int):
+    pattern = rb'(.)\1{' + str(num_consecutive - 1).encode() + rb',}'
+    replacement = rb'\1'
+    return re.sub(pattern, replacement, bs)
 
 
 def preprocess_fn_add_cls_token(x: LongTensor, cls_token_id: int) -> LongTensor:
