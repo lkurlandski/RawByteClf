@@ -165,7 +165,7 @@ def tokenization_gen(
     files: list[Path],
     batch_size: int,
     block_size: int,
-    bytes_to_str: Callable[[bytes], str] = bytes_to_str_ascii,
+    bytes_to_str: Callable[[bytes], str] = bytes_to_str_utf8,
     total: Optional[int] = None,
 ) -> Generator[list[str], None, None]:
 
@@ -323,6 +323,7 @@ def get_tokenizer(
         tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, **(kwds | SPECIALS))
 
     tokenizer.add_special_tokens(SPECIALS)
+
     return tokenizer
 
 
