@@ -41,7 +41,7 @@ from tqdm import tqdm
 from src.cfg import BR, SPECIALS, TOKENIZERS_OUTPUT_PATH
 from src.learn.preprocessing import bytes_to_str_ascii, bytes_to_str_utf8
 from src.data.cfg import DATASET_TO_FILES
-from src.utils import batched
+from src.utils import batched, get_highest_path
 
 
 TokenizerAlgorithm = Literal["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
@@ -105,7 +105,8 @@ class SentencePieceUnigramTokenizer(_SentencePieceUnigramTokenizer):
             initial_alphabet=initial_alphabet,
             unk_token=unk_token,
             max_piece_length=max_token_length,
-            shrinking_factor=0.95,
+            shrinking_factor=0.75,
+            n_sub_iterations=2,
         )
 
         self._tokenizer.train_from_iterator(
@@ -261,8 +262,26 @@ def get_tokenizer_object_16bit() -> Tokenizer:
     return tokenizer
 
 
-def tokenizer_path(algorithm: TokenizerAlgorithm, vocab_size: int):
-    return TOKENIZERS_OUTPUT_PATH / f"{algorithm}_{vocab_size}.json"
+def tokenizer_path_read(
+    algorithm: TokenizerAlgorithm,
+    vocab_size: int,
+    num_files: Optional[int] = None,
+) -> Path:
+    if num_files is not None:
+        return tokenizer_path(algorithm, vocab_size, num_files)
+    return get_highest_path(
+        TOKENIZERS_OUTPUT_PATH,
+        lstrip=f"{algorithm}_{vocab_size}_",
+        rstrip=".json",
+    )
+
+
+def tokenizer_path(
+    algorithm: TokenizerAlgorithm,
+    vocab_size: int,
+    num_files: int,
+) -> Path:
+    return TOKENIZERS_OUTPUT_PATH / f"{algorithm}_{vocab_size}_{num_files}.json"
 
 
 def get_fast_tokenizer(
@@ -312,7 +331,7 @@ def get_tokenizer(
             )
 
     else:
-        path: Path = tokenizer_path(algorithm, vocab_size)
+        path: Path = tokenizer_path_read(algorithm, vocab_size)
         if not path.exists():
             raise FileNotFoundError(f"For {representation=}, could not locate {path.as_posix()=}")
         tokenizer = Tokenizer.from_file(path.as_posix())
@@ -426,7 +445,7 @@ def train_tokenizer(
 
     print("Training complete!", flush=True)
     if save_to_file:
-        path = tokenizer_path(algorithm, vocab_size)
+        path = tokenizer_path(algorithm, vocab_size, num_files)
         path.parent.mkdir(parents=True, exist_ok=True)
         tokenizer.save(path.as_posix())
     return tokenizer
