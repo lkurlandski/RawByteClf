@@ -71,7 +71,7 @@ class TokenizationArgs:
                 "`SentencePieceBPE`, `SentencePieceUnigram`"
         }
     )
-    vocab_size: Optional[int] = field(default=256, metadata={"help": ""})
+    vocab_size: Optional[int] = field(default=256, metadata={"help": "EXCLUDING SPECIAL TOKENS"})
     num_files: Optional[int] = field(default=None, metadata={"help": ""})
     block_size: int = field(default=2**12, metadata={"help": ""})
     batch_size: int = field(default=2**10, metadata={"help": ""})
@@ -336,6 +336,8 @@ def train_tokenizer(
     save_to_file: bool = True,
 ) -> BaseTokenizer:
 
+    vocab_size_with_specials = vocab_size + len(SPECIALS)
+
     if max_token_length and (256**max_token_length < vocab_size):
         raise ValueError(f"{vocab_size=} too big for {max_token_length=}")
 
@@ -372,7 +374,7 @@ def train_tokenizer(
         tokenizer = SentencePieceBPETokenizer()
         tokenizer.train_from_iterator(
             iterator,
-            vocab_size=vocab_size,
+            vocab_size=vocab_size_with_specials,
             special_tokens=special_tokens,
             length=length,
         )
@@ -380,7 +382,7 @@ def train_tokenizer(
         tokenizer = SentencePieceUnigramTokenizer()
         tokenizer.train_from_iterator(
             iterator,
-            vocab_size=vocab_size,
+            vocab_size=vocab_size_with_specials,
             show_progress=False,
             special_tokens=special_tokens,
             length=length,
@@ -391,14 +393,14 @@ def train_tokenizer(
         if algorithm == "BPE":
             model = models.BPE()
             trainer = trainers.BpeTrainer(
-                vocab_size=vocab_size,
+                vocab_size=vocab_size_with_specials,
                 special_tokens=special_tokens,
                 max_token_length=max_token_length,
             )
         elif algorithm == "Unigram":
             model = models.Unigram()
             trainer = trainers.UnigramTrainer(
-                vocab_size=vocab_size,
+                vocab_size=vocab_size_with_specials,
                 special_tokens=special_tokens,
                 unk_token=unk_token,
                 max_piece_length=max_token_length,
@@ -406,13 +408,13 @@ def train_tokenizer(
         elif algorithm == "WordPiece":
             model = models.WordPiece()
             trainer = trainers.WordPieceTrainer(
-                vocab_size=vocab_size,
+                vocab_size=vocab_size_with_specials,
                 special_tokens=special_tokens,
             )
         elif algorithm == "WordLevel":
             model = models.WordLevel()
             trainer = trainers.WordLevelTrainer(
-                vocab_size=vocab_size,
+                vocab_size=vocab_size_with_specials,
                 special_tokens=special_tokens,
             )
         else:
@@ -422,7 +424,6 @@ def train_tokenizer(
         tokenizer.train_from_iterator(iterator, trainer, length=length)
 
     print("Training complete!", flush=True)
-    # path = TOKENIZERS_OUTPUT_PATH / f"{algorithm}_{vocab_size}_{num_files}_{block_size}.json"
     if save_to_file:
         path = tokenizer_path(algorithm, vocab_size)
         path.parent.mkdir(parents=True, exist_ok=True)
