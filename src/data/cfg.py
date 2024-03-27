@@ -97,9 +97,6 @@ DATASET_TO_FILES: dict[str, dict[str, Callable[[], Iterable[Path]]]] = {
     "binaries": _dataset_to_report_files_and_binaries(binaries=True),
 }
 
-
-BYTE_TO_UTF8: dict[int, str] = {i: chr(i + 10752) for i in range(256)}
-
 SOREL_BUCKET = "sorel-20m"
 SOREL_PREFIX = "09-DEC-2020/binaries/"
 

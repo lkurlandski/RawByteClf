@@ -16,7 +16,8 @@ if __name__ == "__main__":
 from tqdm import tqdm
 
 from src.utils import batched
-from src.data.cfg import DATASET_TO_FILES, BYTE_TO_UTF8
+from src.data.cfg import DATASET_TO_FILES
+from src.learn.preprocessing import bytes_to_str_ascii
 from src.learn.tokenization import get_tokenizer
 
 
@@ -45,7 +46,7 @@ with open(outfile, "w") as fp:
 
 for max_length in tqdm(max_lengths, desc="max_lengths", leave=True):
     data = (open(f, "rb").read(max_length) for f in files)
-    data = ("".join([BYTE_TO_UTF8[byte] for byte in row]) for row in tqdm(data, total=num_files, desc="Reading..."))
+    data = (bytes_to_str_ascii(bs) for bs in tqdm(data, total=num_files, desc="Reading..."))
     for batch_size in batch_sizes:
         batches = list(batched(data, batch_size))
         times = [None for _ in range(num_trials)]

@@ -2,6 +2,7 @@
 Handles preprocessing of malware bytes.
 
 # FIXME: there are some issues with trained tokenizers, e.g., Added Token 16391
+# FIXME: the SPECIALS dict is duplicated; it is also in the cfg module
 """
 
 # pylint: disable=wrong-import-position
@@ -17,7 +18,7 @@ import os
 from pathlib import Path
 from pprint import pformat, pprint
 import sys
-from typing import Optional, Union
+from typing import Callable, Literal, Optional, Union
 import warnings
 
 if __name__ == "__main__":
@@ -38,8 +39,12 @@ from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
 
 from src.cfg import BR, SPECIALS, TOKENIZERS_OUTPUT_PATH
-from src.data.cfg import BYTE_TO_UTF8, DATASET_TO_FILES
+from src.learn.preprocessing import bytes_to_str_ascii, bytes_to_str_utf8
+from src.data.cfg import DATASET_TO_FILES
 from src.utils import batched
+
+
+TokenizerAlgorithm = Literal["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
 
 
 SPECIALS = OrderedDict(
@@ -59,7 +64,7 @@ SPECIALS_IDS = {k: i for i, k in enumerate(SPECIALS)}
 
 @dataclass
 class TokenizationArgs:
-    algorithm: str = field(
+    algorithm: TokenizerAlgorithm = field(
         metadata={
             "help":
                 "One of `Raw`, `BPE`, `Unigram`, `WordPiece`, `WordLevel`, "
@@ -71,9 +76,6 @@ class TokenizationArgs:
     block_size: int = field(default=2**12, metadata={"help": ""})
     batch_size: int = field(default=2**10, metadata={"help": ""})
     max_token_length: int = field(default=None, metadata={"help": ""})
-
-    def __post_init__(self):
-        self.vocab_size += len(SPECIALS)
 
 
 class SentencePieceUnigramTokenizer(_SentencePieceUnigramTokenizer):
@@ -160,11 +162,15 @@ def process_mem(fmt: str = "G") -> str:
 
 
 def tokenization_gen(
-    files: list[Path], batch_size: int, block_size: int, total: Optional[int] = None
+    files: list[Path],
+    batch_size: int,
+    block_size: int,
+    bytes_to_str: Callable[[bytes], str] = bytes_to_str_ascii,
+    total: Optional[int] = None,
 ) -> Generator[list[str], None, None]:
 
-    def return_batch(b: list[bytes]) -> list[str]:
-        return ["".join([BYTE_TO_UTF8[byte] for byte in row]) for row in b]
+    def return_batch(lbs: list[bytes | list[int]]) -> list[str]:
+        return [bytes_to_str(bytes(bs)) for bs in lbs]
 
     byte_stream = chain.from_iterable((open(f, "rb").read() for f in files))
 
@@ -179,7 +185,6 @@ def tokenization_gen(
             batch = []
     if batch:
         yield return_batch(batch)
-
 
 
 class FastTokenizerForModelsThatRequireCLSToken(PreTrainedTokenizerFast):
@@ -256,7 +261,7 @@ def get_tokenizer_object_16bit() -> Tokenizer:
     return tokenizer
 
 
-def tokenizer_path(algorithm: str, vocab_size: int):
+def tokenizer_path(algorithm: TokenizerAlgorithm, vocab_size: int):
     return TOKENIZERS_OUTPUT_PATH / f"{algorithm}_{vocab_size}.json"
 
 
@@ -280,7 +285,7 @@ def get_fast_tokenizer(
 def get_tokenizer(
     model_requires_cls_token: bool = False,
     representation: int = 8,
-    algorithm: str = "Raw",
+    algorithm: TokenizerAlgorithm = "Raw",
     vocab_size: Optional[int] = None,
     **kwds,
 ) -> PreTrainedTokenizerFast:
@@ -328,13 +333,11 @@ def train_tokenizer(
     block_size: int,
     num_files: int = None,
     max_token_length: int = None,
+    save_to_file: bool = True,
 ) -> BaseTokenizer:
 
     if max_token_length and (256**max_token_length < vocab_size):
         raise ValueError(f"{vocab_size=} too big for {max_token_length=}")
-    if not math.log2(vocab_size - len(SPECIALS)).is_integer():
-        raise ValueError(f"{vocab_size=} is not a power of two.")
-
 
     files = list(islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), num_files))
     length = sum(f.stat().st_size for f in files) // block_size + 1
@@ -419,9 +422,11 @@ def train_tokenizer(
         tokenizer.train_from_iterator(iterator, trainer, length=length)
 
     print("Training complete!", flush=True)
-    path = TOKENIZERS_OUTPUT_PATH / f"{algorithm}_{vocab_size}_{num_files}_{block_size}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tokenizer.save(path.as_posix())
+    # path = TOKENIZERS_OUTPUT_PATH / f"{algorithm}_{vocab_size}_{num_files}_{block_size}.json"
+    if save_to_file:
+        path = tokenizer_path(algorithm, vocab_size)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tokenizer.save(path.as_posix())
     return tokenizer
 
 

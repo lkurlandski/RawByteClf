@@ -13,7 +13,16 @@ from src.utils import to_long_tensor
 from src.learn.utils import interpret_bytes_as_integers
 
 
-def bytes_to_str(b: bytes) -> str:
+BYTE_TO_UTF8 = tuple(chr(i + 10752) for i in range(256))
+
+
+# 0.35 of a seconds to convert 2 ** 20 bytes to a str.
+def bytes_to_str_utf8(b: bytes) -> str:
+    return "".join(BYTE_TO_UTF8[i] for i in b)
+
+
+# .00031 of a seconds to convert 2 ** 20 bytes to a str.
+def bytes_to_str_ascii(b: bytes) -> str:
     return b.decode("latin1")
 
 
@@ -60,6 +69,7 @@ def bytes_to_input_ids(
 def tokenize_bytes(
     b: bytes | list[bytes],
     tokenizer: PreTrainedTokenizerFast,
+    bytes_to_str: Callable[[bytes], str] = bytes_to_str_ascii,
     truncation: bool = True,
     max_length: Optional[int] = None,
     return_overflowing_tokens: bool = False,
@@ -86,6 +96,7 @@ def tokenize_bytes(
 def hf_tokenize_bytes(
     examples: dict[str, list],
     tokenizer: PreTrainedTokenizerFast,
+    bytes_to_str: Callable[[bytes], str] = bytes_to_str_ascii,
     truncation: bool = True,
     max_length: Optional[int] = None,
     return_overflowing_tokens: bool = False,
