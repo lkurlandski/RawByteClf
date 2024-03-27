@@ -1,5 +1,7 @@
 """
 Handles preprocessing of malware bytes.
+
+# FIXME: there are some issues with trained tokenizers, e.g., Added Token 16391
 """
 
 # pylint: disable=wrong-import-position

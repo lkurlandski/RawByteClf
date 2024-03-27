@@ -3,36 +3,36 @@ Utility functions.
 """
 
 from argparse import ArgumentParser, Namespace
-from collections.abc import Sequence
-from collections import Counter
+import asyncio
 import csv
 import bz2
 import gzip
 from io import BufferedReader
-import logging
 import lzma
 import math
 from pathlib import Path
-import random
-import sys
 from typing import ClassVar, Generator, NamedTuple, Literal, Optional
 import warnings
 import zlib
 
 from datasets import (
-    interleave_datasets,
     Dataset,
     DatasetDict,
     IterableDataset,
     IterableDatasetDict,
 )
-from datasets.utils.logging import set_verbosity, disable_progress_bar, enable_progress_bar
 import numpy as np
-from sklearn.model_selection import train_test_split
+import torch
+from torch import ByteTensor
 from tqdm import tqdm
 import py7zr
 
+from src.utils import batched
 from src.data.cfg import SOREL_META_CSV, DATASET_NAMES
+
+
+DEFAULT_ASYNCH_CHUNK_SIZE = 500000
+DEFAULT_DISABLE_TQDM = True
 
 
 def print_dataset(
@@ -205,142 +205,75 @@ def decompress(
     return b
 
 
-def balance_imbalanced_dataset(
-    dataset: Dataset | IterableDataset,
-    dist: Counter,
-    smoothing_factor: float = 1,
-    check: bool = True,
-) -> tuple[IterableDataset | Dataset, Counter]:
-    """Oversample a dataset to balance the classes.
-
-    Args:
-        dataset: The dataset to balance.
-        dist: The class distribution of the dataset.
-        smoothing_factor: The amount of smoothing to apply when oversampling.
-            1 means the classes will be fully balanced.
-
-    Returns:
-        A tuple of the balanced dataset and its class distribution.
+def read_binary_file(
+    f: Path,
+    max_length: Optional[int] = None,
+    in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
+) -> bytes | np.ndarray | ByteTensor:
     """
+    Will warn with "UserWarning: The given buffer is not writable...", which can
+    safely be ignored because we don't care about modifying the bytes object.
+    """
+    with open(f, "rb") as fp:
+        b = fp.read(max_length)
 
-    warnings.warn(
-        "This function adds and indices mapping to the dataset, making iterating over it slow."
-        "The dataset will have to be reindexed using flatten_indices() to be useful."
-    )
+    if in_memory_dtype == "bytes":
+        return b
+    if in_memory_dtype == "np":
+        return np.frombuffer(b, dtype=np.uint8)
+    if in_memory_dtype == "pt":
+        return torch.frombuffer(b, dtype=torch.uint8)
 
-    assert 0 < smoothing_factor <= 1, f"{smoothing_factor=} must be between 0 and 1."
-    if not isinstance(dataset, IterableDataset):
-        warnings.warn("The dataset is not an IterableDataset, so this might take a long time...")
-
-    id2label = dict(enumerate(dataset.info.features["labels"].names))
-    label2id = dict(enumerate(id2label.values()))
-
-    # Extract one dataset for each class
-    # It is critical for the datasets to have non null features, otherwise the
-    # interleave_datasets function will take hours to complete, ie, .cast()
-    set_verbosity(logging.CRITICAL)
-    disable_progress_bar()
-    datasets = []
-    for l in tqdm(list(dist.keys()), desc="Filtering..."):
-        label_or_id = (l, label2id.get(l))
-        d = dataset.filter(
-            lambda exs: [e in label_or_id for e in exs["labels"]], batched=True
-        ).cast(dataset.features)
-        datasets.append(d)
-    set_verbosity(logging.INFO)
-    enable_progress_bar()
-
-    if check:
-        for d in tqdm(datasets, desc="Checking..."):
-            if isinstance(dataset, Dataset):
-                assert len(d) > 0, "Some classes have no samples."
-            elif isinstance(dataset, IterableDataset):
-                assert bool(next(iter(d), False)), "Some classes have no samples."
-
-    probabilities = class_probabilities_with_smoothing(dist, smoothing_factor)
-
-    f = max(dist.values()) / max(probabilities)
-    new_dist = Counter({l: int(v * p * f) for (l, v), p in zip(dist.items(), probabilities)})
-
-    print("Interleaving...")
-    dataset = interleave_datasets(datasets, probabilities, stopping_strategy="all_exhausted")
-
-    return dataset, new_dist
+    raise ValueError(f"Unknown {in_memory_dtype=}")
 
 
-def class_probabilities_with_smoothing(
-    dist: Counter, smoothing_factor: float = 1
-) -> dict[str, float]:
-    ratio = {k: (1 / math.pow(l, smoothing_factor)) for k, l in dist.items()}
-    s = sum(ratio.values())
-    return {k: v / s for k, v in ratio.items()}
+async def read_binary_file_asynch(
+    f: Path,
+    max_length: Optional[int] = None,
+    in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
+) -> bytes | np.ndarray | ByteTensor:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, read_binary_file, f, max_length, in_memory_dtype)
 
 
-def _select_k_for_each_class(labels: list[int | str], k: int) -> list[int]:
-    unique = set(labels)
-    count = {s : 0 for s in unique}
-    idx = []
-    for i, l in enumerate(labels):
-        if count[l] < k:
-            count[l] += 1
-            idx.append(i)
-    return idx
+async def read_binary_files_asynch(
+    files: list[str],
+    max_length: Optional[int] = None,
+    in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
+    disable_tqdm: bool = DEFAULT_DISABLE_TQDM,
+    asynch_chunk_size: int = DEFAULT_ASYNCH_CHUNK_SIZE,
+) -> None:
+    file_chunks = batched(files, asynch_chunk_size)
+
+    iterable = file_chunks
+    if not disable_tqdm:
+        n_chunks = math.ceil(len(files) / asynch_chunk_size)
+        iterable = tqdm(
+            file_chunks,
+            desc=f"Asynchronously loading {len(files)} files in {n_chunks} chunks...",
+            total=n_chunks,
+        )
+
+    x = []
+    for batch_files in iterable:
+        tasks = [read_binary_file_asynch(f, max_length, in_memory_dtype) for f in batch_files]
+        x_i = await asyncio.gather(*tasks)
+        x.extend(x_i)
+    return x
 
 
-def _tr_vl_ts_split_with_guarentees(
-    y: np.ndarray,
-    len_dataset: int,
-    vl_size: float,
-    ts_size: float,
-    samples_per_class: int = 1,
-) -> dict[Literal["tr", "vl", "ts"], list]:
+def read_binary_files(
+    files: list[str],
+    max_length: Optional[int] = None,
+    in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
+    disable_tqdm: bool = DEFAULT_DISABLE_TQDM,
+) -> list[bytes | np.ndarray | ByteTensor]:
 
-    values, counts = np.unique(y, return_counts=True)
-    if any(counts < (samples_per_class * 3)):
-        raise ValueError("Not enough samples per class.")
+    iterable = files
+    if not disable_tqdm:
+        iterable = tqdm(
+            files,
+            desc=f"Synchronously loading {len(files)} files...",
+        )
 
-    vl_size = vl_size / len_dataset if isinstance(vl_size, int) else vl_size
-    ts_size = ts_size / len_dataset if isinstance(ts_size, int) else ts_size
-
-    tr_dist, tr_idx = {v: 0 for v in values}, []
-    vl_dist, vl_idx = {v: 0 for v in values}, []
-    ts_dist, ts_idx = {v: 0 for v in values}, []
-    for i, l in enumerate(y):
-        if ts_dist[l] < samples_per_class:
-            ts_dist[l] += 1
-            ts_idx.append(i)
-        elif vl_dist[l] < samples_per_class:
-            vl_dist[l] += 1
-            vl_idx.append(i)
-        elif tr_dist[l] < samples_per_class:
-            tr_dist[l] += 1
-            tr_idx.append(i)
-        else:
-            r = random.uniform(0, 1)
-            if 0 <= r < ts_size:
-                ts_dist[l] += 1
-                ts_idx.append(i)
-            elif ts_size <= r < ts_size + vl_size:
-                vl_dist[l] += 1
-                vl_idx.append(i)
-            else:
-                tr_dist[l] += 1
-                tr_idx.append(i)
-
-    return {"tr": np.array(tr_idx), "vl": np.array(vl_idx), "ts": np.array(ts_idx)}
-
-
-# TODO: support passing in multiple *arrays as the scikit-learn function offers.
-def _tr_vl_ts_split(
-    collection: Sequence,
-    vl_size: float | int,
-    ts_size: float | int,
-) -> dict[Literal["tr", "vl", "ts"], list]:
-    vl_size = int(round(vl_size * len(collection), 0)) if isinstance(vl_size, float) else vl_size
-    ts_size = int(round(ts_size * len(collection), 0)) if isinstance(ts_size, float) else ts_size
-    tr_size = len(collection) - vl_size - ts_size
-
-    tr_vl, ts = train_test_split(collection, test_size=ts_size, train_size=tr_size + vl_size)
-    tr, vl = train_test_split(tr_vl, test_size=vl_size, train_size=tr_size)
-
-    return {"tr": tr, "vl": vl, "ts": ts}
+    return [read_binary_file(f, max_length, in_memory_dtype) for f in iterable]

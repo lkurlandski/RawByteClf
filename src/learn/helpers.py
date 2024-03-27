@@ -49,8 +49,8 @@ class Args:
     ft_initialize_positional_embeddings: bool = field(default=False)
     root: Path = field(default=OUTPUT_PATH)
     do_tune: bool = field(default=False)
-    bodmas_min_freq: Optional[int] = field(default=None)
-    bodmas_top_k: Optional[int] = field(default=None)
+    min_freq: Optional[int] = field(default=None)
+    top_k: Optional[int] = field(default=None)
     arch_config_file: Optional[Path] = field(
         default=None,
         metadata={"help": "Location of a configuration file to use for the architecture."},
@@ -70,6 +70,7 @@ class Args:
     early_stopping: bool = field(default=False)
     early_stopping_patience: int = field(default=1)
     early_stopping_threshold: float = field(default=0.0)
+    dataset_backend: str = field(default="PT")
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -95,6 +96,13 @@ class Args:
         self.tr_size = float_to_int(self.tr_size) if self.tr_size > 1 else self.tr_size
         self.vl_size = float_to_int(self.vl_size) if self.vl_size > 1 else self.vl_size
         self.ts_size = float_to_int(self.ts_size) if self.ts_size > 1 else self.ts_size
+        types = [type(x) for x in [self.tr_size, self.vl_size, self.ts_size] if x > 0]
+        if len(set(types)) > 1:
+            raise TypeError("The semantics of using both float and int is not well defined.")
+        IntOrFloat = types[0]
+        self.tr_size = IntOrFloat(self.tr_size) if self.tr_size == 0.0 else self.tr_size
+        self.vl_size = IntOrFloat(self.vl_size) if self.vl_size == 0.0 else self.vl_size
+        self.ts_size = IntOrFloat(self.ts_size) if self.ts_size == 0.0 else self.ts_size
 
 
 class OutputHelper:
@@ -130,8 +138,8 @@ class OutputHelper:
         task: str,
         tr_size: int | float,
         depth: int,
-        bodmas_min_freq: Optional[int],
-        bodmas_top_k: Optional[int],
+        min_freq: Optional[int],
+        top_k: Optional[int],
         enforce_cutoff: Optional[bool],
         tr_length_cutoff: Optional[int],
         ft_freeze_positional_embeddings: bool | str,
@@ -167,8 +175,8 @@ class OutputHelper:
                 ])
             else:
                 args.extend([
-                    f"min_freq--{bodmas_min_freq}",
-                    f"top_k--{bodmas_top_k}",
+                    f"min_freq--{min_freq}",
+                    f"top_k--{top_k}",
                 ])
             args.extend([
                 f"freeze--{str_or_bool_to_str(ft_freeze_positional_embeddings)}",
