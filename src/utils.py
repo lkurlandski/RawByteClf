@@ -10,13 +10,15 @@ from itertools import islice
 import json
 import os
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable
 
+import numpy as np
 import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 import torch
-from torch import nn, Tensor
+from torch import nn, ByteTensor, LongTensor, Tensor
 
 
 def batched(iterable: Iterable, n: int):
@@ -266,7 +268,8 @@ def test_process_files_async():
     LENGTH = None
     BODMAS = True
 
-    fn = lambda f, s: f.open("rb").read(s)
+    def fn(f: Path, s: int):
+        return f.open("rb").read(s)
 
     if BODMAS:
         files = list(Path("/home/lk3591/Documents/datasets/BODMAS/binaries").iterdir())[0:10000]
@@ -287,21 +290,33 @@ def test_process_files_async():
     t = time.time()
 
     if ASYNC:
-        content = process_files_asynch(files, fn, LENGTH)
+        _ = process_files_asynch(files, fn, LENGTH)
     else:
-        content = [fn(f, LENGTH) for f in files]
+        _ = [fn(f, LENGTH) for f in files]
 
     print(time.time() - t)
 
 
+def to_long_tensor(x: bytes | list | np.ndarray | Tensor) -> LongTensor:
+    if isinstance(x, bytes):
+        return torch.frombuffer(x, dtype=torch.uint8).to(torch.long)
+    if isinstance(x, list):
+        return torch.tensor(x, dtype=torch.long)
+    if isinstance(x, np.ndarray):
+        return torch.from_numpy(x.astype(np.int64)).to(torch.long)
+    if isinstance(x, Tensor):
+        return x.to(torch.long)
+    raise TypeError(f"Unexpected type: {type(x)=}")
+
+
 def compose_functions(*funcs):
     raise NotImplementedError("Untested.")
-    def inner(arg):
-        result = arg
-        for func in reversed(funcs):
-            result = func(result)
-        return result
-    return inner
+    # def inner(arg):
+    #     result = arg
+    #     for func in reversed(funcs):
+    #         result = func(result)
+    #     return result
+    # return inner
 
 
 def get_max_keys_from_dict(d: dict[str, int]) -> tuple[str]:
@@ -326,4 +341,4 @@ def is_jsonable(x: Any) -> bool:
 
 
 if __name__ == "__main__":
-    print(bash_file_to_vscode_debug_str(Path("run/scaling_mamba_clm_512/test.sh")))
+    print(bash_file_to_vscode_debug_str(Path(sys.argv[1])))

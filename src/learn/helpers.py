@@ -30,9 +30,17 @@ from src.learn.utils import str_or_bool_to_str, float_to_int
 class Args:
 
     model_name_or_path: str = field()
-    representation: str = field()
     max_length: int = field()
     task: str = field()
+    representation: int = field(default=8)
+    algorithm: str = field(default="Raw",
+        metadata={
+            "help":
+                "One of `Raw`, `BPE`, `Unigram`, `WordPiece`, `WordLevel`, "
+                "`SentencePieceBPE`, `SentencePieceUnigram`"
+        }
+    )
+    vocab_size: Optional[int] = field(default=None)
     depth: int = field(default=1)
     streaming: bool = field(default=False)
     exit_after_map: bool = field(default=False)
@@ -41,8 +49,8 @@ class Args:
     ft_initialize_positional_embeddings: bool = field(default=False)
     root: Path = field(default=OUTPUT_PATH)
     do_tune: bool = field(default=False)
-    bodmas_min_freq: Optional[int] = field(default=None)
-    bodmas_top_k: Optional[int] = field(default=None)
+    min_freq: Optional[int] = field(default=None)
+    top_k: Optional[int] = field(default=None)
     arch_config_file: Optional[Path] = field(
         default=None,
         metadata={"help": "Location of a configuration file to use for the architecture."},
@@ -62,6 +70,7 @@ class Args:
     early_stopping: bool = field(default=False)
     early_stopping_patience: int = field(default=1)
     early_stopping_threshold: float = field(default=0.0)
+    dataset_backend: str = field(default="PT")
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -78,6 +87,8 @@ class Args:
             raise ValueError("Cannot specify both arch_config_file and arch_config.")
         if self.arch_config and isinstance(self.arch_config, str):
             self.arch_config = json.loads(self.arch_config)
+            if not isinstance(self.arch_config, dict):
+                raise ValueError(f"arch_config not parsed correctly: {self.arch_config=}")
         if self.arch_config_file:
             with open(self.arch_config_file) as fp:
                 self.arch_config = json.load(fp)
@@ -85,6 +96,13 @@ class Args:
         self.tr_size = float_to_int(self.tr_size) if self.tr_size > 1 else self.tr_size
         self.vl_size = float_to_int(self.vl_size) if self.vl_size > 1 else self.vl_size
         self.ts_size = float_to_int(self.ts_size) if self.ts_size > 1 else self.ts_size
+        types = [type(x) for x in [self.tr_size, self.vl_size, self.ts_size] if x > 0]
+        if len(set(types)) > 1:
+            raise TypeError("The semantics of using both float and int is not well defined.")
+        IntOrFloat = types[0]
+        self.tr_size = IntOrFloat(self.tr_size) if self.tr_size == 0.0 else self.tr_size
+        self.vl_size = IntOrFloat(self.vl_size) if self.vl_size == 0.0 else self.vl_size
+        self.ts_size = IntOrFloat(self.ts_size) if self.ts_size == 0.0 else self.ts_size
 
 
 class OutputHelper:
@@ -113,13 +131,15 @@ class OutputHelper:
     def __init__(
         self,
         model_name_or_path: str,
-        representation: str,
+        representation: int,
+        algorithm: str,
+        vocab_size: Optional[int],
         max_length: int,
         task: str,
         tr_size: int | float,
         depth: int,
-        bodmas_min_freq: Optional[int],
-        bodmas_top_k: Optional[int],
+        min_freq: Optional[int],
+        top_k: Optional[int],
         enforce_cutoff: Optional[bool],
         tr_length_cutoff: Optional[int],
         ft_freeze_positional_embeddings: bool | str,
@@ -130,7 +150,7 @@ class OutputHelper:
         trainer_config: Optional[dict] = None,
     ) -> None:
         """
-        {representation}{max_length}/{task}/{tr_size}/{
+        {representation}{algorithm}{vocab_size}{max_length}/{task}/{tr_size}/{
             {depth} |
             {min_freq}/{top_k}/{freeze/{duplicate}/{initialize} |
             {enforce_cutoff}/{tr_length_cutoff}
@@ -141,30 +161,32 @@ class OutputHelper:
 
         args = [
             f"representation--{representation}",
-            f"max_length--{str(max_length)}",
+            f"algorithm--{algorithm}",
+            f"vocab_size--{vocab_size if vocab_size is not None else 2 ** representation}",
+            f"max_length--{max_length}",
             f"task--{task}",
-            f"tr_size--{str(tr_size)}",
+            f"tr_size--{tr_size}",
         ]
         if task == "clf":
             if isinstance(tr_length_cutoff, int):
                 args.extend([
-                    f"enforce_cutoff--{str(str_or_bool_to_str(enforce_cutoff)) if isinstance(enforce_cutoff, bool) else None}",
-                    f"tr_length_cutoff--{str(tr_length_cutoff)}",
+                    f"enforce_cutoff--{str_or_bool_to_str(enforce_cutoff) if isinstance(enforce_cutoff, bool) else None}",
+                    f"tr_length_cutoff--{tr_length_cutoff}",
                 ])
             else:
                 args.extend([
-                    f"min_freq--{str(bodmas_min_freq)}",
-                    f"top_k--{str(bodmas_top_k)}",
+                    f"min_freq--{min_freq}",
+                    f"top_k--{top_k}",
                 ])
             args.extend([
-                f"freeze--{str(str_or_bool_to_str(ft_freeze_positional_embeddings))}",
-                f"duplicate--{str(str_or_bool_to_str(ft_duplicate_positional_embeddings))}",
-                f"initialize--{str(str_or_bool_to_str(ft_initialize_positional_embeddings))}",
+                f"freeze--{str_or_bool_to_str(ft_freeze_positional_embeddings)}",
+                f"duplicate--{str_or_bool_to_str(ft_duplicate_positional_embeddings)}",
+                f"initialize--{str_or_bool_to_str(ft_initialize_positional_embeddings)}",
             ])
         elif task in ("mlm", "clm"):
             args.extend(
                 [
-                    f"depth--{str(depth)}",
+                    f"depth--{depth}",
                 ]
             )
         self.arch_config = arch_config

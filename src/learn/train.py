@@ -100,6 +100,7 @@ from src.utils import (
     count_parameters,
     get_highest_path,
     object_from_superset_of_constructor_kwds,
+    to_long_tensor,
 )
 from src.architectures.malconv import (
     AutoMalConvForSequenceClassification,
@@ -125,27 +126,24 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.data.loaders_hf import (
-    get_sorel_dataset as get_sorel_dataset_hf,
-    get_bodmas_dataset as get_bodmas_dataset_hf,
+from src.data.loaders_core import (
+    get_materials_clf_bodmas,
+    get_materials_clf_sorel,
+    get_materials_clf_bodmas_balanced_slice,
+    get_materials_clf_bodmas_with_k_samples_per_class_in_train_set,
+    get_materials_pretrain_sorel,
+    get_materials_clf_sorel_length_extrapolation,
 )
-from src.data.loaders_pt import (
-    get_sorel_dataset as get_sorel_dataset_pt,
-    get_bodmas_dataset as get_bodmas_dataset_pt,
-    get_sorel_dataset_clf as get_sorel_dataset_clf_pt,
-    get_bodmas_dataset_slice,
-    get_bodmas_dataset_balanced,
-    get_length_extrapolation_dataset,
-    preprocess_fn_add_cls_token,
-    preprocess_fn_shift_token_idx,
-    get_dataset_from_wrappers,
-    get_length_extrapolation_dataset_sorel_original_labels,
-    to_long_tensor,
-    BinaryDataset,
-)
-from src.learn.collators import DataCollator, DataCollatorForMLM, DataCollatorForCLM
+from src.data.loaders_hf import get_dataset_hf, print_dataset_hf
+from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
 from src.learn.helpers import Args, OutputHelper
-from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics
+from src.learn.evaluation import clf_compute_metrics
+from src.learn.preprocessing import (
+    hf_bytes_to_input_ids,
+    hf_tokenize_bytes,
+    bytes_to_input_ids,
+    tokenize_bytes,
+)
 from src.learn.tuning import (
     hp_space_mymalconv,
     hp_space_malconv,
@@ -156,9 +154,6 @@ from src.learn.tuning import (
 from src.learn.utils import (
     pad_to_multiple_of_fn,
     find_two_largest_factors,
-    examples_to_text,
-    examples_to_input_ids,
-    tokenize_fn,
     float_to_int,
     compute_total_steps,
     str_or_bool_to_str,
@@ -175,31 +170,21 @@ np.random.seed(0)
 torch.random.manual_seed(0)
 
 
-get_sorel_dataset = get_sorel_dataset_pt
-get_bodmas_dataset = get_bodmas_dataset_pt
-get_sorel_dataset_clf = get_sorel_dataset_clf_pt
-
-
 PAD_TO = 8
 
-KEEP_IN_MEMORY = False
+# Some random temporary flags.
 MOVE_IN_MEMORY = False
-PREPROCESS_AS_TEXT = True
-PREPROCESS_AS_INPUT_IDS = False
-PREPROCESS_AS_INPUT_IDS_DO_PAD = True
 
-# Arguments for the Dataset.map() function.
+# Variables for the datasets.Dataset.map() and datasets.IterableDataset.map()
 BATCH_SIZE: Optional[int] = 1000
 WRITER_BATCH_SIZE: Optional[int] = 1000
 CACHE_FILE_NAME: Optional[str] = None
 NUM_PROC: Optional[int] = None
+KEEP_IN_MEMORY = False
 
-TUNE_TR_N_SAMPLES = None
-TUNE_VL_N_SAMPLES = None
-TUNE_TS_N_SAMPLES = 0
-
+# Variables for hyperparameter tuning.
 N_INITIAL_POINTS = 16
-N_TRIALS = 64  # including the initial points
+N_TRIALS = 64
 TUNE_RESOURCES_PER_TRIAL = {
     "cpu": 4,
     "gpu": 1,
@@ -220,32 +205,28 @@ MODEL_NAMES = [
     "mamba",
 ]
 
-RETURN_ATTENTION_MASK = {
-    "longformer": True,
-    "reformer": True,
-    "nystromformer": True,
-    "fnet": False,
-    "malconv": False,
-    "malconvgct": False,
-    "mymalconv": False,
-    "hrrformer": True,
-    "rwkv": False,
-    "mamba": False,
-}
+RETURN_ATTENTION_MASK = [
+    "longformer",
+    "reformer",
+    "nystromformer",
+    "hrrformer",
+]
 
+REQ_CLS_TOKEN = [
+    "longformer",
+    "reformer",
+    "nystromformer",
+    "fnet",
+    "hrrformer",
+]
 
-APPLY_BERT_PROCESSING = {
-    "longformer": True,
-    "reformer": False,
-    "nystromformer": False,
-    "fnet": True,
-    "malconv": False,
-    "malconvgct": False,
-    "mymalconv": False,
-    "hrrformer": True,
-    "rwkv": False,
-    "mamba": False,
-}
+REQ_BOS_TOKEN = [
+    "rwkv",
+    "mamba",
+]
+
+REQ_EOS_TOKEN = [
+]
 
 MODEL_NAME_TO_CONFIG_CLASS = {
     "longformer": LongformerConfig,
@@ -316,7 +297,7 @@ class UtilCallback(TrainerCallback):
         if self.do_print:
             print(d, end="\n", flush=True)
 
-        if self._time_step_deltas != []:
+        if len(self._time_step_deltas) > 0:
             d = {"mean_time_per_step": np.mean(np.array(self._time_step_deltas))}
             state.log_history[-1].update(d)
             self._time_step_deltas = []
@@ -612,7 +593,7 @@ def get_config(
         return get_config_from_path(model_name_or_path, **kwds)
 
     # Handle float values when hyperparameter tuning.
-    # FIXME: this probably gets broken...
+    # TODO: this probably got broken at some point.
     float_to_int_kwds = [
         "num_hidden_layers",
         "num_attention_heads",
@@ -701,6 +682,8 @@ def get_config(
         kwds = kwds | dict(
             vocab_size=vocab_size,
             pad_token_id=tokenizer.pad_token_id,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
             pad_vocab_size_multiple=PAD_TO,
         )
         return MambaConfig(**kwds)
@@ -846,19 +829,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
     print(f"{args=}", flush=True)
 
-    DATASET_TYPE: Literal["HF", "PT"]
     MODEL_TYPE: Literal["HF", "MC"] = get_model_type(args.model_name_or_path)
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
 
     oh = OutputHelper(
         args.model_name_or_path,
         args.representation,
+        args.algorithm,
+        args.vocab_size,
         args.max_length,
         args.task,
         args.tr_size,
         args.depth,
-        args.bodmas_min_freq,
-        args.bodmas_top_k,
+        args.min_freq,
+        args.top_k,
         args.enforce_cutoff,
         args.tr_length_cutoff,
         args.ft_freeze_positional_embeddings,
@@ -879,8 +863,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     tokenizer = get_tokenizer(
-        model_requires_cls_token=APPLY_BERT_PROCESSING[MODEL_NAME],
-        bit_representation=args.representation,
+        model_requires_cls_token=MODEL_NAME in REQ_CLS_TOKEN,
+        representation=args.representation,
+        algorithm=args.algorithm,
+        vocab_size=args.vocab_size,
         model_max_length=args.max_length,
     )
     print(f"{tokenizer=}")
@@ -890,155 +876,107 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{tokenizer.model_input_names=}")
     print(BR, flush=True)
 
-    dataset: DatasetDict | dict[Literal["tr", "vl", "ts"], BinaryDataset | Subset[BinaryDataset]] = None
-    dist: Optional[Counter[str, int]] = None
 
-    fns = [
-        partial(interpret_bytes_as_integers, bits_in_byte=int(args.representation)),
-        to_long_tensor,
-        partial(preprocess_fn_shift_token_idx, shift=len(tokenizer.all_special_ids)),
-    ]
-    if APPLY_BERT_PROCESSING[MODEL_NAME]:
-        fns.append(partial(preprocess_fn_add_cls_token, cls_token_id=tokenizer.cls_token_id))
-    preprocess_fn = lambda x: reduce(lambda y, func: func(y), fns, x)
-
+    # Get the raw materials for the dataset, i.e., the files, labels, etc.
+    id2label: Optional[dict[int, str]] = None
+    label2id: Optional[dict[str, int]] = None
+    dist: Optional[Counter] = None
+    num_classes: Optional[int] = None
+    weight: Optional[Tensor] = None
     if args.task in ("mlm", "clm"):
-        dataset = get_sorel_dataset(
-            subset=args.subset,
-            max_length=int(args.max_length * int(args.representation) / 8),
-            preprocess_fn=preprocess_fn,
-            streaming=args.streaming,
-            vl_size=args.vl_size,
-            ts_size=args.ts_size,
-        )
+        materials = get_materials_pretrain_sorel(args.tr_size, args.vl_size, args.ts_size)
     elif args.task == "clf":
-        # dataset, dist = get_bodmas_dataset(
-        #     subset=args.subset,
-        #     min_freq=args.bodmas_min_freq,
-        #     top_k=args.bodmas_top_k,
-        #     vl_size=args.vl_size,
-        #     ts_size=args.ts_size,
-        #     max_length=int(args.max_length * int(args.representation) / 8),
-        #     preprocess_fn=preprocess_fn,
-        # )
-        # dataset, dist = get_sorel_dataset_clf(
-        #     subset=args.subset,
-        #     min_freq=args.bodmas_min_freq,
-        #     top_k=args.bodmas_top_k,
-        #     vl_size=args.vl_size,
-        #     ts_size=args.ts_size,
-        #     max_length=args.max_length,
-        #     preprocess_fn=preprocess_fn,
-        # )
-        # dataset, dist = get_bodmas_dataset_slice(
-        #     tr_size=args.tr_size,
-        #     vl_size=args.vl_size,
-        #     ts_size=args.ts_size,
-        #     min_freq=args.bodmas_min_freq,
-        #     top_k=args.bodmas_top_k,
-        #     max_length=args.max_length,
-        #     preprocess_fn=preprocess_fn,
-        # )
-        # dataset, dist = get_bodmas_dataset_balanced(
-        #     samples_per_class=args.bodmas_min_freq,
-        #     max_length=args.max_length,
-        #     preprocess_fn=preprocess_fn,
-        # )
-
-        # dataset, dist = get_length_extrapolation_dataset(args.tr_length_cutoff, args.enforce_cutoff)
-        dataset, dist = get_length_extrapolation_dataset_sorel_original_labels(
-            tr_length_cutoff=args.tr_length_cutoff,
-            enforce_length=True,
-            tr_size=args.tr_size,
-            ts_size=args.ts_size,
-            tr_length_cutoffs=[
-                2 ** 17,
-                2 ** 18,
-                (2 ** 18) + (2 ** 17),
-                2 ** 19,
-                (2 ** 19) + (2 ** 17),
-                (2 ** 19) + (2 ** 18) + (2 ** 17),
-                (2 ** 20),
-            ],
-            max_length=args.max_length,
-            preprocess_fn=preprocess_fn,
-            streaming=args.streaming,
+        materials = get_materials_clf_bodmas(
+            args.tr_size,
+            args.vl_size,
+            args.ts_size,
+            top_k=args.top_k,
+            min_freq=args.min_freq,
         )
-
-
-    if isinstance(dataset, (Dataset, DatasetDict, IterableDataset, IterableDatasetDict)):
-        DATASET_TYPE = "HF"
-    else:
-        DATASET_TYPE = "PT"
-
-    if args.do_tune:
-        if DATASET_TYPE != "HF":
-            raise NotImplementedError("TODO: transition to pytorch's datasets.")
-        if isinstance(TUNE_TR_N_SAMPLES, int):
-            if TUNE_TR_N_SAMPLES == 0:
-                dataset.pop("tr")
-            else:
-                dataset["tr"] = dataset["tr"].select(range(TUNE_TR_N_SAMPLES))
-        if isinstance(TUNE_VL_N_SAMPLES, int):
-            if TUNE_VL_N_SAMPLES == 0:
-                dataset.pop("vl")
-            else:
-                dataset["vl"] = dataset["vl"].select(range(TUNE_VL_N_SAMPLES))
-        if isinstance(TUNE_TS_N_SAMPLES, int):
-            if TUNE_TS_N_SAMPLES == 0:
-                dataset.pop("ts")
-            else:
-                dataset["ts"] = dataset["ts"].select(range(TUNE_TS_N_SAMPLES))
-
-    if DATASET_TYPE == "PT":
-        for k, d in dataset.items():
-            print(f"{k} -- {get_dataset_from_wrappers(d)}")
-    else:
-        print(f"{dataset['tr'].info=}", flush=True)
-        print(f"{dataset['vl'].info=}", flush=True)
-        print(f"{dataset['ts'].info=}", flush=True)
+        id2label = materials.id2label
+        label2id = materials.label2id
+        dist = materials.dist
+        num_classes = len(id2label)
+        weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
     print(f"{dist=}")
     print(BR, flush=True)
 
-    if args.streaming:
-        if training_arguments.max_steps == -1:
-            max_steps = compute_total_steps(
-                len(dataset["tr"]),
-                training_arguments.num_train_epochs,
-                training_arguments.per_device_train_batch_size,
-                training_arguments.gradient_accumulation_steps,
-            )
-            assert isinstance(max_steps, int)
-            training_arguments = replace(training_arguments, max_steps=max_steps)
-        if DATASET_TYPE == "HF":
-            # For some reason, the intuitive way of creating a IterableDatasetDict causes issues.
-            ds = IterableDatasetDict()
-            num_shards = training_arguments.dataloader_num_workers
-            if not training_arguments.dataloader_num_workers:
-                num_shards = 1
-            for split in dataset:
-                ds[split] = dataset[split].to_iterable_dataset(num_shards)
-            dataset = ds
-            del ds, num_shards
 
-    # CLM/MLM heads ignore classification-specific arugments, so we can leave these as defaults.
-    num_classes: Optional[int] = None
-    id2label: Optional[dict[int, str]] = None
-    label2id: Optional[dict[str, int]] = None
-    if args.task == "clf":
-        if DATASET_TYPE == "HF":
-            num_classes = dataset["tr"].info.features["labels"].num_classes
-            id2label = {i: l for i, l in enumerate(dataset["tr"].info.features["labels"].names)}
-            label2id = {l: i for i, l in enumerate(id2label.values())}
-            dataset = dataset.rename_column("labels", "label")
-        elif DATASET_TYPE == "PT":
-            id2label = get_dataset_from_wrappers(dataset["tr"]).id2label
-            label2id = get_dataset_from_wrappers(dataset["tr"]).label2id
-            num_classes = get_dataset_from_wrappers(dataset["tr"]).num_classes
-        print(f"{id2label=}")
-        print(f"{label2id=}")
-        print(f"{dist=}")
-        weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
+    # If we have apriori knowledge of the length of the dataset, we can compute the number of steps
+    # from the number of training epochs.
+    if args.streaming and training_arguments.max_steps == -1:
+        max_steps = compute_total_steps(
+            len(materials.tr_vl_ts_files_and_labels["tr"][0]),
+            training_arguments.num_train_epochs,
+            training_arguments.per_device_train_batch_size,
+            training_arguments.gradient_accumulation_steps,
+        )
+        assert isinstance(max_steps, int)
+        training_arguments = replace(training_arguments, max_steps=max_steps)
+
+
+    dataset: DatasetDict | IterableDatasetDict | MapBinaryDatasetDict | IterableBinaryDatasetDict
+    if args.dataset_backend == "HF":
+        dataset = get_dataset_hf(
+            materials,
+            args.streaming,
+            training_arguments.dataloader_num_workers,
+            max_length=args.max_length * args.representation // 8,
+        )
+        print_dataset_hf(dataset)
+
+        if args.algorithm == "Raw":
+            preprocess_fn = partial(
+                hf_bytes_to_input_ids,
+                bits_in_byte=args.representation,
+                num_special_ids=len(tokenizer.all_special_ids),
+                cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
+                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+                eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+            )
+        else:
+            preprocess_fn = partial(
+                hf_tokenize_bytes,
+                tokenizer=tokenizer,
+                max_length=args.max_length,
+            )
+        dataset = dataset.map(**get_map_kwds_for_hf_datasets(
+            function=preprocess_fn,
+            dataset=dataset,
+            remove_columns=["name", "bytes"] if args.task == "clf" else ["name", "bytes", "labels"],
+        ))
+        print_dataset_hf(dataset)
+
+        if args.exit_after_map:
+            sys.exit(0)
+        if MOVE_IN_MEMORY:
+            for s in dataset:
+                dataset[s] = dataset[s].select(range(len(dataset[s])), keep_in_memory=True)
+
+    else:
+        if args.algorithm == "Raw":
+            preprocess_fn = partial(
+                bytes_to_input_ids,
+                bits_in_byte=args.representation,
+                num_special_ids=len(tokenizer.all_special_ids),
+                cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
+                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+                eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+            )
+        else:
+            preprocess_fn = partial(
+                tokenize_bytes,
+                tokenizer=tokenizer,
+                max_length=args.max_length,
+            )
+
+        dataset = get_dataset_pt(
+            materials,
+            args.streaming,
+            max_length=args.max_length * args.representation // 8,
+            preprocess_fn=preprocess_fn,
+        )
+        print_dataset_pt(dataset)
 
     config = get_config(
         args.model_name_or_path,
@@ -1053,45 +991,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{config=}")
     print(BR, flush=True)
 
-    if PREPROCESS_AS_TEXT:
-        function = partial(
-            examples_to_text,
-            max_length=args.max_length if args.task == "clf" else args.max_length * args.depth,
-        )
-    elif PREPROCESS_AS_INPUT_IDS:
-        function = partial(
-            examples_to_input_ids,
-            max_length=args.max_length,
-            do_pad=PREPROCESS_AS_INPUT_IDS_DO_PAD,
-            pad_idx=tokenizer.pad_token_id,
-            pad_to_length=args.max_length,
-        )
-    else:
-        raise RuntimeError("Specify either `PREPROCESS_AS_TEXT` or `PREPROCESS_AS_INPUT_IDS`.")
-
-    if DATASET_TYPE == "HF":
-        dataset = dataset.map(**get_map_kwds_for_hf_datasets(function, dataset))
-
-    if PREPROCESS_AS_TEXT and DATASET_TYPE == "HF":
-        remove_columns = ["name", "bytes", "size", "length", "text"]
-        remove_columns = remove_columns + ["labels"] if args.task != "clf" else remove_columns
-        function = partial(  # The partial function here is picky (`tokenizer` must be arg not kwd)
-            tokenize_fn,
-            tokenizer,
-            truncation=True,
-            max_length=args.max_length,
-            return_overflowing_tokens=args.task in ("mlm", "clm"),
-            add_special_tokens=True,
-        )
-        dataset = dataset.map(
-            **get_map_kwds_for_hf_datasets(function, dataset, remove_columns=remove_columns)
-        )
-
-    if args.exit_after_map:
-        sys.exit(0)
-    if MOVE_IN_MEMORY and not args.streaming and DATASET_TYPE == "HF":
-        for s in dataset:
-            dataset[s] = dataset[s].select(range(len(dataset[s])), keep_in_memory=True)
 
     pad_to_multiple_of = PAD_TO
     if isinstance(config, transformers.ReformerConfig):
@@ -1100,19 +999,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     # Change the tokenizer's attributes for the data_collator to use correctly.
     # This let's us use the previously generated cache files then drop the
     # attention_mask before passing the inputs to the model.
-    if not RETURN_ATTENTION_MASK[MODEL_NAME]:
+    if MODEL_NAME not in RETURN_ATTENTION_MASK:
         tokenizer.model_input_names.remove("attention_mask")
 
     if args.task == "clf":
-        if PREPROCESS_AS_INPUT_IDS and PREPROCESS_AS_INPUT_IDS_DO_PAD:
-            data_collator = DefaultDataCollator()
-        else:
-            data_collator = DataCollatorWithPadding(
-                tokenizer=tokenizer,
-                padding="max_length" if MODEL_TYPE == "MC" else "longest",  # malconv needs padding to its max_length
-                pad_to_multiple_of=pad_to_multiple_of,
-                max_length=args.max_length,  # hopefully, the sequences were truncated before hand...
-            )
+        data_collator = DataCollatorWithPadding(
+            tokenizer=tokenizer,
+            padding="max_length" if MODEL_TYPE == "MC" else "longest",  # malconv needs padding to its max_length
+            pad_to_multiple_of=pad_to_multiple_of,
+            max_length=args.max_length,  # hopefully, the sequences were truncated before hand...
+        )
         compute_metrics = clf_compute_metrics
     elif args.task == "mlm":
         data_collator = DataCollatorForLanguageModeling(
@@ -1120,7 +1016,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             mlm=True,
             pad_to_multiple_of=pad_to_multiple_of,
         )
-        # compute_metrics = mlm_compute_metrics
         compute_metrics = None
     elif args.task == "clm":
         data_collator = DataCollatorForLanguageModeling(
@@ -1128,7 +1023,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             mlm=False,
             pad_to_multiple_of=pad_to_multiple_of,
         )
-        # compute_metrics = clm_compute_metrics
         compute_metrics = None
 
     print(f"{data_collator=}")
@@ -1207,7 +1101,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 train_dataset=dataset["tr"],
                 eval_dataset=dataset["vl"],
                 data_collator=data_collator,
-                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
+                tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: args.algorithm.lower() != "raw"
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
@@ -1236,7 +1130,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             except OSError:
                 pass
 
-            # FIXME: if the OOM error arises during the evaluation loop while training, this could
+            # TODO: if the OOM error arises during the evaluation loop while training, this could
             # cause irresponsible and unessecary reduction of the training batch size when we really
             # should be decrementing the evaluation batch size.
             per_device_eval_batch_size = batch_size
@@ -1260,7 +1154,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 train_dataset=dataset["tr"],
                 eval_dataset=dataset["vl"],
                 data_collator=data_collator,
-                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
+                tokenizer=tokenizer if args.dataset_backend == "HF" else None,
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
@@ -1278,7 +1172,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 train_dataset=dataset["tr"],
                 eval_dataset=dataset["vl"],
                 data_collator=data_collator,
-                tokenizer=tokenizer if DATASET_TYPE == "HF" else None,
+                tokenizer=tokenizer if args.dataset_backend == "HF" else None,
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )

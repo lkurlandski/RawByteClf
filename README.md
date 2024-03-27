@@ -82,3 +82,5 @@ pip install /path/to/mamba/repository
 find /path/to/directory -type d -path "*/None/10/*" -regex '.*/[0-9]+/None/10/.*'
 
 
+cythonize -i src/learn/bytes_to_str_utf8.pyx
+
