@@ -220,12 +220,22 @@ REQ_CLS_TOKEN = [
     "hrrformer",
 ]
 
+REQ_SEP_TOKEN = [
+    "longformer",
+    "reformer",
+    "nystromformer",
+    "fnet",
+    "hrrformer",
+]
+
 REQ_BOS_TOKEN = [
     "rwkv",
     "mamba",
 ]
 
 REQ_EOS_TOKEN = [
+    "rwkv",
+    "mamba",
 ]
 
 MODEL_NAME_TO_CONFIG_CLASS = {
@@ -863,16 +873,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     tokenizer = get_tokenizer(
-        model_requires_cls_token=MODEL_NAME in REQ_CLS_TOKEN,
         representation=args.representation,
         algorithm=args.algorithm,
         vocab_size=args.vocab_size,
         model_max_length=args.max_length,
+        add_cls_token=MODEL_NAME in REQ_CLS_TOKEN,
+        add_bos_token=MODEL_NAME in REQ_BOS_TOKEN,
+        add_eos_token=MODEL_NAME in REQ_EOS_TOKEN,
+        add_sep_token=MODEL_NAME in REQ_SEP_TOKEN,
     )
     print(f"{tokenizer=}")
-    print(f"{tokenizer.all_special_ids=}")
-    print(f"{tokenizer.all_special_tokens=}")
-    print(f"{tokenizer.all_special_tokens_extended=}")
+    pprint({k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)})
     print(f"{tokenizer.model_input_names=}")
     print(BR, flush=True)
 
@@ -931,7 +942,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 bits_in_byte=args.representation,
                 num_special_ids=len(tokenizer.all_special_ids),
                 cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
-                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_BOS_TOKEN else None,
                 eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
             )
         else:
@@ -960,7 +971,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 bits_in_byte=args.representation,
                 num_special_ids=len(tokenizer.all_special_ids),
                 cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
-                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_BOS_TOKEN else None,
                 eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
             )
         else:
