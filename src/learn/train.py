@@ -932,7 +932,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             materials,
             args.streaming,
             training_arguments.dataloader_num_workers,
-            max_length=args.max_length * args.representation // 8,
+            max_length=args.data_read_bytes,
         )
         print_dataset_hf(dataset)
 
@@ -984,7 +984,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset = get_dataset_pt(
             materials,
             args.streaming,
-            max_length=args.max_length * args.representation // 8,
+            max_length=args.data_read_bytes,
             preprocess_fn=preprocess_fn,
         )
         print_dataset_pt(dataset)

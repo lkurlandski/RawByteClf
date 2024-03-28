@@ -71,6 +71,7 @@ class Args:
     early_stopping_patience: int = field(default=1)
     early_stopping_threshold: float = field(default=0.0)
     dataset_backend: str = field(default="PT")
+    data_read_bytes: Optional[int] = field(default=None)
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -104,6 +105,9 @@ class Args:
         self.vl_size = IntOrFloat(self.vl_size) if self.vl_size == 0.0 else self.vl_size
         self.ts_size = IntOrFloat(self.ts_size) if self.ts_size == 0.0 else self.ts_size
 
+        if self.data_read_bytes is None:
+            self.data_read_bytes = int(self.max_length * self.representation // 8)
+        
 
 class OutputHelper:
 
