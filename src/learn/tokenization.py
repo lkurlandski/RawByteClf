@@ -270,7 +270,7 @@ def tokenizer_path_read(
     if num_files is not None:
         return tokenizer_path(algorithm, vocab_size, num_files)
     return get_highest_path(
-        TOKENIZERS_OUTPUT_PATH,
+        list(TOKENIZERS_OUTPUT_PATH.glob(f"{algorithm}_{vocab_size}_*.json")),
         lstrip=f"{algorithm}_{vocab_size}_",
         rstrip=".json",
     )
@@ -418,7 +418,7 @@ def train_tokenizer(
                 max_token_length=max_token_length,
             )
         elif algorithm == "Unigram":
-            model = models.Unigram()
+            model = models.Unigram()  # FIXME: add unk_token argument
             trainer = trainers.UnigramTrainer(
                 vocab_size=vocab_size_with_specials,
                 special_tokens=special_tokens,
@@ -426,13 +426,13 @@ def train_tokenizer(
                 max_piece_length=max_token_length,
             )
         elif algorithm == "WordPiece":
-            model = models.WordPiece()
+            model = models.WordPiece()  # FIXME: add unk_token argument
             trainer = trainers.WordPieceTrainer(
                 vocab_size=vocab_size_with_specials,
                 special_tokens=special_tokens,
             )
         elif algorithm == "WordLevel":
-            model = models.WordLevel()
+            model = models.WordLevel()  # FIXME: add unk_token argument
             trainer = trainers.WordLevelTrainer(
                 vocab_size=vocab_size_with_specials,
                 special_tokens=special_tokens,
@@ -467,6 +467,9 @@ def cli():
 
 
 if __name__ == "__main__":
+
+    get_tokenizer(False, 8, "BPE", 1024)
+
     print(f"START @{datetime.now()}")
     print(BR, flush=True)
     cli()
