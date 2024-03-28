@@ -3,20 +3,26 @@ Useful functions for the project.
 """
 
 import asyncio
+import bz2
 from collections.abc import Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
+import gzip
 import inspect
+from io import BytesIO
 from itertools import islice
 import json
+import lzma
 import os
 from pathlib import Path
 import sys
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+import zlib
 
 import numpy as np
 import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
+import py7zr
 import torch
 from torch import nn, ByteTensor, LongTensor, Tensor
 
@@ -90,12 +96,20 @@ def get_highest_path(
 ) -> Path:
     """
     Get the highest/lowest numerically indexed path from a directory or a collection of paths.
+
+    Note that lstrip and rstrip are applied to the stem of the path and that they do not align
+    with the typical API for str.lstrip and str.rstrip.
     """
 
     def key(p: Path) -> int:
-        return int(p.stem.lstrip(lstrip).rstrip(rstrip))
+        s = p.stem
+        if s.startswith(lstrip):
+            s = s[len(lstrip):]
+        if s.endswith(rstrip):
+            s = s[:-len(rstrip)]
+        return int(s)
 
-    files = Path(path).iterdir() if isinstance(path, (Path, str)) else path
+    files = list(Path(path).iterdir()) if isinstance(path, (Path, str)) else path
     idx = 0 if lowest else -1
     return list(sorted(files, key=key))[idx]
 
@@ -338,6 +352,29 @@ def is_jsonable(x: Any) -> bool:
         return True
     except (TypeError, OverflowError):
         return False
+
+
+def compress(bs: bytes, compression_type: Literal["gzip", "bzip2", "lzma", "zlib", "7z"], **kwds) -> bytes:
+    if compression_type == "gzip":
+        return gzip.compress(bs, **kwds)
+
+    if compression_type == "bzip2":
+        return bz2.compress(bs, **kwds)
+
+    if compression_type == "lzma":
+        return lzma.compress(bs, **kwds)
+
+    if compression_type == "zlib":
+        return zlib.compress(bs, **kwds)
+
+    if compression_type == "7z":
+        fp = BytesIO()
+        with py7zr.SevenZipFile(fp, 'w') as archive:
+            archive.writef(BytesIO(bs), "tmp")
+        fp.seek(0)
+        return fp.read()
+
+    raise RuntimeError(f"Unknown compression type: {compression_type}")
 
 
 if __name__ == "__main__":
