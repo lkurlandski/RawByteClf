@@ -12,7 +12,7 @@ BODY = """#!/bin/bash -l
 #SBATCH --time=DD-HH:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks=4
+#SBATCH --ntasks=5
 #SBATCH --mem=MEMORY
 #SBATCH --gres=gpu:a100:1
 
@@ -36,13 +36,12 @@ src/learn/train.py \\
 --group_by_length \\
 --tr_length_cutoff=TR_LENGTH_CUTOFF \\
 --do_train \\
---do_eval \\
 --output_dir=tmp \\
 --save_strategy="epoch" \\
 --evaluation_strategy="epoch" \\
 --num_train_epochs=10 \\
 --logging_steps=100 \\
---dataloader_num_workers=3 \\
+--dataloader_num_workers=4 \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
@@ -53,6 +52,7 @@ src/learn/train.py \\
 --save_total_limit=3 \\
 --model_name_or_path=MODEL_NAME_OR_PATH \\
 --max_length=1048576 \\
+--auto_find_batch_size_and_gradient_accumulation_steps \\
 --per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE \\
 --per_device_eval_batch_size=PER_DEVICE_EVAL_BATCH_SIZE \\
 --gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS \\
@@ -79,20 +79,22 @@ class Config:
 
 
 ARCH_CONFIG = {
-    "mymalconv": '{"hidden_size": 512}',
-    "mamba": '{"d_model": 64, "n_layer": 2, "mlp_hidden_size": 512}'
+    "mymalconv": '{"hidden_size": 512}', # 0.5M
+    "mamba-tiny": '{"d_model": 64, "n_layer": 2, "mlp_hidden_size": 512}',  # 0.1M
+    "mamba-small": '{"d_model": 192, "n_layer": 8, "mlp_hidden_size": 512}',  # 3.5M
 }
 
 
 # [28.311552, 44.040192, 59.768832, 75.497472, 91.226112, 122.683392, 138.412032]
 THRESHOLDS = [
-    2 ** 17,
-    2 ** 18,
-    (2 ** 18) + (2 ** 17),
-    2 ** 19,
-    (2 ** 19) + (2 ** 17),
-    (2 ** 19) + (2 ** 18) + (2 ** 17),
-    (2 ** 20),
+    (2 ** 17),                            # 0
+    (2 ** 18),                            # 1
+    (2 ** 18) + (2 ** 17),                # 2
+    (2 ** 19),                            # 3
+    (2 ** 19) + (2 ** 17),                # 4
+    (2 ** 19) + (2 ** 18),                # 5
+    (2 ** 19) + (2 ** 18) + (2 ** 17),    # 6
+    (2 ** 20),                            # 7
 ]
 
 
@@ -102,16 +104,27 @@ CONFIGS = [
     Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[2], "02-00", "128G"),
     Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[3], "02-00", "128G"),
     Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[4], "03-00", "128G"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[5], "03-00", "160G"),
-    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[6], "03-00", "192G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[5], "03-00", "144G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[6], "03-00", "160G"),
+    Config("mymalconv", ARCH_CONFIG["mymalconv"], THRESHOLDS[7], "03-00", "192G"),
 
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[0], "01-00", "96G", 32, 2, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[1], "01-00", "96G", 16, 4, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[2], "02-00", "128G", 8, 8, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[3], "02-00", "128G", 8, 8, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[4], "03-00", "128G", 4, 16, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[5], "03-00", "160G", 4, 16, 8),
-    Config("mamba", ARCH_CONFIG["mamba"], THRESHOLDS[6], "03-00", "192G", 4, 16, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[0], "01-00", "96G", 32, 2, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[1], "01-00", "96G", 16, 4, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[2], "02-00", "128G", 8, 8, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[3], "02-00", "128G", 8, 8, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[4], "03-00", "128G", 4, 16, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[5], "03-00", "144G", 4, 16, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[6], "03-00", "160G", 4, 16, 8),
+    Config("mamba", ARCH_CONFIG["mamba-tiny"], THRESHOLDS[7], "03-00", "192G", 4, 16, 8),
+
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[0], "03-00", "96G", 8, 8, 2),
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[1], "03-00", "96G", 8, 8, 2),
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[2], "03-00", "128G", 8, 8, 2),
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[3], "04-00", "128G", 8, 8, 2),
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[4], "04-00", "128G", 8, 8, 2),
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[5], "04-00", "144G", 8, 8, 2),
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[6], "05-00", "160G", 8, 8, 2),
+    Config("mamba", ARCH_CONFIG["mamba-small"], THRESHOLDS[7], "05-00", "192G", 8, 8, 2),
 ]
 
 
@@ -121,7 +134,8 @@ OUTPUT = Path(os.path.realpath(__file__)).parent
 
 outfiles = []
 for config in CONFIGS:
-    jobname = f"lxs_{config.model_name_or_path}_{config.threshold}"
+    model_name = [k for k, v in ARCH_CONFIG.items() if v == config.arch_config][0]
+    jobname = f"lxs_{model_name}_{config.threshold}"
     print(jobname)
 
     text = BODY \
