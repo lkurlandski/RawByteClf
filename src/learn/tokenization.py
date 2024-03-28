@@ -207,15 +207,55 @@ def tokenization_gen(
         yield return_batch(batch)
 
 
-class FastTokenizerForModelsThatRequireCLSToken(PreTrainedTokenizerFast):
-    def build_inputs_with_special_tokens(self,
+class PreTrainedTokenizerFastWithAddedSpecialTokens(PreTrainedTokenizerFast):
+    """
+    This doesn't work for the PreTrainedTokenizerFast, only when it inherits from the
+    PreTrainedTokenizer (slow).
+    """
+
+    def __init__(
+        self,
+        add_cls_token: bool = False,
+        add_bos_token: bool = False,
+        add_eos_token: bool = False,
+        add_sep_token: bool = False,
+        **kwds,
+    ) -> None:
+        super().__init__(**kwds)
+
+        if add_cls_token and add_bos_token:
+            raise ValueError(f"Cannot add both the cls_token and bos_token.")
+        if add_eos_token and add_sep_token:
+            raise ValueError(f"Cannot add both the eos_token and sep_token.")
+
+        if add_cls_token:
+            self.prepend_token = [self.cls_token_id]
+        elif add_bos_token:
+            self.prepend_token = [self.bos_token_id]
+        else:
+            self.prepend_token = []
+
+        if add_eos_token:
+            self.append_token = [self.eos_token_id]
+        elif add_sep_token:
+            self.append_token = [self.sep_token_id]
+        else:
+            self.append_token = []
+
+    def build_inputs_with_special_tokens(
+        self,
         token_ids_0: list[int],
         token_ids_1: Optional[list[int]] = None,
     ) -> list:
-        output = [self.cls_token_id] + token_ids_0 + [self.sep_token_id]
-        if token_ids_1 is not None:
-            output += token_ids_1 + [self.sep_token_id]
-        return output
+
+        print(f"In the method: build_inputs_with_special_tokens")
+
+        token_ids_0 = self.prepend_token + token_ids_0 + self.append_token
+        if token_ids_1 is None:
+            return token_ids_0
+
+        token_ids_1 = self.prepend_token + token_ids_1 + self.append_token
+        return token_ids_0 + [self.sep_token_id] + token_ids_1
 
 
 def get_tokenizer_object_8bit() -> Tokenizer:
@@ -321,10 +361,13 @@ def get_fast_tokenizer(
 
 
 def get_tokenizer(
-    model_requires_cls_token: bool = False,
     representation: int = 8,
     algorithm: TokenizerAlgorithm = "Raw",
     vocab_size: Optional[int] = None,
+    add_cls_token: bool = False,
+    add_bos_token: bool = False,
+    add_eos_token: bool = False,
+    add_sep_token: bool = False,
     **kwds,
 ) -> PreTrainedTokenizerFast:
     """
@@ -343,11 +386,6 @@ def get_tokenizer(
             tokenizer = get_tokenizer_object_16bit()
         else:
             raise ValueError(f"Representation not supported: {representation}")
-        if model_requires_cls_token:
-            tokenizer.post_processor = processors.BertProcessing(
-                sep=(SPECIALS["sep_token"], SPECIALS_IDS["sep_token"]),
-                cls=(SPECIALS["cls_token"], SPECIALS_IDS["cls_token"]),
-            )
 
     else:
         path: Path = tokenizer_path_read(algorithm, vocab_size)
@@ -355,13 +393,28 @@ def get_tokenizer(
             raise FileNotFoundError(f"For {representation=}, could not locate {path.as_posix()=}")
         tokenizer = Tokenizer.from_file(path.as_posix())
 
-    if model_requires_cls_token:
-        tokenizer = FastTokenizerForModelsThatRequireCLSToken(tokenizer_object=tokenizer, **(kwds | SPECIALS))
+    if add_bos_token:
+        start = SPECIALS["bos_token"]
+    elif add_cls_token:
+        start = SPECIALS["cls_token"]
     else:
-        tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, **(kwds | SPECIALS))
+        start = ""
 
-    tokenizer.add_special_tokens(SPECIALS)
+    if add_eos_token:
+        end = SPECIALS["eos_token"]
+    elif add_sep_token:
+        end = SPECIALS["sep_token"]
+    else:
+        end = ""
 
+    # TODO: no idea what this does for the `pair`
+    tokenizer.post_processor = processors.TemplateProcessing(
+        single=f"{start} $0 {end}",
+        pair=f"{start} $A {end} {SPECIALS['sep_token']} {start} $B:1 {end}",
+        special_tokens=tuple((s, i) for i, s in enumerate(SPECIALS.values())),
+    )
+
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, **(kwds | SPECIALS))
     return tokenizer
 
 
@@ -493,6 +546,11 @@ if __name__ == "__main__":
     # )
     # for b in gen:
     #     print(len(b))
+
+    # tokenizer = get_tokenizer(8, "BPE", 1024, False, True, True, False)
+    # file = list(islice(DATASET_TO_FILES["binaries"]["bodmas_pe"](), 1))[0]
+    # text = bytes_to_str_utf8(file.read_bytes())
+    # encoding = tokenizer(text, add_special_tokens=True)
 
     print(f"START @{datetime.now()}")
     print(BR, flush=True)
