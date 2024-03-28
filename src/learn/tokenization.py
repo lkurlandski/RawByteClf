@@ -8,6 +8,7 @@ Handles preprocessing of malware bytes.
 # pylint: disable=wrong-import-position
 print(f"Entered {__file__=}")
 
+import asyncio
 from collections.abc import Iterator, Generator
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -41,6 +42,7 @@ from tqdm import tqdm
 from src.cfg import BR, SPECIALS, TOKENIZERS_OUTPUT_PATH
 from src.learn.preprocessing import bytes_to_str_ascii, bytes_to_str_utf8
 from src.data.cfg import DATASET_TO_FILES
+from src.data.utils import read_binary_files_asynch
 from src.utils import batched, get_highest_path
 
 
@@ -173,7 +175,16 @@ def tokenization_gen(
     def return_batch(lbs: list[bytes | list[int]]) -> list[str]:
         return [bytes_to_str(bytes(bs)) for bs in lbs]
 
-    byte_stream = chain.from_iterable((open(f, "rb").read() for f in files))
+    loop = asyncio.get_event_loop()
+    future = read_binary_files_asynch(
+        files,
+        max_length=None,
+        in_memory_dtype="bytes",
+        disable_tqdm=False,
+    )
+    lbs = loop.run_until_complete(future)
+
+    byte_stream = chain.from_iterable(lbs)
 
     pbar = tqdm(batched(byte_stream, block_size), total=total, dynamic_ncols=True)
 
@@ -467,8 +478,13 @@ def cli():
 
 
 if __name__ == "__main__":
-
-    get_tokenizer(False, 8, "BPE", 1024)
+    # gen = tokenization_gen(
+    #     list(DATASET_TO_FILES["binaries"]["sorel_pe"]())[0:100],
+    #     batch_size=10,
+    #     block_size=10,
+    # )
+    # for b in gen:
+    #     print(len(b))
 
     print(f"START @{datetime.now()}")
     print(BR, flush=True)
