@@ -175,7 +175,13 @@ def tokenization_gen(
     def return_batch(lbs: list[bytes | list[int]]) -> list[str]:
         return [bytes_to_str(bytes(bs)) for bs in lbs]
 
-    loop = asyncio.get_event_loop()
+    # The typical way of doing this results in
+    # RuntimeError: There is no current event loop in thread 'Dummy-1'
+    # when run within the tokenizer routine.
+    # loop = asyncio.get_event_loop()
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     future = read_binary_files_asynch(
         files,
         max_length=None,
@@ -185,6 +191,8 @@ def tokenization_gen(
     lbs = loop.run_until_complete(future)
 
     byte_stream = chain.from_iterable(lbs)
+
+    # byte_stream = chain.from_iterable((open(f, "rb").read() for f in files))
 
     pbar = tqdm(batched(byte_stream, block_size), total=total, dynamic_ncols=True)
 
