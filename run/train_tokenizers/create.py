@@ -22,7 +22,7 @@ conda activate RawByteClf2
 module unload blindfold
 
 
-python \\
+python -u \\
 src/learn/tokenization.py \\
 --algorithm=ALGORITHM \\
 --vocab_size=VOCAB_SIZE \\
