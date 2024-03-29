@@ -72,6 +72,7 @@ class Args:
     early_stopping_threshold: float = field(default=0.0)
     dataset_backend: str = field(default="PT")
     data_read_bytes: Optional[int] = field(default=None)
+    compression_level: int = field(default=9)
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)

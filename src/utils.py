@@ -356,22 +356,39 @@ def is_jsonable(x: Any) -> bool:
 COMPRESSION_TYPES = ("gzip", "bzip2", "lzma", "zlib", "7z")
 
 
-def compress(bs: bytes, compression_type: Literal["gzip", "bzip2", "lzma", "zlib", "7z"], **kwds) -> bytes:
+def compress(
+    bs: bytes,
+    compression_type: Literal["gzip", "bzip2", "lzma", "zlib", "7z"],
+    compression_level: int = 9,
+    **kwds,
+) -> bytes:
     if compression_type == "gzip":
+        if kwds.get("compresslevel", compression_level) != compression_level:
+            raise RuntimeError("Cannot specify both `compresslevel` and `compression_level`.")
+        kwds["compresslevel"] = compression_level
         return gzip.compress(bs, **kwds)
 
     if compression_type == "bzip2":
+        if kwds.get("compresslevel", compression_level) != compression_level:
+            raise RuntimeError("Cannot specify both `compresslevel` and `compression_level`.")
+        kwds["compresslevel"] = compression_level
         return bz2.compress(bs, **kwds)
 
     if compression_type == "lzma":
+        if kwds.get("preset", compression_level) != compression_level:
+            raise RuntimeError("Cannot specify both `preset` and `compression_level`.")
+        kwds["preset"] = compression_level
         return lzma.compress(bs, **kwds)
 
     if compression_type == "zlib":
+        if kwds.get("level", compression_level) != compression_level:
+            raise RuntimeError("Cannot specify both `level` and `compression_level`.")
+        kwds["level"] = compression_level
         return zlib.compress(bs, **kwds)
 
     if compression_type == "7z":
         fp = BytesIO()
-        with py7zr.SevenZipFile(fp, 'w') as archive:
+        with py7zr.SevenZipFile(fp, "w", **kwds) as archive:
             archive.writef(BytesIO(bs), "tmp")
         fp.seek(0)
         return fp.read()

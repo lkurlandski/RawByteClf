@@ -108,8 +108,8 @@ def tokenize_bytes(
     return [to_long_tensor(i) for i in batch_encoding.data["input_ids"]]
 
 
-def hf_compress_bytes(examples: dict[str, list], compression_type: str) -> dict[str, list]:
-    return {"bytes": [compress(bs, compression_type) for bs in examples["bytes"]]}
+def hf_compress_bytes(examples: dict[str, list], compression_type: str, compression_level: int = 9) -> dict[str, list]:
+    return {"bytes": [compress(bs, compression_type, compression_level) for bs in examples["bytes"]]}
 
 
 def hf_tokenize_bytes(

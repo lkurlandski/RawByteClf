@@ -943,7 +943,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES:
             preprocess_fns = []
             if args.algorithm in COMPRESSION_TYPES:
-                preprocess_fns.append(partial(hf_compress_bytes, compression_type=args.algorithm))
+                preprocess_fns.append(partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level))
             preprocess_fns.append(partial(
                 hf_bytes_to_input_ids,
                 bits_in_byte=args.representation,
@@ -977,7 +977,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES:
             preprocess_fns = []
             if args.algorithm in COMPRESSION_TYPES:
-                preprocess_fns.append(partial(compress, compression_type=args.algorithm))
+                preprocess_fns.append(partial(compress, compression_type=args.algorithm, compression_level=args.compression_level))
             preprocess_fns.append(partial(
                 bytes_to_input_ids,
                 bits_in_byte=args.representation,
