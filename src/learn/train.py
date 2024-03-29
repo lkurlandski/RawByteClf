@@ -183,7 +183,7 @@ MOVE_IN_MEMORY = False
 BATCH_SIZE: Optional[int] = 1000
 WRITER_BATCH_SIZE: Optional[int] = 1000
 CACHE_FILE_NAME: Optional[str] = None
-NUM_PROC: Optional[int] = 16
+NUM_PROC: Optional[int] = None
 KEEP_IN_MEMORY = False
 
 # Variables for hyperparameter tuning.
@@ -825,7 +825,6 @@ def get_map_kwds_for_hf_datasets(
         "batched": True,
         "batch_size": BATCH_SIZE,
     }
-    map_kwds.update(kwds)
     if isinstance(dataset, (DatasetDict, Dataset)):
         map_kwds.update(
             {
@@ -835,6 +834,7 @@ def get_map_kwds_for_hf_datasets(
                 "writer_batch_size": WRITER_BATCH_SIZE,
             }
         )
+    map_kwds.update(kwds)
     return map_kwds
 
 
@@ -881,10 +881,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         algorithm=args.algorithm,
         vocab_size=args.vocab_size,
         model_max_length=args.max_length,
-        add_cls_token=MODEL_NAME in REQ_CLS_TOKEN,
-        add_bos_token=MODEL_NAME in REQ_BOS_TOKEN,
-        add_eos_token=MODEL_NAME in REQ_EOS_TOKEN,
-        add_sep_token=MODEL_NAME in REQ_SEP_TOKEN,
+        add_cls_token=False,
+        add_bos_token=True,
+        add_eos_token=True,
+        add_sep_token=False,
     )
     print(f"{tokenizer=}")
     pprint({k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)})
@@ -954,16 +954,19 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
             ))
             preprocess_fn = compose_functions(*preprocess_fns)
+            num_proc = len(os.sched_getaffinity(0))
         else:
             preprocess_fn = partial(
                 hf_tokenize_bytes,
                 tokenizer=tokenizer,
                 max_length=args.max_length,
             )
+            num_proc = NUM_PROC
         dataset = dataset.map(**get_map_kwds_for_hf_datasets(
             function=preprocess_fn,
             dataset=dataset,
             remove_columns=["name", "bytes"] if args.task == "clf" else ["name", "bytes", "labels"],
+            num_proc=num_proc,
         ))
         print_dataset_hf(dataset)
 
