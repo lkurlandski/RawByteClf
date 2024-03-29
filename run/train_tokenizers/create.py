@@ -34,8 +34,8 @@ src/learn/tokenization.py \\
 
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
-ALGORITHMS = ["BPE", "WordPiece", "Unigram"]
-VOCAB_SIZES = [1024, 4096, 16384, 65536]
+ALGORITHMS = ["BPE", "Unigram"]
+VOCAB_SIZES = [1024, 4096, 16384, 32768,  65536]
 
 
 outfiles = []
@@ -46,7 +46,7 @@ for alg in ALGORITHMS:
             .replace("JOB_NAME", jobname) \
             .replace("ALGORITHM", alg) \
             .replace("VOCAB_SIZE", str(vs)) \
-            .replace("HH", "12" if alg == "Unigram" else "01")
+            .replace("HH", "01")
 
         outfile = OUTPUT / f"{jobname}.sh"
         outfiles.append(outfile)
