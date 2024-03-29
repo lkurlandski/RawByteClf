@@ -461,14 +461,17 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
 
     def forward(self, input_ids: LongTensor, labels: Optional[LongTensor] = None) -> CausalLMOutput:
         hidden_states: Tensor = self.backbone(input_ids)
-        logits: Tensor = self.head(hidden_states)
 
+        # Use only the final hidden state for classification. This didn't work well...
+        # clf_logits: Tensor = self.head(hidden_states[:,-1,:])
+
+        # # Use all hidden states for classification
+        logits: Tensor = self.head(hidden_states)
         batch_size = input_ids.shape[0]
         sequence_lengths = torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
         sequence_lengths = sequence_lengths % input_ids.shape[-1]
         sequence_lengths = sequence_lengths.to(logits.device)
-
-        pooled_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
+        clf_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
 
         loss = None
         if labels is not None:
@@ -483,21 +486,36 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             if self.config.problem_type == "regression":
                 loss_fct = MSELoss()
                 if self.num_labels == 1:
-                    loss = loss_fct(pooled_logits.squeeze(), labels.squeeze())
+                    loss = loss_fct(clf_logits.squeeze(), labels.squeeze())
                 else:
-                    loss = loss_fct(pooled_logits, labels)
+                    loss = loss_fct(clf_logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(pooled_logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(clf_logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(pooled_logits, labels)
+                loss = loss_fct(clf_logits, labels)
 
         # Returning hidden_states can cause excessive memory build-up during evaluation
         # use TrainingArguments.prediction_loss_only to prevent OOMs is insufficient because
         # we need the logits.
-        return SequenceClassifierOutput(loss=loss, logits=pooled_logits, hidden_states=None)
+        return SequenceClassifierOutput(loss=loss, logits=clf_logits, hidden_states=None)
+
+
+def test():
+    config = MambaConfig(
+        d_model=192,
+        n_layer=8,
+        vocab_size=264,
+        mlp_hidden_size=512,
+        num_labels=7,
+    )
+    clf = MambaForSequenceClassification(config).to("cuda")
+    input_ids = torch.randint(0, 256, (16, 512), dtype=torch.long, device="cuda")
+    print(input_ids)
+    clf.forward(input_ids)
 
 
 if __name__ == "__main__":
-    test_prepare_input_for_backward_model()
+    test()
+    # test_prepare_input_for_backward_model()
