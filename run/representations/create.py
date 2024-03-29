@@ -168,6 +168,7 @@ for config in CONFIGS:
         text = text.replace("VOCAB_SIZE", str(config.vocab_size))
 
     outfile = OUTPUT / f"{jobname}.sh"
+    outfiles.append(outfile)
     with open(outfile, "w") as fp:
         fp.write(text)
 
