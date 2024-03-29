@@ -10,7 +10,7 @@ import torch
 from torch import LongTensor
 from transformers import PreTrainedTokenizerFast
 
-from src.utils import to_long_tensor
+from src.utils import to_long_tensor, compress
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8
 from src.learn.utils import interpret_bytes_as_integers
 
@@ -58,6 +58,7 @@ def bytes_to_input_ids(
     b: bytes,
     bits_in_byte: int = 8,
     num_special_ids: int = 0,
+    max_length: Optional[int] = None,
     cls_token_id: Optional[int] = None,
     bos_token_id: Optional[int] = None,
     eos_token_id: Optional[int] = None,
@@ -72,7 +73,9 @@ def bytes_to_input_ids(
         x = preprocess_fn_add_cls_token(x, cls_token_id=cls_token_id)
     if bos_token_id is not None:
         x = preprocess_fn_add_bos_token(x, bos_token_id=bos_token_id)
+    x = x[:max_length]
     if eos_token_id is not None:
+        x = x[:max_length - 1] if isinstance(max_length, int) else x
         x = preprocess_fn_add_eos_token(x, eos_token_id=eos_token_id)
 
     return x
@@ -105,6 +108,10 @@ def tokenize_bytes(
     return [to_long_tensor(i) for i in batch_encoding.data["input_ids"]]
 
 
+def hf_compress_bytes(examples: dict[str, list], compression_type: str) -> dict[str, list]:
+    return {"bytes": [compress(bs, compression_type) for bs in examples["bytes"]]}
+
+
 def hf_tokenize_bytes(
     examples: dict[str, list],
     tokenizer: PreTrainedTokenizerFast,
@@ -130,6 +137,7 @@ def hf_bytes_to_input_ids(
     examples: dict[str, list],
     bits_in_byte: int = 8,
     num_special_ids: int = 0,
+    max_length: Optional[int] = None,
     cls_token_id: Optional[int] = None,
     bos_token_id: Optional[int] = None,
     eos_token_id: Optional[int] = None,
@@ -140,6 +148,7 @@ def hf_bytes_to_input_ids(
                 b,
                 bits_in_byte=bits_in_byte,
                 num_special_ids=num_special_ids,
+                max_length=max_length,
                 cls_token_id=cls_token_id,
                 bos_token_id=bos_token_id,
                 eos_token_id=eos_token_id,

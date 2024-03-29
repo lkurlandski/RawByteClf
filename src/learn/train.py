@@ -101,6 +101,9 @@ from src.utils import (
     get_highest_path,
     object_from_superset_of_constructor_kwds,
     to_long_tensor,
+    compress,
+    COMPRESSION_TYPES,
+    compose_functions,
 )
 from src.architectures.malconv import (
     AutoMalConvForSequenceClassification,
@@ -143,6 +146,7 @@ from src.learn.preprocessing import (
     hf_tokenize_bytes,
     bytes_to_input_ids,
     tokenize_bytes,
+    hf_compress_bytes,
 )
 from src.learn.tuning import (
     hp_space_mymalconv,
@@ -179,7 +183,7 @@ MOVE_IN_MEMORY = False
 BATCH_SIZE: Optional[int] = 1000
 WRITER_BATCH_SIZE: Optional[int] = 1000
 CACHE_FILE_NAME: Optional[str] = None
-NUM_PROC: Optional[int] = None
+NUM_PROC: Optional[int] = 16
 KEEP_IN_MEMORY = False
 
 # Variables for hyperparameter tuning.
@@ -936,15 +940,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         print_dataset_hf(dataset)
 
-        if args.algorithm == "Raw":
-            preprocess_fn = partial(
+        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES:
+            preprocess_fns = []
+            if args.algorithm in COMPRESSION_TYPES:
+                preprocess_fns.append(partial(hf_compress_bytes, compression_type=args.algorithm))
+            preprocess_fns.append(partial(
                 hf_bytes_to_input_ids,
                 bits_in_byte=args.representation,
                 num_special_ids=len(tokenizer.all_special_ids),
+                max_length=args.max_length,
                 cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
                 bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_BOS_TOKEN else None,
                 eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
-            )
+            ))
+            preprocess_fn = compose_functions(*preprocess_fns)
         else:
             preprocess_fn = partial(
                 hf_tokenize_bytes,
@@ -965,15 +974,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 dataset[s] = dataset[s].select(range(len(dataset[s])), keep_in_memory=True)
 
     else:
-        if args.algorithm == "Raw":
-            preprocess_fn = partial(
+        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES:
+            preprocess_fns = []
+            if args.algorithm in COMPRESSION_TYPES:
+                preprocess_fns.append(partial(compress, compression_type=args.algorithm))
+            preprocess_fns.append(partial(
                 bytes_to_input_ids,
                 bits_in_byte=args.representation,
                 num_special_ids=len(tokenizer.all_special_ids),
+                max_length=args.max_length,
                 cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
                 bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_BOS_TOKEN else None,
                 eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
-            )
+            ))
+            preprocess_fn = compose_functions(*preprocess_fns)
         else:
             preprocess_fn = partial(
                 tokenize_bytes,

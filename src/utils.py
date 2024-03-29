@@ -324,13 +324,12 @@ def to_long_tensor(x: bytes | list | np.ndarray | Tensor) -> LongTensor:
 
 
 def compose_functions(*funcs):
-    raise NotImplementedError("Untested.")
-    # def inner(arg):
-    #     result = arg
-    #     for func in reversed(funcs):
-    #         result = func(result)
-    #     return result
-    # return inner
+    def inner(arg):
+        result = arg
+        for func in funcs:
+            result = func(result)
+        return result
+    return inner
 
 
 def get_max_keys_from_dict(d: dict[str, int]) -> tuple[str]:
@@ -352,6 +351,9 @@ def is_jsonable(x: Any) -> bool:
         return True
     except (TypeError, OverflowError):
         return False
+
+
+COMPRESSION_TYPES = ("gzip", "bzip2", "lzma", "zlib", "7z")
 
 
 def compress(bs: bytes, compression_type: Literal["gzip", "bzip2", "lzma", "zlib", "7z"], **kwds) -> bytes:
