@@ -106,17 +106,18 @@ ARCH_CONFIG = {
 CONFIGS: list[Config] = []
 for model_name_or_path in ["mamba", "mymalconv"]:
     for rep in [8, 12, 16]:
-        CONFIGS.append(
-            Config(
-                model_name_or_path,
-                ARCH_CONFIG[model_name_or_path],
-                "Raw",
-                MAX_LENGTH,
-                DATA_READ_BYTES,
-                rep,
-                ntasks=4,
+        for alg in ["gzip", "bzip2", "lzma", "zlib", "7z"]:
+            CONFIGS.append(
+                Config(
+                    model_name_or_path,
+                    ARCH_CONFIG[model_name_or_path],
+                    alg,
+                    MAX_LENGTH,
+                    DATA_READ_BYTES,
+                    rep,
+                    ntasks=4,
+                )
             )
-        )
     for alg in ["BPE", "Unigram"]:
         for vs in [2 ** 10, 2 ** 12, 2 ** 14, 2 ** 16]:
             CONFIGS.append(
@@ -133,18 +134,6 @@ for model_name_or_path in ["mamba", "mymalconv"]:
                     mem=64,
                 )
             )
-    for alg in ["gzip", "bzip2", "lzma", "zlib", "7z"]:
-        CONFIGS.append(
-            Config(
-                model_name_or_path,
-                ARCH_CONFIG[model_name_or_path],
-                alg,
-                MAX_LENGTH,
-                DATA_READ_BYTES,
-                8,
-                ntasks=4,
-            )
-        )
 
 
 outfiles = []
