@@ -106,7 +106,7 @@ ARCH_CONFIG = {
 CONFIGS: list[Config] = []
 for model_name_or_path in ["mamba", "mymalconv"]:
     for rep in [8, 12, 16]:
-        for alg in ["gzip", "bzip2", "lzma", "zlib", "7z"]:
+        for alg in ["gzip", "bzip2", "lzma", "zlib", "7z", "aes"]:
             CONFIGS.append(
                 Config(
                     model_name_or_path,
