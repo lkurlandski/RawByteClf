@@ -961,7 +961,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 tokenizer=tokenizer,
                 max_length=args.max_length,
             )
-            num_proc = len(os.sched_getaffinity(0))
+            num_proc = None
         dataset = dataset.map(**get_map_kwds_for_hf_datasets(
             function=preprocess_fn,
             dataset=dataset,
