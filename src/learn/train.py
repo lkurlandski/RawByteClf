@@ -955,6 +955,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             ))
             preprocess_fn = compose_functions(*preprocess_fns)
             num_proc = len(os.sched_getaffinity(0))
+            if num_proc == 40:  # don't kill armitage server :)
+                num_proc = 20
         else:
             preprocess_fn = partial(
                 hf_tokenize_bytes,
