@@ -16,7 +16,7 @@ BODY = """#!/bin/bash -l
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=CPUS_PER_TASK
 #SBATCH --ntasks=NTASKS
-#SBATCH --mem=16G
+#SBATCH --mem=MEMORYG
 #SBATCH --gres=gpu:a100:1
 
 
@@ -85,6 +85,7 @@ class Config:
     vocab_size: Optional[int] = None
     ntasks: int = 1
     cpus_per_task: int = 1
+    mem: int = 16
 
     def __post_init__(self):
         self.representation = str(self.representation)
@@ -113,6 +114,7 @@ for model_name_or_path in ["mamba", "mymalconv"]:
                 MAX_LENGTH,
                 DATA_READ_BYTES,
                 rep,
+                ntasks=4,
             )
         )
     for alg in ["BPE", "Unigram"]:
@@ -127,7 +129,8 @@ for model_name_or_path in ["mamba", "mymalconv"]:
                     8,
                     vs,
                     ntasks=4,
-                    cpus_per_task=2,
+                    cpus_per_task=1,
+                    mem=64,
                 )
             )
     for alg in ["gzip", "bzip2", "lzma", "zlib", "7z"]:
@@ -160,7 +163,8 @@ for config in CONFIGS:
         .replace("DATA_READ_BYTES", str(config.data_read_bytes)) \
         .replace("DATALOADER_NUM_WORKERS", str(config.ntasks - 1)) \
         .replace("NTASKS", str(config.ntasks)) \
-        .replace("CPUS_PER_TASK", str(config.cpus_per_task))
+        .replace("CPUS_PER_TASK", str(config.cpus_per_task)) \
+        .replace("MEMORY", str(config.mem)) 
 
     if config.vocab_size is None:
         text = text.replace("--vocab_size=VOCAB_SIZE \\\n", "")
