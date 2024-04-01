@@ -43,7 +43,7 @@ from src.cfg import BR, SPECIALS, TOKENIZERS_OUTPUT_PATH
 from src.learn.preprocessing import bytes_to_str_ascii, bytes_to_str_utf8
 from src.data.cfg import DATASET_TO_FILES
 from src.data.utils import read_binary_files_asynch
-from src.utils import batched, get_highest_path, COMPRESSION_TYPES
+from src.utils import batched, get_highest_path, COMPRESSION_TYPES, ENCRYPTION_TYPES
 
 
 TokenizerAlgorithm = Literal["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
@@ -377,7 +377,7 @@ def get_tokenizer(
 
     tokenizer: Tokenizer
 
-    if algorithm.lower() == "raw" or algorithm in COMPRESSION_TYPES:
+    if algorithm.lower() == "raw" or algorithm in COMPRESSION_TYPES + ENCRYPTION_TYPES:
         if representation == 8:
             tokenizer = get_tokenizer_object_8bit()
         elif representation == 12:

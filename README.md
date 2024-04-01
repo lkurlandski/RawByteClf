@@ -75,7 +75,7 @@ Install mamba locally
 pip install packaging
 pip install /path/to/mamba/repository
 ```
-
+pip install pycryptodome
 
 
 

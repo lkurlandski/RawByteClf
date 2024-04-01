@@ -103,6 +103,8 @@ from src.utils import (
     to_long_tensor,
     compress,
     COMPRESSION_TYPES,
+    encrypt,
+    ENCRYPTION_TYPES,
     compose_functions,
 )
 from src.architectures.malconv import (
@@ -147,6 +149,7 @@ from src.learn.preprocessing import (
     bytes_to_input_ids,
     tokenize_bytes,
     hf_compress_bytes,
+    hf_encrypt_bytes,
 )
 from src.learn.tuning import (
     hp_space_mymalconv,
@@ -940,10 +943,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         print_dataset_hf(dataset)
 
-        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES:
+        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES + ENCRYPTION_TYPES:
             preprocess_fns = []
             if args.algorithm in COMPRESSION_TYPES:
                 preprocess_fns.append(partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level))
+            elif args.algorithm in ENCRYPTION_TYPES:
+                preprocess_fns.append(partial(hf_encrypt_bytes, encryption_type=args.algorithm, key=None))
             preprocess_fns.append(partial(
                 hf_bytes_to_input_ids,
                 bits_in_byte=args.representation,
@@ -979,10 +984,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 dataset[s] = dataset[s].select(range(len(dataset[s])), keep_in_memory=True)
 
     else:
-        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES:
+        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES + ENCRYPTION_TYPES:
             preprocess_fns = []
             if args.algorithm in COMPRESSION_TYPES:
                 preprocess_fns.append(partial(compress, compression_type=args.algorithm, compression_level=args.compression_level))
+            elif args.algorithm in ENCRYPTION_TYPES:
+                preprocess_fns.append(partial(encrypt, encryption_type=args.algorithm, key=None))
             preprocess_fns.append(partial(
                 bytes_to_input_ids,
                 bits_in_byte=args.representation,
