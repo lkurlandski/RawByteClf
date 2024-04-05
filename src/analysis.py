@@ -2,11 +2,12 @@
 Various codes for data analysis.
 """
 
-from collections import defaultdict
+from collections import defaultdict, Counter
 import json
 import os
 from pathlib import Path
 import sys
+from typing import Literal
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -65,6 +66,24 @@ def overflow_analysis(path: Path) -> dict[str, pd.DataFrame]:
         df = pd.read_csv(f, index_col=False)
         data[f.stem] = df
     return data
+
+
+def tokenizer_vocab_analysis(
+    path: os.PathLike,
+    alg: Literal["BPE", "Unigram"],
+    num_special_tokens: int = 0,
+) -> Counter:
+    with open(path) as fp:
+        d = json.load(fp)
+
+    if alg == "Unigram":
+        tokens = [k for k, _ in d["model"]["vocab"][num_special_tokens:]]
+    elif alg == "BPE":
+        tokens = [k for k, _ in list(d["model"]["vocab"].items())[num_special_tokens:]]
+    else:
+        raise ValueError(f"Invalid alg: {alg}")
+
+    return Counter([len(k) for k in tokens])
 
 
 def main():
