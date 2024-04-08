@@ -182,11 +182,11 @@ PAD_TO = 8
 # Some random temporary flags.
 MOVE_IN_MEMORY = False
 
-# Variables for the datasets.Dataset.map() and datasets.IterableDataset.map()
+# Default variables for the datasets.Dataset.map() and datasets.IterableDataset.map()
 BATCH_SIZE: Optional[int] = 1000
 WRITER_BATCH_SIZE: Optional[int] = 1000
 CACHE_FILE_NAME: Optional[str] = None
-NUM_PROC: Optional[int] = None
+NUM_PROC: Optional[int] = len(os.sched_getaffinity(0)) if len(os.sched_getaffinity(0)) != 40 else 20
 KEEP_IN_MEMORY = False
 
 # Variables for hyperparameter tuning.
@@ -959,9 +959,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
             ))
             preprocess_fn = compose_functions(*preprocess_fns)
-            num_proc = len(os.sched_getaffinity(0))
-            if num_proc == 40:  # don't kill armitage server :)
-                num_proc = 20
+            num_proc = NUM_PROC
         else:
             preprocess_fn = partial(
                 hf_tokenize_bytes,

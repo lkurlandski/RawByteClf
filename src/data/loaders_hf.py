@@ -70,8 +70,14 @@ def classification_generator(
 
 
 def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict):
+    cache_files = []
     for split, d in dataset.items():
+        d: Dataset | IterableDataset
         print(f"{split} -- {d.info}")
+        cache_files.extend([list(f.values())[0] for f in d.cache_files])
+    print("Cache Files:")
+    for f in cache_files:
+        print(f, "\\")
 
 
 def get_dataset_hf(
@@ -86,7 +92,6 @@ def get_dataset_hf(
             **kwds,
         )
         datasets[split] = Dataset.from_generator(generator, features=FEATURES)
-        print(f"datasets[split].cache_files={pformat(datasets[split].cache_files)}")
 
     if streaming:
         num_shards = 1 if num_shards is None else num_shards

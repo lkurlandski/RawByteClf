@@ -95,3 +95,8 @@ Weird BUG
 SystemExit: 15
 
 https://github.com/huggingface/datasets/issues/3172 
+
+This may be caused by memory allocation error in the compression libraries? But this can't possibly be the only cause because the error also occured for experiments that don't involve any compression.
+
+https://github.com/python/cpython/blob/main/Modules/zlibmodule.c
+
