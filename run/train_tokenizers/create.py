@@ -26,7 +26,7 @@ python -u \\
 src/learn/tokenization.py \\
 --algorithm=ALGORITHM \\
 --vocab_size=VOCAB_SIZE \\
---num_files=5000 \\
+--num_files=2000 \\
 --block_size=1024 \\
 --batch_size=1024 \\
 --max_token_length=16

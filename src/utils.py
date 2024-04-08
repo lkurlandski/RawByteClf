@@ -16,9 +16,10 @@ import os
 from pathlib import Path
 import sys
 import time
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Optional
 import zlib
 
+from Crypto.Cipher import AES
 import numpy as np
 import psutil
 from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
@@ -393,7 +394,21 @@ def compress(
         fp.seek(0)
         return fp.read()
 
-    raise RuntimeError(f"Unknown compression type: {compression_type}")
+    raise ValueError(f"Unknown compression type: {compression_type}")
+
+
+ENCRYPTION_TYPES = ("aes",)
+
+
+def encrypt(bs: bytes, encryption_type: Literal["aes",], key: Optional[bytes] = None, **kwds) -> bytes:
+    key = np.random.randint(0, 256, 16, dtype=np.uint8).tobytes() if key is None else key
+
+    if encryption_type == "aes":
+        kwds["mode"] = kwds.pop("mode", AES.MODE_CTR)
+        cipher = AES.new(key, **kwds)
+        return key + cipher.encrypt(bs)
+
+    raise ValueError(f"Unknown encryption type: {encryption_type}")
 
 
 if __name__ == "__main__":

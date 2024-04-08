@@ -10,7 +10,7 @@ import torch
 from torch import LongTensor
 from transformers import PreTrainedTokenizerFast
 
-from src.utils import to_long_tensor, compress
+from src.utils import to_long_tensor, compress, encrypt
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8
 from src.learn.utils import interpret_bytes_as_integers
 
@@ -110,6 +110,10 @@ def tokenize_bytes(
 
 def hf_compress_bytes(examples: dict[str, list], compression_type: str, compression_level: int = 9) -> dict[str, list]:
     return {"bytes": [compress(bs, compression_type, compression_level) for bs in examples["bytes"]]}
+
+
+def hf_encrypt_bytes(examples: dict[str, list], encryption_type: str, key: Optional[bytes] = None) -> dict[str, list]:
+    return {"bytes": [encrypt(bs, encryption_type, key) for bs in examples["bytes"]]}
 
 
 def hf_tokenize_bytes(
