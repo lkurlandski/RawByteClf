@@ -100,3 +100,15 @@ This may be caused by memory allocation error in the compression libraries? But 
 
 https://github.com/python/cpython/blob/main/Modules/zlibmodule.c
 
+Installing datasets==2.18.0, but this gives the error
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+tokenizers 0.14.1 requires huggingface_hub<0.18,>=0.16.4, but you have huggingface-hub 0.22.2 which is incompatible.
+
+so we'll se what other problems this might cause...
+
+okay, it seems like uninstalling ray may help.
+
+Also, ensuring that the original file-generator has finished before different processes try and map also helps?
+
+
