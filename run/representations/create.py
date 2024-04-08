@@ -12,7 +12,7 @@ BODY = """#!/bin/bash -l
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-08:00:00
+#SBATCH --time=05-00:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=CPUS_PER_TASK
 #SBATCH --ntasks=NTASKS
@@ -33,6 +33,7 @@ src/learn/train.py \\
 --metric_for_best_model="eval_accuracy" \\
 --task="clf" \\
 --streaming=false \\
+--skip_eval_check=true \\
 --top_k=10 \\
 --dataset_backend="HF" \\
 --representation=REPRESENTATION \\
@@ -44,9 +45,9 @@ src/learn/train.py \\
 --do_train \\
 --do_eval \\
 --output_dir=tmp \\
---save_strategy="steps" \\
---evaluation_strategy="steps" \\
---max_steps=4000 \\
+--save_strategy="epoch" \\
+--evaluation_strategy="epoch" \\
+--num_train_epochs=5 \\
 --logging_steps=10 \\
 --save_steps=100 \\
 --eval_steps=100 \\
@@ -62,9 +63,9 @@ src/learn/train.py \\
 --model_name_or_path=MODEL_NAME_OR_PATH \\
 --max_length=MAX_LENGTH \\
 --data_read_bytes=DATA_READ_BYTES \\
---per_device_train_batch_size=32 \\
---per_device_eval_batch_size=64 \\
---gradient_accumulation_steps=1 \\
+--per_device_train_batch_size=1 \\
+--per_device_eval_batch_size=4 \\
+--gradient_accumulation_steps=16 \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
@@ -85,7 +86,7 @@ class Config:
     vocab_size: Optional[int] = None
     ntasks: int = 1
     cpus_per_task: int = 1
-    mem: int = 16
+    mem: int = 64
 
     def __post_init__(self):
         self.representation = str(self.representation)
@@ -95,18 +96,18 @@ class Config:
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
 
-MAX_LENGTH = 65536
-DATA_READ_BYTES = 65536
+MAX_LENGTH = 2 ** 20
+DATA_READ_BYTES = 2 ** 20
 
 ARCH_CONFIG = {
-    "mamba": '{"mode": "bi", "d_model": 192, "n_layer": 8, "mlp_hidden_size": 512}',
+    "mamba": '{"mode": "bi", "d_model": 128, "n_layer": 6, "mlp_hidden_size": 512}',
     "mymalconv": '{"hidden_size": 512}',
 }
 
 CONFIGS: list[Config] = []
 for model_name_or_path in ["mamba", "mymalconv"]:
     for rep in [8, 12, 16]:
-        for alg in ["gzip", "bzip2", "lzma", "zlib", "7z"]:
+        for alg in ["Raw", "gzip", "bzip2", "lzma", "zlib", "7z"]:
             CONFIGS.append(
                 Config(
                     model_name_or_path,
@@ -119,7 +120,7 @@ for model_name_or_path in ["mamba", "mymalconv"]:
                 )
             )
     for alg in ["BPE", "Unigram"]:
-        for vs in [2 ** 10, 2 ** 12, 2 ** 14, 2 ** 16]:
+        for vs in [2 ** 10, 2 ** 12, 2 ** 14, 2 ** 15, 2 ** 16]:
             CONFIGS.append(
                 Config(
                     model_name_or_path,
@@ -139,7 +140,7 @@ for model_name_or_path in ["mamba", "mymalconv"]:
 outfiles = []
 for config in CONFIGS:
 
-    jobname = f"rep_{config.model_name_or_path}_{config.algorithm[:3]}_{config.representation}"
+    jobname = f"repl_{config.model_name_or_path}_{config.algorithm[:3]}_{config.representation}"
     jobname = jobname + f"_{config.vocab_size}" if config.vocab_size is not None else jobname
 
     text = BODY \
@@ -166,6 +167,6 @@ for config in CONFIGS:
         fp.write(text)
 
 
-with open(OUTPUT / "run.sh", "w") as fp:
-    for outfile in sorted(outfiles):
-        fp.write(f"sbatch {outfile.as_posix()}\n")
+#with open(OUTPUT / "run.sh", "w") as fp:
+#    for outfile in sorted(outfiles):
+#        fp.write(f"sbatch {outfile.as_posix()}\n")
