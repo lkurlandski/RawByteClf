@@ -91,9 +91,12 @@ from transformers.trainer_utils import (
 )
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
 from transformers.utils import CONFIG_NAME, is_ninja_available
-from ray import tune
-from ray.tune.search.hyperopt import HyperOptSearch
-from ray.tune import TuneError
+try:
+    from ray import tune
+    from ray.tune.search.hyperopt import HyperOptSearch
+    from ray.tune import TuneError
+except (ModuleNotFoundError, ImportError) as err:
+    print(err)
 
 from src.cfg import BR
 from src.utils import (
@@ -121,12 +124,15 @@ from src.architectures.hrrformer import (
     HRRForSequenceClassification,
     HRRForMaskedLM,
 )
-from src.architectures.mamba import (
-    MambaConfig,
-    MambaForSequenceClassification,
-    MambaLMHeadModel as MambaForCausalLM,
-    MambaPreTrainedModel,
-)
+try:
+    from src.architectures.mamba import (
+        MambaConfig,
+        MambaForSequenceClassification,
+        MambaLMHeadModel as MambaForCausalLM,
+        MambaPreTrainedModel,
+    )
+except Exception as err:
+    print(err)
 from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
@@ -151,13 +157,20 @@ from src.learn.preprocessing import (
     hf_compress_bytes,
     hf_encrypt_bytes,
 )
-from src.learn.tuning import (
-    hp_space_mymalconv,
-    hp_space_malconv,
-    hp_space_malconvgct,
-    hp_space_longformer,
-    hp_space_hrrformer,
-)
+try:
+    from src.learn.tuning import (
+        hp_space_mymalconv,
+        hp_space_malconv,
+        hp_space_malconvgct,
+        hp_space_longformer,
+        hp_space_hrrformer,
+    )
+except (ModuleNotFoundError, ImportError) as err:
+    print(err)
+    def hp_space(trial: Any) -> dict[str, float | int]:
+        raise NotImplementedError()
+    hp_space_mymalconv = hp_space_malconv = hp_space_malconvgct = hp_space_longformer = hp_space_hrrformer = hp_space
+
 from src.learn.utils import (
     pad_to_multiple_of_fn,
     find_two_largest_factors,
@@ -976,6 +989,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_dataset_hf(dataset)
 
         if args.exit_after_map:
+            print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
             sys.exit(0)
         if MOVE_IN_MEMORY:
             for s in dataset:
