@@ -84,3 +84,14 @@ find /path/to/directory -type d -path "*/None/10/*" -regex '.*/[0-9]+/None/10/.*
 
 cythonize -i src/learn/bytes_to_str_utf8.pyx
 
+
+
+Weird BUG
+
+  File "/home/lk3591/anaconda3/envs/RawByteClf2/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 1366, in __del__
+    if hasattr(self, "_indices"):
+  File "/home/lk3591/anaconda3/envs/RawByteClf2/lib/python3.10/site-packages/ray/_private/worker.py", line 1723, in sigterm_handler
+    sys.exit(signum)
+SystemExit: 15
+
+https://github.com/huggingface/datasets/issues/3172 

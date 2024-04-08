@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Generator
 from functools import partial
 import os
+from pprint import pformat
 import sys
 from typing import Optional
 
@@ -85,6 +86,7 @@ def get_dataset_hf(
             **kwds,
         )
         datasets[split] = Dataset.from_generator(generator, features=FEATURES)
+        print(f"datasets[split].cache_files={pformat(datasets[split].cache_files)}")
 
     if streaming:
         num_shards = 1 if num_shards is None else num_shards
