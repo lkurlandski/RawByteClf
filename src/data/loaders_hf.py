@@ -24,6 +24,7 @@ from datasets import (
     Features,
 )
 import numpy as np
+import pandas as pd
 
 from src.data.loaders_core import (
     ClfMaterials,
@@ -33,6 +34,7 @@ from src.data.loaders_pt import read_binary_files_asynch, read_binary_files
 
 
 FEATURES = Features({"name": Value("string"), "bytes": Value("binary"), "labels": Value("int32")})
+DF = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [0]}).drop(index=0)
 
 
 def classification_generator(
@@ -85,6 +87,9 @@ def get_dataset_hf(
 ) -> DatasetDict | IterableDataset:
     datasets: dict[SplitNames, Dataset] = {}
     for split in ["tr", "vl", "ts"]:
+        if not materials.tr_vl_ts_files_and_labels[split][0]:  # Empty split for datasets > 2.14
+            datasets[split] = Dataset.from_pandas(DF.copy(), features=FEATURES)
+            continue
         generator = partial(
             classification_generator,
             materials.tr_vl_ts_files_and_labels[split][0],
