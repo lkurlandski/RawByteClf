@@ -140,7 +140,7 @@ for model_name_or_path in ["mamba", "mymalconv"]:
 outfiles = []
 for config in CONFIGS:
 
-    jobname = f"repl_{config.model_name_or_path}_{config.algorithm[:3]}_{config.representation}"
+    jobname = f"repl2_{config.model_name_or_path}_{config.algorithm[:3]}_{config.representation}"
     jobname = jobname + f"_{config.vocab_size}" if config.vocab_size is not None else jobname
 
     text = BODY \
@@ -167,6 +167,8 @@ for config in CONFIGS:
         fp.write(text)
 
 
-#with open(OUTPUT / "run.sh", "w") as fp:
-#    for outfile in sorted(outfiles):
-#        fp.write(f"sbatch {outfile.as_posix()}\n")
+with open(OUTPUT / "run.sh", "w") as fp:
+    for outfile in sorted(outfiles):
+        if "lzm" in outfile.as_posix().split("_") or "Raw" in outfile.as_posix().split("_"):
+            fp.write(f"sbatch {outfile.as_posix()}\n")
+
