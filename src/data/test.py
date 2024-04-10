@@ -2,17 +2,27 @@
 Some tests for the loaders_core module.
 """
 
+import bz2
 from collections import Counter
+import gzip
+from io import BytesIO
+import lzma
 import os
+from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import MagicMock
+import zlib
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
-from loaders_core import (
+import py7zr
+
+from src.data.loaders_core import (
     compute_integer_sizes,
     compute_float_sizes,
     tr_vl_ts_split_idx,
@@ -20,6 +30,8 @@ from loaders_core import (
     tr_vl_ts_split_idx_guarentee,
     tr_vl_ts_split_guarentee,
 )
+from src.data.utils import Decompressor
+
 
 class TestSplitFunctions(unittest.TestCase):
     def test_compute_integer_sizes(self):
@@ -68,5 +80,67 @@ class TestSplitFunctions(unittest.TestCase):
         self.assertGreaterEqual(Counter(labels[i] for i in split["ts"])[1], 5)
 
 
+class TestDecompressor(unittest.TestCase):
+    def setUp(self):
+        self.test_data = b'This is a test string.'
+        self.test_dir = tempfile.TemporaryDirectory()
+        self.test_file = Path(self.test_dir.name) / "test_file.txt"
+        with open(self.test_file, 'wb') as f:
+            f.write(self.test_data)
+
+    def tearDown(self):
+        self.test_dir.cleanup()
+
+    def test_gzip_decompression(self):
+        compressed_data = gzip.compress(self.test_data)
+        decompressor = Decompressor(Decompressor.GZIP)
+        alg, b = decompressor(BytesIO(compressed_data))
+        self.assertEqual(alg, Decompressor.GZIP)
+        self.assertEqual(b, self.test_data)
+
+    def test_bzip2_decompression(self):
+        compressed_data = bz2.compress(self.test_data)
+        decompressor = Decompressor(Decompressor.BZIP2)
+        alg, b = decompressor(BytesIO(compressed_data))
+        self.assertEqual(alg, Decompressor.BZIP2)
+        self.assertEqual(b, self.test_data)
+
+    def test_lzma_decompression(self):
+        compressed_data = lzma.compress(self.test_data)
+        decompressor = Decompressor(Decompressor.LZMA)
+        alg, b = decompressor(BytesIO(compressed_data))
+        self.assertEqual(alg, Decompressor.LZMA)
+        self.assertEqual(b, self.test_data)
+
+    def test_zlib_decompression(self):
+        compressed_data = zlib.compress(self.test_data)
+        print(f"compressed_data: {compressed_data}")
+        decompressor = Decompressor(Decompressor.ZLIB)
+        alg, b = decompressor(BytesIO(compressed_data))
+        self.assertEqual(alg, Decompressor.ZLIB)
+        self.assertEqual(b, self.test_data)
+
+    # def test_py7zr_decompression(self):
+    #     fp = BytesIO()
+    #     with py7zr.SevenZipFile(fp, 'w') as archive:
+    #         archive.writef(BytesIO(self.test_data), "tmp")
+    #     fp.seek(0)
+    #     compressed_data = fp.read()
+    #     decompressor = Decompressor(Decompressor.S7Z)
+    #     alg, b = decompressor(BytesIO(compressed_data))
+    #     self.assertEqual(alg, Decompressor.S7Z)
+    #     self.assertEqual(b, self.test_data)
+
+
 if __name__ == "__main__":
+
+    test_data = b'This is a test string.'
+    fp = BytesIO()
+    with py7zr.SevenZipFile(fp, 'w') as archive:
+        archive.writef(BytesIO(test_data), "tmp")
+    fp.seek(0)
+    compressed_data = fp.read()
+    decompressor = Decompressor(Decompressor.S7Z)
+    alg, b = decompressor(BytesIO(compressed_data))
+
     unittest.main()
