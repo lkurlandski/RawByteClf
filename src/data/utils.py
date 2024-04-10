@@ -383,7 +383,7 @@ def time_decompressor(n: int = 10000):
 
     sizes = []
     times = []
-    for f in tqdm(files, total=n):
+    for i, f in enumerate(tqdm(files, total=n)):
         t_i = time.time()
         try:
             _, b = decompress(f)
@@ -393,7 +393,7 @@ def time_decompressor(n: int = 10000):
         times.append(t_f - t_i)
         sizes.append((f.stat().st_size, len(b)))
 
-    print(f"Num files: {len(sizes)=}")
+    print(f"Decompressed: {len(sizes)=} / {i + 1}")
     print(f"Average decompression time: {np.mean(times)}")
     print(f"Average compressed size: {np.mean([s[0] for s in sizes])}")
     print(f"Average uncompressed size: {np.mean([s[1] for s in sizes])}")
