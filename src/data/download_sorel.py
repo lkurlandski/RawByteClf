@@ -22,8 +22,11 @@ from src.data.cfg import (
     SOREL_BUCKET,
     SOREL_PREFIX,
 )
-from src.data.utils import stream_sorel_meta
+from src.data.utils import stream_sorel_meta, Decompressor
 
+
+DECOMPRESSOR = Decompressor(Decompressor.NONE, must_decompress=True)
+SUFFIX = "" if DECOMPRESSOR.alg == Decompressor.NONE else ".exe"
 
 
 async def download_samples_async(files, output_root: Path, num_bytes: int, max_length: int, errors: int):
@@ -34,8 +37,10 @@ async def download_samples_async(files, output_root: Path, num_bytes: int, max_l
         bucket=SOREL_BUCKET,
         prefix=SOREL_PREFIX,
         errors=errors,
-    ):
-        with open(output_root / sample["name"], "wb") as fp:
+        decompress=DECOMPRESSOR,
+    ):        
+        outfile = (output_root / sample["name"]).with_suffix(SUFFIX)
+        with open(outfile, "wb") as fp:
             fp.write(sample["bytes"])
 
 
@@ -51,10 +56,12 @@ def download_samples(files, output_root: Path, num_bytes: int, max_length: int, 
         bucket=SOREL_BUCKET,
         prefix=SOREL_PREFIX,
         errors=errors,
+        decompress=DECOMPRESSOR,
     )
 
     for sample in tqdm(generator, total=len(files)):
-        with open(output_root / sample["name"], "wb") as fp:
+        outfile = (output_root / sample["name"]).with_suffix(SUFFIX)
+        with open(outfile, "wb") as fp:
             fp.write(sample["bytes"])
 
 
