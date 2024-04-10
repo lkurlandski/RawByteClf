@@ -6,13 +6,16 @@ from pprint import pformat
 from typing import Optional
 
 
+JOB_NAME = "repl100"
+
+
 BODY = """#!/bin/bash -l
 
 #SBATCH --job-name=JOB_NAME
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=05-00:00:00
+#SBATCH --time=02-00:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=CPUS_PER_TASK
 #SBATCH --ntasks=NTASKS
@@ -34,7 +37,7 @@ src/learn/train.py \\
 --task="clf" \\
 --streaming=false \\
 --skip_eval_check=true \\
---top_k=10 \\
+--top_k=100 \\
 --dataset_backend="HF" \\
 --representation=REPRESENTATION \\
 --algorithm=ALGORITHM \\
@@ -43,11 +46,10 @@ src/learn/train.py \\
 --vl_size=0.15 \\
 --ts_size=0.0 \\
 --do_train \\
---do_eval \\
 --output_dir=tmp \\
 --save_strategy="epoch" \\
 --evaluation_strategy="epoch" \\
---num_train_epochs=5 \\
+--num_train_epochs=10 \\
 --logging_steps=10 \\
 --save_steps=100 \\
 --eval_steps=100 \\
@@ -86,7 +88,7 @@ class Config:
     vocab_size: Optional[int] = None
     ntasks: int = 1
     cpus_per_task: int = 1
-    mem: int = 64
+    mem: int = 96
 
     def __post_init__(self):
         self.representation = str(self.representation)
@@ -140,7 +142,7 @@ for model_name_or_path in ["mamba", "mymalconv"]:
 outfiles = []
 for config in CONFIGS:
 
-    jobname = f"repl2_{config.model_name_or_path}_{config.algorithm[:3]}_{config.representation}"
+    jobname = f"{JOB_NAME}_{config.model_name_or_path}_{config.algorithm[:3]}_{config.representation}"
     jobname = jobname + f"_{config.vocab_size}" if config.vocab_size is not None else jobname
 
     text = BODY \
