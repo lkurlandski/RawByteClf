@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import AsyncGenerator, Literal, Optional, Protocol
+from typing import Any, AsyncGenerator, Literal, Optional, Protocol
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -33,7 +33,7 @@ from src.data.cfg import (
     SOREL_BUCKET,
     SOREL_PREFIX,
 )
-from src.data.utils import stream_sorel_meta, decompress, PerDatasetArgumentParser
+from src.data.utils import stream_sorel_meta, Decompressor, PerDatasetArgumentParser
 
 
 class ErrorStream:
@@ -76,10 +76,12 @@ def disk_dataset_generator(
     num_bytes: Optional[int] = None,
     max_length: Optional[int] = None,
     errors: int = 0,
+    decompress: Optional[Decompressor] = None,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
+    decompress = Decompressor(None, False) if decompress is None else decompress
     for f, l in zip(files, labels):
         try:
-            b: bytes = decompress(f)
+            _, b = decompress(f)
         except Exception as err:
             msg = f"{f} {str(err)}"
             if errors == 0:
@@ -103,7 +105,11 @@ async def s3_download_file(s3, bucket, key, buffer):
     await asyncio.to_thread(s3.download_fileobj, bucket, key, buffer)
 
 
-async def s3_decompress(buffer):
+async def s3_decompress(
+    buffer: BytesIO,
+    decompress: Optional[Decompressor] = None,
+) -> tuple[int, bytes]:
+    decompress = Decompressor(None, False) if decompress is None else decompress
     return await asyncio.to_thread(decompress, buffer)
 
 
@@ -112,15 +118,16 @@ async def s3_dataset_generator_async(
     labels: Optional[Iterable[Optional[str]]] = repeat(None),
     num_bytes: Optional[int] = None,
     max_length: Optional[int] = None,
-    bucket: str = "your_bucket_name",
-    prefix: str = "your_prefix",
+    bucket: str = SOREL_BUCKET,
+    prefix: str = SOREL_BUCKET,
     errors: int = 0,
+    decompress: Optional[Decompressor] = None,
 ) -> AsyncGenerator[dict[str, str | bytes | int], None]:
     """
     files and labels must be pickle-able.
     """
     s3 = boto3.client("s3", config=BotocoreConfig(signature_version=UNSIGNED))
-
+    decompress = Decompressor(None, False) if decompress is None else decompress
     for f, l in zip(files, labels):
         h = f.stem if isinstance(f, Path) else f
         key = prefix + h
@@ -143,7 +150,7 @@ async def s3_dataset_generator_async(
             raise RuntimeError() from err
 
         try:
-            b = await s3_decompress(buffer)
+            _, b = await s3_decompress(buffer, decompress)
         except Exception as err:
             msg = f"{h} {str(err)}"
             if errors == 0:
@@ -172,10 +179,12 @@ def s3_dataset_generator(
     bucket: str = SOREL_BUCKET,
     prefix: str = SOREL_PREFIX,
     errors: int = 0,
+    decompress: Optional[Decompressor] = None,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     """
     files and labels must be pickle-able.
     """
+    decompress = Decompressor(None, False) if decompress is None else decompress
     s3: boto3.Session = boto3.client("s3", config=BotocoreConfig(signature_version=UNSIGNED))
     for f, l in zip(files, labels):
         h: str = f.stem if isinstance(f, Path) else f
@@ -199,7 +208,7 @@ def s3_dataset_generator(
             raise RuntimeError() from err
 
         try:
-            b: bytes = decompress(buffer)
+            _, b = decompress(buffer)
         except Exception as err:
             msg = f"{h} {str(err)}"
             if errors == 0:
