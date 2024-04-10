@@ -8,7 +8,7 @@ from copy import deepcopy
 import csv
 import bz2
 import gzip
-from io import BufferedReader
+from io import BytesIO
 from itertools import islice
 import lzma
 import math
@@ -190,16 +190,34 @@ class Decompressor:
         self.alg = alg
         self.must_decompress = must_decompress
 
-    def __call__(self, data: str | Path | BufferedReader | bytes, outfile: Optional[Path] = None) -> tuple[int, bytes]:
+    def __call__(self, data: os.PathLike | BytesIO | bytes, outfile: Optional[os.PathLike] = None) -> tuple[int, bytes]:
+        if self.alg == Decompressor.NONE:
+            alg = self.alg
+
         if isinstance(data, (str, Path)):
             with open(data, "rb") as fp:
-                alg, b = self.decompress(fp)
+                if self.alg == Decompressor.NONE:
+                    b = fp.read()
+                else:
+                    alg, b = self.decompress(fp)
+
         elif isinstance(data, bytes):
-            fp = BufferedReader(data)
-            alg, b = self.decompress(fp)
-        else:
+            fp = BytesIO(data)
+            if self.alg == Decompressor.NONE:
+                b = data
+            else:
+                alg, b = self.decompress(fp)
+
+        elif isinstance(data, BytesIO):
             fp = data
-            alg, b = self.decompress(fp)
+            if self.alg == Decompressor.NONE:
+                fp.seek(0)
+                b = fp.read()
+            else:
+                alg, b = self.decompress(fp)
+
+        else:
+            raise TypeError(f"Unsupported data type: {type(data)=}")
 
         if outfile:
             with open(outfile, "rb") as fp:
@@ -207,7 +225,7 @@ class Decompressor:
 
         return alg, b
 
-    def decompress(self, fp: BufferedReader) -> tuple[int, bytes]:
+    def decompress(self, fp: BytesIO) -> tuple[int, bytes]:
         fp.seek(0)
         signature = fp.read(10)
         fp.seek(0)
@@ -251,26 +269,26 @@ class Decompressor:
         return Decompressor.NONE, fp.read()
 
     @staticmethod
-    def _gzip(fp: BufferedReader) -> tuple[int, bytes]:
+    def _gzip(fp: BytesIO) -> tuple[int, bytes]:
         with gzip.open(fp, "rb") as compressed_file:
             return Decompressor.GZIP, compressed_file.read()
 
     @staticmethod
-    def _bzip2(fp: BufferedReader) -> tuple[int, bytes]:
+    def _bzip2(fp: BytesIO) -> tuple[int, bytes]:
         with bz2.BZ2File(fp, "rb") as compressed_file:
             return Decompressor.BZIP2, compressed_file.read()
 
     @staticmethod
-    def _lzma(fp: BufferedReader) -> tuple[int, bytes]:
+    def _lzma(fp: BytesIO) -> tuple[int, bytes]:
         with lzma.open(fp, "rb") as compressed_file:
             return Decompressor.LZMA, compressed_file.read()
 
     @staticmethod
-    def _zlib(fp: BufferedReader) -> tuple[int, bytes]:
+    def _zlib(fp: BytesIO) -> tuple[int, bytes]:
         return Decompressor.ZLIB, zlib.decompress(fp.read())
 
     @staticmethod
-    def _py7zr(fp: BufferedReader) -> tuple[int, bytes]:
+    def _py7zr(fp: BytesIO) -> tuple[int, bytes]:
         raise NotImplementedError("7z decompression is not supported yet.")
         with py7zr.SevenZipFile(fp, mode="r") as archive:
             file_list = archive.getnames()
@@ -354,6 +372,12 @@ def read_binary_files(
 
 
 def time_decompressor(n: int = 10000):
+
+    # Num files: len(sizes)=79163
+    # Average decompression time: 0.0017401391113650562
+    # Average compressed size: 210191.44859340854
+    # Average uncompressed size: 444060.41214961535
+
     files = islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), n)
     decompress = Decompressor(Decompressor.ZLIB)
 
@@ -371,8 +395,8 @@ def time_decompressor(n: int = 10000):
 
     print(f"Num files: {len(sizes)=}")
     print(f"Average decompression time: {np.mean(times)}")
-    print(f"Average compressed size: {np.mean(s[0] for s in sizes)}")
-    print(f"Average uncompressed size: {np.mean(s[1] for s in sizes)}")
+    print(f"Average compressed size: {np.mean([s[0] for s in sizes])}")
+    print(f"Average uncompressed size: {np.mean([s[1] for s in sizes])}")
 
 
 if __name__ == "__main__":
