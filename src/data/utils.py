@@ -8,6 +8,7 @@ from copy import deepcopy
 import csv
 import bz2
 from functools import partial
+import gc
 import gzip
 from io import BytesIO
 from itertools import islice
@@ -40,7 +41,7 @@ from tqdm.asyncio import tqdm as atqdm
 import py7zr
 
 from src.utils import batched
-from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES
+from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES, SOREL_PATH
 
 
 DEFAULT_ASYNCH_CHUNK_SIZE = 500000
@@ -503,11 +504,13 @@ def time_decompressor(n: int = 10000):
     print(f"Average uncompressed size: {np.mean([s[1] for s in sizes])}")
 
 
-
 async def decompress_sorel_collection(
-    num_files: Optional[int] = None,
+    input_files: list[os.PathLike] = None,
+    output_files: Optional[list[os.PathLike]] = None,
     num_workers: int = 1,
     chunk_size: int = 100000,
+    delete: bool = False,
+    save: bool = True,
 ) -> None:
 
     def stats(sizes: list[int | float], div: float = 1.0):
@@ -522,38 +525,85 @@ async def decompress_sorel_collection(
         }
 
 
-    files = list(map(str, islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), num_files)))
     decompress = Decompressor(Decompressor.ZLIB, must_decompress=True)
     fn = partial(decompress_error_resilient, decompress=decompress)
-
+    iterable = read_binary_files_asynch_lazy(input_files, asynch_chunk_size=chunk_size)
+    pbar = atqdm(
+        iterable,
+        total=len(input_files) // chunk_size,
+        desc="Reading...",
+    )
 
     compressed_sizes = []
     decompressed_sizes = []
-    decompress_times = []
-    pbar = atqdm(
-        read_binary_files_asynch_lazy(files, asynch_chunk_size=chunk_size),
-        total=len(files) // chunk_size,
-        desc="Reading...",
-    )
-    print(f"{len(files)=}")
-    print(f"{len(files) // chunk_size=}")
-    async for data in pbar:
-        pbar.set_description("Decompressing...")
-        compressed_sizes.extend([len(d) for d in data])
-        t_i = time.time()
+
+    i = 0
+    async for data_batch in pbar:
+        n = len(data_batch)
+        pbar.set_description(f"Decompressing {n} files...")
+        compressed_sizes.extend([len(d) for d in data_batch])
         with mp.Pool(num_workers) as p:
-            decompressed_data = p.map(fn, data)
-        t_f = time.time()
-        decompress_times.append(t_f - t_i)
-        decompressed_sizes.extend([len(d[1]) for d in decompressed_data if d is not None])
+            decompressed_data = [d[1] if d is not None else None for d in p.map(fn, data_batch)]
+        del data_batch
+        gc.collect()
+        decompressed_sizes.extend([len(d) for d in decompressed_data if d is not None])
+
+        if delete:
+            pbar.set_description(f"Removing {n} files...")
+            input_files_batch = input_files[i : i + n]
+            for f in input_files_batch:
+                os.remove(f)
+
+        if save:
+            pbar.set_description(f"Writing {n} files...")
+            output_files_batch = output_files[i : i + n]
+            non_null_files = [f for j, f in enumerate(output_files_batch) if decompressed_data[j] is not None]
+            non_null_data = [d for d in decompressed_data if d is not None]
+            await write_binary_files_asynch(non_null_files, non_null_data)
+            
+
+        i += n
         pbar.set_description("Reading...")
 
     print(f"Compressed File Statistics: {pformat(stats(compressed_sizes, 1e9))}")
     print(f"Decompressed File Statistics: {pformat(stats(decompressed_sizes, 1e9))}")
-    print(f"Decompression Time Statistics: {pformat(stats(decompress_times))}")
+
+
+def main():
+    parser = ArgumentParser()
+    parser.add_argument("--root", type=Path, default=SOREL_PATH / "binaries")
+    parser.add_argument("--num_files", default=None)
+    parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--chunk_size", type=int, default=100000)
+    parser.add_argument("--save", action="store_true")
+    parser.add_argument("--delete", action="store_true")
+    args = parser.parse_args()
+
+    input_files = list(
+        islice(
+            map(
+                str,
+                filter(
+                    lambda p: p.suffix in ("", ".zlib"),
+                    Path(args.root).iterdir()
+                )
+            ),
+            args.num_files,
+        )
+    )
+    output_files = [Path(f).with_suffix(".exe") for f in input_files]
+
+    loop = asyncio.get_event_loop()
+    future = decompress_sorel_collection(
+        input_files=input_files,
+        output_files=output_files,
+        num_workers=args.num_workers,
+        chunk_size=args.chunk_size,
+        delete=args.delete,
+        save=args.save,
+    )
+    loop.run_until_complete(future)
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    future = decompress_sorel_collection(num_files=1000, num_workers=16, chunk_size=100000)
-    loop.run_until_complete(future)
+    main()
