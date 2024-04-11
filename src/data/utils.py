@@ -379,19 +379,22 @@ def time_decompressor(n: int = 10000):
     # Average uncompressed size: 444060.41214961535
 
     files = islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), n)
+    loop = asyncio.get_event_loop()
+    future = read_binary_files_asynch(files)
+    data = loop.run_until_complete(future)
     decompress = Decompressor(Decompressor.ZLIB)
 
     sizes = []
     times = []
-    for i, f in enumerate(tqdm(files, total=n)):
+    for i, cb in enumerate(tqdm(data, total=n)):
         t_i = time.time()
         try:
-            _, b = decompress(f)
+            _, db = decompress(cb)
         except Exception as err:
             continue
         t_f = time.time()
         times.append(t_f - t_i)
-        sizes.append((f.stat().st_size, len(b)))
+        sizes.append((cb, len(db)))
 
     print(f"Decompressed: {len(sizes)=} / {i + 1}")
     print(f"Average decompression time: {np.mean(times)}")
