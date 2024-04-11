@@ -44,19 +44,20 @@ FilesAndLabels = tuple[list[os.PathLike], Optional[Sequence[int]]]
 
 
 @dataclass
-class ClfMaterials:
-    tr_vl_ts_files_and_labels: dict[SplitNames, FilesAndLabels]
-    id2label: dict[int, str]
-    label2id: dict[str, int]
-    dist: Counter[str, int]
+class Materials:
+    files: dict[SplitNames, list[os.PathLike]]
+    labels: Optional[dict[SplitNames, Sequence[int]]] = None
+    id2label: dict[int, str] = None
+    label2id: dict[str, int] = None
+    dist: Counter[str, int] = None
 
     def __repr__(self):
         return (
-            f"len(tr)={len(self.tr_vl_ts_files_and_labels['tr'][0])}\n"
-            f"len(vl)={len(self.tr_vl_ts_files_and_labels['vl'][0])}\n"
-            f"len(ts)={len(self.tr_vl_ts_files_and_labels['ts'][0])}\n"
-            f"num_classes={len(self.id2label)}\n"
-            f"dist={pformat(self.dist)}\n"
+            f"len(tr)={len(self.files['tr'])}\n"
+            f"len(vl)={len(self.files['vl'])}\n"
+            f"len(ts)={len(self.files['ts'])}\n"
+            f"num_classes={len(self.id2label) if self.id2label is not None else None}\n"
+            f"dist={pformat(self.dist) if self.dist is not None else None}"
         )
 
 
@@ -275,7 +276,7 @@ def get_tr_vl_ts_files_and_labels(
     tr_idx: Optional[Sequence[int]] = None,
     vl_idx: Optional[Sequence[int]] = None,
     ts_idx: Optional[Sequence[int]] = None,
-) -> dict[SplitNames, FilesAndLabels]:
+) -> tuple[dict[SplitNames, list[os.PathLike]], dict[SplitNames, np.ndarray]]:
 
     if idx is not None:
         if tr_idx is not None or vl_idx is not None or ts_idx is not None:
@@ -283,11 +284,17 @@ def get_tr_vl_ts_files_and_labels(
         tr_idx, vl_idx, ts_idx = idx["tr"], idx["vl"], idx["ts"]
 
     labels = np.array(labels) if isinstance(labels, list) else labels
-    return {
-        "tr": ([files[i] for i in tr_idx], labels[tr_idx]),
-        "vl": ([files[i] for i in vl_idx], labels[vl_idx]),
-        "ts": ([files[i] for i in ts_idx], labels[ts_idx]),
+    files = {
+        "tr": [files[i] for i in tr_idx],
+        "vl": [files[i] for i in vl_idx],
+        "ts": [files[i] for i in ts_idx],
     }
+    labels = {
+        "tr": labels[tr_idx],
+        "vl": labels[vl_idx],
+        "ts": labels[ts_idx],
+    }
+    return files, labels
 
 
 def filter_file_label_map(
@@ -363,9 +370,10 @@ def get_materials_pretrain_sorel(
     tr_size: int | float,
     vl_size: int | float,
     ts_size: int | float,
-) -> dict[SplitNames, list[os.PathLike]]:
+) -> Materials:
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
-    return tr_vl_ts_split(files, tr_size, vl_size, ts_size)
+    tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
+    return Materials(files=tr_vl_ts_files)
 
 
 def get_materials_clf(
@@ -376,7 +384,7 @@ def get_materials_clf(
     top_k: Optional[int] = None,
     min_freq: Optional[int] = None,
     min_size: int = 0,
-) -> ClfMaterials:
+) -> Materials:
 
     num_splits = 2 if vl_size == 0 or tr_size == 0 else 3
     min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * num_splits if min_freq is None else min_freq
@@ -396,8 +404,8 @@ def get_materials_clf(
         labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT
     )
 
-    tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
-    return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+    files, labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
+    return Materials(files, labels, id2label, label2id, dist)
 
 
 def get_materials_clf_bodmas(
@@ -405,7 +413,7 @@ def get_materials_clf_bodmas(
     vl_size: int | float,
     ts_size: int | float,
     **kwds,
-) -> ClfMaterials:
+) -> Materials:
 
     files_and_labels = get_bodmas_file_label_map()
     return get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
@@ -414,7 +422,7 @@ def get_materials_clf_bodmas(
 def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
     samples_per_class: int,
     top_k: Optional[int] = None,
-) -> ClfMaterials:
+) -> Materials:
     """
     Returns a balanced BODMAS dataset with the same number of samples for each class in the
     train set. The remainder of the samples are allocated to the validation set.
@@ -436,8 +444,8 @@ def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
     vl_idx = [i for i in range(len(files_and_labels)) if i not in tr_idx]
     ts_idx = []
 
-    tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, ts_idx)
-    return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+    files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, ts_idx)
+    return Materials(files, labels, id2label, label2id, dist)
 
 
 def get_materials_clf_bodmas_balanced_slice(
@@ -446,7 +454,7 @@ def get_materials_clf_bodmas_balanced_slice(
     min_freq: Optional[int] = None,
     top_k: Optional[int] = None,
     balance_tr_set: bool = True,
-) -> ClfMaterials:
+) -> Materials:
     """Returns small slices for the BODMAS training dataset. The validation set is consistent
     accross all slices.
     """
@@ -480,8 +488,8 @@ def get_materials_clf_bodmas_balanced_slice(
     assert len(tr_sub_idx) == tr_size
     idx["tr"] = idx["tr"][tr_sub_idx]
 
-    tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, None, idx["tr"], idx["vl"], [])
-    return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+    files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, idx["tr"], idx["vl"], [])
+    return Materials(files, labels, id2label, label2id, dist)
 
 
 def get_materials_clf_sorel(
@@ -489,7 +497,7 @@ def get_materials_clf_sorel(
     vl_size: int | float,
     ts_size: int | float,
     **kwds,
-) -> ClfMaterials:
+) -> Materials:
 
     files_and_labels = get_sorel_original_labels_file_label_map()
     return get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
@@ -557,8 +565,17 @@ class GetMaterialsClfLengthExtrapolation:
         with open(self.dist_cache_path(tr_length_cutoff), "r") as fp:
             dist = Counter(json.load(fp))
 
-        tr_vl_ts_files_and_labels = {"tr": (tr_files, tr_labels), "vl": (vl_files, vl_labels), "ts": ([], [])}
-        return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+        files = {
+            "tr": tr_files,
+            "vl": vl_files,
+            "ts": [],
+        }
+        labels = {
+            "tr": np.array(tr_labels, dtype=np.int32),
+            "vl": np.array(vl_labels, dtype=np.int32),
+            "ts": np.array([], dtype=np.int32),
+        }
+        return Materials(files, labels, id2label, label2id, dist)
 
     def get_tr_and_ts_idx(
         self,
@@ -582,7 +599,7 @@ class GetMaterialsClfLengthExtrapolation:
         tr_idx = {c: v[0:tr_samples_per_class] for c, v in tr_idx.items()}
         return tr_idx, vl_idx
 
-    def __call__(self, tr_length_cutoff: int) -> ClfMaterials:
+    def __call__(self, tr_length_cutoff: int) -> Materials:
         if (materials := self.load_from_cache(tr_length_cutoff)) is not None:
             return materials
 
@@ -635,9 +652,9 @@ class GetMaterialsClfLengthExtrapolation:
         with open(self.label2id_cache_path(tr_length_cutoff), "w") as fp:
             json.dump(label2id, fp)
 
-        tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, [])
+        files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, [])
         dist = Counter({c: len(tr_files) / len(self.classes) for c in self.classes})
-        return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+        return Materials(files, labels, id2label, label2id, dist)
 
 
 def get_materials_clf_sorel_length_extrapolation(
@@ -645,7 +662,7 @@ def get_materials_clf_sorel_length_extrapolation(
     tr_size: int = 120000,
     vl_size: int = 12000,
     tr_length_cutoffs: list[int] = tuple(list(range(2**17, 2**20 + 1, 2**17))),
-) -> ClfMaterials:
+) -> Materials:
 
     classes = ("spyware", "worm", "dropper", "file_infector", "downloader", "adware")
     cache_root = Path("./cache/length_extrapolation_dataset_sorel_original_labels/")
@@ -661,7 +678,7 @@ def get_materials_clf_goodware_vs_malware(
     oversample: bool = False,
     undersample: bool = False,
     min_size: int = 0,
-) -> ClfMaterials:
+) -> Materials:
 
     def filter_fn(f: Path) -> bool:
         return f.stat().st_size >= min_size and f.suffix == ".exe"
@@ -678,9 +695,9 @@ def get_materials_clf_goodware_vs_malware(
         labels = np.array([1] * len(mal_files) + [0] * len(ben_files))
         files, labels = shuffle(files, labels)
         idx = tr_vl_ts_split_idx(len(files), tr_size, vl_size, ts_size)
-        tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
+        files, labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
         dist = Counter({"benign": len(ben_files), "malware": len(mal_files)})
-        return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
+        return Materials(files, labels, id2label, label2id, dist)
 
     n_ben = ratio * len(mal_files) / (1 - ratio)
     assert n_ben.is_integer(), n_ben
@@ -708,10 +725,9 @@ def get_materials_clf_goodware_vs_malware(
         labels = labels[0:s]
 
     idx = tr_vl_ts_split_idx(len(files), tr_size, vl_size, ts_size)
-    tr_vl_ts_files_and_labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
+    files, labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
     dist = Counter({"benign": n_ben, "malware": n_mal})
-    return ClfMaterials(tr_vl_ts_files_and_labels, id2label, label2id, dist)
-
+    return Materials(files, labels, id2label, label2id, dist)
 
 
 def test_get_materials_clf_sorel_length_extrapolation():
