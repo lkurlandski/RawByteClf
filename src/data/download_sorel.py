@@ -25,7 +25,7 @@ from src.data.cfg import (
 from src.data.utils import stream_sorel_meta, Decompressor
 
 
-DECOMPRESSOR = Decompressor(Decompressor.NONE, must_decompress=True)
+DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
 SUFFIX = "" if DECOMPRESSOR.alg == Decompressor.NONE else ".exe"
 
 
