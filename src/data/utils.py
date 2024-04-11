@@ -7,6 +7,7 @@ import asyncio
 from copy import deepcopy
 import csv
 import bz2
+from functools import partial
 import gzip
 from io import BytesIO
 from itertools import islice
@@ -300,6 +301,13 @@ class Decompressor:
         return Decompressor.S7Z, archive.read(file_list[0])
 
 
+def decompress_error_resilient(b: bytes, decompress: Decompressor) -> Optional[tuple[int, bytes]]:
+    try:
+        return decompress(b)
+    except Exception as err:
+        return None
+
+
 def read_binary_file(
     f: Path,
     max_length: Optional[int] = None,
@@ -462,6 +470,7 @@ def time_decompressor(n: int = 10000):
     print(f"Average uncompressed size: {np.mean([s[1] for s in sizes])}")
 
 
+
 async def decompress_sorel_collection(
     num_files: Optional[int] = None,
     num_workers: int = 1,
@@ -479,8 +488,11 @@ async def decompress_sorel_collection(
             "sum": np.sum(sizes) / div,
         }
 
+
     files = list(map(str, islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), num_files)))
     decompress = Decompressor(Decompressor.ZLIB, must_decompress=True)
+    fn = partial(decompress_error_resilient, decompress=decompress)
+
 
     compressed_sizes = []
     decompressed_sizes = []
@@ -497,10 +509,10 @@ async def decompress_sorel_collection(
         compressed_sizes.extend([len(d) for d in data])
         t_i = time.time()
         with mp.Pool(num_workers) as p:
-            decompressed_data = p.map(decompress, data)
+            decompressed_data = p.map(fn, data)
         t_f = time.time()
         decompress_times.append(t_f - t_i)
-        decompressed_sizes.extend([len(d) for _, d in decompressed_data])
+        decompressed_sizes.extend([len(d[1]) for d in decompressed_data if d is not None])
         pbar.set_description("Reading...")
 
     print(f"Compressed File Statistics: {pformat(stats(compressed_sizes, 1e9))}")
@@ -510,5 +522,5 @@ async def decompress_sorel_collection(
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    future = decompress_sorel_collection(num_files=None, num_workers=16, chunk_size=100000)
+    future = decompress_sorel_collection(num_files=1000, num_workers=16, chunk_size=100000)
     loop.run_until_complete(future)
