@@ -12,11 +12,13 @@ from io import BytesIO
 from itertools import islice
 import lzma
 import math
+import multiprocessing as mp
 import os
 from pathlib import Path
+from pprint import pprint, pformat
 import sys
 import time
-from typing import ClassVar, Generator, NamedTuple, Literal, Optional
+from typing import AsyncGenerator, ClassVar, Generator, NamedTuple, Literal, Optional
 import warnings
 import zlib
 
@@ -33,6 +35,7 @@ import numpy as np
 import torch
 from torch import ByteTensor
 from tqdm import tqdm
+from tqdm.asyncio import tqdm as atqdm
 import py7zr
 
 from src.utils import batched
@@ -319,6 +322,41 @@ def read_binary_file(
     raise ValueError(f"Unknown {in_memory_dtype=}")
 
 
+def read_binary_files(
+    files: list[str],
+    max_length: Optional[int] = None,
+    in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
+    disable_tqdm: bool = DEFAULT_DISABLE_TQDM,
+) -> list[bytes | np.ndarray | ByteTensor]:
+
+    iterable = files
+    if not disable_tqdm:
+        iterable = tqdm(
+            files,
+            desc=f"Synchronously loading {len(files)} files...",
+        )
+
+    return [read_binary_file(f, max_length, in_memory_dtype) for f in iterable]
+
+
+def read_binary_files_lazy(
+    files: list[str],
+    max_length: Optional[int] = None,
+    in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
+    disable_tqdm: bool = DEFAULT_DISABLE_TQDM,
+) -> Generator[bytes | np.ndarray | ByteTensor, None, None]:
+
+    iterable = files
+    if not disable_tqdm:
+        iterable = tqdm(
+            files,
+            desc=f"Synchronously loading {len(files)} files...",
+        )
+
+    for f in iterable:
+        yield read_binary_file(f, max_length, in_memory_dtype)
+
+
 async def read_binary_file_asynch(
     f: Path,
     max_length: Optional[int] = None,
@@ -334,7 +372,14 @@ async def read_binary_files_asynch(
     in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
     disable_tqdm: bool = DEFAULT_DISABLE_TQDM,
     asynch_chunk_size: int = DEFAULT_ASYNCH_CHUNK_SIZE,
-) -> None:
+) -> list[bytes | np.ndarray | ByteTensor]:
+    """
+    Usage
+    -----
+    >>> loop = asyncio.get_event_loop()
+    >>> future = read_binary_files_asynch(files)
+    >>> data = loop.run_until_complete(future)
+    """
     file_chunks = batched(files, asynch_chunk_size)
 
     iterable = file_chunks
@@ -354,21 +399,36 @@ async def read_binary_files_asynch(
     return x
 
 
-def read_binary_files(
+async def read_binary_files_asynch_lazy(
     files: list[str],
     max_length: Optional[int] = None,
     in_memory_dtype: Literal["bytes", "np", "pt"] = "bytes",
     disable_tqdm: bool = DEFAULT_DISABLE_TQDM,
-) -> list[bytes | np.ndarray | ByteTensor]:
+    asynch_chunk_size: int = DEFAULT_ASYNCH_CHUNK_SIZE,
+) -> AsyncGenerator[list[bytes | np.ndarray | ByteTensor], None]:
+    """
+    Usage
+    -----
+    >>> loop = asyncio.get_event_loop()
+    >>> data = []
+    >>> async for result in read_binary_files_asynch(files):
+    >>>     data.append(result)
+    """
+    file_chunks = batched(files, asynch_chunk_size)
 
-    iterable = files
+    iterable = file_chunks
     if not disable_tqdm:
+        n_chunks = math.ceil(len(files) / asynch_chunk_size)
         iterable = tqdm(
-            files,
-            desc=f"Synchronously loading {len(files)} files...",
+            file_chunks,
+            desc=f"Asynchronously loading {len(files)} files in {n_chunks} chunks...",
+            total=n_chunks,
         )
 
-    return [read_binary_file(f, max_length, in_memory_dtype) for f in iterable]
+    for batch_files in iterable:
+        tasks = [read_binary_file_asynch(f, max_length, in_memory_dtype) for f in batch_files]
+        x_i = await asyncio.gather(*tasks)
+        yield x_i
 
 
 def time_decompressor(n: int = 10000):
@@ -402,5 +462,53 @@ def time_decompressor(n: int = 10000):
     print(f"Average uncompressed size: {np.mean([s[1] for s in sizes])}")
 
 
+async def decompress_sorel_collection(
+    num_files: Optional[int] = None,
+    num_workers: int = 1,
+    chunk_size: int = 100000,
+) -> None:
+
+    def stats(sizes: list[int | float], div: float = 1.0):
+        return {
+            "n": len(sizes),
+            "median": np.median(sizes) / div,
+            "mean": np.mean(sizes) / div,
+            "std": np.std(sizes) / div,
+            "min": np.min(sizes) / div,
+            "max": np.max(sizes) / div,
+            "sum": np.sum(sizes) / div,
+        }
+
+    files = list(map(str, islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), num_files)))
+    decompress = Decompressor(Decompressor.ZLIB, must_decompress=True)
+
+    compressed_sizes = []
+    decompressed_sizes = []
+    decompress_times = []
+    pbar = atqdm(
+        read_binary_files_asynch_lazy(files, asynch_chunk_size=chunk_size),
+        total=len(files) // chunk_size,
+        desc="Reading...",
+    )
+    print(f"{len(files)=}")
+    print(f"{len(files) // chunk_size=}")
+    async for data in pbar:
+        pbar.set_description("Decompressing...")
+        compressed_sizes.extend([len(d) for d in data])
+        t_i = time.time()
+        with mp.Pool(num_workers) as p:
+            decompressed_data = p.map(decompress, data)
+        t_f = time.time()
+        decompress_times.append(t_f - t_i)
+        decompressed_sizes.extend([len(d) for _, d in decompressed_data])
+        pbar.set_description("Reading...")
+
+    print(f"Compressed File Statistics: {pformat(stats(compressed_sizes, 1e9))}")
+    print(f"Decompressed File Statistics: {pformat(stats(decompressed_sizes, 1e9))}")
+    print(f"Decompression Time Statistics: {pformat(stats(decompress_times))}")
+
+
 if __name__ == "__main__":
-    time_decompressor(100000)
+    loop = asyncio.get_event_loop()
+    future = decompress_sorel_collection(num_files=None, num_workers=16, chunk_size=100000)
+    loop.run_until_complete(future)
