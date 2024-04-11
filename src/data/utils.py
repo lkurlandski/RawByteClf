@@ -431,6 +431,39 @@ async def read_binary_files_asynch_lazy(
         yield x_i
 
 
+def write_binary_file(f: Path, b: bytes) -> None:
+    with open(f, "wb") as fp:
+        fp.write(b)
+
+
+async def write_binary_file_asynch(f: Path, b: bytes) -> None:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, write_binary_file, f, b)
+
+
+async def write_binary_files_asynch(
+    files: list[str],
+    data: list[bytes],
+    disable_tqdm: bool = DEFAULT_DISABLE_TQDM,
+    asynch_chunk_size: int = DEFAULT_ASYNCH_CHUNK_SIZE,
+) -> None:
+    file_chunks = batched(files, asynch_chunk_size)
+    data_chunks = batched(data, asynch_chunk_size)
+
+    iterable = zip(file_chunks, data_chunks)
+    if not disable_tqdm:
+        n_chunks = math.ceil(len(files) / asynch_chunk_size)
+        iterable = tqdm(
+            iterable,
+            desc=f"Asynchronously writing {len(files)} files in {n_chunks} chunks...",
+            total=n_chunks,
+        )
+
+    for batch_files, batch_data in iterable:
+        tasks = [write_binary_file_asynch(f, b) for f, b in zip(batch_files, batch_data)]
+        await asyncio.gather(*tasks)
+
+
 def time_decompressor(n: int = 10000):
 
     # Num files: len(sizes)=79163
