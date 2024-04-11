@@ -142,11 +142,13 @@ def tr_vl_ts_split_idx(
         tr_vl, ts = train_test_split(collection, test_size=ts_size, train_size=tr_size + vl_size)
     else:
         tr_vl = collection
+        ts = []
 
     if vl_size > 0:
         tr, vl = train_test_split(tr_vl, test_size=vl_size, train_size=tr_size)
     else:
         tr = tr_vl
+        vl = []
 
     return {"tr": tr[0:tr_size], "vl": vl, "ts": ts}
 
@@ -161,7 +163,7 @@ def tr_vl_ts_split(
     Returns train/validation/test sets for a collection.
     """
 
-    idx = tr_vl_ts_split_idx(len(collection), tr_size, ts_size, vl_size)
+    idx = tr_vl_ts_split_idx(len(collection), tr_size, vl_size, ts_size)
     try:  # Try to slice with a numpy array
         return {s: collection[indices] for s, indices in idx.items()}
     except TypeError:  # If that fails, use list comprehension
