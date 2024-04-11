@@ -73,7 +73,7 @@ from src.data.label_datasets import (
     ThreatLabelExtractor,
     ThreatLabelRefiner,
 )
-from src.data.loaders_core import ClfMaterials, SplitNames
+from src.data.loaders_core import Materials, SplitNames
 from src.data.utils import read_binary_files, read_binary_files_asynch
 
 
@@ -403,13 +403,13 @@ def print_dataset_pt(dataset: MapBinaryDatasetDict | IterableBinaryDatasetDict) 
 
 
 def get_dataset_pt(
-    materials: ClfMaterials, streaming: bool = False, **kwds,
+    materials: Materials, streaming: bool = False, **kwds,
 ) -> MapBinaryDatasetDict | IterableBinaryDatasetDict:
     BinaryDatasetClass = IterableBinaryDataset if streaming else MapBinaryDataset
     dataset = {
         split: BinaryDatasetClass(
-            materials.tr_vl_ts_files_and_labels[split][0],
-            materials.tr_vl_ts_files_and_labels[split][1],
+            materials.files[split],
+            materials.labels[split],
             id2label=materials.id2label,
             label2id=materials.label2id,
             dist=materials.dist,

@@ -27,23 +27,25 @@ import numpy as np
 import pandas as pd
 
 from src.data.loaders_core import (
-    ClfMaterials,
+    Materials,
     SplitNames,
 )
 from src.data.loaders_pt import read_binary_files_asynch, read_binary_files
 
 
-FEATURES = Features({"name": Value("string"), "bytes": Value("binary"), "labels": Value("int32")})
-DF = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [0]}).drop(index=0)
+FEATURES_CLM = Features({"name": Value("string"), "bytes": Value("binary")})
+FEATURES_CLF = Features({"name": Value("string"), "bytes": Value("binary"), "labels": Value("int32")})
+DF_CLM = pd.DataFrame({"name": [""], "bytes": [b""]}).drop(index=0)
+DF_CLF = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [0]}).drop(index=0)
 
 
-def classification_generator(
+def generator(
     files: list[os.PathLike],
     labels: Optional[np.ndarray] = None,
     max_length: Optional[int] = None,
     asynch: bool = True,
     asynch_chunk_size: int = 500000,
-) -> Generator:
+) -> Generator[dict[str, str | bytes | int], None, None]:
     kwds = {"max_length": max_length, "in_memory_dtype": "bytes", "disable_tqdm": True}
 
     data: Optional[bytes] = [None for _ in range(len(files))]
@@ -72,41 +74,72 @@ def classification_generator(
 
 
 def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict):
-    cache_files = []
     for split, d in dataset.items():
         d: Dataset | IterableDataset
         print(f"{split} -- {d.info}")
-        cache_files.extend([list(f.values())[0] for f in d.cache_files])
-    print("Cache Files:")
-    for f in cache_files:
-        print(f, "\\")
+
+    if isinstance(dataset, DatasetDict):
+        files = [list(f.values())[0] for f in d.cache_files for d in dataset.values()]
+        print(f"Cache Files: {pformat(files)}")
 
 
 def get_dataset_hf(
-    materials: ClfMaterials, streaming: bool = False, num_shards: Optional[int] = None, **kwds,
+    materials: Materials,
+    streaming: bool = False,
+    num_shards: Optional[int] = None,
+    **kwds,
 ) -> DatasetDict | IterableDataset:
+    """
+    Should the streaming version first generate the Dataset from the raw files then call
+    to_iterable_dataset? Or should it just generate the dataset from the raw files? The former
+    will get the asycnhronous file-reading out of the way before the training loop and before the
+    DataLoader multiprocessing phase. The latter will have the asynchrounous file-reading happen
+    during the training loop such that multiple processes are using different asyncio event loops.
+
+    This would look something like the below:
+    """
+
+    features = FEATURES_CLF if materials.labels is not None else FEATURES_CLM
+    df = DF_CLF if materials.labels is not None else DF_CLM
+
     datasets: dict[SplitNames, Dataset] = {}
     for split in ["tr", "vl", "ts"]:
-        if not materials.tr_vl_ts_files_and_labels[split][0]:  # Empty split for datasets > 2.14
-            datasets[split] = Dataset.from_pandas(DF.copy(), features=FEATURES)
+        if not materials.files[split]:  # Empty split for datasets > 2.14
+            datasets[split] = Dataset.from_pandas(df.copy(), features=features)
             continue
-        generator = partial(
-            classification_generator,
-            materials.tr_vl_ts_files_and_labels[split][0],
-            materials.tr_vl_ts_files_and_labels[split][1],
-            **kwds,
-        )
-        datasets[split] = Dataset.from_generator(generator, features=FEATURES)
+
+        kwds["files"] = materials.files[split]
+        if materials.labels is not None:
+            kwds["labels"] = materials.labels[split]
+        datasets[split] = Dataset.from_generator(generator, features=features, gen_kwargs=kwds)
 
     if streaming:
         num_shards = 1 if num_shards is None else num_shards
         dataset = IterableDatasetDict()
-        for split in datasets:
+        for split in ["tr", "vl", "ts"]:
+            if len(datasets[split]) == 0:
+                continue
             dataset[split] = datasets[split].to_iterable_dataset(num_shards)
     else:
         dataset = DatasetDict(datasets)
 
     return dataset
+
+    # num_shards = 1 if num_shards is None else num_shards
+    # datasets: dict[SplitNames, IterableDataset] = {}
+    # for split in ["tr", "vl", "ts"]:
+    #     # if not materials.files[split]:  # Empty split for datasets > 2.14
+    #     #     datasets[split] = Dataset.from_pandas(df.copy(), features=features)
+    #     #     continue
+    #     generator = partial(
+    #         classification_generator,
+    #         materials.files[split],
+    #         materials.labels[split] if materials.labels is not None else None,
+    #         **kwds,
+    #     )
+    #     gen_kwargs={"shards": shards}
+    #     datasets[split] = IterableDataset.from_generator(generator, features=features)
+    # return DatasetDict(datasets)
 
 
 def test():

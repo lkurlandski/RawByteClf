@@ -836,22 +836,33 @@ def get_map_kwds_for_hf_datasets(
     dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict,
     **kwds,
 ) -> dict[str, Any]:
-    map_kwds = {
-        "function": function,
-        "batched": True,
+    either_style_kwds = {
         "batch_size": BATCH_SIZE,
     }
-    if isinstance(dataset, (DatasetDict, Dataset)):
-        map_kwds.update(
-            {
-                "keep_in_memory": KEEP_IN_MEMORY,
-                "num_proc": NUM_PROC,
-                "cache_file_names": CACHE_FILE_NAME,
-                "writer_batch_size": WRITER_BATCH_SIZE,
-            }
-        )
-    map_kwds.update(kwds)
-    return map_kwds
+    map_style_kwds = {
+        "keep_in_memory": KEEP_IN_MEMORY,
+        "num_proc": NUM_PROC,
+        "cache_file_names": CACHE_FILE_NAME,
+        "writer_batch_size": WRITER_BATCH_SIZE,
+    }
+    iterable_style_kwds = {
+
+    }
+
+    kwds = either_style_kwds | map_style_kwds | iterable_style_kwds | kwds
+    if isinstance(dataset, (Dataset, DatasetDict)):
+        for k in iterable_style_kwds:
+            kwds.pop(k)
+    if isinstance(dataset, (IterableDataset, IterableDatasetDict)):
+        for k in map_style_kwds:
+            kwds.pop(k)
+
+    kwds.update({
+        "function": function,
+        "batched": True,
+    })
+
+    return kwds
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
@@ -937,7 +948,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     # from the number of training epochs.
     if args.streaming and training_arguments.max_steps == -1:
         max_steps = compute_total_steps(
-            len(materials.tr_vl_ts_files_and_labels["tr"][0]),
+            len(materials.files["tr"]),
             training_arguments.num_train_epochs,
             training_arguments.per_device_train_batch_size,
             training_arguments.gradient_accumulation_steps,
@@ -983,7 +994,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset = dataset.map(**get_map_kwds_for_hf_datasets(
             function=preprocess_fn,
             dataset=dataset,
-            remove_columns=["name", "bytes"] if args.task == "clf" else ["name", "bytes", "labels"],
+            remove_columns=["name", "bytes"],
             num_proc=num_proc,
         ))
         print_dataset_hf(dataset)
