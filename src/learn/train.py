@@ -133,6 +133,12 @@ try:
     )
 except Exception as err:
     print(err)
+from src.architectures.mamba_hf import (
+    MambaConfig,
+    MambaForSequenceClassification,
+    MambaForCausalLM,
+    MambaPreTrainedModel,
+)
 from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
