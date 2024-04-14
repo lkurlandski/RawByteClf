@@ -211,6 +211,17 @@ class MambaCache:
             for i in range(config.num_hidden_layers)
         }
 
+    def float(self):
+        # TODO: ascertain whether or not we can truly skip converting to fp32...
+        # We need this because accelerate internals will try and convert things to fp32
+        # recursively if it detects the object has a `dtype` attribute. However, we don't
+        # actually need to convert the conv_states and ssm_states to fp32; we only need to
+        # convert the `dtype` attribute to fp32.
+        self.dtype = torch.float32
+        # self.conv_states = {k: v.float() for k, v in self.conv_states.items()}
+        # self.ssm_states = {k: v.float() for k, v in self.ssm_states.items()}
+        return self
+
 
 class MambaMixer(nn.Module):
     """
