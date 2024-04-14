@@ -298,6 +298,20 @@ class TrainingArguments(HfTrainingArguments):
         kwds["metric_for_best_model"] = kwds.pop("metric_for_best_model", "eval_loss")
 
         super().__init__(**kwds)
+
+        # When training with multiple GPUs, if the number of steps is not divisible by the number of
+        # devices, the sequence lengths for a batch prepared for one device might not equal the
+        # sequence length for a batch prepared for another device. Due to a bug in accelerate, this
+        # causes an error when concatenating tensors. The issue is documented here:
+        # https://github.com/huggingface/transformers/issues/26548. The temporary fix is to either
+        # use a number of steps that is divisible by the number of devices and the
+        # per_device_train_batch or simply set the dispatch_batches flag to false.
+        if self.world_size > 1:
+            if hasattr(self, "accelerator_config"):
+                self.accelerator_config["dispatch_batches"] = False
+            else:
+                self.dispatch_batches = False
+
         self.do_eval = do_eval
 
     def hf_training_arguments_object(self) -> HfTrainingArguments:
@@ -951,13 +965,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 
     # If we have apriori knowledge of the length of the dataset, we can compute the number of steps
-    # from the number of training epochs.
-    if args.streaming and training_arguments.max_steps == -1:
+    # from the number of training epochs. This lets us use `epochs` instead of max_steps from the CLI.
+    if args.streaming and (training_arguments.max_steps == -1 or training_arguments.max_steps is None):
         max_steps = compute_total_steps(
             len(materials.files["tr"]),
             training_arguments.num_train_epochs,
+            None,
             training_arguments.per_device_train_batch_size,
             training_arguments.gradient_accumulation_steps,
+            training_arguments.world_size,
         )
         assert isinstance(max_steps, int)
         training_arguments = replace(training_arguments, max_steps=max_steps)
@@ -968,7 +984,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset = get_dataset_hf(
             materials,
             args.streaming,
-            training_arguments.dataloader_num_workers,
+            training_arguments.world_size * training_arguments.dataloader_num_workers,
             max_length=args.data_read_bytes,
         )
         print_dataset_hf(dataset)
