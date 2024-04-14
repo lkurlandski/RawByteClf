@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import CrossEntropyLoss
+from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from transformers.activations import ACT2FN
 from transformers.modeling_utils import PreTrainedModel
@@ -896,7 +896,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
         )
         hidden_states = mamba_outputs[0]
 
-        logits = self.clf_head(hidden_states.to(self.lm_head.weight.dtype)).float()
+        logits = self.clf_head(hidden_states.to(self.clf_head.weight.dtype)).float()
 
 
         # ME
@@ -909,21 +909,21 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
         loss = None
         if labels is not None:
             if self.config.problem_type is None:
-                if self.num_labels == 1:
+                if self.config.num_labels == 1:
                     self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
+                elif self.config.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
                     self.config.problem_type = "single_label_classification"
                 else:
                     self.config.problem_type = "multi_label_classification"
             if self.config.problem_type == "regression":
                 loss_fct = MSELoss()
-                if self.num_labels == 1:
+                if self.config.num_labels == 1:
                     loss = loss_fct(clf_logits.squeeze(), labels.squeeze())
                 else:
                     loss = loss_fct(clf_logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(clf_logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(clf_logits.view(-1, self.config.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(clf_logits, labels)
