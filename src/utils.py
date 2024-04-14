@@ -91,8 +91,8 @@ def get_paths_sorted_numerically(
 
 def get_highest_path(
     path: Collection[Path] | Path,
-    lstrip: str = "",
-    rstrip: str = "",
+    lstrip: Optional[str] = None,
+    rstrip: Optional[str] = None,
     lowest: bool = False,
 ) -> Path:
     """
@@ -104,9 +104,9 @@ def get_highest_path(
 
     def key(p: Path) -> int:
         s = p.stem
-        if s.startswith(lstrip):
+        if lstrip and s.startswith(lstrip):
             s = s[len(lstrip):]
-        if s.endswith(rstrip):
+        if rstrip and s.endswith(rstrip):
             s = s[:-len(rstrip)]
         return int(s)
 
