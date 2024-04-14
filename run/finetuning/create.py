@@ -8,9 +8,11 @@ from typing import Optional
 
 ROOT = "./output/finetuning"
 MODEL_NAME_OR_PATH = "mamba"
-ARCH_CONFIG = '{"mode": "uni", "d_model": 256, "n_layer": 8, "mlp_hidden_size": 512}'
-PER_DEVICE_TRAIN_BATCH_SIZE = 16
-PER_DEVICE_EVAL_BATCH_SIZE = 32
+ARCH_CONFIG = '{"mode": "uni", "d_model": 256, "n_layer": 8}'
+PER_DEVICE_TRAIN_BATCH_SIZE = 32
+PER_DEVICE_EVAL_BATCH_SIZE = 64
+CLM_GRADIENT_ACCUMULATION_STEPS = 8
+CLF_GRADIENT_ACCUMULATION_STEPS = 2
 REPRESENTATION = 8
 ALGORITHM = "Raw"
 VOCAB_SIZE = 256
@@ -23,7 +25,7 @@ TF32 = "true"
 
 BODY_CLM = f"""#!/bin/bash -l
 
-#SBATCH --job-name=ftCLM
+#SBATCH --job-name=ft2CLM
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -62,8 +64,8 @@ src/learn/train.py \\
 --evaluation_strategy="steps" \\
 --num_train_epochs=1 \\
 --logging_steps=10 \\
---save_steps=400 \\
---eval_steps=400 \\
+--save_steps=200 \\
+--eval_steps=200 \\
 --dataloader_num_workers={3} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
@@ -78,19 +80,20 @@ src/learn/train.py \\
 --data_read_bytes={DATA_READ_BYTES} \\
 --per_device_train_batch_size={PER_DEVICE_TRAIN_BATCH_SIZE} \\
 --per_device_eval_batch_size={PER_DEVICE_EVAL_BATCH_SIZE} \\
---gradient_accumulation_steps=16 \\
+--gradient_accumulation_steps={CLM_GRADIENT_ACCUMULATION_STEPS} \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
 --{BF_OR_FP}16 \\
 --{BF_OR_FP}16_full_eval \\
---tf32={TF32}
+--tf32={TF32} \\
+--gradient_checkpointing=true
 """
 
 
 BODY_CLF = f"""#!/bin/bash -l
 
-#SBATCH --job-name=ftCLF
+#SBATCH --job-name=ft2CLF
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -146,13 +149,14 @@ src/learn/train.py \\
 --data_read_bytes={DATA_READ_BYTES} \\
 --per_device_train_batch_size={PER_DEVICE_TRAIN_BATCH_SIZE} \\
 --per_device_eval_batch_size={PER_DEVICE_EVAL_BATCH_SIZE} \\
---gradient_accumulation_steps=4 \\
+--gradient_accumulation_steps={CLF_GRADIENT_ACCUMULATION_STEPS} \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
 --{BF_OR_FP}16 \\
 --{BF_OR_FP}16_full_eval \\
---tf32={TF32}
+--tf32={TF32} \\
+--gradient_checkpointing=true
 """
 
 
