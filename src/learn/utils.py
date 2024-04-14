@@ -295,13 +295,32 @@ def float_to_int(x: float | int) -> int:
     raise TypeError(f"Tried to convert {x=} to int, but it is not an integer.")
 
 
-def compute_total_steps(n_samples: int, n_epochs: int, batch_size: int, n_accumulation: int) -> int:
+def compute_total_steps(
+    n_samples: int,
+    n_epochs: int,
+    batch_size: Optional[int] = None,
+    per_device_batch_size: Optional[int] = None,
+    n_accumulation_steps: Optional[int] = None,
+    n_devices: Optional[int] = None,
+) -> int:
+
+    # Ray tune seems to fuck up the data types? WTF. Anyway, cast them all to int.
     n_samples = float_to_int(n_samples)
     n_epochs = float_to_int(n_epochs)
-    batch_size = float_to_int(batch_size)
-    n_accumulation = float_to_int(n_accumulation)
+    batch_size = float_to_int(batch_size) if batch_size is not None else None
+    per_device_batch_size = float_to_int(per_device_batch_size) if per_device_batch_size is not None else None
+    n_accumulation_steps = float_to_int(n_accumulation_steps) if n_accumulation_steps is not None else None
+    n_devices = float_to_int(n_devices) if n_devices is not None else None
 
-    q, r = divmod(n_samples * n_epochs, batch_size * n_accumulation)
+    if batch_size is None:
+        if any(x is None for x in (per_device_batch_size, n_accumulation_steps, n_devices)):
+            raise ValueError()
+        batch_size = per_device_batch_size * n_accumulation_steps * n_devices
+    else:
+        if not all(x is None for x in (per_device_batch_size, n_accumulation_steps, n_devices)):
+            raise ValueError()
+
+    q, r = divmod(n_samples * n_epochs, batch_size)
     if r == 0:
         return q
     return q + 1
