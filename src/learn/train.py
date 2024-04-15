@@ -231,7 +231,14 @@ MODEL_NAMES = [
     "mamba",
 ]
 
-RETURN_ATTENTION_MASK = [
+REQ_ATTENTION_MASK = [
+    "longformer",
+    "reformer",
+    "nystromformer",
+    "hrrformer",
+]
+
+REQ_TOKEN_TYPE_IDS = [
     "longformer",
     "reformer",
     "nystromformer",
@@ -945,6 +952,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         add_eos_token=True,
         add_sep_token=False,
     )
+    tokenizer.model_input_names = ["input_ids"]
+    if MODEL_NAME in REQ_ATTENTION_MASK:
+        tokenizer.model_input_names.append("attention_mask")
+    if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
+        tokenizer.model_input_names.append("token_type_ids")
+
     print(f"{tokenizer=}")
     pprint({k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)})
     print(f"{tokenizer.model_input_names=}")
@@ -1098,8 +1111,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     # Change the tokenizer's attributes for the data_collator to use correctly.
     # This let's us use the previously generated cache files then drop the
     # attention_mask before passing the inputs to the model.
-    if MODEL_NAME not in RETURN_ATTENTION_MASK:
-        tokenizer.model_input_names.remove("attention_mask")
+    # if MODEL_NAME not in REQ_ATTENTION_MASK:
+    #     if "attention_mask" in tokenizer.model_input_names:
+    #         tokenizer.model_input_names.remove("attention_mask")
 
     if args.task == "clf":
         data_collator = DataCollatorWithPadding(
