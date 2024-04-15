@@ -2,10 +2,11 @@
 Various codes for data analysis.
 """
 
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, OrderedDict
 import json
 import os
 from pathlib import Path
+from pprint import pprint
 import sys
 from typing import Literal
 
@@ -87,11 +88,19 @@ def tokenizer_vocab_analysis(
 
 
 def main():
-    path = ".output/mymalconv/65536/clf/1/False/False/False/tuning_results/dataframe.csv"
-    df = process_tuning_dataframe(path)
-    with pd.option_context("display.max_rows", None, "display.max_columns", None):
-        print(df)
-    
+    for file in Path("output/tokenizers").iterdir():
+        if "2000" not in file.name:
+            continue
+        print(file.name)
+        if "Unigram" in file.name:
+            alg = "Unigram"
+        elif "BPE" in file.name:
+            alg = "BPE"
+        else:
+            raise ValueError(f"Invalid file: {file}")
+        c = tokenizer_vocab_analysis(file, alg, num_special_tokens=7)
+        c = OrderedDict(sorted(c.items(), key=lambda x: x[0]))
+        pprint(c)
 
 
 if __name__ == "__main__":
