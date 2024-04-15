@@ -51,7 +51,7 @@ class MyMalConvConfig(PretrainedConfig):
         num_embd: int = -1,
         max_length: int = -1,
         embd_size: int = 8,
-        hidden_size: Optional[int] = -1,
+        hidden_size: int = -1,
         window_size: int = 512,
         channels: int = 128,
         stride: int = 512,
@@ -65,7 +65,7 @@ class MyMalConvConfig(PretrainedConfig):
         self.num_embd = num_embd
         self.max_length = max_length
         self.embd_size = embd_size
-        self.hidden_size = hidden_size if hidden_size > 0 else channels
+        self.hidden_size = hidden_size
         self.window_size = window_size
         self.channels = channels
         self.stride = stride
@@ -87,7 +87,7 @@ class BaseMalConvConfig(PretrainedConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = -1,
-        hidden_size: Optional[int] = -1,
+        hidden_size: int = -1,
         window_size: int = -1,
         channels: int = -1,
         stride: int = -1,
@@ -103,7 +103,7 @@ class BaseMalConvConfig(PretrainedConfig):
         self.pad_idx = pad_idx
         self.num_embd = num_embd
         self.embd_size = embd_size
-        self.hidden_size = hidden_size if hidden_size > 0 else channels
+        self.hidden_size = hidden_size
         self.window_size = window_size
         self.channels = channels
         self.stride = stride
@@ -135,7 +135,7 @@ class MalConvConfig(BaseMalConvConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = 8,
-        hidden_size: Optional[int] = -1,
+        hidden_size: int = -1,
         window_size: int = 512,
         channels: int = 128,
         stride: int = 512,
@@ -171,7 +171,7 @@ class MalConvMLConfig(BaseMalConvConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = 8,
-        hidden_size: Optional[int] = -1,
+        hidden_size: int = -1,
         window_size: int = 512,
         channels: int = 128,
         stride: int = 512,
@@ -209,7 +209,7 @@ class MalConvGCTConfig(BaseMalConvConfig):
         pad_idx: int = -1,
         num_embd: int = -1,
         embd_size: int = 8,
-        hidden_size: Optional[int] = -1,
+        hidden_size: int = -1,
         window_size: int = 64,
         channels: int = 128,
         stride: int = 64,
@@ -796,13 +796,11 @@ class ClassificationHead(nn.Module):
         self,
         in_features: int,
         out_features: int = 1,
-        hidden_size: Optional[int] = None,
+        hidden_size: int = -1,
         hidden_act: Literal["tanh", "relu", "leaky_relu"] = "relu",
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
-
-        hidden_size = in_features if hidden_size is None else hidden_size
 
         if hidden_act == "leaky_relu":
             activation = nn.LeakyReLU()
@@ -813,12 +811,15 @@ class ClassificationHead(nn.Module):
         else:
             raise ValueError(f"Unknown activation function: {hidden_act=}")
 
-        self.mlp = nn.Sequential(
-            nn.Linear(in_features, hidden_size),
-            nn.Dropout(dropout),
-            activation,
-            nn.Linear(hidden_size, out_features),
-        )
+        if hidden_size > 0:
+            self.mlp = nn.Sequential(
+                nn.Linear(in_features, hidden_size),
+                nn.Dropout(dropout),
+                activation,
+                nn.Linear(hidden_size, out_features),
+            )
+        else:
+            self.mlp = nn.Linear(in_features, out_features)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.mlp(x)
