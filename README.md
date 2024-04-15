@@ -112,3 +112,7 @@ okay, it seems like uninstalling ray may help.
 Also, ensuring that the original file-generator has finished before different processes try and map also helps?
 
 
+
+
+transformers==4.39.3
+accelerate==0.29.2
