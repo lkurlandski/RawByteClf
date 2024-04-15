@@ -6,8 +6,9 @@ from pprint import pformat
 from typing import Optional
 
 
-ALGORITHMS = ["BPE", "Unigram"]
-VOCAB_SIZES = [1024, 4096, 16384, 65536]
+ALGORITHMS = ["BPE", "Unigram", "Raw"]
+VOCAB_SIZES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+TOP_K = [10, 100]
 
 
 JOB_NAME = "JOB_NAME"
@@ -23,7 +24,7 @@ ALGORITHM = "ALGORITHM"
 VOCAB_SIZE = "VOCAB_SIZE"
 MAX_LENGTH = 2 ** 16
 DATA_READ_BYTES = 2 ** 16
-TOP_K = 100
+TOP_K = "TOP_K"
 BF_OR_FP = "bf"
 TF32 = "true"
 
@@ -169,27 +170,26 @@ OUTPUT = Path(os.path.realpath(__file__)).parent
 
 
 for algorithm in ALGORITHMS:
-    for vocab_size in VOCAB_SIZES: 
-        job_name = f"ftCLM-{algorithm[0]}-{vocab_size}"
-        body = BODY_CLM \
-            .replace("JOB_NAME", job_name) \
-            .replace("ALGORITHM", algorithm) \
-            .replace("VOCAB_SIZE", str(vocab_size))
-        with open(OUTPUT / f"{job_name}.sh", "w") as fp:
-            fp.write(body)
+    for vocab_size in VOCAB_SIZES:
+        for top_k in TOP_K:
+            job_name = f"ftCLM-{algorithm[0]}-{vocab_size}"
+            body = BODY_CLM \
+                .replace("JOB_NAME", job_name) \
+                .replace("ALGORITHM", algorithm) \
+                .replace("VOCAB_SIZE", str(vocab_size))
+            with open(OUTPUT / f"{job_name}.sh", "w") as fp:
+                fp.write(body)
 
-        job_name = f"ftCLF-{algorithm[0]}-{vocab_size}"
-        body = BODY_CLF \
-            .replace("JOB_NAME", job_name) \
-            .replace("ALGORITHM", algorithm) \
-            .replace("VOCAB_SIZE", str(vocab_size))
-        with open(OUTPUT / f"{job_name}.sh", "w") as fp:
-            fp.write(body)
+            job_name = f"ftCLF-{algorithm[0]}-{vocab_size}"
+            body = BODY_CLF \
+                .replace("JOB_NAME", job_name) \
+                .replace("ALGORITHM", algorithm) \
+                .replace("VOCAB_SIZE", str(vocab_size))
+            with open(OUTPUT / f"{job_name}.sh", "w") as fp:
+                fp.write(body)
 
-        job_name = f"ftCLFFT-{algorithm[0]}-{vocab_size}"
-        pretrained_model_path = "FIXME"
-        body = body.replace("mamba", pretrained_model_path)
-        with open(OUTPUT / f"{job_name}.sh", "w") as fp:
-            fp.write(body)
-
-
+            job_name = f"ftCLFFT-{algorithm[0]}-{vocab_size}"
+            pretrained_model_path = "FIXME"
+            body = body.replace("mamba", pretrained_model_path)
+            with open(OUTPUT / f"{job_name}.sh", "w") as fp:
+                fp.write(body)
