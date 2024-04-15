@@ -36,79 +36,10 @@ _CHECKPOINT_FOR_DOC = "state-spaces/mamba-130m-hf"
 _CONFIG_FOR_DOC = "MambaConfig"
 
 
-
+# Overridden for some backwards compatibily with the d_model and n_layer parameters used in the
+# original Mamba implementation. More critically, includes the keys_to_ignore_at_inference attribute
+# which is used to filter out the MambaCache object.
 class MambaConfig(PretrainedConfig):
-    """
-    This is the configuration class to store the configuration of a [`MambaModel`]. It is used to instantiate a MAMBA
-    model according to the specified arguments, defining the model architecture. Instantiating a configuration with the
-    defaults will yield a similar configuration to that of the MAMBA
-    [state-spaces/mamba-2.8b](https://huggingface.co/state-spaces/mamba-2.8b) architecture.
-
-    Configuration objects inherit from [`PretrainedConfig`] and can be used to control the model outputs. Read the
-    documentation from [`PretrainedConfig`] for more information.
-
-
-    Args:
-        vocab_size (`int`, *optional*, defaults to 50280):
-            Vocabulary size of the MAMBA model. Defines the number of different tokens that can be represented by the
-            `inputs_ids` passed when calling [`MambaModel`].
-        hidden_size (`int`, *optional*, defaults to 768):
-            Dimensionality of the embeddings and hidden states.
-        state_size (`int`, *optional*, defaults to 16): shape of the state space latents.
-        num_hidden_layers (`int`, *optional*, defaults to 32):
-            Number of hidden layers in the model.
-        layer_norm_epsilon (`float`, *optional*, defaults to 1e-05):
-            The epsilon to use in the layer normalization layers.
-        pad_token_id (`int`, *optional*, defaults to 0):
-            Padding token id.
-        bos_token_id (`int`, *optional*, defaults to 0):
-            The id of the beginning of sentence token in the vocabulary.
-        eos_token_id (`int`, *optional*, defaults to 0):
-            The id of the end of sentence token in the vocabulary.
-        expand (`int`, *optional*, defaults to 2): Expanding factor used to determine the intermediate size.
-        conv_kernel (`int`, *optional*, defaults to 4): Size of the convolution kernel.
-        use_bias (`bool`, *optional*, defaults to `False`):
-            Whether or not to use bias in ["in_proj", "out_proj"] of the mixer block
-        use_conv_bias (`bool`, *optional*, defaults to `True`):
-            Whether or not to use bias in the convolution layer of the mixer block.
-        hidden_act (`str`, *optional*, defaults to `"silu"`):
-            The non-linear activation function (function or string) in the decoder.
-        initializer_range (`float`, *optional*, defaults to 0.1):
-            The standard deviation of the truncated_normal_initializer for initializing all weight matrices.
-        residual_in_fp32 (`bool`, *optional*, defaults to `True`):
-            Whether or not residuals should be in `float32`. If set to `False` residuals will keep the same `dtype` as the rest of the model
-        time_step_rank (`Union[int,str]`, *optional*, defaults to `"auto"`):
-            Rank of the discretization projection matrix. `"auto"` means that it will default to `math.ceil(self.hidden_size / 16)`
-        time_step_scale (`float`, *optional*, defaults to 1.0):
-            Scale used used to scale `dt_proj.bias`.
-        time_step_min (`float`, *optional*, defaults to 0.001):
-            Minimum `time_step` used to bound `dt_proj.bias`.
-        time_step_max (`float`, *optional*, defaults to 0.1):
-            Maximum `time_step` used to bound `dt_proj.bias`.
-        time_step_init_scheme (`float`, *optional*, defaults to `"random"`):
-            Init scheme used for `dt_proj.weight`. Should be one of `["random","uniform"]`
-        time_step_floor (`float`, *optional*, defaults to 0.0001):
-            Minimum clamping value of the `dt_proj.bias` layer initialization.
-        rescale_prenorm_residual (`bool`, *optional*, defaults to `False`):
-            Whether or not to rescale `out_proj` weights when initializing.
-        use_cache (`bool`, *optional*, defaults to `True`):
-            Whether or not the cache should be used.
-
-
-    Example:
-
-    ```python
-    >>> from transformers import MambaConfig, MambaModel
-
-    >>> # Initializing a Mamba configuration
-    >>> configuration = MambaConfig()
-
-    >>> # Initializing a model (with random weights) from the configuration
-    >>> model = MambaModel(configuration)
-
-    >>> # Accessing the model configuration
-    >>> configuration = model.config
-    ```"""
 
     model_type = "mamba"
     keys_to_ignore_at_inference = ["cache_params"]
@@ -178,45 +109,12 @@ class MambaConfig(PretrainedConfig):
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
 
 
+# Overridden to include the float and detach methods which allows for compatibilty with acclerates
+# mixed precision training routines. Neither of these methods actually do anything to the underlying
+# data but do change the dtype and device attributes.
 class MambaCache(MambaCache):
-    """
-    Arguments:
-        config: MambaConfig
-        batch_size: int
-        dtype: torch.dtype
-        device: torch.device
-
-    Attributes:
-        seqlen_offset: int
-        dtype: torch.dtype
-        conv_states: Dict[int, torch.Tensor] # layer_idx -> [batch_size, intermediate_size, conv_kernel_size]
-        ssm_states: Dict[int, torch.Tensor] # layer_idx -> [batch_size, intermediate_size, ssm_state_size]
-    """
-
-#     def __init__(
-#         self, config: MambaConfig, batch_size: int, dtype: torch.dtype = torch.float16, device: Optional[str] = None
-#     ):
-#         self.seqlen_offset = 0
-#         self.dtype = dtype
-#         intermediate_size = config.intermediate_size
-#         ssm_state_size = config.state_size
-#         conv_kernel_size = config.conv_kernel
-
-#         self.conv_states = {
-#             i: torch.zeros(batch_size, intermediate_size, conv_kernel_size, device=device, dtype=dtype)
-#             for i in range(config.num_hidden_layers)
-#         }
-#         self.ssm_states = {
-#             i: torch.zeros(batch_size, intermediate_size, ssm_state_size, device=device, dtype=dtype)
-#             for i in range(config.num_hidden_layers)
-#         }
 
     def float(self):
-        # TODO: ascertain whether or not we can truly skip converting to fp32...
-        # We need this because accelerate internals will try and convert things to fp32
-        # recursively if it detects the object has a `dtype` attribute. However, we don't
-        # actually need to convert the conv_states and ssm_states to fp32; we only need to
-        # convert the `dtype` attribute to fp32.
         self.dtype = torch.float32
         # self.conv_states = {k: v.float() for k, v in self.conv_states.items()}
         # self.ssm_states = {k: v.float() for k, v in self.ssm_states.items()}
@@ -228,9 +126,6 @@ class MambaCache(MambaCache):
         # self.ssm_states = {k: v.detach() for k, v in self.ssm_states.items()}
         return self
 
-    # def shape(self):
-    #     return tuple()
-
 
 class MambaMixer(nn.Module):
     """
@@ -240,13 +135,13 @@ class MambaMixer(nn.Module):
     and is why Mamba is called **selective** state spaces)
     """
 
-    def __init__(self, config: MambaConfig, layer_idx: int):
+    def __init__(self, config, layer_idx):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.ssm_state_size = config.state_size
         self.conv_kernel_size = config.conv_kernel
         self.intermediate_size = config.intermediate_size
-        self.time_step_rank = int(config.time_step_rank)
+        self.time_step_rank = config.time_step_rank
         self.layer_idx = layer_idx
         self.use_conv_bias = config.use_conv_bias
         self.conv1d = nn.Conv1d(
@@ -384,7 +279,7 @@ class MambaMixer(nn.Module):
 
         # 2. Convolution sequence transformation
         if cache_params is not None:
-            ssm_state = cache_params.ssm_states[self.layer_idx].clone()
+            ssm_state = cache_params.ssm_states[self.layer_idx]
             if cache_params.seqlen_offset > 0:
                 conv_state = cache_params.conv_states[self.layer_idx]                   # [batch, intermediate_size, conv_kernel_size]
                 conv_state = torch.roll(conv_state, shifts=-1, dims=-1)
@@ -655,14 +550,7 @@ class MambaModel(MambaPreTrainedModel):
         self.gradient_checkpointing = False
         self.norm_f = MambaRMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
         # Initialize weights and apply final processing
-        self._register_load_state_dict_pre_hook(self.load_hook)
         self.post_init()
-
-    def load_hook(self, state_dict, prefix, *args):
-        for k in state_dict:
-            if "embedding." in k:
-                state_dict[k.replace("embedding.", "embeddings.")] = state_dict.pop(k)
-                break
 
     def get_input_embeddings(self):
         return self.embeddings
