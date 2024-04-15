@@ -83,6 +83,7 @@ def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict):
         print(f"Cache Files: {pformat(files)}")
 
 
+# TODO: treat the train and test sets differently because we don't really need an iterable test set.
 def get_dataset_hf(
     materials: Materials,
     streaming: bool = False,

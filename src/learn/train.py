@@ -1019,6 +1019,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             preprocess_fn = compose_functions(*preprocess_fns)
             num_proc = NUM_PROC
         else:
+            # TODO: is an attention mask being returned here? If so, we don't need it for most
+            # models...a comment later down indicates that it may be generated and saved for more
+            # convenient cacheing behavior, but this would slow down the iterable versions? On
+            # second thought, its probably very efficient to generate the mask, so the slow down
+            # wouldn't be too significant as long as the data isn't being transferred to the GPU.
             preprocess_fn = partial(
                 hf_tokenize_bytes,
                 tokenizer=tokenizer,
