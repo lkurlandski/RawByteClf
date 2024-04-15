@@ -18,7 +18,7 @@ ALGORITHM = "Raw"
 VOCAB_SIZE = 256
 MAX_LENGTH = 2 ** 16
 DATA_READ_BYTES = 2 ** 16
-TOP_K = 100
+TOP_K = 10
 BF_OR_FP = "bf"
 TF32 = "true"
 
@@ -74,7 +74,7 @@ src/learn/train.py \\
 --weight_decay=0.01 \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
---save_total_limit=3 \\
+--save_total_limit=100 \\
 --model_name_or_path={MODEL_NAME_OR_PATH} \\
 --max_length={MAX_LENGTH} \\
 --data_read_bytes={DATA_READ_BYTES} \\
@@ -97,7 +97,7 @@ BODY_CLF = f"""#!/bin/bash -l
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-8:00:00
+#SBATCH --time=00-12:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks={4}
@@ -161,19 +161,20 @@ src/learn/train.py \\
 
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
-CHECKPOINTS = Path("/home/lk3591/Documents/code/RawByteClf/output/finetuning/mamba/representation--8/algorithm--Raw/vocab_size--256/max_length--65536/task--clm/tr_size--1000000/depth--1/mode--uni/d_model--256/n_layer--8/mlp_hidden_size--512/per_device_train_batch_size--8/gradient_accumulation_steps--32/learning_rate--0.001/weight_decay--0.01/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_grad_norm--1.0/lr_scheduler_type--linear/warmup_ratio--0.0/bf16--True/fp16--False/tf32--True/optim--adamw_torch/checkpoints/")
+CHECKPOINTS = [
+    "/home/lk3591/Documents/code/RawByteClf/output/finetuning/mamba/representation--8/algorithm--Raw/vocab_size--256/max_length--65536/task--clm/tr_size--1000000/depth--1/mode--uni/d_model--256/n_layer--8/per_device_train_batch_size--16/gradient_accumulation_steps--16/learning_rate--0.001/weight_decay--0.01/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_grad_norm--1.0/lr_scheduler_type--linear/warmup_ratio--0.0/bf16--True/fp16--False/tf32--True/optim--adamw_torch/checkpoints/CHECKPOINT-1000/",
+]
 
 
 with open(OUTPUT / "clm.sh", "w") as fp:
     fp.write(BODY_CLM)
 with open(OUTPUT / "clf.sh", "w") as fp:
     fp.write(BODY_CLF)
-
-
-for checkpoint in CHECKPOINTS.glob("checkpoint-*"):
-    steps = checkpoint.stem.replace("checkpoint-", "")
+for checkpoint in CHECKPOINTS:
+    checkpoint = Path(checkpoint)
+    steps = checkpoint.stem.replace("CHECKPOINT-", "")
     body = BODY_CLF \
         .replace("mamba", checkpoint.as_posix()) \
-        .replace("ftCLF", f"ftFTCLF-{steps}")
+        .replace("ft2CLF", f"ft2FTCLF-{steps}")
     with open(OUTPUT / f"ftclf-{steps}.sh", "w") as fp:
         fp.write(body)
