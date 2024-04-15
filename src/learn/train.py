@@ -297,6 +297,18 @@ class TrainingArguments(HfTrainingArguments):
 
         kwds["metric_for_best_model"] = kwds.pop("metric_for_best_model", "eval_loss")
 
+        # Pytorch recommends setting this parameter to False.
+        # https://pytorch.org/docs/stable/checkpoint.html
+        # Huggingface recommends setting it to False when using DDP
+        # https://huggingface.co/docs/trl/en/sft_trainer
+        # I don't really understand how its going to impact training with gradient checkpointing,
+        # but it seems to work in the non-DDP scenario, so let's just keep it as a default.
+        # I also cannot figure out how to properly set this from the CLI, so its got to be done
+        # within the Python code itself.
+        if kwds.pop("gradient_checkpointing", False):
+            if kwds["gradient_checkpointing_kwargs"] is None:
+                kwds["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
+
         super().__init__(**kwds)
 
         # When training with multiple GPUs, if the number of steps is not divisible by the number of
