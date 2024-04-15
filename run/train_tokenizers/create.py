@@ -35,7 +35,10 @@ src/learn/tokenization.py \\
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
 ALGORITHMS = ["BPE", "Unigram"]
-VOCAB_SIZES = [1024, 4096, 16384, 32768,  65536]
+VOCAB_SIZES = [
+    512, 1024, 2048, 4096, 8192,
+    16384, 32768, 65536, 131072, 262144,
+]
 
 
 outfiles = []
