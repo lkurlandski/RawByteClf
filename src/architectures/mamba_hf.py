@@ -19,7 +19,7 @@ from transformers.utils import (
     logging,
 )
 from transformers.configuration_utils import PretrainedConfig
-
+from transformers.models.mamba.modeling_mamba import MambaCache
 
 logger = logging.get_logger(__name__)
 
@@ -111,6 +111,7 @@ class MambaConfig(PretrainedConfig):
     ```"""
 
     model_type = "mamba"
+    keys_to_ignore_at_inference = ["cache_params"]
 
     def __init__(
         self,
@@ -175,10 +176,9 @@ class MambaConfig(PretrainedConfig):
         self.use_cache = use_cache
 
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
-    
 
 
-class MambaCache:
+class MambaCache(MambaCache):
     """
     Arguments:
         config: MambaConfig
@@ -193,23 +193,23 @@ class MambaCache:
         ssm_states: Dict[int, torch.Tensor] # layer_idx -> [batch_size, intermediate_size, ssm_state_size]
     """
 
-    def __init__(
-        self, config: MambaConfig, batch_size: int, dtype: torch.dtype = torch.float16, device: Optional[str] = None
-    ):
-        self.seqlen_offset = 0
-        self.dtype = dtype
-        intermediate_size = config.intermediate_size
-        ssm_state_size = config.state_size
-        conv_kernel_size = config.conv_kernel
+#     def __init__(
+#         self, config: MambaConfig, batch_size: int, dtype: torch.dtype = torch.float16, device: Optional[str] = None
+#     ):
+#         self.seqlen_offset = 0
+#         self.dtype = dtype
+#         intermediate_size = config.intermediate_size
+#         ssm_state_size = config.state_size
+#         conv_kernel_size = config.conv_kernel
 
-        self.conv_states = {
-            i: torch.zeros(batch_size, intermediate_size, conv_kernel_size, device=device, dtype=dtype)
-            for i in range(config.num_hidden_layers)
-        }
-        self.ssm_states = {
-            i: torch.zeros(batch_size, intermediate_size, ssm_state_size, device=device, dtype=dtype)
-            for i in range(config.num_hidden_layers)
-        }
+#         self.conv_states = {
+#             i: torch.zeros(batch_size, intermediate_size, conv_kernel_size, device=device, dtype=dtype)
+#             for i in range(config.num_hidden_layers)
+#         }
+#         self.ssm_states = {
+#             i: torch.zeros(batch_size, intermediate_size, ssm_state_size, device=device, dtype=dtype)
+#             for i in range(config.num_hidden_layers)
+#         }
 
     def float(self):
         # TODO: ascertain whether or not we can truly skip converting to fp32...
@@ -221,6 +221,15 @@ class MambaCache:
         # self.conv_states = {k: v.float() for k, v in self.conv_states.items()}
         # self.ssm_states = {k: v.float() for k, v in self.ssm_states.items()}
         return self
+
+    def detach(self):
+        self.device = "cpu"
+        # self.conv_states = {k: v.detach() for k, v in self.conv_states.items()}
+        # self.ssm_states = {k: v.detach() for k, v in self.ssm_states.items()}
+        return self
+
+    # def shape(self):
+    #     return tuple()
 
 
 class MambaMixer(nn.Module):
@@ -936,8 +945,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
 
         return MambaCausalLMOutput(
             loss=loss,
-            logits=logits,
+            logits=clf_logits,
             cache_params=mamba_outputs.cache_params,
             hidden_states=mamba_outputs.hidden_states,
         )
-
