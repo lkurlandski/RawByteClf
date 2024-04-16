@@ -35,10 +35,8 @@ src/learn/tokenization.py \\
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
 ALGORITHMS = ["BPE", "Unigram"]
-VOCAB_SIZES = [
-    512, 1024, 2048, 4096, 8192,
-    16384, 32768, 65536, 131072, 262144,
-]
+VOCAB_SIZES = [2 ** i for i in range(9, 21)] + [2 ** i + 2 ** (i - 1) for i in range(9, 21)]
+
 
 
 outfiles = []
@@ -56,7 +54,7 @@ for alg in ALGORITHMS:
         with open(outfile, "w") as fp:
             fp.write(text)
 
-outfiles = sorted(outfiles, key=lambda x: x.stem.split("_")[1])
+outfiles = sorted(outfiles, key=lambda x: (x.stem.split("_")[1], int(x.stem.split("_")[2])))
 with open(OUTPUT / "run.sh", "w") as fp:
     for outfile in outfiles:
         fp.write(f"bash {outfile}\n")
