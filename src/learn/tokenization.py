@@ -398,21 +398,22 @@ def get_tokenizer(
     elif add_cls_token:
         start = SPECIALS["cls_token"]
     else:
-        start = ""
+        start = None
 
     if add_eos_token:
         end = SPECIALS["eos_token"]
     elif add_sep_token:
         end = SPECIALS["sep_token"]
     else:
-        end = ""
+        end = None
 
     # TODO: no idea what this does for the `pair`
-    tokenizer.post_processor = processors.TemplateProcessing(
-        single=f"{start} $0 {end}",
-        pair=f"{start} $A {end} {SPECIALS['sep_token']} {start} $B:1 {end}",
-        special_tokens=tuple((s, i) for i, s in enumerate(SPECIALS.values())),
-    )
+    if start or end:
+        tokenizer.post_processor = processors.TemplateProcessing(
+            single=f"{start} $0 {end}",
+            pair=f"{start} $A {end} {SPECIALS['sep_token']} {start} $B:1 {end}",
+            special_tokens=tuple((s, i) for i, s in enumerate(SPECIALS.values())),
+        )
 
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=tokenizer, **(kwds | SPECIALS))
     return tokenizer
