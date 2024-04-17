@@ -32,6 +32,7 @@ from transformers import (
     PretrainedConfig,
     PreTrainedModel,
 )
+import tokenizers
 
 from src.utils import count_parameters
 from src.architectures.hrrformer import (
@@ -39,9 +40,9 @@ from src.architectures.hrrformer import (
     HRRForMaskedLM,
     HRRForSequenceClassification,
 )
-from src.architectures.mamba import (
+from src.architectures.mamba_hf import (
     MambaConfig,
-    MambaLMHeadModel,
+    MambaForCausalLM,
     MambaForMaskedLM,
     MambaForSequenceClassification,
 )
@@ -104,24 +105,24 @@ def get_config(
         "hidden_size": HIDDEN_SIZE,
         "intermediate_size": INTERMEDIATE_SIZE,
         "num_attention_heads": NUM_ATTENTION_HEADS,
+        "pad_token_id": tokenizer.pad_token_id,
+        "bos_token_id": tokenizer.cls_token_id,
+        "cls_token_id": tokenizer.cls_token_id,
+        "eos_token_id": tokenizer.sep_token_id,
+        "sep_token_id": tokenizer.sep_token_id,
     }
     if task == "clf":
         kwds.update(
             {
                 "num_labels": dataset["train"].info.features["labels"].num_classes,
-                "id2label": {
-                    i: l for i, l in enumerate(dataset["train"].info.features["labels"].names)
-                },
-                "label2id": {
-                    l: i for i, l in enumerate(dataset["train"].info.features["labels"].names)
-                },
+                "id2label": {i: l for i, l in enumerate(dataset["train"].info.features["labels"].names)},
+                "label2id": {l: i for i, l in enumerate(dataset["train"].info.features["labels"].names)},
             }
         )
     if task == "clm":
         kwds.update(
             {
                 "is_decoder": True,
-                # "add_cross_attention": True,  # only for seq2seq
             }
         )
 
@@ -130,17 +131,14 @@ def get_config(
     elif model == "lng":
         return LongformerConfig(**kwds)
     elif model == "hrr":
-        kwds.update({"superposition_scale_factor": "log"})
+        kwds["superposition_scale_factor"] = "log"
+        kwds["superposition_scale_factor"] = 1.0
         return HRRConfig(**kwds)
     elif model == "mamba":
-        kwds["pad_token_id"] = tokenizer.pad_token_id
-        kwds["bos_token_id"] = tokenizer.cls_token_id
-        kwds["eos_token_id"] = tokenizer.sep_token_id
-        kwds["d_model"] = kwds.pop("hidden_size")
-        kwds["n_layer"] = kwds.pop("num_hidden_layers")
+        kwds["mode"] = "uni"
         kwds["mode"] = "bi"
-        for k in ["max_position_embeddings", "intermediate_size", "num_attention_heads"]:
-            kwds.pop(k)
+        kwds["embedding_size"] = kwds["hidden_size"]
+        # kwds["embedding_size"] = 64
         return MambaConfig(**kwds)
     elif model == "rwkv":
         kwds["context_length"] = kwds.pop("max_position_embeddings")
@@ -158,7 +156,7 @@ def get_model(task: str, model: str, config: BertConfig | HRRConfig):
         elif model == "hrr":
             raise NotImplementedError()
         elif model == "mamba":
-            return MambaLMHeadModel(config)
+            return MambaForCausalLM(config)
         elif model == "rwkv":
             return RwkvForCausalLM(config)
     elif task == "mlm":
@@ -233,9 +231,10 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
         per_device_train_batch_size=BATCH_SIZE,
         per_device_eval_batch_size=BATCH_SIZE,
         save_total_limit=3,
-        # debug="underflow_overflow",
+        debug="underflow_overflow",
         # use_cpu=True,
         fp16=True,
+        max_grad_norm=1.0,
     )
 
 
@@ -254,6 +253,11 @@ if __name__ == "__main__":
     BATCH_SIZE = args.batch_size
 
     tokenizer: PreTrainedTokenizerFast = BertTokenizerFast.from_pretrained("bert-base-cased")
+    tokenizer._tokenizer.post_processor = tokenizers.processors.TemplateProcessing(
+        single=f"{tokenizer.cls_token} $0 {tokenizer.sep_token}",
+        pair=f"{tokenizer.cls_token} $A {tokenizer.cls_token} $B:1 {tokenizer.cls_token}",
+        special_tokens=tuple(zip(tokenizer.all_special_ids, tokenizer.all_special_tokens)),
+    )
     if args.model == "mamba":
         tokenizer.model_input_names.remove("attention_mask")
     print(f"{tokenizer=}")

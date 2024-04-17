@@ -2,7 +2,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union, Literal
 
 import torch
 import torch.utils.checkpoint
@@ -32,13 +32,9 @@ is_fast_path_available = all(
     (selective_state_update, selective_scan_fn, causal_conv1d_fn, causal_conv1d_update, mamba_inner_fn)
 )
 
-_CHECKPOINT_FOR_DOC = "state-spaces/mamba-130m-hf"
-_CONFIG_FOR_DOC = "MambaConfig"
 
-
-# Overridden for some backwards compatibily with the d_model and n_layer parameters used in the
-# original Mamba implementation. More critically, includes the keys_to_ignore_at_inference attribute
-# which is used to filter out the MambaCache object.
+# Overrridden to include the keys_to_ignore_at_inference attribute which is used
+# to filter out the MambaCache object and prevent it from causing problems in accelerate.
 class MambaConfig(PretrainedConfig):
 
     model_type = "mamba"
@@ -46,43 +42,37 @@ class MambaConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size=50280,
-        hidden_size=768,  # d_model
-        state_size=16,
-        num_hidden_layers=32,  # n_layer
-        layer_norm_epsilon=1e-5,
-        pad_token_id=0,
-        bos_token_id=0,
-        eos_token_id=0,
-        expand=2,
-        conv_kernel=4,
-        use_bias=False,
-        use_conv_bias=True,
-        hidden_act="silu",
-        initializer_range=0.1,
-        residual_in_fp32=True,
-        time_step_rank="auto",
-        time_step_scale=1.0,
-        time_step_min=0.001,
-        time_step_max=0.1,
-        time_step_init_scheme="random",
-        time_step_floor=1e-4,
-        rescale_prenorm_residual=False,
-        use_cache=True,
-        d_model: int = -1,
-        n_layer: int = -1,
+        vocab_size: int = 50280,
+        embedding_size: int = 768,
+        hidden_size: int = 768,
+        state_size: int = 16,
+        num_hidden_layers: int = 32,
+        layer_norm_epsilon: float = 1e-5,
+        pad_token_id: int = 0,
+        bos_token_id: int = 0,
+        eos_token_id: int = 0,
+        expand: int = 2,
+        conv_kernel: int = 4,
+        use_bias: bool = False,
+        use_conv_bias: bool = True,
+        hidden_act: str = "silu",
+        initializer_range: float = 0.1,
+        residual_in_fp32: bool = True,
+        time_step_rank: str = "auto",
+        time_step_scale: float = 1.0,
+        time_step_min: float = 0.001,
+        time_step_max: float = 0.1,
+        time_step_init_scheme: str = "random",
+        time_step_floor: float = 1e-4,
+        rescale_prenorm_residual: bool = False,
+        use_cache: bool = True,
+        mode: Literal["uni", "bi"] = "uni",
         **kwargs,
     ):
 
-        # Backwards compatibility
-        if d_model is not None and d_model != -1:
-            hidden_size = d_model
-        if n_layer is not None and n_layer != -1:
-            num_hidden_layers = n_layer
-
-
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
+        self.embedding_size = embedding_size
         self.state_size = state_size
         self.num_hidden_layers = num_hidden_layers
         self.layer_norm_epsilon = layer_norm_epsilon
@@ -105,6 +95,10 @@ class MambaConfig(PretrainedConfig):
         self.rescale_prenorm_residual = rescale_prenorm_residual
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
+        self.mode = mode
+
+        if self.hidden_size != self.embedding_size:
+            kwargs["tie_word_embeddings"] = False
 
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
 
@@ -491,60 +485,22 @@ class MambaCausalLMOutput(ModelOutput):
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
 
 
-MAMBA_START_DOCSTRING = r"""
-
-    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-
-    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
-    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
-    and behavior.
-
-    Parameters:
-        config ([`MambaConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
-
-MAMBA_INPUTS_DOCSTRING = r"""
-    Args:
-        input_ids (`torch.LongTensor` of shape `(batch_size, input_ids_length)`):
-            Indices of input sequence tokens in the vocabulary.
-
-            If `cache_params.seqlen_offset>0`, only `input_ids` that do not have their past calculated should be passed as
-            `input_ids`.
-
-            Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
-            [`PreTrainedTokenizer.__call__`] for details.
-
-            [What are input IDs?](../glossary#input-ids)
-        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
-            Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
-            is useful if you want more control over how to convert `input_ids` indices into associated vectors than the
-            model's internal embedding lookup matrix.
-        cache_params (`MambaCache`, *optional*):
-            If passed along, the model uses the previous state in all the blocks (which will give the output for the
-            `input_ids` provided as if the model add `state_input_ids + input_ids` as context).
-        use_cache (`bool`, *optional*):
-            If set to `True`, the `cache_params` is returned and can be used to quickly generate the next logits.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
-
-
-@add_start_docstrings(
-    "The bare MAMBA Model transformer outputting raw hidden-states without any specific head on top.",
-    MAMBA_START_DOCSTRING,
-)
 class MambaModel(MambaPreTrainedModel):
-    def __init__(self, config):
+    def __init__(self, config: MambaConfig):
         super().__init__(config)
+        self.config: MambaConfig
 
-        self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.embeddings = nn.Embedding(
+            self.config.vocab_size,
+            self.config.embedding_size,
+            self.config.pad_token_id,
+        )
+
+        if self.config.hidden_size != self.config.embedding_size:
+            self.embedding_projection = nn.Linear(config.embedding_size, config.hidden_size)
+        else:
+            self.embedding_projection = None
+
         self.layers = nn.ModuleList([MambaBlock(config, layer_idx=idx) for idx in range(config.num_hidden_layers)])
 
         self.gradient_checkpointing = False
@@ -558,12 +514,6 @@ class MambaModel(MambaPreTrainedModel):
     def set_input_embeddings(self, new_embeddings):
         self.embeddings = new_embeddings
 
-    @add_start_docstrings_to_model_forward(MAMBA_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=MambaOutput,
-        config_class=_CONFIG_FOR_DOC,
-    )
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -596,7 +546,12 @@ class MambaModel(MambaPreTrainedModel):
                 self.config, inputs_embeds.size(0), device=inputs_embeds.device, dtype=inputs_embeds.dtype
             )
 
-        hidden_states = inputs_embeds
+        # Linearly project the embedding output to the hidden size, if needed.
+        if self.embedding_projection is not None:
+            hidden_states = self.embedding_projection(inputs_embeds)
+        else:
+            hidden_states = inputs_embeds
+
         all_hidden_states = () if output_hidden_states else None
         for mixer_block in self.layers:
             if self.gradient_checkpointing and self.training:
@@ -625,21 +580,199 @@ class MambaModel(MambaPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
-    The MAMBA Model transformer with a language modeling head on top (linear layer with weights tied to the input
-    embeddings).
-    """,
-    MAMBA_START_DOCSTRING,
-)
+class BiMambaModel(MambaPreTrainedModel):
+    def __init__(self, config: MambaConfig):
+        super().__init__(config)
+        self.config: MambaConfig
+
+        self.embeddings = nn.Embedding(
+            self.config.vocab_size,
+            self.config.embedding_size,
+            self.config.pad_token_id,
+        )
+
+        if self.config.hidden_size != self.config.embedding_size:
+            self.embedding_projection = nn.Linear(config.embedding_size, config.hidden_size)
+        else:
+            self.embedding_projection = None
+
+        self.layers_forw = nn.ModuleList([MambaBlock(config, layer_idx=idx) for idx in range(config.num_hidden_layers)])
+        self.layers_back = nn.ModuleList([MambaBlock(config, layer_idx=idx) for idx in range(config.num_hidden_layers)])
+
+        self.gradient_checkpointing = False
+        self.norm_f = MambaRMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        # Initialize weights and apply final processing
+        self.tie_forward_and_backward_weights()
+        self.post_init()
+
+    def tie_forward_and_backward_weights(self):
+        for i in range(self.config.num_hidden_layers):
+            block_forw: MambaBlock = self.layers_forw[i]
+            block_back: MambaBlock = self.layers_back[i]
+
+            mixer_forw: MambaMixer = block_forw.mixer
+            mixer_back: MambaMixer = block_back.mixer
+
+            # TODO: verify that we're tying the correct weights together...
+            mixer_forw.in_proj = mixer_back.in_proj
+            mixer_forw.out_proj = mixer_back.out_proj
+            mixer_forw.x_proj = mixer_back.x_proj
+
+    def prepare_input_for_backward_model(self, input_ids: torch.LongTensor) -> torch.LongTensor:
+        """
+        Assumes the input is structured as follows:
+
+        <bos> <token1> <token2> ... <eos> <pad> <pad>
+        """
+
+        PAD_TOKEN_ID = self.config.pad_token_id
+        BOS_TOKEN_ID = self.config.bos_token_id
+        EOS_TOKEN_ID = self.config.eos_token_id
+
+        assert len(set([PAD_TOKEN_ID, BOS_TOKEN_ID, EOS_TOKEN_ID])) == 3
+
+        DEVICE = input_ids.device
+        DTYPE = input_ids.dtype
+        B = input_ids.shape[0]
+        L = input_ids.shape[1]
+
+        reversed_input_ids = torch.zeros_like(input_ids)
+
+        for i in range(B):
+            pad_idx = torch.nonzero(torch.eq(input_ids[i], PAD_TOKEN_ID), as_tuple=False)
+            pad_idx = L if len(pad_idx) == 0 else pad_idx[0].to("cpu").item()  # index of first pad token
+
+            start = 1
+            end = pad_idx - 1
+
+            tensors = []
+            tensors.append(torch.tensor([BOS_TOKEN_ID], device=DEVICE, dtype=DTYPE))
+            tensors.append(input_ids[i][start:end].flip(0))
+            tensors.append(torch.tensor([EOS_TOKEN_ID], device=DEVICE, dtype=DTYPE))
+            if (length := sum(x.shape[0] for x in tensors)) < L:
+                tensors.append(torch.full((L - length,), PAD_TOKEN_ID, device=DEVICE, dtype=DTYPE))
+
+            reversed_input_ids[i] = torch.cat(tensors)
+
+        return reversed_input_ids
+
+    def get_input_embeddings(self):
+        return self.embeddings
+
+    def set_input_embeddings(self, new_embeddings):
+        self.embeddings = new_embeddings
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.LongTensor] = None,
+        cache_params: Optional[tuple[MambaCache, MambaCache]] = None,
+        use_cache: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        **kwargs,  # `attention_mask` is passed by the tokenizer and we don't want it
+    ) -> Union[Tuple, MambaOutput]:
+        # TODO: explore methods of mixing information from the hidden states.
+        # Should we be flipping the hidden states from the backward model?
+        # Should we be adding them together or concatenating them?
+
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if input_ids is None:
+            raise ValueError("Bidirectional Mamba needs input_ids to be passed.")
+
+        input_ids_forw = input_ids
+        input_ids_back = self.prepare_input_for_backward_model(input_ids)
+
+        inputs_embeds_forw: torch.Tensor = self.embeddings(input_ids_forw)
+        inputs_embeds_back: torch.Tensor = self.embeddings(input_ids_back)
+
+        if self.gradient_checkpointing and self.training and use_cache:
+            use_cache = False
+
+        if cache_params is None and use_cache:
+            cache_params = (
+                MambaCache(
+                    self.config,
+                    inputs_embeds_forw.size(0),
+                    device=inputs_embeds_forw.device,
+                    dtype=inputs_embeds_forw.dtype,
+                ),
+                MambaCache(
+                    self.config,
+                    inputs_embeds_back.size(0),
+                    device=inputs_embeds_back.device,
+                    dtype=inputs_embeds_back.dtype,
+                )
+            )
+
+        # Linearly project the embedding output to the hidden size, if needed.
+        if self.embedding_projection is not None:
+            hidden_states_forw = self.embedding_projection(inputs_embeds_forw)
+            hidden_states_back = self.embedding_projection(inputs_embeds_back)
+        else:
+            hidden_states_forw = inputs_embeds_forw
+            hidden_states_back = inputs_embeds_back
+
+        all_hidden_states = () if output_hidden_states else None
+        for mixer_block_forw, mixer_block_back in zip(self.layers_forw, self.layers_back):
+            cache_params_forw = cache_params[0] if cache_params is not None else None
+            cache_params_back = cache_params[1] if cache_params is not None else None
+
+            if self.gradient_checkpointing and self.training:
+                hidden_states_forw = self._gradient_checkpointing_func(
+                    mixer_block_forw.__call__, hidden_states_forw, cache_params_forw
+                )
+            else:
+                hidden_states_forw = mixer_block_forw(hidden_states_forw, cache_params=cache_params_forw)
+
+            if self.gradient_checkpointing and self.training:
+                hidden_states_back = self._gradient_checkpointing_func(
+                    mixer_block_back.__call__, hidden_states_back, cache_params_back
+                )
+            else:
+                hidden_states_back = mixer_block_back(hidden_states_back, cache_params=cache_params_back)
+
+            # Flipping the backward hidden states aligns them with the forward ones.
+            hidden_states = hidden_states_forw + hidden_states_back.flip(1)
+            hidden_states_forw = hidden_states
+            hidden_states_back = hidden_states
+
+            if output_hidden_states:
+                all_hidden_states = all_hidden_states + (hidden_states,)
+
+        if use_cache:
+            cache_params[0].seqlen_offset += inputs_embeds_forw.shape[1]
+            cache_params[1].seqlen_offset += inputs_embeds_back.shape[1]
+
+        hidden_states = self.norm_f(hidden_states)
+        if output_hidden_states:
+            all_hidden_states = all_hidden_states + (hidden_states,)
+
+        if not return_dict:
+            return tuple(v for v in [hidden_states, cache_params, all_hidden_states] if v is not None)
+
+        return MambaOutput(
+            last_hidden_state=hidden_states,
+            cache_params=cache_params if use_cache else None,
+            hidden_states=all_hidden_states,
+        )
+
+
 class MambaForCausalLM(MambaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
+        if config.mode == "bi":
+            raise ValueError("MambaForCausalLM does not support bidirectional models.")
+
         super().__init__(config)
         self.backbone = MambaModel(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        # Initialize weights and apply final processing
         self.post_init()
 
     def get_output_embeddings(self):
@@ -675,12 +808,6 @@ class MambaForCausalLM(MambaPreTrainedModel):
         model_inputs["cache_params"] = cache_params
         return model_inputs
 
-    @add_start_docstrings_to_model_forward(MAMBA_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=MambaCausalLMOutput,
-        config_class=_CONFIG_FOR_DOC,
-    )
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -735,21 +862,101 @@ class MambaForCausalLM(MambaPreTrainedModel):
         )
 
 
-@add_start_docstrings(
-    """
-    The MAMBA Model transformer with a classification head on top (linear layer with weights tied to the input
-    embeddings).
-    """,
-    MAMBA_START_DOCSTRING,
-)
-class MambaForSequenceClassification(MambaPreTrainedModel):
+class MambaForMaskedLM(MambaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
+        if config.mode == "uni":
+            raise ValueError("MambaForCausalLM does not support unidirectional models.")
+
         super().__init__(config)
-        self.backbone = MambaModel(config)
+        self.backbone = BiMambaModel(config)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.post_init()
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
+
+    def get_input_embeddings(self):
+        return self.backbone.get_input_embeddings()
+
+    def set_input_embeddings(self, new_embeddings):
+        return self.backbone.set_input_embeddings(new_embeddings)
+
+    def _update_model_kwargs_for_generation(
+        self, outputs: ModelOutput, model_kwargs: Dict[str, Any], **kwargs
+    ) -> Dict[str, Any]:
+        model_kwargs["cache_params"] = outputs.get("cache_params", None)
+        return model_kwargs
+
+    def prepare_inputs_for_generation(
+        self, input_ids, cache_params: Optional[MambaCache] = None, inputs_embeds=None, attention_mask=None, **kwargs
+    ):
+        # only last token for inputs_ids if the state is passed along.
+        if cache_params is not None:
+            input_ids = input_ids[:, -1].unsqueeze(-1)
+
+        if inputs_embeds is not None and cache_params is None:
+            model_inputs = {"inputs_embeds": inputs_embeds}
+        else:
+            model_inputs = {"input_ids": input_ids}
+
+        model_inputs["cache_params"] = cache_params
+        return model_inputs
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        cache_params: Optional[MambaCache] = None,
+        labels: Optional[torch.LongTensor] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        use_cache: Optional[bool] = None,
+        **kwargs,  # for now we need this for generation
+    ) -> Union[Tuple, MambaCausalLMOutput]:
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        mamba_outputs = self.backbone(
+            input_ids,
+            cache_params=cache_params,
+            inputs_embeds=inputs_embeds,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            use_cache=use_cache,
+        )
+        hidden_states = mamba_outputs[0]
+        logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()  # -100 index = padding token
+            loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
+
+        if not return_dict:
+            output = (logits,) + mamba_outputs[1:]
+            return ((loss,) + output) if loss is not None else output
+
+        return MambaCausalLMOutput(
+            loss=loss,
+            logits=logits,
+            cache_params=mamba_outputs.cache_params,
+            hidden_states=mamba_outputs.hidden_states,
+        )
+
+
+class MambaForSequenceClassification(MambaPreTrainedModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+        if self.config.mode == "uni":
+            self.backbone = MambaModel(config)
+        elif self.config.mode == "bi":
+            self.backbone = BiMambaModel(config)
         self.clf_head = nn.Linear(config.hidden_size, config.num_labels)
-        # Initialize weights and apply final processing
         self.post_init()
 
     def get_input_embeddings(self):
@@ -758,12 +965,6 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
     def set_input_embeddings(self, new_embeddings):
         return self.backbone.set_input_embeddings(new_embeddings)
 
-    @add_start_docstrings_to_model_forward(MAMBA_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=MambaCausalLMOutput,
-        config_class=_CONFIG_FOR_DOC,
-    )
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -792,11 +993,8 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             use_cache=use_cache,
         )
         hidden_states = mamba_outputs[0]
-
         logits = self.clf_head(hidden_states.to(self.clf_head.weight.dtype)).float()
 
-
-        # ME
         batch_size = input_ids.shape[0]
         sequence_lengths = torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
         sequence_lengths = sequence_lengths % input_ids.shape[-1]
@@ -824,8 +1022,6 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(clf_logits, labels)
-        # ME
-
 
         if not return_dict:
             output = (logits,) + mamba_outputs[1:]

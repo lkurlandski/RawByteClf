@@ -20,6 +20,8 @@ Train and evaluate the models for malware family classification.
 # NOTE 0: storing token class probabilities for every token in a long input sequence requires
     an infeasible amount of memory (hundreds of GBs) for long sequences with a reasonbly-
     sized test dataset.
+
+FIXME: always use bos and eos tokens as this simplifies the preprocessing logic.
 """
 
 # pylint: disable=wrong-import-position
@@ -137,6 +139,7 @@ from src.architectures.mamba_hf import (
     MambaConfig,
     MambaForSequenceClassification,
     MambaForCausalLM,
+    MambaForMaskedLM,
     MambaPreTrainedModel,
 )
 from src.architectures.rwkv import (
@@ -823,6 +826,8 @@ def get_model(
         if task == "mlm":
             if model_name == "hrrformer":
                 return HRRForMaskedLM.from_pretrained(model_name_or_path, **kwds)
+            if model_name == "mamba":
+                return MambaForMaskedLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
         if task == "clm":
             if model_name == "mamba":
@@ -853,15 +858,14 @@ def get_model(
             if isinstance(config, RwkvConfig):
                 raise NotImplementedError()
             if isinstance(config, MambaConfig):
-                raise NotImplementedError()
-                # return MambaForMaskedLM(config)
+                return MambaForMaskedLM(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForMaskedLM.from_config(config)
         if task == "clm":
             if isinstance(config, HRRConfig):
                 raise NotImplementedError()
             if isinstance(config, RwkvConfig):
-                pass
+                raise NotImplementedError()
             if isinstance(config, MambaConfig):
                 return MambaForCausalLM(config)
             if isinstance(config, PretrainedConfig):
