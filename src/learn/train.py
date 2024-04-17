@@ -909,6 +909,11 @@ def get_map_kwds_for_hf_datasets(
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
+
+    random.seed(training_arguments.seed)
+    np.random.seed(training_arguments.seed)
+    torch.random.manual_seed(training_arguments.seed)
+
     m = get_mem(unit="MB")
     print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
     print(f"{args=}", flush=True)
@@ -917,6 +922,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
 
     oh = OutputHelper(
+        training_arguments.seed,
         args.model_name_or_path,
         args.representation,
         args.algorithm,

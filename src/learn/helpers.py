@@ -135,6 +135,7 @@ class OutputHelper:
 
     def __init__(
         self,
+        seed: int,
         model_name_or_path: str,
         representation: int,
         algorithm: str,
@@ -165,6 +166,7 @@ class OutputHelper:
         self.root = Path(root)
 
         args = [
+            f"seed-{seed}",
             f"representation--{representation}",
             f"algorithm--{algorithm}",
             f"vocab_size--{vocab_size if vocab_size is not None else 2 ** representation}",
