@@ -6,30 +6,36 @@ from pprint import pformat
 from typing import Optional
 
 
-ALGORITHMS = ["BPE", "Unigram", "Raw"]
-VOCAB_SIZES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
-TOP_K = [10, 100]
+ALGORITHMS = ["Raw"]
+VOCAB_SIZES = [256]
+TOP_KS = [10]
+MODES = ["uni", "bi"]
+TASKS = ["clm", "mlm"]
 
 
 JOB_NAME = "JOB_NAME"
 ROOT = "./output/finetuning"
 MODEL_NAME_OR_PATH = "mamba"
-ARCH_CONFIG = '{"mode": "uni", "d_model": 256, "n_layer": 8}'
-PER_DEVICE_TRAIN_BATCH_SIZE = 32
+ARCH_CONFIG = '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256}'
+PER_DEVICE_TRAIN_BATCH_SIZE = 64
 PER_DEVICE_EVAL_BATCH_SIZE = 64
-CLM_GRADIENT_ACCUMULATION_STEPS = 8
-CLF_GRADIENT_ACCUMULATION_STEPS = 2
 REPRESENTATION = 8
 ALGORITHM = "ALGORITHM"
 VOCAB_SIZE = "VOCAB_SIZE"
-MAX_LENGTH = 2 ** 16
-DATA_READ_BYTES = 2 ** 16
+MAX_LENGTH = 2 ** 12  # FIXME
+DATA_READ_BYTES = 2 ** 12  # FIXME
 TOP_K = "TOP_K"
-BF_OR_FP = "bf"
-TF32 = "true"
+BF_OR_FP = "fp"  # FIXME
+TF32 = "false"  # FIXME
 
+LM_TR_SIZE = 10000 # FIXME
+LM_VL_SIZE = 1000 # FIXME
+LM_SAVE_EVAL_STEPS = 2 # FIXME
+LM_GRADIENT_ACCUMULATION_STEPS = 8
 
-BODY_CLM = f"""#!/bin/bash -l
+CLF_GRADIENT_ACCUMULATION_STEPS = 1
+
+BODY_LM = f"""#!/bin/bash -l
 
 #SBATCH --job-name={JOB_NAME}
 #SBATCH --account=admalware
@@ -54,15 +60,15 @@ src/learn/train.py \\
 --root="{ROOT}" \\
 --arch_config='{ARCH_CONFIG}' \\
 --metric_for_best_model="eval_loss" \\
---task="clm" \\
+--task="TASK" \\
 --streaming=true \\
 --skip_eval_check=false \\
 --dataset_backend="HF" \\
 --representation={REPRESENTATION} \\
 --algorithm={ALGORITHM} \\
 --vocab_size={VOCAB_SIZE} \\
---tr_size=1000000 \\
---vl_size=10000 \\
+--tr_size={LM_TR_SIZE} \\
+--vl_size={LM_VL_SIZE} \\
 --ts_size=0 \\
 --do_train \\
 --output_dir=tmp \\
@@ -70,8 +76,8 @@ src/learn/train.py \\
 --evaluation_strategy="steps" \\
 --num_train_epochs=1 \\
 --logging_steps=10 \\
---save_steps=200 \\
---eval_steps=200 \\
+--save_steps={LM_SAVE_EVAL_STEPS} \\
+--eval_steps={LM_SAVE_EVAL_STEPS} \\
 --dataloader_num_workers={3} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
@@ -80,13 +86,13 @@ src/learn/train.py \\
 --weight_decay=0.01 \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
---save_total_limit=100 \\
+--save_total_limit=-1 \\
 --model_name_or_path={MODEL_NAME_OR_PATH} \\
 --max_length={MAX_LENGTH} \\
 --data_read_bytes={DATA_READ_BYTES} \\
 --per_device_train_batch_size={PER_DEVICE_TRAIN_BATCH_SIZE} \\
 --per_device_eval_batch_size={PER_DEVICE_EVAL_BATCH_SIZE} \\
---gradient_accumulation_steps={CLM_GRADIENT_ACCUMULATION_STEPS} \\
+--gradient_accumulation_steps={LM_GRADIENT_ACCUMULATION_STEPS} \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
@@ -167,29 +173,46 @@ src/learn/train.py \\
 
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
+PRETRAINED_MODEL_PATH = {  # FIXME
+    "clm": Path("output/finetuning/mamba/representation--8/algorithm--Raw/vocab_size--256/max_length--4096/task--clm/tr_size--10000/depth--1/mode--uni/num_hidden_layers--8/hidden_size--256/embedding_size--256/per_device_train_batch_size--64/gradient_accumulation_steps--8/learning_rate--0.001/weight_decay--0.01/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_grad_norm--1.0/lr_scheduler_type--linear/warmup_ratio--0.0/bf16--False/fp16--True/tf32--False/optim--adamw_torch/checkpoints/"),
+    "mlm": Path("output/finetuning/mamba/representation--8/algorithm--Raw/vocab_size--256/max_length--4096/task--mlm/tr_size--10000/depth--1/mode--bi/num_hidden_layers--8/hidden_size--256/embedding_size--256/per_device_train_batch_size--32/gradient_accumulation_steps--16/learning_rate--0.001/weight_decay--0.01/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_grad_norm--1.0/lr_scheduler_type--linear/warmup_ratio--0.0/bf16--False/fp16--True/tf32--False/optim--adamw_torch/checkpoints/"),
+}
 
 
 for algorithm in ALGORITHMS:
     for vocab_size in VOCAB_SIZES:
-        for top_k in TOP_K:
-            job_name = f"ftCLM-{algorithm[0]}-{vocab_size}"
-            body = BODY_CLM \
+        if algorithm == "Raw" and vocab_size != 256:
+            continue
+        elif algorithm != "Raw" and vocab_size == 256:
+            continue
+
+        for mode, task in zip(MODES, TASKS):
+            job_name = f"ft-{task}-{algorithm[0]}-{vocab_size}"
+            body = BODY_LM \
                 .replace("JOB_NAME", job_name) \
                 .replace("ALGORITHM", algorithm) \
-                .replace("VOCAB_SIZE", str(vocab_size))
+                .replace("VOCAB_SIZE", str(vocab_size)) \
+                .replace("TASK", task) \
+                .replace('"mode": "uni"', f'"mode": "{mode}"')
             with open(OUTPUT / f"{job_name}.sh", "w") as fp:
                 fp.write(body)
 
-            job_name = f"ftCLF-{algorithm[0]}-{vocab_size}"
-            body = BODY_CLF \
-                .replace("JOB_NAME", job_name) \
-                .replace("ALGORITHM", algorithm) \
-                .replace("VOCAB_SIZE", str(vocab_size))
-            with open(OUTPUT / f"{job_name}.sh", "w") as fp:
-                fp.write(body)
+            for top_k in TOP_KS:
+                job_name = f"ft-{'clf'}-{mode}-{algorithm[0]}-{vocab_size}-{top_k}"
+                body = BODY_CLF \
+                    .replace("JOB_NAME", job_name) \
+                    .replace("ALGORITHM", algorithm) \
+                    .replace("VOCAB_SIZE", str(vocab_size)) \
+                    .replace("TOP_K", str(top_k))
+                with open(OUTPUT / f"{job_name}.sh", "w") as fp:
+                    fp.write(body)
 
-            job_name = f"ftCLFFT-{algorithm[0]}-{vocab_size}"
-            pretrained_model_path = "FIXME"
-            body = body.replace("mamba", pretrained_model_path)
-            with open(OUTPUT / f"{job_name}.sh", "w") as fp:
-                fp.write(body)
+                checkpoints = list(PRETRAINED_MODEL_PATH[task].iterdir())
+                checkpoints = sorted(checkpoints, key=lambda x: int(x.name.split("-")[1]))
+                for f in checkpoints:
+                    job_name = f"ft-{'ft'}-{f.name.replace('checkpoint-', '')}-{mode}-{algorithm[0]}-{vocab_size}-{top_k}"
+                    body = body \
+                        .replace("mamba", f.as_posix()) \
+                        .replace('"mode": "uni"', f'"mode": "{mode}"')
+                    with open(OUTPUT / f"{job_name}.sh", "w") as fp:
+                        fp.write(body)
