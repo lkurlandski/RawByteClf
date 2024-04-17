@@ -33,6 +33,11 @@ from src.data.utils import PerDatasetArgumentParser
 FEATURES = Features({"name": Value("string"), "bytes": Value("binary"), "labels": list("str")})
 
 
+################################################################################
+# Boilerplate code to read parts of the VirusTotal reports.
+################################################################################
+
+
 def sorted_list_of_dicts(l: list[dict[str, int | str]]) -> list[str, int]:
     r = [(d["value"], d["count"]) for d in l]
     r.sort(key=lambda x: x[1], reverse=True)
@@ -44,6 +49,13 @@ def threat_classification(d: dict) -> dict:
     return r
 
 
+################################################################################
+# Virus total reports contain several fields that can be used to label the data:
+# - popular_threat_name
+# - popular_threat_category
+# - suggested_threat_label
+# It is unclear at the moment what exactly these fields represent.
+# The ThreatLabelExtractor extracts the labels from the report.
 ################################################################################
 
 
@@ -112,6 +124,13 @@ def vote_labels(labels: list[tuple[str, int]], k: int = -sys.maxsize) -> tuple[s
 
 
 ################################################################################
+# After extracting a set of labels from the report, the labels can be refined
+# for single-label multiclass classification or multi-label multiclass
+# classification. The refinement can be done according to two policies:
+# - top: select the top k most popular labels
+# - vote: select labels with at least k votes
+# The ThreatLabelRefiner refines the labels according to these policies.
+################################################################################
 
 
 class ThreatLabelRefiner(Protocol):
@@ -150,6 +169,8 @@ class ThreatLabelRefiner(Protocol):
 
 
 ################################################################################
+# This is some boilerplate code to help printing and debugging.
+################################################################################
 
 
 def _extractor_and_refiner_args_and_kwds(
@@ -181,13 +202,19 @@ def _extractor_and_refiner_name(
 
 
 ################################################################################
+# The low-level API to extract labels from a report file.
+################################################################################
 
 
 def get_label(
     f: Path,
     extractor: ThreatLabelExtractor,
     refiner: ThreatLabelRefiner,
-) -> tuple[str]:
+) -> Optional[tuple[str]]:
+    """Extract a label from a report file.
+
+    Returns None if the file is not a valid JSON or if the report contains no labels.
+    """
     try:
         with open(f) as fp:
             d = json.load(fp)
@@ -207,7 +234,11 @@ async def get_label_asynch(
     f: Path,
     extractor: ThreatLabelExtractor,
     refiner: ThreatLabelRefiner,
-) -> tuple[str]:
+) -> Optional[tuple[str]]:
+    """Extract a label from a report file, asynchronously.
+
+    Returns None if the file is not a valid JSON or if the report contains no labels.
+    """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, get_label, f, extractor, refiner)
 
@@ -217,6 +248,8 @@ def get_labels(
     extractor: ThreatLabelExtractor | str,
     refiner: ThreatLabelRefiner | str,
 ) -> Generator[Optional[tuple[str]], None, None]:
+    """Lazily extract labels from report files.
+    """
     extractor = ThreatLabelExtractor.build(extractor)
     refiner = ThreatLabelRefiner.build(refiner)
 
@@ -230,6 +263,9 @@ async def get_labels_asynch(
     refiner: ThreatLabelRefiner | str = "top",
     asynch_chunk_size: int = 500000
 ) -> list[Optional[tuple[str]], None, None]:
+    """Extract labels from report files, asynchronously.
+    TODO: make lazy.
+    """
     extractor = ThreatLabelExtractor.build(extractor)
     refiner = ThreatLabelRefiner.build(refiner)
 
@@ -265,12 +301,19 @@ def apply_labels_bodmas(dataset: Dataset) -> Dataset:
     return dataset.add_column("labels", labels)
 
 
+################################################################################
+# The high-level API to extract labels for a dataset.
+################################################################################
+
+
 def get_label_mapping_virus_total_reports(
     report_files: Iterable[os.PathLike],
     extractor: ThreatLabelExtractor | str,
     refiner: ThreatLabelRefiner | str,
     asynch: bool = False,
-) -> dict[str, str]:
+) -> dict[str, Optional[tuple[str]]]:
+    """Get a label mapping for a set of report files.
+    """
     report_files = list(report_files)
 
     if asynch:
@@ -284,7 +327,7 @@ def get_label_mapping_virus_total_reports(
     if not asynch:  # Wrap in tqdm if performing sequentially
         iterable = tqdm(iterable, total=len(report_files))
 
-    labels: dict[str, tuple[str]] = {Path(file).stem: label for file, label in iterable}
+    labels: dict[str, Optional[tuple[str]]] = {Path(file).stem: label for file, label in iterable}
     return labels
 
 
@@ -296,7 +339,9 @@ def get_label_mapping_virus_total_reports_sorel(
     use_cache: bool = True,
     create_cache: bool = True,
     overwrite_cache: bool = False,
-) -> dict[str, str]:
+) -> dict[str, Optional[tuple[str]]]:
+    """Get a label mapping for the Sorel dataset.
+    """
 
     cache_file = Path(
         SOREL_LABEL_CACHE_DIR,
