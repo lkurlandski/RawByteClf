@@ -436,6 +436,7 @@ def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
 
     files = list(files_and_labels.keys())
     labels = list(files_and_labels.values())
+    files, labels = shuffle(files, labels)
 
     dist: Counter[str, int] = Counter(files_and_labels.values())
     label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
