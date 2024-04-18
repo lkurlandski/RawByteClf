@@ -166,7 +166,7 @@ class OutputHelper:
         self.root = Path(root)
 
         args = [
-            f"seed-{seed}",
+            f"seed-{seed}",  # FIXME: f"seed--{seed}"
             f"representation--{representation}",
             f"algorithm--{algorithm}",
             f"vocab_size--{vocab_size if vocab_size is not None else 2 ** representation}",
@@ -202,7 +202,7 @@ class OutputHelper:
         # If model_name_or_path is a path and it exists, then we're finetuning something.
         # In this case the model_name_or_path is a path and it already contains the model name,
         # so we don't need to include it in basepath Otherwise, its the firt part of basepath.
-        self.finetuning = Path(model_name_or_path).exists()
+        self.finetuning = Path(model_name_or_path).exists()  # FIXME: f"model--{model_name_or_path}"
         if self.finetuning:
             self.basepath = Path(model_name_or_path).joinpath(*args)
         else:
