@@ -420,18 +420,19 @@ def get_materials_clf_bodmas(
 
 
 def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
-    samples_per_class: int,
+    tr_samples_per_class: int,
+    vl_samples_per_class: Optional[int] = None,
     top_k: Optional[int] = None,
 ) -> Materials:
     """
     Returns a balanced BODMAS dataset with the same number of samples for each class in the
     train set. The remainder of the samples are allocated to the validation set.
     """
+    _vl_samples_per_class = 1 if vl_samples_per_class is None else vl_samples_per_class
+    min_freq = tr_samples_per_class + _vl_samples_per_class
 
     files_and_labels = get_bodmas_file_label_map()
-    files_and_labels = filter_file_label_map(
-        files_and_labels, top_k=top_k, min_freq=samples_per_class + 1
-    )
+    files_and_labels = filter_file_label_map(files_and_labels, top_k=top_k, min_freq=min_freq)
 
     files = list(files_and_labels.keys())
     labels = list(files_and_labels.values())
@@ -440,12 +441,25 @@ def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
     label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
     id2label: dict[int, str] = {i: l for l, i in label2id.items()}
 
-    tr_idx = select_k_for_each_class(labels, k=samples_per_class)
-    vl_idx = [i for i in range(len(files_and_labels)) if i not in tr_idx]
+    tr_idx = select_k_for_each_class(labels, k=tr_samples_per_class)
+    if vl_samples_per_class is None:
+        vl_idx = [i for i in range(len(files_and_labels)) if i not in tr_idx]
+    else:
+        # _labels: [(IDX of original file/labels data structure, label)]
+        _labels = [(i, l) for i, l in enumerate(labels) if i not in tr_idx]
+        _vl_idx = select_k_for_each_class([l for _, l in _labels], k=vl_samples_per_class)
+        vl_idx = [i for j, (i, l) in enumerate(_labels) if j in _vl_idx]
     ts_idx = []
 
     files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, ts_idx)
-    return Materials(files, labels, id2label, label2id, dist)
+
+    tr_dist = Counter(labels["tr"])
+    vl_dist = Counter(labels["vl"])
+    assert len(tr_dist) == len(vl_dist), f"{len(tr_dist)=} != {len(vl_dist)=}"
+    assert all(tr_dist[l] == tr_samples_per_class for l in tr_dist), f"tr_dist={pformat(tr_dist)}"
+    assert vl_samples_per_class is None or all(vl_dist[l] == vl_samples_per_class for l in vl_dist), f"vl_dist={pformat(vl_dist)}"
+
+    return Materials(files, labels, id2label, label2id, Counter(chain.from_iterable(labels.values())))
 
 
 def get_materials_clf_bodmas_balanced_slice(
@@ -812,5 +826,24 @@ def test():
     # materials = get_length_extrapolation_dataset_sorel_original_labels(2**18, tr_size=100, ts_size=10)
 
 
+def test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set():
+
+    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, None)
+    print(materials)
+    print("-" * 88)
+
+    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, 1)
+    print(materials)
+    print("-" * 88)
+
+    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, 2)
+    print(materials)
+    print("-" * 88)
+
+    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(3, 2)
+    print(materials)
+    print("-" * 88)
+
+
 if __name__ == "__main__":
-    test()
+    test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set()
