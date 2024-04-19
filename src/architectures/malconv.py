@@ -2,6 +2,8 @@
 A huggingface-compatible implementation of MalConv2 and MalConvGCG.
 
 # TODO: implement a way to load the models from disk.
+
+# FIXME: figure out the issues here. Why must everything be padded to the same length?
 """
 
 # pylint: disable=wrong-import-position
@@ -63,7 +65,7 @@ class MyMalConvConfig(PretrainedConfig):
         self.out_size = out_size
         self.pad_idx = pad_idx
         self.num_embd = num_embd
-        self.max_length = max_length
+        self.max_length_ = max_length
         self.embd_size = embd_size
         self.hidden_size = hidden_size
         self.window_size = window_size
@@ -752,7 +754,7 @@ class MyMalConv(nn.Module):
             stride=config.window_size,
             bias=True,
         )
-        self.pooling = nn.MaxPool1d(int(config.max_length / config.window_size))
+        self.pooling = nn.MaxPool1d(int(config.max_length_ / config.window_size))
         self.mlp = ClassificationHead(
             config.channels,
             config.num_labels,
