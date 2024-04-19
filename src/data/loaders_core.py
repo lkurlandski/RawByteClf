@@ -831,21 +831,31 @@ def test():
 
 def test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set():
 
-    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, None)
-    print(materials)
-    print("-" * 88)
+    # materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, None)
+    # print(materials)
+    # print("-" * 88)
 
-    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, 1)
-    print(materials)
-    print("-" * 88)
+    # materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, 1)
+    # print(materials)
+    # print("-" * 88)
 
-    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, 2)
-    print(materials)
-    print("-" * 88)
+    # materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(1, 2)
+    # print(materials)
+    # print("-" * 88)
 
-    materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(3, 2)
-    print(materials)
-    print("-" * 88)
+    # materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(3, 2)
+    # print(materials)
+    # print("-" * 88)
+
+    files = {"tr": [], "vl": []}
+    for seed in [0, 1, 2, 3, 42]:
+        random.seed(seed)
+        np.random.seed(seed)
+        materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(3, 2)
+        files["tr"].append(materials.files["tr"])
+        files["vl"].append(materials.files["vl"])
+
+    print()
 
 
 if __name__ == "__main__":
