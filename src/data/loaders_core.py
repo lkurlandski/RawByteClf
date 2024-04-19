@@ -434,13 +434,14 @@ def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
     files_and_labels = get_bodmas_file_label_map()
     files_and_labels = filter_file_label_map(files_and_labels, top_k=top_k, min_freq=min_freq)
 
-    files = list(files_and_labels.keys())
-    labels = list(files_and_labels.values())
-    files, labels = shuffle(files, labels)
-
     dist: Counter[str, int] = Counter(files_and_labels.values())
     label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
     id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    files = list(files_and_labels.keys())
+    labels = list(files_and_labels.values())
+    labels = np.array([label2id[l] for l in labels], dtype=np.int32)
+    files, labels = shuffle(files, labels)
 
     tr_idx = select_k_for_each_class(labels, k=tr_samples_per_class)
     if vl_samples_per_class is None:
@@ -460,7 +461,8 @@ def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
     assert all(tr_dist[l] == tr_samples_per_class for l in tr_dist), f"tr_dist={pformat(tr_dist)}"
     assert vl_samples_per_class is None or all(vl_dist[l] == vl_samples_per_class for l in vl_dist), f"vl_dist={pformat(vl_dist)}"
 
-    return Materials(files, labels, id2label, label2id, Counter(chain.from_iterable(labels.values())))
+    dist = Counter(id2label[i] for i in chain.from_iterable(labels.values()))
+    return Materials(files, labels, id2label, label2id, dist)
 
 
 def get_materials_clf_bodmas_balanced_slice(
