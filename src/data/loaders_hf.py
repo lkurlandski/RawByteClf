@@ -115,7 +115,8 @@ def get_dataset_hf(
         datasets[split] = Dataset.from_generator(generator, features=features, gen_kwargs=kwds)
 
     if streaming:
-        num_shards = None if num_shards == 0 else num_shards
+        if num_shards is None or num_shards == 0:
+            num_shards = 1
         dataset = IterableDatasetDict()
         for split in ["tr", "vl", "ts"]:
             if len(datasets[split]) == 0:
