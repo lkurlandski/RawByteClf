@@ -812,7 +812,7 @@ def get_model(
     # Get model from disk
     if model_name_or_path is not None and Path(model_name_or_path).exists():
         model_name = object_to_model_name(model_name_or_path)
-        if task == "clf":
+        if task[0:3] == "clf":
             if model_name == "hrrformer":
                 return HRRForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
             if model_name == "rwkv":
@@ -836,7 +836,7 @@ def get_model(
 
     # Get model from config
     if config:
-        if task == "clf":
+        if task[0:3] == "clf":
             if isinstance(config, MalConvConfig):
                 return MalConv(config)
             if isinstance(config, MalConvGCTConfig):
@@ -930,6 +930,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.max_length,
         args.task,
         args.tr_size,
+        args.tr_samples_per_class,
         args.depth,
         args.min_freq,
         args.top_k,
@@ -982,7 +983,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     weight: Optional[Tensor] = None
     if args.task in ("mlm", "clm"):
         materials = get_materials_pretrain_sorel(args.tr_size, args.vl_size, args.ts_size)
-    elif args.task == "clf":
+    elif args.task == "clf" or args.task == "clf-bod":
         materials = get_materials_clf_bodmas(
             args.tr_size,
             args.vl_size,
@@ -990,6 +991,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             top_k=args.top_k,
             min_freq=args.min_freq,
         )
+    elif args.task == "clf-ksc":
+        materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
+            args.tr_samples_per_class,
+            args.vl_samples_per_class,
+            args.top_k,
+        )
+    elif args.task == "clf-lxs":
+        raise NotImplementedError()
+
+
+    if args.task[0:3] == "clf":
         id2label = materials.id2label
         label2id = materials.label2id
         dist = materials.dist
@@ -1125,7 +1137,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     #     if "attention_mask" in tokenizer.model_input_names:
     #         tokenizer.model_input_names.remove("attention_mask")
 
-    if args.task == "clf":
+    if args.task[0:3] == "clf":
         data_collator = DataCollatorWithPadding(
             tokenizer=tokenizer,
             padding="max_length" if MODEL_TYPE == "MC" else "longest",  # malconv needs padding to its max_length
@@ -1159,7 +1171,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")
 
-    if args.task == "clf":
+    if args.task[0:3] == "clf":
         ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
     elif args.task in ("mlm", "clm"):
         ModelTrainer = Trainer
@@ -1329,7 +1341,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
 
-        if args.task == "clf":
+        if args.task[0:3] == "clf":
             single_shot_classes = [label2id[l] for l in dist if dist[l] == 3]
             compute_metrics = partial(clf_compute_metrics, single_shot_classes=single_shot_classes)
             print("single_shot_classes=")
