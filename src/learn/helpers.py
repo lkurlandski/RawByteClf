@@ -183,20 +183,21 @@ class OutputHelper:
             f"tr_size--{tr_size}",
         ]
 
-        if task == "clf":
-            if isinstance(tr_length_cutoff, int):
-                args.extend([
-                    f"enforce_cutoff--{str_or_bool_to_str(enforce_cutoff) if isinstance(enforce_cutoff, bool) else None}",
-                    f"tr_length_cutoff--{tr_length_cutoff}",
-                ])
-            elif tr_samples_per_class is not None:
-                args.extend([
-                    f"tr_samples_per_class--{tr_samples_per_class}",
-                ])
-            else:
+        if task[0:3] == "clf":
+            if task == "clf" or task == "clf-bod":
                 args.extend([
                     f"min_freq--{min_freq}",
                     f"top_k--{top_k}",
+                ])
+            elif task == "clf-ksc":
+                args.extend([
+                    f"tr_samples_per_class--{tr_samples_per_class}",
+                    f"top_k--{top_k}",
+                ])
+            elif task == "clf-lxs":
+                args.extend([
+                    f"enforce_cutoff--{str_or_bool_to_str(enforce_cutoff) if isinstance(enforce_cutoff, bool) else None}",
+                    f"tr_length_cutoff--{tr_length_cutoff}",
                 ])
             args.extend([
                 f"freeze--{str_or_bool_to_str(ft_freeze_positional_embeddings)}",
@@ -209,6 +210,9 @@ class OutputHelper:
                     f"depth--{depth}",
                 ]
             )
+        else:
+            raise ValueError(f"Unknown task: {task}")
+
         self.arch_config = arch_config
         self.trainer_config = trainer_config
 
