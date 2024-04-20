@@ -1,5 +1,8 @@
 """
 Utilies to help with the output of the training process.
+
+# FIXME: put seed at the very end. Include num_train_epochs, etc. Do a big refactor of this after
+# next round of experiments is complete.
 """
 
 # pylint: disable=wrong-import-position
@@ -26,20 +29,22 @@ from src.utils import get_highest_path, is_jsonable
 from src.learn.utils import str_or_bool_to_str, float_to_int
 
 
+TASKS = ["clm", "mlm", "clf", "clf-bod", "clf-ksc", "clf-lxs"]
+TOKENIZERS = ["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
+
+
+def print_options(options: list[str]) -> str:
+    return "One of " + ", ".join([f"`{x}`" for x in options[:-1]]) + f", or {options[-1]}."
+
+
 @dataclass
 class Args:
 
     model_name_or_path: str = field()
     max_length: int = field()
-    task: str = field()
+    task: str = field(metadata={"help": print_options(TASKS)})
     representation: int = field(default=8)
-    algorithm: str = field(default="Raw",
-        metadata={
-            "help":
-                "One of `Raw`, `BPE`, `Unigram`, `WordPiece`, `WordLevel`, "
-                "`SentencePieceBPE`, `SentencePieceUnigram`"
-        }
-    )
+    algorithm: str = field(default="Raw", metadata={"help": print_options(TOKENIZERS)})
     vocab_size: Optional[int] = field(default=None)
     depth: int = field(default=1)
     streaming: bool = field(default=False)
@@ -73,6 +78,8 @@ class Args:
     dataset_backend: str = field(default="PT")
     data_read_bytes: Optional[int] = field(default=None)
     compression_level: int = field(default=9)
+    tr_samples_per_class: Optional[int] = field(default=None)  # FIXME: make default argument 1?
+    vl_samples_per_class: Optional[int] = field(default=1)  # FIXME: add to output path
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -143,6 +150,7 @@ class OutputHelper:
         max_length: int,
         task: str,
         tr_size: int | float,
+        tr_samples_per_class: Optional[int],
         depth: int,
         min_freq: Optional[int],
         top_k: Optional[int],
@@ -174,11 +182,16 @@ class OutputHelper:
             f"task--{task}",
             f"tr_size--{tr_size}",
         ]
+
         if task == "clf":
             if isinstance(tr_length_cutoff, int):
                 args.extend([
                     f"enforce_cutoff--{str_or_bool_to_str(enforce_cutoff) if isinstance(enforce_cutoff, bool) else None}",
                     f"tr_length_cutoff--{tr_length_cutoff}",
+                ])
+            elif tr_samples_per_class is not None:
+                args.extend([
+                    f"tr_samples_per_class--{tr_samples_per_class}",
                 ])
             else:
                 args.extend([
