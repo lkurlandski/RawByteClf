@@ -84,23 +84,62 @@ def tokenizer_vocab_analysis(
     else:
         raise ValueError(f"Invalid alg: {alg}")
 
-    return Counter([len(k) for k in tokens])
+    return Counter([len(k) for k in tokens]), tokens
 
 
 def main():
-    for file in Path("output/tokenizers").iterdir():
-        if "2000" not in file.name:
-            continue
-        print(file.name)
-        if "Unigram" in file.name:
-            alg = "Unigram"
-        elif "BPE" in file.name:
-            alg = "BPE"
-        else:
-            raise ValueError(f"Invalid file: {file}")
-        c = tokenizer_vocab_analysis(file, alg, num_special_tokens=7)
-        c = OrderedDict(sorted(c.items(), key=lambda x: x[0]))
-        pprint(c)
+
+    ALGORITHMS = ["BPE", "Unigram"]
+    VOCAB_SIZES = [2 ** i for i in range(9, 21)] + [2 ** i + 2 ** (i - 1) for i in range(9, 21)]
+    VOCAB_SIZES.remove(2 ** 20 + 2 ** 19)
+    VOCAB_SIZES.sort()
+    NUM_FILES = 2000
+    TOKEN_LENGTHS = list(range(1, 17))
+    NUM_SPECIAL_TOKENS = 7
+
+    data: dict[str, dict[str, Counter]] = {a: {v: None for v in VOCAB_SIZES} for a in ALGORITHMS}
+    for a in ALGORITHMS:
+        for v in VOCAB_SIZES:
+            path = Path(f"./output/tokenizers/{a}_{v}_{NUM_FILES}.json")
+            if not path.exists():
+                print(f"File not found: {path}")
+                print(f"Train a {a} tokenizer with vocab size {v}")
+                continue
+            c, tokens = tokenizer_vocab_analysis(path, a, NUM_SPECIAL_TOKENS)
+            l = len(set(tokens))
+            if l != v:
+                print(f"Expected to find {v} tokens, but found {l} tokens for {a} tokenizer!")
+            data[a][v] = c
+            c = OrderedDict(sorted(c.items(), key=lambda x: x[0]))
+            pprint(c)
+
+    from matplotlib.axes import Axes
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(len(ALGORITHMS), len(VOCAB_SIZES), figsize=(15, 10))
+
+    for i, algorithm in enumerate(ALGORITHMS):
+        for j, vocab_size in enumerate(VOCAB_SIZES):
+            if data[algorithm][vocab_size] is None:
+                continue
+            counts = [data[algorithm][vocab_size][length] for length in TOKEN_LENGTHS]
+            ax: Axes = axes[i][j]
+            ax.bar(TOKEN_LENGTHS, counts, color='skyblue')
+            ax.set_title(f'{algorithm[0:3]}@{vocab_size}')
+            ax.set_xticks(TOKEN_LENGTHS, [str(TOKEN_LENGTHS[0])] + ["" for _ in range(len(TOKEN_LENGTHS) - 2)] + [str(TOKEN_LENGTHS[-1])])
+            # ax.set_xlabel('Token Length')
+            # ax.set_ylabel('Count')
+
+    plt.tight_layout()
+    plt.show()
+    plt.savefig("tmp/fig.png", dpi=800)
+
+
+# File not found: output/tokenizers/BPE_12288_2000.json
+# Train a BPE tokenizer with vocab size 12288
+
+# File not found: output/tokenizers/BPE_24576_2000.json
+# Train a BPE tokenizer with vocab size 24576
 
 
 if __name__ == "__main__":
