@@ -12,13 +12,14 @@
 
 
 source ~/anaconda3/etc/profile.d/conda.sh
-conda activate RawByteClf
+conda activate RawByteClf2
+
 
 python -u src/data/download_sorel.py \
 --output_root="/home/lk3591/Documents/datasets/Sorel/binaries" \
---num_samples=10000000 \
+--num_samples=2000000 \
 --num_bytes=1048576 \
 --max_length=1048576 \
 --shard_idx=$1 \
---num_shards=2000 \
+--num_shards=1000 \
 --errors=2
