@@ -614,9 +614,9 @@ class BiMambaModel(MambaPreTrainedModel):
             mixer_back: MambaMixer = block_back.mixer
 
             # TODO: verify that we're tying the correct weights together...
-            mixer_forw.in_proj = mixer_back.in_proj
-            mixer_forw.out_proj = mixer_back.out_proj
-            mixer_forw.x_proj = mixer_back.x_proj
+            mixer_forw.in_proj.weight = mixer_back.in_proj.weight
+            mixer_forw.out_proj.weight = mixer_back.out_proj.weight
+            mixer_forw.x_proj.weight = mixer_back.x_proj.weight
 
     def prepare_input_for_backward_model(self, input_ids: torch.LongTensor) -> torch.LongTensor:
         """
@@ -1033,3 +1033,31 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             cache_params=mamba_outputs.cache_params,
             hidden_states=mamba_outputs.hidden_states,
         )
+
+
+def test():
+
+    CFG = dict(pad_token_id=0, bos_token_id=1, eos_token_id=2, vocab_size=9)
+
+    X = torch.tensor(
+        [
+            [1, 2, 3, 4, 5, 2],
+            [1, 6, 7, 8, 2, 0],
+        ]
+    )
+
+    config = MambaConfig(mode="uni", **CFG)
+    model = MambaModel(config)
+    print(model)
+    output = model.forward(X)
+    print(f"{output.last_hidden_state.shape=}")
+
+    config = MambaConfig(mode="bi", **CFG)
+    model = BiMambaModel(config)
+    print(model)
+    output = model.forward(X)
+    print(f"{output.last_hidden_state.shape=}")
+
+
+if __name__ == "__main__":
+    test()

@@ -5,6 +5,7 @@ Test architectures on language modeling tasks.
 from argparse import ArgumentParser
 from datetime import datetime
 from functools import partial
+import random
 import os
 import sys
 
@@ -14,6 +15,7 @@ if __name__ == "__main__":
 from datasets import load_dataset, Dataset, DatasetDict
 import evaluate
 import numpy as np
+import torch
 from transformers import (
     BertConfig,
     BertTokenizerFast,
@@ -51,6 +53,11 @@ from src.architectures.rwkv import (
     RwkvForSequenceClassification,
     RwkvForMaskedLM,
 )
+
+
+random.seed(0)
+np.random.seed(0)
+torch.manual_seed(0)
 
 
 HIDDEN_SIZE = 512
@@ -224,17 +231,18 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
         save_strategy="epoch",
         save_steps=100,
         eval_steps=100,
-        logging_steps=50,
+        logging_steps=10,
         learning_rate=1e-3,
         num_train_epochs=NUM_TRAIN_EPOCHS,
         weight_decay=0.01,
         per_device_train_batch_size=BATCH_SIZE,
         per_device_eval_batch_size=BATCH_SIZE,
         save_total_limit=3,
-        debug="underflow_overflow",
+        # debug="underflow_overflow",
         # use_cpu=True,
         fp16=True,
         max_grad_norm=1.0,
+        seed=0,
     )
 
 
