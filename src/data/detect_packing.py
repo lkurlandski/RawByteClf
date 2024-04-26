@@ -7,16 +7,18 @@ from argparse import ArgumentParser
 from collections import Counter
 from collections.abc import Iterable, Generator
 from copy import deepcopy
+from functools import singledispatch
 import gc
 from itertools import islice
 import json
 import os
 from pathlib import Path
 from pprint import pprint
+import shutil
 import subprocess
 import sys
 import time
-from tempfile import NamedTemporaryFile
+import tempfile
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -26,6 +28,7 @@ if __name__ == "__main__":
 import pandas as pd
 from tqdm import tqdm
 
+from src.utils import batched
 from src.data.prepare_datasets import s3_dataset_generator, s3_dataset_generator_async
 from src.data.cfg import (
     SOREL_BUCKET,
@@ -35,50 +38,42 @@ from src.data.utils import stream_sorel_meta, Decompressor
 
 
 DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
+CHUNK_SIZE = 100
+BUFFERING = 1  # use 1 for debugging, -1 otherwise
 
 
-# def process_report(text: str) -> dict:
-#     d = {}
-#     lines = text.split("\n")
-#     d["Platform"] = lines[0].strip()
-#     for line in lines[1:]:
-#         if line.strip() == "":
-#             continue
-#         parts = line.split(":")
-#         d[parts[0].strip()] = parts[1].strip()
-#     return d
+def _analyze_samples_with_diec(directory: os.PathLike) -> dict[str, str]:
 
-
-# def consolidate_reports(output_root: Path, meta_file: Path):
-#     full = {}
-#     for f in output_root.iterdir():
-#         sha = f.stem
-#         text = f.read_text()
-#         d = process_report(text)
-#         full[sha] = d
-
-#     with open(meta_file, "w") as fp:
-#         json.dump(full, fp, indent=2)
-
-
-def analyze_sample(file_or_bytes: os.PathLike | bytes, del_file: bool = False) -> str:
-    if isinstance(file_or_bytes, bytes):
-        with NamedTemporaryFile("wb", delete=False) as fp:
-            fp.write(file_or_bytes)
-        file = Path(fp.name)
-        del_file = True
-
-    else:
-        file = Path(file_or_bytes)
-
-    result = subprocess.run(["diec", "--entropy", "--json", str(file)], check=True, capture_output=True)
-
-    if del_file:
-        file.unlink()
-
+    result = subprocess.run(["diec", "--entropy", "--json", str(directory)], check=True, capture_output=True)
     output = result.stdout.decode("utf-8")
-    analysis = json.loads(output)
-    return analysis["status"]
+
+    results: dict[str, str] = {}
+    sha = None
+    report = []
+    for line in output.split("\n"):
+        if line.startswith("/"):
+            if sha is not None:
+                report = json.loads("".join(report))
+                results[sha] = report.get("status", None)
+                sha = None
+                report = []
+            sha = Path(line).stem
+        else:
+            report.append(line)
+
+    return results
+
+
+def analyze_samples_with_diec(bs: list[bytes], names: list[str]) -> dict[str, str]:
+    d = Path(tempfile.mkdtemp())
+
+    for b, n in zip(bs, names):
+        p = d / f"{n}.exe"
+        p.write_bytes(b)
+
+    results = _analyze_samples_with_diec(d)
+    shutil.rmtree(d)
+    return results
 
 
 async def analyze_samples_async(files: Iterable[str], output_file: Path, num_bytes: int, max_length: int, errors: int):
@@ -101,6 +96,7 @@ async def analyze_samples_async(files: Iterable[str], output_file: Path, num_byt
             r = analyze_sample(sample["bytes"])
             fp.write(f"{sample['name']},{r}\n")
 
+
 async def run_async(files: Iterable[str], output_file: Path, num_bytes: int, max_length: int, errors: int):
     await analyze_samples_async(files, output_file, num_bytes, max_length, errors)
 
@@ -119,11 +115,38 @@ def analyze_samples(files: Iterable[str], output_file: Path, num_bytes: int, max
         errors=errors,
         decompress=DECOMPRESSOR,
     )
+    # generator = batched(generator, CHUNK_SIZE)
 
-    with open(output_file, "a") as fp:
-        for sample in tqdm(generator, total=len(files)):
-            r = analyze_sample(sample["bytes"])
-            fp.write(f"{sample['name']},{r}\n")
+    # for samples in tqdm(generator, total=len(files) // CHUNK_SIZE + 1):
+    #     bs = [s["bytes"] for s in samples]
+    #     names = [s["name"] for s in samples]
+    #     results = analyze_samples_with_diec(bs, names)
+    #     with open(output_file, "a", buffering=-1) as fp:
+    #         for name, status in results.items():
+    #             fp.write(f"{name},{status}\n")
+    #     del samples
+    #     gc.collect()
+
+    def process(samples):
+        bs = [s["bytes"] for s in samples]
+        names = [s["name"] for s in samples]
+        results = analyze_samples_with_diec(bs, names)
+        with open(output_file, "a", buffering=-1) as fp:
+            for name, status in results.items():
+                fp.write(f"{name},{status}\n")
+
+
+    samples = []
+    for sample in tqdm(generator, total=len(files)):
+        samples.append(sample)
+        if len(samples) < CHUNK_SIZE:
+            continue
+        process(samples)
+        del samples
+        gc.collect()
+        samples = []
+
+    process(samples)
 
 
 def run(files: Iterable[str], output_root: Path, num_bytes: int, max_length: int, errors: int):
@@ -159,11 +182,11 @@ def main():
 
     # Merge the csv files and clean up other files.
     if args.finish:
-        finished_files = [f for f in args.output_root.glob("packingPartial_*.csv")]
+        files = [f for f in args.output_root.glob("packingPartial_*.csv")]
         dfs = [pd.read_csv(f) for f in files]
         df = pd.concat(dfs, ignore_index=True)
         df.to_csv(args.output_root / "packing.csv", index=False)
-        for f in finished_files:
+        for f in files:
             f.unlink()
         return
 
