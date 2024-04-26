@@ -15,23 +15,37 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
 
 
-#python -u src/data/detect_packing.py \
-#    --output_root="/home/lk3591/Documents/datasets/Sorel/" \
-#    --prepare \
-#    --num_shards=16
+S="src/data/detect_packing.py"
+O="/home/lk3591/Documents/datasets/Sorel/"
+N=32
+L=$((N - 1))
+P=$((N - 2))
 
 
-for i in {0..63}; do
-    python -u src/data/detect_packing.py \
-	--output_root="/home/lk3591/Documents/datasets/Sorel/" \
-	--shard_idx=$i \
-	--num_shards=64 \
-        --errors=2 \
-	> logs/detect_packing_$i.out 2>&1 &
+echo "Parameters:"
+echo $S
+echo $O
+echo $N
+echo $L
+echo $P
+echo "--------------------------------------------------"
+
+
+echo "Preparation..."
+python -u $S --output_root=$O --prepare --num_shards=$N
+echo "--------------------------------------------------"
+
+
+echo "Processing..."
+for ((i=0; i < $P; i++)); do
+    echo "Shard $i --> logs/detect_packing_$i.out"
+    python -u $S --output_root=$O --shard_idx=$i --num_shards=$N --errors=2 > "logs/detect_packing_$i.out" 2>&1 &
 done
+echo "Shard $L --> logs/detect_packing_$L.out"
+python -u $S --output_root=$O --shard_idx=$L --num_shards=$N --errors=2 > "logs/detect_packing_$L.out"
+echo "--------------------------------------------------"
 
 
-#python -u src/data/detect_packing.py \
-#    --output_root="/home/lk3591/Documents/datasets/Sorel/" \
-#    --finish \
-#    --num_shards=16
+echo "Finishing..."
+python -u $S --output_root=$O --finish --num_shards=$N
+echo "--------------------------------------------------"
