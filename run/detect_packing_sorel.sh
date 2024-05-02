@@ -14,16 +14,12 @@ export DIEC_TIMEOUT=5
 run() {
     t_start_all=$(date +%s)
 
-    local filter="$1"
+    filter="$1"
     logfile="$LOG/packing_$filter.log"
     awslogfile="$LOG/packing_aws_$filter.log"
     directory="$DOWNLOAD/$filter"
     mkdir $directory
-
-    #echo "logfile: $logfile"
-    #echo "awslogile: $awslogfile"
-    #echo "directory: $directory"
-    # exit
+    echo "" > $logfile
 
     echo "Downloading..." >> $logfile 2>&1
     t_start=$(date +%s)
@@ -112,6 +108,7 @@ export -f test
 MODE=$1
 JOBS=$2
 ULIMIT=$((JOBS * 8))
+START=$3
 
 if [ "$MODE" -eq 1 ]; then
     TOTAL=16
@@ -130,6 +127,12 @@ else
     exit 1
 fi
 
+if [ $START = "" ]; then
+    START=0
+else
+    START=$((16#$START))
+fi
+
 currentLimit=$(ulimit -n)
 if [ $currentLimit -lt $ULIMIT ]; then
     echo "CHANGING ULIMIT: $currentLimit"
@@ -141,6 +144,7 @@ echo "MODE: $MODE"
 echo "JOBS: $JOBS"
 echo "FORMAT: $FORMAT"
 echo "ULIMIT: $ULIMIT"
+echo "START: $START"
 
 pkill aws > /dev/null 2>&1
 pkill diec > /dev/null 2>&1
@@ -150,26 +154,24 @@ echo "OUTPUT: $OUTPUT"
 echo "LOG: $LOG"
 echo "DOWNLOAD: $DOWNLOAD"
 
-rm -rf $DOWNLOAD > /dev/null 2>&1
-rm -rf $OUTPUT > /dev/null 2>&1
-rm $LOG/packing_* > /dev/null 2>&1
+if [ $START -eq 0 ]; then
+    echo "Exiting early because I am a pussy."
+    exit
 
-mkdir $DOWNLOAD
-mkdir $OUTPUT
-mkdir $OUTPUT/recursive
-mkdir $OUTPUT/deep
-mkdir $OUTPUT/heuristic
+    rm -rf $DOWNLOAD > /dev/null 2>&1
+    rm -rf $OUTPUT > /dev/null 2>&1
+    rm $LOG/packing_* > /dev/null 2>&1
 
-for ((i=0; i<$TOTAL; i++)); do
+    mkdir $DOWNLOAD
+    mkdir $OUTPUT
+    mkdir $OUTPUT/recursive
+    mkdir $OUTPUT/deep
+    mkdir $OUTPUT/heuristic
+fi
+
+for ((i=$START; i<$TOTAL; i++)); do
     filter=$(printf $FORMAT "$i")
     echo "$filter"
 done | parallel --jobs $JOBS run
 
-# for file in /home/lk3591/Documents/datasets/Sorel/diec/*.txt; do
-#     sha=$(basename "$file" | cut -d '.' -f 1)
-#     echo "$sha"
-#     status=$(jq -r '.status' "$file")
-#     echo "$status"
-#     echo "$sha,$status" >> output.csv
-# done
 
