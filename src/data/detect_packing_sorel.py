@@ -38,7 +38,7 @@ or
 
 Its recommended to use a tool like GNU-parallel to run all shards at once, e.g.,
 
-    parallel --bar -j 48 'python src/data/detect_packing_sorel.py --filter_idx={1} --filter_mode=4 > ./logs/packing_python_{1}.log 2>&1' ::: $(printf "%04x\n" {0..65536})
+    parallel --bar -j 48 'python src/data/detect_packing_sorel.py --run --filter_idx={1} --filter_mode=4 > ./logs/packing_python_{1}.log 2>&1' ::: $(printf "%04x\n" {0..65535})
 
 Either way, this will produce a set of JSON files for each sample in the SOREL collection
 
@@ -84,11 +84,13 @@ This will produce a single JSON file for the entire SOREL collection.
 
 TODO
 ----
-- Save intermediary files (from run process) as .json not .txt
-- Save consolidated results as CSV as well as JSON
+- Save intermediary files (from run process) as .json not .txt. Only if we can
+guarentee that the files are always valid JSON.
+- Save consolidated results as CSV as well as JSON.
 """
 
 from argparse import ArgumentParser
+import asyncio
 from collections.abc import Iterable
 from itertools import chain, islice
 import json
@@ -106,13 +108,15 @@ if __name__ == "__main__":
 
 from tqdm import tqdm
 
+from src.utils import batched
 from src.data.cfg import SOREL_BUCKET, SOREL_PREFIX
 from src.data.prepare_datasets import s3_dataset_generator
-from src.data.utils import read_binary_files_asynch, stream_sorel_meta, Decompressor
+from src.data.utils import read_binary_files_asynch, write_binary_files_asynch, stream_sorel_meta, Decompressor
 
 
 DIEC_MODES = ("recursive", "deep", "heuristic")
 DIEC_TIMEOUT = 10
+MERGE_CHUNK_SIZE = 200000
 DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
 
 P_ROOT = Path("/home/lk3591/Documents/datasets/Sorel/diec")
@@ -296,6 +300,57 @@ def merge():
     print(f"\tJSONDecodeError: {errors[2]}")
 
 
+# def _merge(sha_batch: tuple[str]) -> tuple[int, int, int]:
+#     SHAS = tuple(sha_batch)
+#     num_file_does_not_exist = 0
+#     num_file_is_empty = 0
+#     num_json_decode_error = 0
+#     data: dict[str, dict[str, Optional[dict]]] = {s: {mode: None for mode in DIEC_MODES} for s in SHAS}
+#     for mode in DIEC_MODES:
+#         files = [(P_MODES[mode] / s).with_suffix(".txt") for s in SHAS]
+#         file_not_exist_idx = [i for i, f in enumerate(files) if not f.exists()]
+#         num_file_does_not_exist += len(file_not_exist_idx)
+#         file_is_empty_idx = [i for i, f in enumerate(files) if f.exists() and f.stat().st_size == 0]
+#         num_file_is_empty += len(file_is_empty_idx)
+#         remove = set(file_not_exist_idx + file_is_empty_idx)
+#         files = [f for i, f in enumerate(files) if i not in remove]
+#         shas = [s for i, s in enumerate(SHAS) if i not in remove]
+#         loop = asyncio.get_event_loop()
+#         future = read_binary_files_asynch(files, disable_tqdm=True)
+#         bs: list[bytes] = loop.run_until_complete(future)
+#         contents = [b.decode("utf-8") for b in bs]
+#         contents = [c[c.find("{"):c.rfind("}") + 1].strip() for c in contents]
+#         for sha, content in zip(shas, contents):
+#             try:
+#                 data[sha][mode] = json.loads(content)
+#             except json.JSONDecodeError:
+#                 data[sha][mode] = None
+#                 num_json_decode_error += 1
+
+#     files = [(P_MERGED / s).with_suffix(".json") for s in SHAS]
+#     outdata = [json.dumps(data.pop(s), indent=4).encode("utf-8") for s in SHAS]
+#     loop = asyncio.get_event_loop()
+#     future = write_binary_files_asynch(files, outdata, disable_tqdm=True)
+#     loop.run_until_complete(future)
+
+
+# def merge():
+
+#     files = islice(chain.from_iterable(d.iterdir() for d in P_MODES.values()), None)
+#     files = list(tqdm(files, desc="Initial Scan..."))
+#     shas = sorted(set(file.stem for file in files))
+#     print(f"{len(files)} reports from {len(shas)} unique files.")
+
+#     errors = {name: 0 for name in (0, 1, 2)}
+#     for sha_batch in tqdm(batched(shas, MERGE_CHUNK_SIZE), total=(len(shas) // MERGE_CHUNK_SIZE) + 1):
+#         _merge(sha_batch)
+
+#     print("ERRORS\n------")
+#     print(f"\tfile not found: {errors[0]}")
+#     print(f"\tFile is empty: {errors[1]}")
+#     print(f"\tJSONDecodeError: {errors[2]}")
+
+
 def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bool) -> None:
     if filter_idx is None == shard_idx is None:
         raise ValueError("Must use filter or shard API, not both.")
@@ -322,6 +377,7 @@ def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bo
 def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_complete: bool) -> None:
     if filter_mode is None == num_shards is None:
         raise ValueError("Must use filter or shard API, not both.")
+    print(f"{ignore_complete=}")
 
     for f in P_PREP.iterdir():
         f.unlink()
@@ -333,7 +389,10 @@ def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_comple
 
     if ignore_complete:
         completed = infer_completed_samples()
-        files = [f for f in files if f not in completed]
+        print(f"Ignoring {len(completed)} completed files")
+        # files = [f for f in files if f not in completed]  # premature filtering fucks up some other stuff
+    else:
+        completed = set()
 
     if num_shards:
         shard_size = (len(files) // num_shards) + 1
@@ -361,13 +420,14 @@ def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_comple
             for i in range(start, len(files)):
                 if files[i][0:filter_mode] != filter_:
                     if i == start:
-                        raise RuntimeError()
+                        raise RuntimeError("This should never happen.")
                     finish = i
                     break
 
             with open(filter_file, "w") as fp:
                 for f in files[start:finish]:
-                    fp.write(f"{f}\n")
+                    if f not in completed:
+                        fp.write(f"{f}\n")
 
             start = finish
             finish = len(files)
