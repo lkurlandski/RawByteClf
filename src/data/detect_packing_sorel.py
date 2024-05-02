@@ -99,7 +99,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Optional
+from typing import Literal, Optional
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -247,8 +247,6 @@ def consolidate():
 
     with open(P_CONSOLIDATED / "output.json", "w") as f:
         json.dump(output, f, indent=4)
-
-    # TODO: save as CSV
 
 
 def merge():
@@ -432,6 +430,26 @@ def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_comple
             start = finish
             finish = len(files)
         return
+
+
+def get_packing_map(include: tuple[Literal["recursive", "deep", "heuristic"]] = tuple(DIEC_MODES)) -> dict[str, bool]:
+    with open(P_CONSOLIDATED / "output.json", "r") as fp:
+        data: dict[str, dict] = json.load(fp)
+
+    def f(report: dict[Literal["recursive", "deep", "heuristic"], Optional[dict[Literal["packed", "packer"], bool | str]]]) -> bool:
+        for mode in include:
+            if report[mode] is None:
+                continue
+            if report[mode]["packed"]:
+                return True
+        return False
+
+    return {sha: f(report) for sha, report in data.items()}
+
+
+def get_is_packed(shas: list[str], **kwds) -> list[bool]:
+    packing_map = get_packing_map(**kwds)
+    return [packing_map[sha] for sha in shas]
 
 
 def main():
