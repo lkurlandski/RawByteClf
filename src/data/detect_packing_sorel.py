@@ -40,19 +40,28 @@ Its recommended to use a tool like GNU-parallel to run all shards at once, e.g.,
 
     parallel --bar -j 48 'python src/data/detect_packing_sorel.py --run --filter_idx={1} --filter_mode=4 > ./logs/packing_python_{1}.log 2>&1' ::: $(printf "%04x\n" {0..65535})
 
-Either way, this will produce a set of JSON files for each sample in the SOREL collection
+Either way, this will produce a set of JSON-ish files for each sample in the SOREL collection
 
     | -- P_ROOT
         | -- P_RAW
             | -- recursive
-                | -- sha.json
+                    | -- 0
+                        | -- sha.txt
+                        ...
+                    ...
+                    | -- f
+                        | -- sha.txt
+                        ...
                 ...
             | -- deep
-                | -- sha.json
                 ...
             | -- heuristic
-                | -- sha.json
                 ...
+
+We use subdirectories 0, 1, 2, ..., e, f to prevent Errno 28, which can occur when a directory
+contains so many files that the OS runs in hash collision issues. Notably, both diec's stdout
+and stderr are piped to the same output file. If an error occurs, the file is not valid JSON,
+hence our decision to use the .txt extension instead of .json.
 
 If you want DO NOT want to ignore files that have already been processed (process them again),
 then use the --dont_ignore_complete flag.
@@ -68,7 +77,13 @@ This will produce one JSON files for each sample in the SOREL collection
 
     | -- P_ROOT
         | -- P_MERGED
-            | -- sha.json
+            | -- 0
+                | -- sha.json
+                ...
+            ...
+            | -- f
+                | -- sha.json
+                ...
 
 4. Finally, consolidate the results into a single file for the entire collection
 for usage in downstream ML tasks.
@@ -81,12 +96,6 @@ This will produce a single JSON file for the entire SOREL collection.
         | -- P_CONSOLIDATED
             | -- output.json
             | -- output.csv
-
-TODO
-----
-- Save intermediary files (from run process) as .json not .txt. Only if we can
-guarentee that the files are always valid JSON.
-- Save consolidated results as CSV as well as JSON.
 """
 
 from argparse import ArgumentParser
@@ -118,6 +127,7 @@ DIEC_MODES = ("recursive", "deep", "heuristic")
 DIEC_TIMEOUT = 10
 MERGE_CHUNK_SIZE = 200000
 DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
+HEX = tuple(hex(i)[2:] for i in range(16))
 
 P_ROOT = Path("/home/lk3591/Documents/datasets/Sorel/diec")
 P_PREP = P_ROOT / "prep"
@@ -138,7 +148,7 @@ def analyze_sample(b: bytes, sha: str) -> None:
         fp.write(b)
 
     for mode in DIEC_MODES:
-        outfile = P_MODES[mode] / f"{sha}.txt"
+        outfile = P_MODES[mode] / sha[0] / f"{sha}.txt"
         try:
             subprocess.run(
                 args(mode),
@@ -149,6 +159,11 @@ def analyze_sample(b: bytes, sha: str) -> None:
             )
         except subprocess.TimeoutExpired:
             print(f"TimeoutExpired: {mode} {sha}")
+        except OSError as err:
+            if "Errno 28" in str(err):
+                print(f"Errno 28: {mode} {sha}")
+            else:
+                raise err
 
     file.unlink()
 
@@ -173,8 +188,12 @@ def analyze_samples(files: Iterable[str]) -> None:
 
 def infer_completed_samples(all_modes: bool = True) -> set[str]:
     completed = set()
+
     for d in P_MODES.values():
-        c = set(f.stem for f in d.iterdir() if f.stat().st_size > 0)
+        c = set()
+        for h in HEX:
+            c.update(f.stem for f in (d / h).iterdir() if f.stat().st_size > 0)
+
         if not completed:
             completed = c
         else:
@@ -182,6 +201,7 @@ def infer_completed_samples(all_modes: bool = True) -> set[str]:
                 completed = completed.intersection(c)
             else:
                 completed = completed.union(c)
+
     return completed
 
 
@@ -251,7 +271,12 @@ def consolidate():
 
 def merge():
 
-    files = islice(chain.from_iterable(d.iterdir() for d in P_MODES.values()), None)
+    iterables = []
+    for d in P_MODES.values():
+        for h in HEX:
+            p = d / h
+            iterables.append(p.iterdir())
+    files = chain.from_iterable(iterables)
     files = list(tqdm(files, desc="Initial Scan..."))
     shas = set(file.stem for file in files)
     print(f"{len(files)} reports from {len(shas)} unique files.")
@@ -265,11 +290,11 @@ def merge():
         for alg, file in files.items():
             s = str(Path(file.parent.name) / file.name)
             if not file.exists():
-                print(f"File not found: {s}")
+                # print(f"File not found: {s}")
                 d = None
                 errors[0] += 1
             elif file.stat().st_size == 0:
-                print(f"File is empty: {s}")
+                # print(f"File is empty: {s}")
                 d = None
                 errors[1] += 1
             else:
@@ -288,7 +313,7 @@ def merge():
 
             data[alg] = d
 
-        outfile = (P_MERGED / sha).with_suffix(".json")
+        outfile = (P_MERGED / sha[0] / sha).with_suffix(".json")
         with open(outfile, "w") as fp:
             json.dump(data, fp, indent=4)
 
@@ -298,12 +323,19 @@ def merge():
     print(f"\tJSONDecodeError: {errors[2]}")
 
 
+# Merging involves a lot of IO, so it should be able to benefit from asynchronous programming.
+# This asynchronous implementation didn't seem any faster, so we'll leave it for future work.
+# It must be noted that I conducted my limited testing while the main --run program was in
+# progress, which could have impacted the results.
+
 # def _merge(sha_batch: tuple[str]) -> tuple[int, int, int]:
 #     SHAS = tuple(sha_batch)
 #     num_file_does_not_exist = 0
 #     num_file_is_empty = 0
 #     num_json_decode_error = 0
-#     data: dict[str, dict[str, Optional[dict]]] = {s: {mode: None for mode in DIEC_MODES} for s in SHAS}
+#     data: dict[str, dict[str, Optional[dict]]] = {
+#         s: {mode: None for mode in DIEC_MODES} for s in SHAS
+#     }
 #     for mode in DIEC_MODES:
 #         files = [(P_MODES[mode] / s).with_suffix(".txt") for s in SHAS]
 #         file_not_exist_idx = [i for i, f in enumerate(files) if not f.exists()]
@@ -367,8 +399,6 @@ def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bo
             completed = infer_completed_samples()
             files = [f for f in files if f not in completed]
     print(f"{len(files)=}")
-    print(f"mem(files)={int(sys.getsizeof(files[0]) * len(files) // 1e6)}MB")
-
     analyze_samples(files)
 
 
@@ -460,10 +490,14 @@ def main():
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--consolidate", action="store_true")
     parser.add_argument("--dont_ignore_complete", action="store_true")
-    parser.add_argument("--filter_mode", type=int, default=None)
-    parser.add_argument("--filter_idx", type=str, default=None)
-    parser.add_argument("--num_shards", type=int, default=None)
-    parser.add_argument("--shard_idx", type=int, default=None)
+    parser.add_argument("--filter_mode", type=int, default=None,
+        help="Parallel with 16 ** `filter_mode` processes. Required for --prepare and --run.")
+    parser.add_argument("--filter_idx", type=str, default=None,
+        help="Required for --run.")
+    parser.add_argument("--num_shards", type=int, default=None,
+        help="Parallel with `num_shards` processes. Required for --prepare and --run.")
+    parser.add_argument("--shard_idx", type=int, default=None,
+        help="Required for --run.")
     args = parser.parse_args()
 
     P_ROOT.mkdir(exist_ok=True)
@@ -471,7 +505,11 @@ def main():
     P_RAW.mkdir(exist_ok=True)
     for p in P_MODES.values():
         p.mkdir(exist_ok=True)
+        for h in HEX:
+            (p / h).mkdir(exist_ok=True)
     P_MERGED.mkdir(exist_ok=True)
+    for h in HEX:
+        (P_MERGED / h).mkdir(exist_ok=True)
 
     t_0 = time.time()
 
