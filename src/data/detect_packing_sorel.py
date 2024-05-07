@@ -280,21 +280,22 @@ def merge():
     files = list(tqdm(files, desc="Initial Scan..."))
     shas = set(file.stem for file in files)
     print(f"{len(files)} reports from {len(shas)} unique files.")
+    del files
 
     errors = {name: 0 for name in (0, 1, 2)}
     pbar = tqdm(shas)
     for sha in pbar:
         pbar.set_description(f"Processing: {sha}")
-        files = {alg: (path / sha).with_suffix(".txt") for alg, path in P_MODES.items()}
+        files = {alg: (path / sha[0] / sha).with_suffix(".txt") for alg, path in P_MODES.items()}
         data = {}
         for alg, file in files.items():
-            s = str(Path(file.parent.name) / file.name)
+            s = str(Path(file.parent.name) / file.name[0] / file.name)
             if not file.exists():
-                # print(f"File not found: {s}")
+                print(f"File not found: {s}")
                 d = None
                 errors[0] += 1
             elif file.stat().st_size == 0:
-                # print(f"File is empty: {s}")
+                print(f"File is empty: {s}")
                 d = None
                 errors[1] += 1
             else:
