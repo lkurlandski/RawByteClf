@@ -57,7 +57,7 @@ from datasets import (
 )
 import numpy as np
 import torch
-from torch import tensor, Tensor
+from torch import tensor, Tensor  # pylint: disable=no-name-in-module
 from torch.nn import CrossEntropyLoss, Embedding
 from torch.utils.data import Subset
 import transformers
@@ -922,25 +922,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
 
     oh = OutputHelper(
-        training_arguments.seed,
-        args.model_name_or_path,
+        args.root,
         args.representation,
         args.algorithm,
         args.vocab_size,
         args.max_length,
+        args.model_name_or_path,
+        args.arch_config,
         args.task,
         args.tr_size,
-        args.tr_samples_per_class,
         args.depth,
         args.min_freq,
         args.top_k,
-        args.enforce_cutoff,
+        args.tr_samples_per_class,
         args.tr_length_cutoff,
-        args.ft_freeze_positional_embeddings,
-        args.ft_duplicate_positional_embeddings,
-        args.ft_initialize_positional_embeddings,
-        args.root,
-        args.arch_config,
         training_arguments.__dict__,
     )
     print(f"{oh=}")
@@ -1261,7 +1256,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             nonlocal training_arguments, oh
             print(f"Training with {batch_size=} and {gradient_accumulation_steps=}...", flush=True)
             try:  # Try to remove a created, but empty directory from a previous attempt.
-                oh.rmdir(ignore_config=True)
+                oh.rmdir()
             except OSError:
                 pass
 
