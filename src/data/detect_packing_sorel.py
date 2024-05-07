@@ -250,7 +250,7 @@ def consolidate():
 
 
     output = {}
-    pbar = tqdm(P_MERGED.iterdir(), total=sum(1 for _ in P_MERGED.iterdir()))
+    pbar = tqdm(P_MERGED.rglob("*.json"), total=sum(1 for _ in P_MERGED.rglob("*.json")))
     for file in pbar:
         sha = file.stem
         pbar.set_description(f"Processing: {sha}")
