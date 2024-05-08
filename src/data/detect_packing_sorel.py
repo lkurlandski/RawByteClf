@@ -282,22 +282,22 @@ def merge():
     print(f"{len(files)} reports from {len(shas)} unique files.")
     del files
 
-    errors = {name: 0 for name in (0, 1, 2)}
+    errors: tuple[list[str], list[str], list[str]] = ([], [], [])
     pbar = tqdm(shas)
     for sha in pbar:
         pbar.set_description(f"Processing: {sha}")
         files = {alg: (path / sha[0] / sha).with_suffix(".txt") for alg, path in P_MODES.items()}
         data = {}
         for alg, file in files.items():
-            s = str(Path(file.parent.name) / file.name[0] / file.name)
+            s = str(Path(file.parent.parent.name) / file.name[0] / file.name)
             if not file.exists():
                 print(f"File not found: {s}")
                 d = None
-                errors[0] += 1
+                errors[0].append(s)
             elif file.stat().st_size == 0:
                 print(f"File is empty: {s}")
                 d = None
-                errors[1] += 1
+                errors[1].append(s)
             else:
 
                 with open(file, "r") as fp:
@@ -306,10 +306,11 @@ def merge():
 
                 try:
                     d = json.loads(content)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as err:
                     print(f"JSONDecodeError: {s}")
+                    print(err)
                     print(f"*****{content}*****")
-                    errors[2] += 1
+                    errors[2].append(s)
                     d = None
 
             data[alg] = d
@@ -319,9 +320,21 @@ def merge():
             json.dump(data, fp, indent=4)
 
     print("ERRORS\n------")
-    print(f"\tfile not found: {errors[0]}")
-    print(f"\tFile is empty: {errors[1]}")
-    print(f"\tJSONDecodeError: {errors[2]}")
+    print(f"\tFile not found: {len(errors[0])}")
+    print(f"\tFile is empty: {len(errors[1])}")
+    print(f"\tJSONDecodeError: {len(errors[2])}")
+
+    print("Logging to logs/merge_errors.log")
+    with open("logs/merge_errors.log", "w") as fp:
+        fp.write("File not found\n")
+        for s in errors[0]:
+            fp.write(f"{s}\n")
+        fp.write("\nFile is empty\n")
+        for s in errors[1]:
+            fp.write(f"{s}\n")
+        fp.write("\nJSONDecodeError\n")
+        for s in errors[2]:
+            fp.write(f"{s}\n")
 
 
 # Merging involves a lot of IO, so it should be able to benefit from asynchronous programming.
