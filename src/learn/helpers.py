@@ -119,112 +119,105 @@ class Args:
 
 class OutputHelper:
 
-    # The values from the TrainingArguments thats will be hashed.
-    trainer_config_relevant_keys = [
-        # Optimizer
+    """
+    General philosophy for organizing the various parameters is:
+       - meta hyperaparameters
+       - model hyperparameters
+       - task hyperparameters
+       - training hyperparameters
+    """
+
+    FINAL_PATH = "results"
+    TRAINER_KEYS = [
+        "max_grad_norm",  # Regularization
+        "weight_decay",
+        "learning_rate",  # Optimizer
+        "lr_scheduler_type",
+        "warmup_ratio",
+        "optim",
         "adam_beta1",
         "adam_beta2",
         "adam_epsilon",
-        "learning_rate",
-        "lr_scheduler_type",
-        "max_grad_norm",
-        "optim",
-        "warmup_ratio",
-        "weight_decay",
-        # Batch size
+        "max_steps",  # Training
+        "num_train_epochs",
         "per_device_train_batch_size",
         "gradient_accumulation_steps",
-        # Numeric types
-        "tf32",
+        "tf32",  # Numeric types
         "fp16",
         "bf16",
+        "seed",  # Randomness
     ]
+
+    _meta_args: list[str]
+    _model_args: list[str]
+    _task_args: list[str]
+    _trainer_args: list[str]
 
     def __init__(
         self,
-        seed: int,
-        model_name_or_path: str,
+        root: Path,
         representation: int,
         algorithm: str,
         vocab_size: Optional[int],
         max_length: int,
+        model_name_or_path: str,
+        arch_config: Optional[dict],
         task: str,
         tr_size: int | float,
-        tr_samples_per_class: Optional[int],
         depth: int,
         min_freq: Optional[int],
         top_k: Optional[int],
-        enforce_cutoff: Optional[bool],
+        tr_samples_per_class: Optional[int],
         tr_length_cutoff: Optional[int],
-        ft_freeze_positional_embeddings: bool | str,
-        ft_duplicate_positional_embeddings: bool | str,
-        ft_initialize_positional_embeddings: bool | str,
-        root: Path,
-        arch_config: Optional[dict] = None,
         trainer_config: Optional[dict] = None,
     ) -> None:
-        """
-        {representation}{algorithm}{vocab_size}{max_length}/{task}/{tr_size}/{
-            {depth} |
-            {min_freq}/{top_k}/{freeze/{duplicate}/{initialize} |
-            {enforce_cutoff}/{tr_length_cutoff}
-        }/
-        """
 
-        self.root = Path(root)
+        if Path(model_name_or_path).exists():
+            self.root = Path(model_name_or_path)
+            for s in self.root.as_posix().split("/"):
+                if s.startswith("model--"):
+                    self.model_name = s[7:]
+                    break
+        else:
+            self.root = root
+            self.model_name = model_name_or_path
 
-        args = [
-            f"seed-{seed}",  # FIXME: f"seed--{seed}"
+        self._meta_args = [
             f"representation--{representation}",
             f"algorithm--{algorithm}",
             f"vocab_size--{vocab_size if vocab_size is not None else 2 ** representation}",
-            f"max_length--{max_length}",
-            f"task--{task}",
-            f"tr_size--{tr_size}",
+            f"max_length--{max_length if max_length is not None else 'None'}",
         ]
 
-        if task[0:3] == "clf":
-            if task == "clf" or task == "clf-bod":
-                args.extend([
-                    f"min_freq--{min_freq}",
-                    f"top_k--{top_k}",
-                ])
-            elif task == "clf-ksc":
-                args.extend([
-                    f"tr_samples_per_class--{tr_samples_per_class}",
-                    f"top_k--{top_k}",
-                ])
-            elif task == "clf-lxs":
-                args.extend([
-                    f"enforce_cutoff--{str_or_bool_to_str(enforce_cutoff) if isinstance(enforce_cutoff, bool) else None}",
-                    f"tr_length_cutoff--{tr_length_cutoff}",
-                ])
-            args.extend([
-                f"freeze--{str_or_bool_to_str(ft_freeze_positional_embeddings)}",
-                f"duplicate--{str_or_bool_to_str(ft_duplicate_positional_embeddings)}",
-                f"initialize--{str_or_bool_to_str(ft_initialize_positional_embeddings)}",
+        self._model_args = [f"model_name--{self.model_name}"]
+        self._model_args.extend([f"{k}--{v}" for k, v in arch_config.items()])
+
+        # Experiment hyperparameters
+        self._task_args = [f"task--{task}"]
+        if task == "clf-bod":
+            self._task_args.extend([
+                f"min_freq--{min_freq}",
+                f"top_k--{top_k}",
+            ])
+        elif task == "clf-ksc":
+            self._task_args.extend([
+                f"tr_samples_per_class--{tr_samples_per_class}",
+                f"top_k--{top_k}",
+            ])
+        elif task == "clf-lxs":
+            self._task_args.extend([
+                f"tr_length_cutoff--{tr_length_cutoff}",
             ])
         elif task in ("mlm", "clm"):
-            args.extend(
-                [
-                    f"depth--{depth}",
-                ]
-            )
+            self._task_args.extend([
+                f"tr_size--{tr_size}",
+                f"depth--{depth}",
+            ])
         else:
             raise ValueError(f"Unknown task: {task}")
 
-        self.arch_config = arch_config
-        self.trainer_config = trainer_config
-
-        # If model_name_or_path is a path and it exists, then we're finetuning something.
-        # In this case the model_name_or_path is a path and it already contains the model name,
-        # so we don't need to include it in basepath Otherwise, its the firt part of basepath.
-        self.finetuning = Path(model_name_or_path).exists()  # FIXME: f"model--{model_name_or_path}"
-        if self.finetuning:
-            self.basepath = Path(model_name_or_path).joinpath(*args)
-        else:
-            args.insert(0, model_name_or_path)
-            self.basepath = self.root.joinpath(*args)
+        self._trainer_config = trainer_config
+        self._trainer_args = self._trainer_path_args()
 
     def __repr__(self) -> str:
         return self.path.as_posix()
@@ -233,25 +226,30 @@ class OutputHelper:
         return self.path.as_posix()
 
     @property
-    def path(self) -> Path:
-        """
-        If finetuning, we want to place the finetuned model within the checkpoint its being
-        finetuned from. In this circumstance, we can assume that the architecture is the same,
-        so we don't include that in the path construction. Otherwise, we assume we're training a
-        model from scratch and we want the model_name_or_path as well as its architectural details.
-        """
-        if self.finetuning:
-            tail = self.trainer_path()
-        else:
-            tail = self.arch_path() / self.trainer_path()
+    def trainer_config(self) -> dict:
+        return self._trainer_config
 
-        return self.basepath / tail
+    @trainer_config.setter
+    def trainer_config(self, config: dict) -> None:
+        self._trainer_config = config
+        self._trainer_args = self._trainer_path_args()
+
+    @property
+    def path(self) -> Path:
+        return self.root.joinpath(
+            *self._meta_args,
+            *self._model_args,
+            *self._task_args,
+            *self._trainer_args,
+        )
 
     @property
     def best_model_dir(self) -> Path:
         with open(self.last_checkpoint / "trainer_state.json") as fp:
             state = json.load(fp)
-        best_model_checkpoint = state["best_model_checkpoint"]
+        best_model_checkpoint = state.get("best_model_checkpoint", None)
+        if best_model_checkpoint is None:
+            return self.last_checkpoint
         return Path(best_model_checkpoint)
 
     @property
@@ -263,20 +261,12 @@ class OutputHelper:
         return self.path / "config.json"
 
     @property
-    def arch_config_file(self) -> Path:
-        return self.path / "arch_config.json"
-
-    @property
-    def trainer_config_file(self) -> Path:
-        return self.path / "trainer_config.json"
-
-    @property
     def test_results_dir(self) -> Path:
         return self.path / "test_results"
 
     @property
     def test_results_file(self) -> Path:
-        return self.test_results_dir / "results.json"
+        return self.test_results_dir / "test_results.json"
 
     @property
     def initial_validation_results_file(self) -> Path:
@@ -317,25 +307,7 @@ class OutputHelper:
     def mkdir(self) -> None:
         self.path.mkdir(exist_ok=True, parents=True)
 
-        # Dump the architecture configuration to a file.
-        if self.arch_config:
-            d = {k: v if is_jsonable(v) else str(v) for k, v in self.arch_config.items()}
-            with open(self.arch_config_file, "w") as fp:
-                json.dump(d, fp, indent=4)
-
-        # Dump the trainer configuration to a file.
-        if self.trainer_config:
-            d = {k: v if is_jsonable(v) else str(v) for k, v in self.trainer_config.items()}
-            with open(self.trainer_config_file, "w") as fp:
-                json.dump(d, fp, indent=4)
-
-    def rmdir(self, ignore_config: bool = False, force: bool = False) -> None:
-        """
-        Remove the output directory and all its contents. Default behaviour is to only remove the
-        directory if it is empty. If ignore_config is True, then will delete the directory if the
-        only two files found within it are the arch_config and trainer_config files. If force is
-        True, then will hard delete the directory and all its contents.
-        """
+    def rmdir(self, force: bool = False) -> None:
         if not self.path.exists():
             return
 
@@ -348,48 +320,7 @@ class OutputHelper:
             shutil.rmtree(self.path)
             return
 
-        if ignore_config and len(files) == 2:
-            if {self.arch_config_file, self.trainer_config_file} == set(files):
-                shutil.rmtree(self.path)
-                return
-
         raise OSError(errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY), self.path)
 
-    def arch_path(self, arch_config: Optional[dict[str, Any]] = None) -> Path:
-        arch_config = arch_config if arch_config is not None else self.arch_config
-        if arch_config is None:
-            return Path()
-        return Path().joinpath(*[f"{k}--{v}" for k, v in arch_config.items()])
-
-    def trainer_path(self, trainer_config: Optional[dict[str, Any]] = None) -> Path:
-        trainer_config = trainer_config if trainer_config is not None else self.trainer_config
-        if trainer_config is None:
-            return Path()
-        d = {k: v for k, v in trainer_config.items() if k in self.trainer_config_relevant_keys}
-        return Path().joinpath(*[f"{k}--{v}" for k, v in d.items()])
-
-    # @property
-    # def arch_config_hash(self) -> str:
-    #     raise DeprecationWarning("Hashing the arch config is depricated.")
-    #     if not self.arch_config:
-    #         return ""
-    #     return self.get_hash(self.arch_config)
-
-    # @property
-    # def trainer_config_hash(self) -> str:
-    #     if not self.trainer_config:
-    #         return ""
-    #     d = {k: v for k, v in self.trainer_config.items() if k in self.trainer_config_relevant_keys}
-    #     return self.get_hash(d)
-
-    # @staticmethod
-    # def get_hash(d: dict[str, Any]) -> str:
-    #     """
-    #     Tries to convert not hashable values to hashable values then returns a
-    #     hash of the hashable items in the dict.
-    #     """
-    #     x = [(k, v) if isinstance(v, Hashable) else (k, tuple(v)) for k, v in d.items()]
-    #     x = [(k, v) for k, v in x if (isinstance(k, Hashable) and isinstance(v, Hashable))]
-    #     x = tuple(sorted(x))
-    #     s = hex(hash(x))
-    #     return s[s.index("x") + 1:]
+    def _trainer_path_args(self) -> list[str]:
+        return [f"{k}--{self.trainer_config.get(k), None}" for k in self.TRAINER_KEYS]
