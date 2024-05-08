@@ -101,6 +101,7 @@ This will produce a single JSON file for the entire SOREL collection.
 from argparse import ArgumentParser
 import asyncio
 from collections.abc import Iterable
+import gc
 from itertools import chain, islice
 import json
 import os
@@ -115,17 +116,19 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
+import psutil
 from tqdm import tqdm
 
 from src.utils import batched
 from src.data.cfg import SOREL_BUCKET, SOREL_PREFIX
 from src.data.prepare_datasets import s3_dataset_generator
-from src.data.utils import read_binary_files_asynch, write_binary_files_asynch, stream_sorel_meta, Decompressor
+from src.data.utils import stream_sorel_meta, Decompressor, read_binary_files_asynch, write_binary_files_asynch
 
 
 DIEC_MODES = ("recursive", "deep", "heuristic")
 DIEC_TIMEOUT = 10
-MERGE_CHUNK_SIZE = 200000
+MERGE_CHUNK_SIZE = 100000
+CONSOLIDATE_CHUNK_SIZE = 100000
 DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
 HEX = tuple(hex(i)[2:] for i in range(16))
 
@@ -212,13 +215,12 @@ def consolidate():
         return any(packeds)
 
 
-    def packers_decision(packers: list[str]) -> str:
-        packers = [p if p != "Packer detected" else "Heuristic" for p in packers]
-        packers = [p for p in packers if p != ""]
-        return "|".join(packers) if packers != "" else ""
+    def packers_decision(packers: list[str]) -> list[str]:
+        packers = [p if p != "Packer detected" else "Heursitic" for p in packers]
+        return list(set(packers) - {""})
 
 
-    def parse_values_blob(values: list[dict]) -> tuple[bool, str]:
+    def parse_values_blob(values: list[dict]) -> tuple[bool, list[str]]:
         packeds: list[bool] = []
         packers: list[str] = []
         for value in values:
@@ -226,37 +228,44 @@ def consolidate():
                 packed, packer = parse_values_blob(value.get("values"))
             elif value.get("type") == "Packer":
                 packed = True
-                packer = value.get("name", "")
+                packer = [value.get("name", "")]
             else:
                 packed = False
-                packer = ""
+                packer = [""]
 
             packeds.append(packed)
-            packers.append(packer)
+            packers.extend(packer)
 
         return packeds_decision(packeds), packers_decision(packers)
 
 
-    def parse_detects_blob(detects: list[dict]) -> tuple[bool, str]:
+    def parse_detects_blob(detects: list[dict]) -> tuple[bool, list[str]]:
         packeds: list[bool] = []
         packers: list[str] = []
 
         for detect in detects:
             packed, packer = parse_values_blob(detect.get("values", []))
             packeds.append(packed)
-            packers.append(packer)
+            packers.extend(packer)
 
         return packeds_decision(packeds), packers_decision(packers)
 
 
+    # Remove old temporary files.
+    for f in P_CONSOLIDATED.glob("tmp_*.json"):
+        f.unlink()
+
+    # Iterate over the merged JSON files.
     output = {}
-    pbar = tqdm(P_MERGED.rglob("*.json"), total=sum(1 for _ in P_MERGED.rglob("*.json")))
-    for file in pbar:
+    total = sum(1 for _ in tqdm(P_MERGED.rglob("*.json"), desc="Initial Scan..."))
+    pbar = tqdm(P_MERGED.rglob("*.json"), total=total)
+    for i, file in enumerate(pbar):
         sha = file.stem
         pbar.set_description(f"Processing: {sha}")
-        with open(file, "r") as f:
-            data = json.load(f)
 
+        # Process the data from the merged JSON file into a concise summary and store it in memory.
+        with open(file, "r") as fp:
+            data = json.load(fp)
         output[sha] = {}
         for mode, d in data.items():
             if d is None:
@@ -265,8 +274,39 @@ def consolidate():
             packed, packer = parse_detects_blob(d.get("detects", []))
             output[sha][mode] = {"packed": packed, "packer": packer}
 
-    with open(P_CONSOLIDATED / "output.json", "w") as f:
-        json.dump(output, f, indent=4)
+        # Write the output to a temporary file and clear up in-memory data structures.
+        if (i + 1) % CONSOLIDATE_CHUNK_SIZE == 0:
+            mem_0 = psutil.virtual_memory().used
+            with open(P_CONSOLIDATED / f"tmp_{i}.json", "w") as fp:
+                json.dump(output, fp, indent=4)
+            output = {}
+            gc.collect()
+            mem_1 = psutil.virtual_memory().used
+            print(f"Partial file: {i}. Freed: {round((mem_1 - mem_0) / 1e6)} MB. Used: {round(mem_1 / 1e6)} MB")
+
+
+    # Parse the temporary files and consolidate them into a single JSON file.
+    files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
+    with open(P_CONSOLIDATED / "output.json", "w") as fp_w:
+        fp_w.write("{\n")
+
+        for i, f in enumerate(tqdm(files, desc="Merging temporary consolidation files.")):
+            with open(f, "r") as fp_r:
+                lines = fp_r.readlines()
+
+            for j, line in enumerate(lines):
+                if j == 0:  # Skip the initial bracket
+                    continue
+                if j == len(lines) - 1:  # Skip the final bracket
+                    break
+                if j == len(lines) - 2:  # Add a comma to the end of the line
+                    if i == len(files) - 1:  # Skip if this is the final file
+                        pass
+                    else:
+                        line = line.rstrip("\n") + ","
+                fp_w.write(line)
+
+        fp_w.write("\n}")
 
 
 def merge():
