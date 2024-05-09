@@ -80,7 +80,7 @@ def remove_empty_directories(directory: str, missing_ok: bool = False) -> None:
     if missing_ok and not os.path.exists(directory):
         return
 
-    for root, dirs, files in os.walk(directory, topdown=False):
+    for root, dirs, files in os.walk(directory, topdown=False):  # pylint: disable=unused-variable
         for d in dirs:
             dir_path = os.path.join(root, d)
             if not os.listdir(dir_path):

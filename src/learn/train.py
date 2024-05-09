@@ -134,7 +134,7 @@ try:
         MambaLMHeadModel as MambaForCausalLM,
         MambaPreTrainedModel,
     )
-except Exception as err:
+except (ModuleNotFoundError, ImportError) as err:
     print(err)
 from src.architectures.mamba_hf import (
     MambaConfig,
@@ -177,9 +177,9 @@ try:
     )
 except (ModuleNotFoundError, ImportError) as err:
     print(err)
-    def hp_space(trial: Any) -> dict[str, float | int]:
+    def _hp_space(trial: Any) -> dict[str, float | int]:
         raise NotImplementedError()
-    hp_space_mymalconv = hp_space_malconv = hp_space_malconvgct = hp_space_longformer = hp_space_hrrformer = hp_space
+    hp_space_mymalconv = hp_space_malconv = hp_space_malconvgct = hp_space_longformer = hp_space_hrrformer = _hp_space
 
 from src.learn.utils import (
     pad_to_multiple_of_fn,

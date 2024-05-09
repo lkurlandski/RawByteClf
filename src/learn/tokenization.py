@@ -224,9 +224,9 @@ class PreTrainedTokenizerFastWithAddedSpecialTokens(PreTrainedTokenizerFast):
         super().__init__(**kwds)
 
         if add_cls_token and add_bos_token:
-            raise ValueError(f"Cannot add both the cls_token and bos_token.")
+            raise ValueError("Cannot add both the cls_token and bos_token.")
         if add_eos_token and add_sep_token:
-            raise ValueError(f"Cannot add both the eos_token and sep_token.")
+            raise ValueError("Cannot add both the eos_token and sep_token.")
 
         if add_cls_token:
             self.prepend_token = [self.cls_token_id]
@@ -248,7 +248,7 @@ class PreTrainedTokenizerFastWithAddedSpecialTokens(PreTrainedTokenizerFast):
         token_ids_1: Optional[list[int]] = None,
     ) -> list:
 
-        print(f"In the method: build_inputs_with_special_tokens")
+        print("In the method: build_inputs_with_special_tokens")
 
         token_ids_0 = self.prepend_token + token_ids_0 + self.append_token
         if token_ids_1 is None:

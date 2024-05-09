@@ -262,7 +262,7 @@ class OutputHelper:
 
     def __del__(self) -> None:
         attrs = ["root", "_meta_args", "_model_args", "_task_args", "_trainer_args", "lock_file"]
-        if all([hasattr(self, a) for a in attrs]):
+        if all(hasattr(self, a) for a in attrs):
             self.lock_file.unlink(missing_ok=True)
 
     def __repr__(self) -> str:

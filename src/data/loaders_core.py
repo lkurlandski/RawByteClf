@@ -376,7 +376,7 @@ def get_materials_pretrain_sorel(
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     if remove_packed:
         is_packed = get_is_packed([os.path.splitext(os.path.basename(f))[0] for f in files])
-        files = [f for f, p in zip(files, is_packed) if p == False]
+        files = [f for f, p in zip(files, is_packed) if p is False]
         print(f"Removed {len(is_packed) - len(files)} possibly packed files from SOREL dataset.")
     tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
     return Materials(files=tr_vl_ts_files)
@@ -776,9 +776,9 @@ def test_get_materials_clf_sorel_length_extrapolation():
 
         lengths = [
             os.path.getsize(f) for f in chain(
-                materials.tr_vl_ts_files_and_labels["tr"][0],
-                materials.tr_vl_ts_files_and_labels["vl"][0],
-                materials.tr_vl_ts_files_and_labels["ts"][0],
+                materials.files["tr"],
+                materials.files["vl"],
+                materials.files["ts"],
             )
         ]
         print(f"{len(lengths)=}")
