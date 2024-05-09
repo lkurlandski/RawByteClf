@@ -111,6 +111,7 @@ from src.utils import (
     encrypt,
     ENCRYPTION_TYPES,
     compose_functions,
+    remove_empty_directories,
 )
 from src.architectures.malconv import (
     AutoMalConvForSequenceClassification,
@@ -923,6 +924,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     oh = OutputHelper(
         args.root,
+        args.remove_packed,
         args.representation,
         args.algorithm,
         args.vocab_size,
@@ -937,6 +939,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.tr_samples_per_class,
         args.tr_length_cutoff,
         training_arguments.__dict__,
+        args.pretraining_task,
     )
     print(f"{oh=}")
     print(BR, flush=True)
@@ -977,7 +980,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     num_classes: Optional[int] = None
     weight: Optional[Tensor] = None
     if args.task in ("mlm", "clm"):
-        materials = get_materials_pretrain_sorel(args.tr_size, args.vl_size, args.ts_size)
+        materials = get_materials_pretrain_sorel(
+            args.tr_size,
+            args.vl_size,
+            args.ts_size,
+            remove_packed=args.remove_packed,
+        )
     elif args.task == "clf" or args.task == "clf-bod":
         materials = get_materials_clf_bodmas(
             args.tr_size,
@@ -1256,7 +1264,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             nonlocal training_arguments, oh
             print(f"Training with {batch_size=} and {gradient_accumulation_steps=}...", flush=True)
             try:  # Try to remove a created, but empty directory from a previous attempt.
-                oh.rmdir()
+                oh.lock_file.unlink(missing_ok=True)
+                remove_empty_directories(oh.task_path.as_posix(), missing_ok=True)
             except OSError:
                 pass
 
