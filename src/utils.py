@@ -76,6 +76,17 @@ def count_parameters(model: nn.Module, requires_grad: bool = False) -> int:
     return sum(p.numel() for p in model.parameters() if (not requires_grad or p.requires_grad))
 
 
+def remove_empty_directories(directory: str, missing_ok: bool = False) -> None:
+    if missing_ok and not os.path.exists(directory):
+        return
+
+    for root, dirs, files in os.walk(directory, topdown=False):
+        for d in dirs:
+            dir_path = os.path.join(root, d)
+            if not os.listdir(dir_path):
+                os.rmdir(dir_path)
+
+
 def get_paths_sorted_numerically(
     path: Collection[Path] | Path,
     lstrip: str = "",
