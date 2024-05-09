@@ -251,6 +251,44 @@ def log_tensor(path: str | Path, x: Tensor, name: str) -> None:
         fp.write(f"{dtype},{shape}\n")
 
 
+def get_memory_usage(obj, seen=None):
+    """
+    Recursively calculate the memory usage of a nested dictionary.
+    
+    Args:
+    - obj: The dictionary or nested structure to analyze.
+    - seen: A set to track objects already visited to avoid infinite recursion (optional).
+    
+    Returns:
+    - Memory usage in bytes.
+    """
+    # Initialize seen set if not provided
+    if seen is None:
+        seen = set()
+
+    # Check if object has already been visited to avoid infinite recursion
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+
+    # Calculate memory usage of current object
+    memory_usage = sys.getsizeof(obj)
+
+    # If obj is a dictionary, recursively calculate memory usage of its values
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            memory_usage += sys.getsizeof(key)
+            memory_usage += get_memory_usage(value, seen)
+
+    # If obj is a list or tuple, recursively calculate memory usage of its elements
+    elif isinstance(obj, (list, tuple, set)):
+        for item in obj:
+            memory_usage += get_memory_usage(item, seen)
+
+    return memory_usage
+
+
 def stable_softmax(x: Tensor, dim: int = 0):
     max_values, _ = torch.max(x, dim=dim, keepdim=True)
     exp_scores = torch.exp(x - max_values)
