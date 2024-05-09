@@ -102,6 +102,7 @@ This will produce a single JSON file for the entire SOREL collection (and some t
 from argparse import ArgumentParser
 import asyncio
 from collections.abc import Iterable
+from collections import UserDict
 import gc
 from itertools import chain, islice
 import json
@@ -128,6 +129,7 @@ from src.data.utils import stream_sorel_meta, Decompressor, read_binary_files_as
 
 
 DIEC_MODES = ("recursive", "deep", "heuristic")
+DiecMode = Literal["recursive", "deep", "heuristic"]
 DIEC_TIMEOUT = 10
 MERGE_CHUNK_SIZE = 100000
 CONSOLIDATE_CHUNK_SIZE = 100000
@@ -231,7 +233,7 @@ def infer_completed_samples_merge(all_modes: bool = True) -> set:
     Takes about 5 minutes when all_modes=True.
     """
     iterable = [(h, all_modes) for h in HEX]
-    with mp.Pool(len(iterable)) as pool:
+    with mp.Pool(len(HEX)) as pool:
         results = list(tqdm(
             pool.starmap(process_hex, iterable),
             total=len(iterable),
@@ -323,7 +325,7 @@ def consolidate():
     # Parse the temporary files and consolidate them into a single JSON file.
     files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
     with open(P_CONSOLIDATED / "output.json", "w") as fp_w:
-        fp_w.write("{\n")
+        fp_w.write("{")
 
         for i, f in enumerate(tqdm(files, desc="Merging temporary consolidation files.")):
             with open(f, "r") as fp_r:
@@ -331,6 +333,7 @@ def consolidate():
 
             for j, line in enumerate(lines):
                 if j == 0:  # Skip the initial bracket
+                    fp_w.write("\n")
                     continue
                 if j == len(lines) - 1:  # Skip the final bracket
                     break
@@ -420,64 +423,6 @@ def merge(ignore_complete: bool):
             fp.write(f"{s}\n")
 
 
-# Merging involves a lot of IO, so it should be able to benefit from asynchronous programming.
-# This asynchronous implementation didn't seem any faster, so we'll leave it for future work.
-# It must be noted that I conducted my limited testing while the main --run program was in
-# progress, which could have impacted the results.
-
-# def _merge(sha_batch: tuple[str]) -> tuple[int, int, int]:
-#     SHAS = tuple(sha_batch)
-#     num_file_does_not_exist = 0
-#     num_file_is_empty = 0
-#     num_json_decode_error = 0
-#     data: dict[str, dict[str, Optional[dict]]] = {
-#         s: {mode: None for mode in DIEC_MODES} for s in SHAS
-#     }
-#     for mode in DIEC_MODES:
-#         files = [(P_MODES[mode] / s).with_suffix(".txt") for s in SHAS]
-#         file_not_exist_idx = [i for i, f in enumerate(files) if not f.exists()]
-#         num_file_does_not_exist += len(file_not_exist_idx)
-#         file_is_empty_idx = [i for i, f in enumerate(files) if f.exists() and f.stat().st_size == 0]
-#         num_file_is_empty += len(file_is_empty_idx)
-#         remove = set(file_not_exist_idx + file_is_empty_idx)
-#         files = [f for i, f in enumerate(files) if i not in remove]
-#         shas = [s for i, s in enumerate(SHAS) if i not in remove]
-#         loop = asyncio.get_event_loop()
-#         future = read_binary_files_asynch(files, disable_tqdm=True)
-#         bs: list[bytes] = loop.run_until_complete(future)
-#         contents = [b.decode("utf-8") for b in bs]
-#         contents = [c[c.find("{"):c.rfind("}") + 1].strip() for c in contents]
-#         for sha, content in zip(shas, contents):
-#             try:
-#                 data[sha][mode] = json.loads(content)
-#             except json.JSONDecodeError:
-#                 data[sha][mode] = None
-#                 num_json_decode_error += 1
-
-#     files = [(P_MERGED / s).with_suffix(".json") for s in SHAS]
-#     outdata = [json.dumps(data.pop(s), indent=4).encode("utf-8") for s in SHAS]
-#     loop = asyncio.get_event_loop()
-#     future = write_binary_files_asynch(files, outdata, disable_tqdm=True)
-#     loop.run_until_complete(future)
-
-
-# def merge():
-
-#     files = islice(chain.from_iterable(d.iterdir() for d in P_MODES.values()), None)
-#     files = list(tqdm(files, desc="Initial Scan..."))
-#     shas = sorted(set(file.stem for file in files))
-#     print(f"{len(files)} reports from {len(shas)} unique files.")
-
-#     errors = {name: 0 for name in (0, 1, 2)}
-#     for sha_batch in tqdm(batched(shas, MERGE_CHUNK_SIZE), total=(len(shas) // MERGE_CHUNK_SIZE) + 1):
-#         _merge(sha_batch)
-
-#     print("ERRORS\n------")
-#     print(f"\tfile not found: {errors[0]}")
-#     print(f"\tFile is empty: {errors[1]}")
-#     print(f"\tJSONDecodeError: {errors[2]}")
-
-
 def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bool) -> None:
     if (filter_idx is None) == (shard_idx is None):
         raise ValueError("Must use filter or shard API, not both.")
@@ -559,24 +504,122 @@ def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_comple
         return
 
 
-def get_packing_map(include: tuple[Literal["recursive", "deep", "heuristic"]] = tuple(DIEC_MODES)) -> dict[str, bool]:
-    with open(P_CONSOLIDATED / "output.json", "r") as fp:
-        data: dict[str, dict] = json.load(fp)
+class PackingMap(UserDict):
 
-    def f(report: dict[Literal["recursive", "deep", "heuristic"], Optional[dict[Literal["packed", "packer"], bool | str]]]) -> bool:
-        for mode in include:
+    """Map SHA256 to whether the corresponding sample is packed or not.
+
+    Use `fast` mode to load the entire output.json file into memory before
+    processing into boolean values. This is the fastest method (~1 min) but requires
+    the most memory (16 GB). Use `lazy` mode to process the output.json file line-by-line,
+    which is much slower (~20 min). Use `parallel` mode to process the output.json file
+    line-by-line with multiple processes (~2 min).
+    """
+
+    def __init__(
+        self,
+        include: tuple[DiecMode] = tuple(DIEC_MODES),
+        mode: Literal["fast", "lazy", "parallel"] = "parallel",
+        num_workers: Optional[int] = 32,
+    ) -> None:
+        self.include = tuple(include)
+        self.num_workers = num_workers
+
+        if mode == "fast":
+            d = self.get_packing_map_fast()
+        if mode == "lazy":
+            d = self.get_packing_map_lazy()
+        if mode == "parallel":
+            d = self.get_packing_map_parallel()
+
+        super().__init__(d)
+
+    def get_packing_map_fast(self):
+        with open(P_CONSOLIDATED / "output.json", "r") as fp:
+            d = json.load(fp)
+        return {sha: self.get_packing_report(v) for sha, v in d.items()}
+
+    def get_packing_map_lazy(
+        self,
+        file: str = str(P_CONSOLIDATED / "output.json"),
+        disable_tqdm: bool = False,
+    ):
+
+        args = ["wc", "-l", file]
+        result = subprocess.run(args, check=True, capture_output=True)
+        total = int(result.stdout.split()[0])
+
+        packing_map = {}
+        blob = []
+        brace_op = 0
+        brace_cl = 0
+
+        with open(file, "r") as fp:
+
+            if not disable_tqdm:
+                pbar = tqdm(enumerate(fp), total=total)
+                iterable = pbar
+            else:
+                pbar = None
+                iterable = enumerate(fp)
+
+            for i, line in iterable:
+                if i == 0:  # Skip the initial bracket
+                    continue
+                if i == total - 1:  # Skip the final bracket
+                    break
+
+                line = line.strip()
+
+                if brace_op == 0:  # Identify and strip the SHA
+                    sha = line.split(":")[0].replace('"', "")
+                    line = line.split(":")[1].strip()
+                    if pbar is not None:
+                        pbar.set_description(f"Processing: {sha}")
+
+                brace_op += line.count("{")
+                brace_cl += line.count("}")
+                blob.append(line)
+
+                if line.rstrip(",") == "}" and brace_op == brace_cl:  # End of the blob
+                    blob = "".join(blob)[:-1]
+                    try:
+                        d = json.loads(blob)
+                    except json.JSONDecodeError:
+                        print(f"JSONDecodeError: {sha}")
+                        print(f"*****{blob}*****")
+                        raise
+                    p = self.get_packing_report(d)
+                    packing_map[sha] = p
+
+                    blob = []
+                    brace_op = 0
+                    brace_cl = 0
+
+        return packing_map
+
+    def get_packing_map_parallel(self):
+        files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
+
+        iterable = [(str(f), True) for f in files]
+        with mp.Pool(self.num_workers) as pool:
+            results: list[dict] = list(pool.starmap(self.get_packing_map_lazy, iterable))
+
+        packing_map = {}
+        for r in results:
+            packing_map.update(r)
+
+        return packing_map
+
+    def get_packing_report(
+        self,
+        report: dict[DiecMode, Optional[dict[Literal["packed", "packer"], bool | str]]],
+    ) -> bool:
+        for mode in self.include:
             if report[mode] is None:
                 continue
             if report[mode]["packed"]:
                 return True
         return False
-
-    return {sha: f(report) for sha, report in data.items()}
-
-
-def get_is_packed(shas: list[str], **kwds) -> list[Optional[bool]]:
-    packing_map = get_packing_map(**kwds)
-    return [packing_map.get(sha, None) for sha in shas]
 
 
 def main():
@@ -625,5 +668,20 @@ def main():
     print(f"Elapsed time: {time.time() - t_0:.2f} seconds")
 
 
+def test():
+    t = time.time()
+    packing_map = PackingMap(mode="fast")
+    print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+    t = time.time()
+    packing_map = PackingMap(mode="lazy")
+    print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+    t = time.time()
+    packing_map = PackingMap(mode="parallel")
+    print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+
 if __name__ == "__main__":
+    # test()
     main()
