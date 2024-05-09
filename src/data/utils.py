@@ -24,8 +24,10 @@ from typing import AsyncGenerator, ClassVar, Generator, NamedTuple, Literal, Opt
 import warnings
 import zlib
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
 
 from datasets import (
     Dataset,
@@ -295,11 +297,11 @@ class Decompressor:
     @staticmethod
     def _py7zr(fp: BytesIO) -> tuple[int, bytes]:
         raise NotImplementedError("7z decompression is not supported yet.")
-        with py7zr.SevenZipFile(fp, mode="r") as archive:
-            file_list = archive.getnames()
-            if len(file_list) != 1:
-                raise ValueError("The 7zip archive does not contain a single file.")
-        return Decompressor.S7Z, archive.read(file_list[0])
+        # with py7zr.SevenZipFile(fp, mode="r") as archive:
+        #     file_list = archive.getnames()
+        #     if len(file_list) != 1:
+        #         raise ValueError("The 7zip archive does not contain a single file.")
+        # return Decompressor.S7Z, archive.read(file_list[0])
 
 
 def decompress_error_resilient(b: bytes, decompress: Decompressor) -> Optional[tuple[int, bytes]]:
@@ -492,7 +494,7 @@ def time_decompressor(n: int = 10000):
         t_i = time.time()
         try:
             _, db = decompress(cb)
-        except Exception as err:
+        except Exception:
             continue
         t_f = time.time()
         times.append(t_f - t_i)
@@ -560,7 +562,6 @@ async def decompress_sorel_collection(
             non_null_files = [f for j, f in enumerate(output_files_batch) if decompressed_data[j] is not None]
             non_null_data = [d for d in decompressed_data if d is not None]
             await write_binary_files_asynch(non_null_files, non_null_data)
-            
 
         i += n
         pbar.set_description("Reading...")

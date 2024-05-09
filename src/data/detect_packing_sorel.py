@@ -90,12 +90,13 @@ for usage in downstream ML tasks.
 
     python detect_packing_sorel.py --consolidate
 
-This will produce a single JSON file for the entire SOREL collection.
+This will produce a single JSON file for the entire SOREL collection (and some temporary files).
 
     | -- P_ROOT
         | -- P_CONSOLIDATED
             | -- output.json
-            | -- output.csv
+            | -- tmp_0.json
+            ...
 """
 
 from argparse import ArgumentParser
@@ -573,9 +574,9 @@ def get_packing_map(include: tuple[Literal["recursive", "deep", "heuristic"]] = 
     return {sha: f(report) for sha, report in data.items()}
 
 
-def get_is_packed(shas: list[str], **kwds) -> list[bool]:
+def get_is_packed(shas: list[str], **kwds) -> list[Optional[bool]]:
     packing_map = get_packing_map(**kwds)
-    return [packing_map[sha] for sha in shas]
+    return [packing_map.get(sha, None) for sha in shas]
 
 
 def main():

@@ -11,7 +11,7 @@ from torch import LongTensor
 from transformers import PreTrainedTokenizerFast
 
 from src.utils import to_long_tensor, compress, encrypt
-from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8
+from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8  # pylint: disable=no-name-in-module
 from src.learn.utils import interpret_bytes_as_integers
 
 

@@ -10,9 +10,13 @@ from pprint import pprint
 import sys
 from typing import Literal
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# pylint: enable=wrong-import-position
 
+from matplotlib.axes import Axes
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -113,10 +117,7 @@ def main():
             c = OrderedDict(sorted(c.items(), key=lambda x: x[0]))
             pprint(c)
 
-    from matplotlib.axes import Axes
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(len(ALGORITHMS), len(VOCAB_SIZES), figsize=(15, 10))
+    _, axes = plt.subplots(len(ALGORITHMS), len(VOCAB_SIZES), figsize=(15, 10))
 
     for i, algorithm in enumerate(ALGORITHMS):
         for j, vocab_size in enumerate(VOCAB_SIZES):
@@ -126,7 +127,11 @@ def main():
             ax: Axes = axes[i][j]
             ax.bar(TOKEN_LENGTHS, counts, color='skyblue')
             ax.set_title(f'{algorithm[0:3]}@{vocab_size}')
-            ax.set_xticks(TOKEN_LENGTHS, [str(TOKEN_LENGTHS[0])] + ["" for _ in range(len(TOKEN_LENGTHS) - 2)] + [str(TOKEN_LENGTHS[-1])])
+            xticks = \
+                [str(TOKEN_LENGTHS[0])] + \
+                ["" for _ in range(len(TOKEN_LENGTHS) - 2)] + \
+                [str(TOKEN_LENGTHS[-1])]
+            ax.set_xticks(TOKEN_LENGTHS, xticks)
             # ax.set_xlabel('Token Length')
             # ax.set_ylabel('Count')
 

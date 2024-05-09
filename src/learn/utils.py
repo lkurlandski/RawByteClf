@@ -67,7 +67,7 @@ def oversample_based_on_label(
     oversampled_examples = {key: [] for key in examples.keys()}
     label_counter = Counter(examples["label"])
 
-    for label in label_counter.keys():
+    for label in label_counter.keys():  # pylint: disable=consider-using-dict-items
         p = probabilities[label]
 
         label_count = label_counter[label]

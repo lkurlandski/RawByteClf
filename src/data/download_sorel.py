@@ -38,7 +38,7 @@ async def download_samples_async(files, output_root: Path, num_bytes: int, max_l
         prefix=SOREL_PREFIX,
         errors=errors,
         decompress=DECOMPRESSOR,
-    ):        
+    ):
         outfile = (output_root / sample["name"]).with_suffix(SUFFIX)
         with open(outfile, "wb") as fp:
             fp.write(sample["bytes"])

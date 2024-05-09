@@ -10,6 +10,7 @@ print(f"Entered {__file__=}")
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 import errno
 import json
 import os
@@ -80,6 +81,8 @@ class Args:
     compression_level: int = field(default=9)
     tr_samples_per_class: Optional[int] = field(default=None)  # FIXME: make default argument 1?
     vl_samples_per_class: Optional[int] = field(default=1)  # FIXME: add to output path
+    remove_packed: bool = field(default=False)
+    pretraining_task: Optional[str] = field(default=None)
 
     def __post_init__(self) -> None:
         self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
@@ -115,7 +118,10 @@ class Args:
 
         if self.data_read_bytes is None:
             self.data_read_bytes = int(self.max_length * self.representation // 8)
-        
+
+        if self.pretraining_task is not None and self.pretraining_task.lower() == "none":
+            self.pretraining_task = None
+
 
 class OutputHelper:
 
@@ -156,6 +162,7 @@ class OutputHelper:
     def __init__(
         self,
         root: Path,
+        remove_packed: bool,
         representation: int,
         algorithm: str,
         vocab_size: Optional[int],
@@ -170,19 +177,53 @@ class OutputHelper:
         tr_samples_per_class: Optional[int],
         tr_length_cutoff: Optional[int],
         trainer_config: Optional[dict] = None,
+        pretraining_task: Optional[str] = None,
     ) -> None:
+
+        if pretraining_task:
+            oh = OutputHelper(
+                root,
+                remove_packed,
+                representation,
+                algorithm,
+                vocab_size,
+                max_length,
+                model_name_or_path,
+                arch_config,
+                pretraining_task,
+                tr_size,
+                depth,
+                min_freq,
+                top_k,
+                tr_samples_per_class,
+                tr_length_cutoff,
+                trainer_config,
+                None,
+            )
+            p = oh.model_path / f"task--{pretraining_task}"
+            completed = list(p.rglob(OutputHelper.FINAL_PATH))
+            if len(completed) == 0:
+                raise FileNotFoundError(f"No completed experiments found for {oh.task_path=}")
+            if len(completed) > 1:
+                raise FileNotFoundError(f"Multiple completed experiments found for {oh.task_path=}")
+            print(completed[0])
+            model_name_or_path = get_highest_path(completed[0] / "checkpoints", lstrip="checkpoint-").as_posix()
+            print(f"Finetuning with {model_name_or_path=}")
 
         if Path(model_name_or_path).exists():
             self.root = Path(model_name_or_path)
             for s in self.root.as_posix().split("/"):
-                if s.startswith("model--"):
+                if s.startswith("model_name--"):
                     self.model_name = s[7:]
                     break
+            else:
+                raise ValueError(f"Could not find model_name in {self.root=}")
         else:
             self.root = root
             self.model_name = model_name_or_path
 
         self._meta_args = [
+            f"remove_packed--{remove_packed}",
             f"representation--{representation}",
             f"algorithm--{algorithm}",
             f"vocab_size--{vocab_size if vocab_size is not None else 2 ** representation}",
@@ -217,7 +258,12 @@ class OutputHelper:
             raise ValueError(f"Unknown task: {task}")
 
         self._trainer_config = trainer_config
-        self._trainer_args = self._trainer_path_args()
+        self._trainer_args = self.get_trainer_path_args()
+
+    def __del__(self) -> None:
+        attrs = ["root", "_meta_args", "_model_args", "_task_args", "_trainer_args", "lock_file"]
+        if all(hasattr(self, a) for a in attrs):
+            self.lock_file.unlink(missing_ok=True)
 
     def __repr__(self) -> str:
         return self.path.as_posix()
@@ -232,7 +278,7 @@ class OutputHelper:
     @trainer_config.setter
     def trainer_config(self, config: dict) -> None:
         self._trainer_config = config
-        self._trainer_args = self._trainer_path_args()
+        self._trainer_args = self.get_trainer_path_args()
 
     @property
     def path(self) -> Path:
@@ -241,7 +287,23 @@ class OutputHelper:
             *self._model_args,
             *self._task_args,
             *self._trainer_args,
-        )
+        ) / OutputHelper.FINAL_PATH
+
+    @property
+    def meta_path(self) -> Path:
+        return self.root.joinpath(*self._meta_args)
+
+    @property
+    def model_path(self) -> Path:
+        return self.meta_path.joinpath(*self._model_args)
+
+    @property
+    def task_path(self) -> Path:
+        return self.model_path.joinpath(*self._task_args)
+
+    @property
+    def trainer_path(self) -> Path:
+        return self.task_path.joinpath(*self._trainer_args)
 
     @property
     def best_model_dir(self) -> Path:
@@ -304,8 +366,25 @@ class OutputHelper:
     def tensor_log_path(self) -> Path:
         return self.path / "tensor_log_path"
 
-    def mkdir(self) -> None:
-        self.path.mkdir(exist_ok=True, parents=True)
+    @property
+    def lock_file(self) -> Path:
+        return self.path / "LOCK"
+
+    def mkdir(self) -> Path:
+        ancestor: Path = None
+        for p in reversed(self.path.parents):
+            if not p.exists():
+                p.mkdir()
+                ancestor = p if ancestor is None else ancestor
+
+        if not self.path.exists():
+            self.path.mkdir()
+
+        with open(self.lock_file, "w") as fp:
+            fp.write("")
+
+        ancestor = self.path if ancestor is None else ancestor
+        return ancestor
 
     def rmdir(self, force: bool = False) -> None:
         if not self.path.exists():
@@ -322,5 +401,7 @@ class OutputHelper:
 
         raise OSError(errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY), self.path)
 
-    def _trainer_path_args(self) -> list[str]:
-        return [f"{k}--{self.trainer_config.get(k), None}" for k in self.TRAINER_KEYS]
+    def get_trainer_path_args(self) -> list[str]:
+        d = {k: self.trainer_config.get(k, None) for k in self.TRAINER_KEYS}
+        d = {k: v.value if isinstance(v, Enum) else v for k, v in d.items()}
+        return [f"{k}--{v}" for k, v in d.items()]
