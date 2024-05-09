@@ -104,6 +104,7 @@ from collections.abc import Iterable
 import gc
 from itertools import chain, islice
 import json
+import multiprocessing as mp
 import os
 from pathlib import Path
 import subprocess
@@ -208,6 +209,39 @@ def infer_completed_samples(all_modes: bool = True) -> set[str]:
     return completed
 
 
+def find_files_with_null(directory: Path | str) -> list[os.PathLike]:
+    command = ['grep', '-l', '-r', 'null', str(directory)]
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    file_paths = result.stdout.splitlines()
+    return file_paths
+
+
+def process_hex(h: str, all_modes: bool = True) -> set[str]:
+    p = P_MERGED / h
+    completed = set(f.stem for f in p.iterdir() if f.stat().st_size > 0)
+    if all_modes:
+        null_files = set(Path(f).stem for f in find_files_with_null(str(p)))
+        completed.difference_update(null_files)
+    return completed
+
+
+def infer_completed_samples_merge(all_modes: bool = True) -> set:
+    """
+    Takes about 5 minutes when all_modes=True.
+    """
+    iterable = [(h, all_modes) for h in HEX]
+    with mp.Pool(len(iterable)) as pool:
+        results = list(tqdm(
+            pool.starmap(process_hex, iterable),
+            total=len(iterable),
+            desc="Scanning for completed merged...",
+        ))
+    completed = set()
+    for result in results:
+        completed.update(result)
+    return completed
+
+
 def consolidate():
 
 
@@ -309,18 +343,26 @@ def consolidate():
         fp_w.write("\n}")
 
 
-def merge():
+def merge(ignore_complete: bool):
 
     iterables = []
     for d in P_MODES.values():
         for h in HEX:
             p = d / h
             iterables.append(p.iterdir())
-    files = chain.from_iterable(iterables)
-    files = list(tqdm(files, desc="Initial Scan..."))
+    files = list(f for f in tqdm(chain.from_iterable(iterables), desc="Initial Scan..."))
     shas = set(file.stem for file in files)
     print(f"{len(files)} reports from {len(shas)} unique files.")
-    del files
+
+    if ignore_complete:
+        print("Locating merged files...")
+        complete = infer_completed_samples_merge()
+        print(f"Found {len(complete)=}")
+        files = [f for f in files if f.stem not in complete]
+        shas = set(file.stem for file in files)
+        print(f"{len(files)} reports from {len(shas)} unique files.")
+
+    del iterables, files
 
     errors: tuple[list[str], list[str], list[str]] = ([], [], [])
     pbar = tqdm(shas)
@@ -436,7 +478,7 @@ def merge():
 
 
 def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bool) -> None:
-    if filter_idx is None == shard_idx is None:
+    if (filter_idx is None) == (shard_idx is None):
         raise ValueError("Must use filter or shard API, not both.")
 
     # Get the files for this shard (or all files)
@@ -457,7 +499,7 @@ def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bo
 
 
 def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_complete: bool) -> None:
-    if filter_mode is None == num_shards is None:
+    if (filter_mode is None) == (num_shards is None):
         raise ValueError("Must use filter or shard API, not both.")
     print(f"{ignore_complete=}")
 
@@ -574,7 +616,7 @@ def main():
         run(args.filter_idx, args.shard_idx, not args.dont_ignore_complete)
 
     if args.merge:
-        merge()
+        merge(not args.dont_ignore_complete)
 
     if args.consolidate:
         consolidate()
