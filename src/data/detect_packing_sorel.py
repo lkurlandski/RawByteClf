@@ -145,7 +145,7 @@ P_MERGED = P_ROOT / "merged"
 P_CONSOLIDATED = P_ROOT / "consolidated"
 
 
-def analyze_sample(b: bytes, sha: str) -> None:
+def analyze_sample(b: bytes, sha: str, diec_timeout: int) -> None:
 
     def args(mode: str) -> list[str]:
         return ["diec", f"--{mode}scan", "--json", str(file)]
@@ -160,7 +160,7 @@ def analyze_sample(b: bytes, sha: str) -> None:
             subprocess.run(
                 args(mode),
                 stdout=open(outfile, "w"),
-                timeout=DIEC_TIMEOUT,
+                timeout=diec_timeout,
                 check=True,
                 capture_output=False,
             )
@@ -175,7 +175,7 @@ def analyze_sample(b: bytes, sha: str) -> None:
     file.unlink()
 
 
-def analyze_samples(files: Iterable[str]) -> None:
+def analyze_samples(files: Iterable[str], diec_timeout: int) -> None:
 
     generator = s3_dataset_generator(
         files=files,
@@ -190,15 +190,15 @@ def analyze_samples(files: Iterable[str]) -> None:
     pbar = tqdm(generator, total=len(files))
     for sample in pbar:
         pbar.set_description(f"Processing: {sample['name']}")
-        analyze_sample(sample["bytes"], sample["name"])
+        analyze_sample(sample["bytes"], sample["name"], diec_timeout)
 
 
 def infer_completed_samples(all_modes: bool = True) -> set[str]:
     completed = set()
 
-    for d in P_MODES.values():
+    for d in tqdm(P_MODES.values(), total=3, desc="Scanning for completed..."):
         c = set()
-        for h in HEX:
+        for h in tqdm(HEX, keep=False):
             c.update(f.stem for f in (d / h).iterdir() if f.stat().st_size > 0)
 
         if not completed:
@@ -423,7 +423,7 @@ def merge(ignore_complete: bool):
             fp.write(f"{s}\n")
 
 
-def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bool) -> None:
+def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bool, diec_timeout: int) -> None:
     if (filter_idx is None) == (shard_idx is None):
         raise ValueError("Must use filter or shard API, not both.")
 
@@ -441,7 +441,7 @@ def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bo
             completed = infer_completed_samples()
             files = [f for f in files if f not in completed]
     print(f"{len(files)=}")
-    analyze_samples(files)
+    analyze_samples(files, diec_timeout)
 
 
 def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_complete: bool) -> None:
@@ -630,6 +630,7 @@ def main():
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--consolidate", action="store_true")
     parser.add_argument("--dont_ignore_complete", action="store_true")
+    parser.add_argument("--diec_timeout", type=int, default=10)
     parser.add_argument("--filter_mode", type=int, default=None,
         help="Parallel with 16 ** `filter_mode` processes. Required for --prepare and --run.")
     parser.add_argument("--filter_idx", type=str, default=None,
@@ -657,7 +658,7 @@ def main():
         prepare(args.filter_mode, args.num_shards, not args.dont_ignore_complete)
 
     if args.run:
-        run(args.filter_idx, args.shard_idx, not args.dont_ignore_complete)
+        run(args.filter_idx, args.shard_idx, not args.dont_ignore_complete, args.diec_timeout)
 
     if args.merge:
         merge(not args.dont_ignore_complete)
