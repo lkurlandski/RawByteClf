@@ -4,6 +4,8 @@ Download the SOREL dataset from s3 and store to disk.
 
 import asyncio
 from argparse import ArgumentParser
+from copy import deepcopy
+import gc
 from itertools import islice
 import os
 from pathlib import Path
@@ -23,6 +25,7 @@ from src.data.cfg import (
     SOREL_PREFIX,
 )
 from src.data.utils import stream_sorel_meta, Decompressor
+from src.data.detect_packing_sorel import PackingMap
 
 
 DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
@@ -76,8 +79,10 @@ def main():
     parser.add_argument("--num_samples", type=int, default=sys.maxsize)
     parser.add_argument("--num_bytes", type=int, default=sys.maxsize)
     parser.add_argument("--max_length", type=int, default=sys.maxsize)
+    parser.add_argument("--remove_packed", action="store_true")
     parser.add_argument("--shard_idx", type=int, default=None)
     parser.add_argument("--num_shards", type=int, default=None)
+    parser.add_argument("--packing_read_mode", type=str, default="lazy")
     parser.add_argument(
         "--errors",
         type=int,
@@ -94,9 +99,22 @@ def main():
     args = parser.parse_args()
     print(f"{args=}")
 
+    is_packed = None
+    if args.remove_packed:
+        is_packed = PackingMap(mode=args.packing_read_mode)
 
-    files = list(islice((s.sha256 for s in stream_sorel_meta() if s.is_malware), args.num_samples))
-    files = sorted(files)
+    files = sorted(
+        map(
+            lambda s: s.sha256,
+            islice(
+                filter(
+                    lambda s: s.is_malware and (is_packed is None or is_packed.get(s.sha256, None) is False),
+                    stream_sorel_meta(),
+                ),
+                args.num_samples
+            )
+        )
+    )
     print(f"{len(files)=}")
 
     if args.shard_idx > -1:
@@ -106,7 +124,8 @@ def main():
         print(f"{shard_size=}")
         print(f"{idx_start=}")
         print(f"{idx_end=}")
-        files = files[idx_start:idx_end]
+        files = deepcopy(files[idx_start:idx_end])
+        gc.collect()
 
     print(f"{len(files)=}")
 
