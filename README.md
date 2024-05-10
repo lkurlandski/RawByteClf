@@ -116,3 +116,11 @@ Also, ensuring that the original file-generator has finished before different pr
 
 transformers==4.39.3
 accelerate==0.29.2
+
+# Other
+
+diec
+
+spack load --first qt@5.15.12
+QT_QPA_PLATFORM=offscreen ./Detect_It_Easy-3.09-x86_64.AppImage
+
