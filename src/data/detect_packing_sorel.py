@@ -518,7 +518,7 @@ class PackingMap(UserDict):
     def __init__(
         self,
         include: tuple[DiecMode] = tuple(DIEC_MODES),
-        mode: Literal["fast", "lazy", "parallel"] = "lazy",
+        mode: Literal["fast", "lazy", "parallel", "fast_parallel"] = "lazy",
         num_workers: Optional[int] = 32,
     ) -> None:
         self.include = tuple(include)
@@ -526,17 +526,34 @@ class PackingMap(UserDict):
 
         if mode == "fast":
             d = self.get_packing_map_fast()
-        if mode == "lazy":
+        elif mode == "lazy":
             d = self.get_packing_map_lazy()
-        if mode == "parallel":
+        elif mode == "parallel":
             d = self.get_packing_map_parallel()
+        elif mode == "fast_parallel":  # FIXME: rename
+            d = self.get_packing_map_fast_parallel()
+        else:
+            raise ValueError(f"Invalid: {mode=}")
 
         super().__init__(d)
 
-    def get_packing_map_fast(self):
-        with open(P_CONSOLIDATED / "output.json", "r") as fp:
+    def get_packing_map_fast(self, file: str = str(P_CONSOLIDATED / "output.json")):
+        with open(file, "r") as fp:
             d = json.load(fp)
         return {sha: self.get_packing_report(v) for sha, v in d.items()}
+
+    def get_packing_map_fast_parallel(self):
+        files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
+        #with mp.Pool(self.num_workers) as pool:
+        #    results: list[dict] = list(pool.map(self.get_packing_map_fast, files))
+
+        results = [self.get_packing_map_fast(f) for f in tqdm(files)]
+
+        packing_map = {}
+        for r in results:
+            packing_map.update(r)
+
+        return packing_map
 
     def get_packing_map_lazy(
         self,
