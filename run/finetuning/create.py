@@ -6,8 +6,8 @@ from pprint import pformat
 from typing import Optional
 
 
-ALGORITHMS = ["Raw"]
-VOCAB_SIZES = [256]
+ALGORITHMS = ["Raw", "BPE", "Unigram"]
+VOCAB_SIZES = [256, 16384]
 TOP_KS = [10]
 MODES = ["uni", "bi"]
 TASKS = ["clm", "mlm"]
@@ -85,7 +85,7 @@ src/learn/train.py \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
---warmup_ratio=0.00 \\
+--warmup_ratio=0.05 \\
 --weight_decay=0.01 \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
@@ -198,6 +198,7 @@ for algorithm in ALGORITHMS:
                 .replace("VOCAB_SIZE", str(vocab_size)) \
                 .replace("TASK", task) \
                 .replace('"mode": "uni"', f'"mode": "{mode}"')
+            print(job_name)
             with open(OUTPUT / f"{job_name}.sh", "w") as fp:
                 fp.write(body)
 
@@ -210,6 +211,7 @@ for algorithm in ALGORITHMS:
                         .replace("VOCAB_SIZE", str(vocab_size)) \
                         .replace("TOP_K", str(top_k)) \
                         .replace("SEED", str(seed))
+                    print(job_name)
                     with open(OUTPUT / f"{job_name}.sh", "w") as fp:
                         fp.write(body)
 
@@ -227,5 +229,6 @@ for algorithm in ALGORITHMS:
                             .replace("SEED", str(seed)) \
                             .replace("mamba", f'"{f.as_posix()}"') \
                             .replace('"mode": "uni"', f'"mode": "{mode}"')
+                        print(job_name)
                         with open(OUTPUT / f"{job_name}.sh", "w") as fp:
                             fp.write(body)
