@@ -166,6 +166,11 @@ def analyze_sample(b: bytes, sha: str, diec_timeout: int) -> None:
             )
         except subprocess.TimeoutExpired:
             print(f"TimeoutExpired: {mode} {sha}")
+        except subprocess.CalledProcessError as err:
+            if "SIGSEGV" in str(err):
+                print(f"SIGSEGV 11: {mode} {sha}")
+            else:
+                raise err
         except OSError as err:
             if "Errno 28" in str(err):
                 print(f"Errno 28: {mode} {sha}")
@@ -198,7 +203,7 @@ def infer_completed_samples(all_modes: bool = True) -> set[str]:
 
     for d in tqdm(P_MODES.values(), total=3, desc="Scanning for completed..."):
         c = set()
-        for h in tqdm(HEX, keep=False):
+        for h in tqdm(HEX, leave=False):
             c.update(f.stem for f in (d / h).iterdir() if f.stat().st_size > 0)
 
         if not completed:
