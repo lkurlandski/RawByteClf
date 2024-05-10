@@ -19,4 +19,6 @@ python -u src/data/download_sorel.py \
 --output_root="/home/lk3591/Documents/datasets/Sorel/binaries" \
 --shard_idx=$1 \
 --num_shards=1000 \
+--remove_packed \
+--packing_read_mode="fast_parallel" \
 --errors=2
