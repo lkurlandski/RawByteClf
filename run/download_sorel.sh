@@ -20,5 +20,4 @@ python -u src/data/download_sorel.py \
 --shard_idx=$1 \
 --num_shards=1000 \
 --remove_packed \
---packing_read_mode="fast_parallel" \
 --errors=2

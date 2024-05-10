@@ -103,12 +103,14 @@ from argparse import ArgumentParser
 import asyncio
 from collections.abc import Iterable
 from collections import UserDict
+from functools import partial
 import gc
 from itertools import chain, islice
 import json
 import multiprocessing as mp
 import os
 from pathlib import Path
+from pprint import pformat
 import subprocess
 import sys
 import time
@@ -251,6 +253,13 @@ def infer_completed_samples_merge(all_modes: bool = True) -> set:
 
 
 def consolidate():
+
+    """
+    TODO: there appears to be two possible issues here:
+      - An extraneous newline character before the final closing brace "}"
+      - An extraneous newline character at the very end of the file
+    Both of these screw up the PackingMap lazy reading.
+    """
 
 
     def packeds_decision(packeds: list[bool]) -> bool:
@@ -510,49 +519,89 @@ def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_comple
 
 
 class PackingMap(UserDict):
+    """
+    Map SHA256 to whether the corresponding sample is packed or not.
 
-    """Map SHA256 to whether the corresponding sample is packed or not.
+    Usage
+    -----
 
-    Use `fast` mode to load the entire output.json file into memory before
-    processing into boolean values. This is the fastest method (~1 min) but requires
-    the most memory (16 GB). Use `lazy` mode to process the output.json file line-by-line,
-    which is much slower (~20 min). Use `parallel` mode to process the output.json file
-    line-by-line with multiple processes (~2 min).
+    To minimize memory usage, booleanize every individual report on the fly:
+    >>> packing_map = PackingMap(lazy=True, chunked=False, num_workers=None)
+
+    To speed up the process a little bit, perform this in parallel:
+    >>> packing_map = PackingMap(lazy=True, chunked=True, num_workers=16)
+    # Elapsed time: 24.29 seconds
+
+    If you have a lot of extra memory to spare, you can load the entire JSON then booleanize:
+    >>> packing_map = PackingMap(lazy=False, chunked=False, num_workers=None)
+    # Elapsed time: 88.93 seconds
+
+    To reduce those memory requirements, you can perform JSON loading in chunks:
+    >>> packing_map = PackingMap(lazy=False, chunked=True, num_workers=None)
+    # Elapsed time: 102.94 seconds
+
+    To speed up the chunked processing, you can parallelize it at the expense of extra memory:
+    >>> packing_map = PackingMap(lazy=False, chunked=True, num_workers=16)
+    # Elapsed time: 16.63 seconds
+
+    Note that `PackingMap(lazy=True, chunked=True, num_workers=None)` is functionally
+    identical to the `chunked=False` version.
     """
 
     def __init__(
         self,
         include: tuple[DiecMode] = tuple(DIEC_MODES),
-        mode: Literal["fast", "lazy", "parallel", "fast_parallel"] = "lazy",
-        num_workers: Optional[int] = 32,
+        lazy: bool = False,
+        chunked: bool = False,
+        num_workers: Optional[int] = None,
     ) -> None:
+        if isinstance(num_workers, int) and chunked is False:
+            print("`chunked` is False, but multiple workers were requested. Setting `chunked` to True.")
+            chunked = True
+
         self.include = tuple(include)
+        self.lazy = lazy
+        self.chunked = chunked
         self.num_workers = num_workers
 
-        if mode == "fast":
-            d = self.get_packing_map_fast()
-        elif mode == "lazy":
-            d = self.get_packing_map_lazy()
-        elif mode == "parallel":
-            d = self.get_packing_map_parallel()
-        elif mode == "fast_parallel":  # FIXME: rename
-            d = self.get_packing_map_fast_parallel()
+        for f in self.partial_files + [self.complete_file]:
+            with open(f, "rb") as fp:
+                fp.seek(-1, 2)
+                if not fp.read(1) == "}".encode():
+                    raise ValueError(f"File is invalid JSON: {f}")
+
+        super().__init__(self.get_packing_map())
+
+    @property
+    def partial_files(self) -> list[os.PathLike]:
+        files = list(P_CONSOLIDATED.glob("tmp_*.json"))
+        files.sort(key=lambda f: int(f.stem.split("_")[1]))
+        files = [str(f) for f in files]
+        return files
+
+    @property
+    def complete_file(self) -> os.PathLike:
+        return str(P_CONSOLIDATED / "output.json")
+
+    def get_packing_map(self) -> dict[str, bool]:
+        if self.chunked:
+            files = self.partial_files
         else:
-            raise ValueError(f"Invalid: {mode=}")
+            files = [self.complete_file]
 
-        super().__init__(d)
+        if self.lazy:
+            if self.chunked:
+                fn = self.get_packing_map_lazy
+            else:
+                fn = partial(self.get_packing_map_lazy, disable_tqdm=False)
+        else:
+            fn = self.get_packing_map_fast
 
-    def get_packing_map_fast(self, file: str = str(P_CONSOLIDATED / "output.json")):
-        with open(file, "r") as fp:
-            d = json.load(fp)
-        return {sha: self.get_packing_report(v) for sha, v in d.items()}
-
-    def get_packing_map_fast_parallel(self):
-        files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
-        #with mp.Pool(self.num_workers) as pool:
-        #    results: list[dict] = list(pool.map(self.get_packing_map_fast, files))
-
-        results = [self.get_packing_map_fast(f) for f in tqdm(files)]
+        if isinstance(self.num_workers, int):
+            with mp.Pool(self.num_workers) as pool:
+                results: list[dict] = list(pool.map(fn, files))
+        else:
+            results = [fn(f) for f in tqdm(files)]
 
         packing_map = {}
         for r in results:
@@ -560,11 +609,12 @@ class PackingMap(UserDict):
 
         return packing_map
 
-    def get_packing_map_lazy(
-        self,
-        file: str = str(P_CONSOLIDATED / "output.json"),
-        disable_tqdm: bool = False,
-    ):
+    def get_packing_map_fast(self, file: str):
+        with open(file, "r") as fp:
+            d = json.load(fp)
+        return {sha: self.get_packing_report(v) for sha, v in d.items()}
+
+    def get_packing_map_lazy(self, file: str, disable_tqdm: bool = True):
 
         args = ["wc", "-l", file]
         result = subprocess.run(args, check=True, capture_output=True)
@@ -587,7 +637,7 @@ class PackingMap(UserDict):
             for i, line in iterable:
                 if i == 0:  # Skip the initial bracket
                     continue
-                if i == total - 1:  # Skip the final bracket
+                if i == total:  # Skip the final bracket
                     break
 
                 line = line.strip()
@@ -603,7 +653,7 @@ class PackingMap(UserDict):
                 blob.append(line)
 
                 if line.rstrip(",") == "}" and brace_op == brace_cl:  # End of the blob
-                    blob = "".join(blob)[:-1]
+                    blob = "".join(blob).rstrip(",")
                     d = json.loads(blob)
                     p = self.get_packing_report(d)
                     packing_map[sha] = p
@@ -611,19 +661,6 @@ class PackingMap(UserDict):
                     blob = []
                     brace_op = 0
                     brace_cl = 0
-
-        return packing_map
-
-    def get_packing_map_parallel(self):
-        files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
-
-        iterable = [(str(f), True) for f in files]
-        with mp.Pool(self.num_workers) as pool:
-            results: list[dict] = list(pool.starmap(self.get_packing_map_lazy, iterable))
-
-        packing_map = {}
-        for r in results:
-            packing_map.update(r)
 
         return packing_map
 
@@ -687,19 +724,47 @@ def main():
 
 
 def test():
+    print("packing_map_0")
     t = time.time()
-    packing_map = PackingMap(mode="fast")
+    packing_map_0 = PackingMap(lazy=False, chunked=True, num_workers=16)
     print(f"Elapsed time: {time.time() - t:.2f} seconds")
+    print(f"{len(packing_map_0)=}")
 
+    print("packing_map_1")
     t = time.time()
-    packing_map = PackingMap(mode="lazy")
+    packing_map_1 = PackingMap(lazy=False, chunked=True, num_workers=None)
     print(f"Elapsed time: {time.time() - t:.2f} seconds")
+    print(f"{len(packing_map_1)=}")
+    print(f"{packing_map_1 == packing_map_0=}")
 
+    print("packing_map_2")
     t = time.time()
-    packing_map = PackingMap(mode="parallel")
+    packing_map_2 = PackingMap(lazy=False, chunked=False, num_workers=None)
     print(f"Elapsed time: {time.time() - t:.2f} seconds")
+    print(f"{len(packing_map_2)=}")
+    print(f"{packing_map_2 == packing_map_0=}")
+    print(f"{packing_map_2 == packing_map_1=}")
+
+    print("packing_map_3")
+    t = time.time()
+    packing_map_3 = PackingMap(lazy=True, chunked=True, num_workers=16)
+    print(f"Elapsed time: {time.time() - t:.2f} seconds")
+    print(f"{len(packing_map_3)=}")
+    print(f"{packing_map_3 == packing_map_0=}")
+    print(f"{packing_map_3 == packing_map_1=}")
+    print(f"{packing_map_3 == packing_map_2=}")
+
+    print("packing_map_4")
+    t = time.time()
+    packing_map_4 = PackingMap(lazy=True, chunked=False, num_workers=None)
+    print(f"Elapsed time: {time.time() - t:.2f} seconds")
+    print(f"{len(packing_map_4)=}")
+    print(f"{packing_map_4 == packing_map_0=}")
+    print(f"{packing_map_4 == packing_map_1=}")
+    print(f"{packing_map_4 == packing_map_2=}")
+    print(f"{packing_map_4 == packing_map_3=}")
 
 
 if __name__ == "__main__":
-    # test()
-    main()
+    test()
+    # main()

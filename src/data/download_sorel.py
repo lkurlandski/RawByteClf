@@ -82,7 +82,6 @@ def main():
     parser.add_argument("--remove_packed", action="store_true")
     parser.add_argument("--shard_idx", type=int, default=None)
     parser.add_argument("--num_shards", type=int, default=None)
-    parser.add_argument("--packing_read_mode", type=str, default="lazy")
     parser.add_argument(
         "--errors",
         type=int,
@@ -101,7 +100,7 @@ def main():
 
     is_packed = None
     if args.remove_packed:
-        is_packed = PackingMap(mode=args.packing_read_mode)
+        is_packed = PackingMap(lazy=False, chunked=True, num_workers=None)  # Low-memory, but fastish
 
     files = sorted(
         map(

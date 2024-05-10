@@ -375,9 +375,15 @@ def get_materials_pretrain_sorel(
 ) -> Materials:
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     if remove_packed:
-        is_packed = PackingMap(mode="fast")
-        files = [f for f in files if is_packed.get(f, None) is False]
-        print(f"Removed {len(is_packed) - len(files)} possibly packed files from SOREL dataset.")
+        is_packed = PackingMap(
+            lazy=False, chunked=True, num_workers=len(os.sched_getaffinity(0)),
+        )
+        print(f"Packing Negative, Positive, and Unknown: {len(files)=}")
+        files = [f for f in files if is_packed.get(os.path.splitext(os.path.basename(f))[0]) is not None]
+        print(f"Packing Negative and Positive: {len(files)=}")
+        files = [f for f in files if is_packed[os.path.splitext(os.path.basename(f))[0]] is False]
+        print(f"Packing Negative: {len(files)=}")
+
     tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
     return Materials(files=tr_vl_ts_files)
 
