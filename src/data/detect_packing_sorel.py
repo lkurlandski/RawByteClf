@@ -523,7 +523,7 @@ class PackingMap(UserDict):
     def __init__(
         self,
         include: tuple[DiecMode] = tuple(DIEC_MODES),
-        mode: Literal["fast", "lazy", "parallel"] = "parallel",
+        mode: Literal["fast", "lazy", "parallel"] = "lazy",
         num_workers: Optional[int] = 32,
     ) -> None:
         self.include = tuple(include)
@@ -587,12 +587,7 @@ class PackingMap(UserDict):
 
                 if line.rstrip(",") == "}" and brace_op == brace_cl:  # End of the blob
                     blob = "".join(blob)[:-1]
-                    try:
-                        d = json.loads(blob)
-                    except json.JSONDecodeError:
-                        print(f"JSONDecodeError: {sha}")
-                        print(f"*****{blob}*****")
-                        raise
+                    d = json.loads(blob)
                     p = self.get_packing_report(d)
                     packing_map[sha] = p
 
