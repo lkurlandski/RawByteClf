@@ -106,6 +106,7 @@ from collections import UserDict
 from functools import partial
 import gc
 from itertools import chain, islice
+from io import BytesIO
 import json
 import multiprocessing as mp
 import os
@@ -736,6 +737,66 @@ class PackingMap(UserDict):
             if report[mode]["packed"]:
                 return True
         return False
+
+
+def unpack(
+    data: str | Path | bytes,
+    outfile: Optional[str | Path] = None,
+    return_file: bool = True,
+    return_bytes: bool = False,
+    errors: int = 0,
+) -> tuple[Optional[Path], Optional[bytes]]:
+
+    infile = None
+    tmpfile = None
+    inbytes = None
+    outbytes = None
+
+    if isinstance(data, (str, Path)):
+        infile = data
+    elif isinstance(data, BytesIO):
+        data.seek(0)
+        inbytes = data.read()
+    elif isinstance(data, bytes):
+        inbytes = data
+    else:
+        raise TypeError(f"Unacceptable type: {type(data)}")
+
+    if infile is None:
+        tmpfile = Path(tempfile.mkstemp())
+        with open(tmpfile, "wb") as fp:
+            fp.write(byte)
+
+    if outfile is None:
+        if return_file:
+            outfile = Path(tempfile.mkstemp())
+    else:
+        outfile = Path(outfile)
+
+    args = ["upx", "-d"]
+    if outfile is not None:
+        args.extend(["-o", str(outfile)])
+    args.append(str(infile))
+
+    try:
+        result = subprocess.run(args, check=True, capture_output=True)
+    except subprocess.CalledProcessError as err:
+        if errors == 0:
+            return None, None
+        raise
+
+    if return_bytes:
+        with open(outfile, "rb") as fp:
+            outbytes = fp.read()
+
+    if not return_file:
+        outfile.unlink()
+        outfile = None
+
+    if tmpfile is not None:
+        tmpfile.unlink()
+
+    return outfile, outbytes
 
 
 if __name__ == "__main__":
