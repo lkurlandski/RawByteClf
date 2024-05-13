@@ -116,7 +116,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Literal, Optional
+from typing import Generator, Literal, Optional
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -797,6 +797,37 @@ def unpack(
         tmpfile.unlink()
 
     return outfile, outbytes
+
+
+def unpack_samples(
+    samples: list[Path | str],
+    outdir: Optional[Path] = None,
+    outfiles: Optional[list[Path]] = None,
+    overwrite: bool = False,
+    return_files: bool = False,
+    return_bytes: bool = True,
+    errors: int = 0,
+) -> Generator[tuple[Optional[Path], Optional[bytes]], None, None]:
+    if outdir is None and outfiles is None:
+        outdir = Path(tempfile.mkdtemp())
+        outfiles = (outdir / f.stem for f in samples)
+        print(f"Saving files to: {outdir=}")
+    elif overwrite:
+        print("Overwriting files...")
+        outfiles = (f for f in samples)
+    elif outfiles is not None:
+        pass
+    outfiles: list[Path | str]
+
+    pbar = tqdm(zip(samples, outfiles), total=len(samples))
+    for f_in, f_out in pbar:
+        pbar.set_description(f_in.stem)
+        yield unpack(f_in, f_out, return_files, return_bytes, errors)
+        if not return_files:
+            Path(f_out).unlink()
+
+    if not return_files and outdir is not None:
+        outdir.rmdir()
 
 
 if __name__ == "__main__":
