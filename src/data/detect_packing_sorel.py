@@ -147,6 +147,11 @@ P_MERGED = P_ROOT / "merged"
 P_CONSOLIDATED = P_ROOT / "consolidated"
 
 
+################################################################################
+# Helper functions
+################################################################################
+
+
 def analyze_sample(b: bytes, sha: str, diec_timeout: int) -> None:
 
     def args(mode: str) -> list[str]:
@@ -250,6 +255,11 @@ def infer_completed_samples_merge(all_modes: bool = True) -> set:
     for result in results:
         completed.update(result)
     return completed
+
+
+################################################################################
+# Main pipeline
+################################################################################
 
 
 def consolidate():
@@ -518,6 +528,58 @@ def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_comple
         return
 
 
+def pipeline():
+
+    parser = ArgumentParser()
+    parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--run", action="store_true")
+    parser.add_argument("--merge", action="store_true")
+    parser.add_argument("--consolidate", action="store_true")
+    parser.add_argument("--dont_ignore_complete", action="store_true")
+    parser.add_argument("--diec_timeout", type=int, default=10)
+    parser.add_argument("--filter_mode", type=int, default=None,
+        help="Parallel with 16 ** `filter_mode` processes. Required for --prepare and --run.")
+    parser.add_argument("--filter_idx", type=str, default=None,
+        help="Required for --run.")
+    parser.add_argument("--num_shards", type=int, default=None,
+        help="Parallel with `num_shards` processes. Required for --prepare and --run.")
+    parser.add_argument("--shard_idx", type=int, default=None,
+        help="Required for --run.")
+    args = parser.parse_args()
+
+    P_ROOT.mkdir(exist_ok=True)
+    P_PREP.mkdir(exist_ok=True)
+    P_RAW.mkdir(exist_ok=True)
+    for p in P_MODES.values():
+        p.mkdir(exist_ok=True)
+        for h in HEX:
+            (p / h).mkdir(exist_ok=True)
+    P_MERGED.mkdir(exist_ok=True)
+    for h in HEX:
+        (P_MERGED / h).mkdir(exist_ok=True)
+
+    t_0 = time.time()
+
+    if args.prepare:
+        prepare(args.filter_mode, args.num_shards, not args.dont_ignore_complete)
+
+    if args.run:
+        run(args.filter_idx, args.shard_idx, not args.dont_ignore_complete, args.diec_timeout)
+
+    if args.merge:
+        merge(not args.dont_ignore_complete)
+
+    if args.consolidate:
+        consolidate()
+
+    print(f"Elapsed time: {time.time() - t_0:.2f} seconds")
+
+
+################################################################################
+# Module endpoint
+################################################################################
+
+
 class PackingMap(UserDict):
     """
     Map SHA256 to whether the corresponding sample is packed or not.
@@ -676,95 +738,5 @@ class PackingMap(UserDict):
         return False
 
 
-def main():
-
-    parser = ArgumentParser()
-    parser.add_argument("--prepare", action="store_true")
-    parser.add_argument("--run", action="store_true")
-    parser.add_argument("--merge", action="store_true")
-    parser.add_argument("--consolidate", action="store_true")
-    parser.add_argument("--dont_ignore_complete", action="store_true")
-    parser.add_argument("--diec_timeout", type=int, default=10)
-    parser.add_argument("--filter_mode", type=int, default=None,
-        help="Parallel with 16 ** `filter_mode` processes. Required for --prepare and --run.")
-    parser.add_argument("--filter_idx", type=str, default=None,
-        help="Required for --run.")
-    parser.add_argument("--num_shards", type=int, default=None,
-        help="Parallel with `num_shards` processes. Required for --prepare and --run.")
-    parser.add_argument("--shard_idx", type=int, default=None,
-        help="Required for --run.")
-    args = parser.parse_args()
-
-    P_ROOT.mkdir(exist_ok=True)
-    P_PREP.mkdir(exist_ok=True)
-    P_RAW.mkdir(exist_ok=True)
-    for p in P_MODES.values():
-        p.mkdir(exist_ok=True)
-        for h in HEX:
-            (p / h).mkdir(exist_ok=True)
-    P_MERGED.mkdir(exist_ok=True)
-    for h in HEX:
-        (P_MERGED / h).mkdir(exist_ok=True)
-
-    t_0 = time.time()
-
-    if args.prepare:
-        prepare(args.filter_mode, args.num_shards, not args.dont_ignore_complete)
-
-    if args.run:
-        run(args.filter_idx, args.shard_idx, not args.dont_ignore_complete, args.diec_timeout)
-
-    if args.merge:
-        merge(not args.dont_ignore_complete)
-
-    if args.consolidate:
-        consolidate()
-
-    print(f"Elapsed time: {time.time() - t_0:.2f} seconds")
-
-
-def test():
-    print("packing_map_0")
-    t = time.time()
-    packing_map_0 = PackingMap(lazy=False, chunked=True, num_workers=16)
-    print(f"Elapsed time: {time.time() - t:.2f} seconds")
-    print(f"{len(packing_map_0)=}")
-
-    print("packing_map_1")
-    t = time.time()
-    packing_map_1 = PackingMap(lazy=False, chunked=True, num_workers=None)
-    print(f"Elapsed time: {time.time() - t:.2f} seconds")
-    print(f"{len(packing_map_1)=}")
-    print(f"{packing_map_1 == packing_map_0=}")
-
-    print("packing_map_2")
-    t = time.time()
-    packing_map_2 = PackingMap(lazy=False, chunked=False, num_workers=None)
-    print(f"Elapsed time: {time.time() - t:.2f} seconds")
-    print(f"{len(packing_map_2)=}")
-    print(f"{packing_map_2 == packing_map_0=}")
-    print(f"{packing_map_2 == packing_map_1=}")
-
-    print("packing_map_3")
-    t = time.time()
-    packing_map_3 = PackingMap(lazy=True, chunked=True, num_workers=16)
-    print(f"Elapsed time: {time.time() - t:.2f} seconds")
-    print(f"{len(packing_map_3)=}")
-    print(f"{packing_map_3 == packing_map_0=}")
-    print(f"{packing_map_3 == packing_map_1=}")
-    print(f"{packing_map_3 == packing_map_2=}")
-
-    print("packing_map_4")
-    t = time.time()
-    packing_map_4 = PackingMap(lazy=True, chunked=False, num_workers=None)
-    print(f"Elapsed time: {time.time() - t:.2f} seconds")
-    print(f"{len(packing_map_4)=}")
-    print(f"{packing_map_4 == packing_map_0=}")
-    print(f"{packing_map_4 == packing_map_1=}")
-    print(f"{packing_map_4 == packing_map_2=}")
-    print(f"{packing_map_4 == packing_map_3=}")
-
-
 if __name__ == "__main__":
-    test()
-    # main()
+    pipeline()

@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock
 import zlib
@@ -22,6 +23,7 @@ if __name__ == "__main__":
 
 import py7zr
 
+from src.data.detect_packing_sorel import PackingMap
 from src.data.loaders_core import (
     compute_integer_sizes,
     compute_float_sizes,
@@ -161,6 +163,65 @@ class TestDecompressor(unittest.TestCase):
     #     alg, b = decompressor(BytesIO(compressed_data))
     #     self.assertEqual(alg, Decompressor.S7Z)
     #     self.assertEqual(b, self.test_data)
+
+
+class TestPackingMap(unittest.TestCase):
+    def setUp(self):
+        self.maps = []
+
+    def tearDown(self):
+        self.maps = []
+
+    def test_packing_map_0(self):
+        print("packing_map_0")
+        t = time.time()
+        packing_map_0 = PackingMap(lazy=False, chunked=True, num_workers=16)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+        print(f"{len(packing_map_0)=}")
+        self.assertTrue(len(packing_map_0) > 0)
+        self.maps.append(packing_map_0)
+
+    def test_packing_map_1(self):
+        print("packing_map_1")
+        t = time.time()
+        packing_map_1 = PackingMap(lazy=False, chunked=True, num_workers=None)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+        print(f"{len(packing_map_1)=}")
+        self.assertTrue(len(packing_map_1) > 0)
+        self.maps.append(packing_map_1)
+
+    def test_packing_map_2(self):
+        print("packing_map_2")
+        t = time.time()
+        packing_map_2 = PackingMap(lazy=False, chunked=False, num_workers=None)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+        print(f"{len(packing_map_2)=}")
+        self.assertTrue(len(packing_map_2) > 0)
+        self.maps.append(packing_map_2)
+
+    def test_packing_map_3(self):
+        print("packing_map_3")
+        t = time.time()
+        packing_map_3 = PackingMap(lazy=True, chunked=True, num_workers=16)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+        print(f"{len(packing_map_3)=}")
+        self.assertTrue(len(packing_map_3) > 0)
+        self.maps.append(packing_map_3)
+
+    def test_packing_map_4(self):
+        print("packing_map_4")
+        t = time.time()
+        packing_map_4 = PackingMap(lazy=True, chunked=False, num_workers=None)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+        print(f"{len(packing_map_4)=}")
+        self.assertTrue(len(packing_map_4) > 0)
+        self.maps.append(packing_map_4)
+
+    def test_maps_equality(self):
+        for i, map1 in enumerate(self.maps):
+            for j, map2 in enumerate(self.maps):
+                if i != j:
+                    self.assertEqual(map1, map2, f"Maps {i} and {j} are not equal")
 
 
 if __name__ == "__main__":
