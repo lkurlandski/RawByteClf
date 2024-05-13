@@ -17,7 +17,7 @@ SEED = "SEED"
 MAX_LENGTH = 2 ** 16
 DATA_READ_BYTES = 2 ** 16
 BF_OR_FP = "fp"
-TF32 = "false"
+TF32 = "true"
 LOGGING_STEPS = 10
 
 LM_TR_SIZE = 2 ** 21  # 2097152
