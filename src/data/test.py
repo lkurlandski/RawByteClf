@@ -9,6 +9,8 @@ from io import BytesIO
 import lzma
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -23,7 +25,7 @@ if __name__ == "__main__":
 
 import py7zr
 
-from src.data.detect_packing_sorel import PackingMap
+from src.data.detect_packing_sorel import PackingMap, unpack
 from src.data.loaders_core import (
     compute_integer_sizes,
     compute_float_sizes,
@@ -222,6 +224,45 @@ class TestPackingMap(unittest.TestCase):
             for j, map2 in enumerate(self.maps):
                 if i != j:
                     self.assertEqual(map1, map2, f"Maps {i} and {j} are not equal")
+
+
+class TestUnpacking(unittest.TestCase):
+
+    _test_file = "./tmp/calc.exe"
+
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.unpacked = self.test_dir /  "unpacked.exe"
+        self.packed = self.test_dir / "packed.exe"
+        self.outfile = self.test_dir / "out.exe"
+        shutil.copy2(self._test_file, self.unpacked)
+        args = ["upx", "--best", "-o", str(self.packed), str(self.unpacked)]
+        try:
+            result = subprocess.run(args, check=True, capture_output=True)
+        except subprocess.CalledProcessError as err:
+            print(err.stderr)
+            raise err
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir)
+
+    def test_packed_file(self):
+        try:
+            outfile, byte_0 = unpack(self.packed, self.outfile, True, True, 1)
+        except subprocess.CalledProcessError as err:
+            print(err.stderr)
+            raise err
+
+        byte_1 = self.unpacked.read_bytes()
+        assert len(byte_0) == len(byte_1), f"{len(byte_0)=} != {len(byte_1)=}"
+        # Don't know why, but the executables themselves have some small differences.
+
+    def test_unpacked_file(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            unpack(self.unpacked, self.outfile, True, False, 1)
+        outfile, byte = unpack(self.unpacked, self.outfile, True, True, 0)
+        assert outfile is None
+        assert byte is None
 
 
 if __name__ == "__main__":
