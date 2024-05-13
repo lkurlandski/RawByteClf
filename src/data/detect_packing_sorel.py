@@ -114,6 +114,7 @@ from pathlib import Path
 from pprint import pformat
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Literal, Optional
 
@@ -153,10 +154,11 @@ P_CONSOLIDATED = P_ROOT / "consolidated"
 ################################################################################
 
 
-def analyze_sample(b: bytes, sha: str, diec_timeout: int) -> None:
+def diec_args(mode: str, file: Path | str) -> list[str]:
+    return ["diec", f"--{mode}scan", "--json", str(file)]
 
-    def args(mode: str) -> list[str]:
-        return ["diec", f"--{mode}scan", "--json", str(file)]
+
+def analyze_sample(b: bytes, sha: str, diec_timeout: int) -> None:
 
     file = (P_DOWNLOAD / sha).with_suffix(".exe")
     with open(file, "wb") as fp:
@@ -166,7 +168,7 @@ def analyze_sample(b: bytes, sha: str, diec_timeout: int) -> None:
         outfile = P_MODES[mode] / sha[0] / f"{sha}.txt"
         try:
             subprocess.run(
-                args(mode),
+                diec_args(mode, file),
                 stdout=open(outfile, "w"),
                 timeout=diec_timeout,
                 check=True,
@@ -763,7 +765,7 @@ def unpack(
     if infile is None:
         tmpfile = Path(tempfile.mkstemp())
         with open(tmpfile, "wb") as fp:
-            fp.write(byte)
+            fp.write(inbytes)
 
     if outfile is None:
         if return_file:
@@ -777,13 +779,13 @@ def unpack(
     args.append(str(infile))
 
     try:
-        result = subprocess.run(args, check=True, capture_output=True)
+        subprocess.run(args, check=True, capture_output=True)
     except subprocess.CalledProcessError as err:
         if errors == 0:
             return None, None
-        raise
+        raise err
 
-    if return_bytes:
+    if return_bytes and outfile is not None:
         with open(outfile, "rb") as fp:
             outbytes = fp.read()
 
