@@ -262,14 +262,7 @@ def infer_completed_samples_merge(all_modes: bool = True) -> set:
 ################################################################################
 
 
-def consolidate():
-
-    """
-    TODO: there appears to be two possible issues here:
-      - An extraneous newline character before the final closing brace "}"
-      - An extraneous newline character at the very end of the file
-    Both of these screw up the PackingMap lazy reading.
-    """
+def consolidate_a():
 
 
     def packeds_decision(packeds: list[bool]) -> bool:
@@ -346,6 +339,8 @@ def consolidate():
             print(f"Partial file: {i}. Freed: {round((mem_1 - mem_0) / 1e6)} MB. Used: {round(mem_1 / 1e6)} MB")
 
 
+def consolidate_b():
+
     # Parse the temporary files and consolidate them into a single JSON file.
     files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
     with open(P_CONSOLIDATED / "output.json", "w") as fp_w:
@@ -368,7 +363,9 @@ def consolidate():
                         line = line.rstrip("\n") + ","
                 fp_w.write(line)
 
-        fp_w.write("\n}")
+        if i != (len(files) - 1):
+            fp_w.write("\n")
+        fp_w.write("}")
 
 
 def merge(ignore_complete: bool):
@@ -570,7 +567,8 @@ def pipeline():
         merge(not args.dont_ignore_complete)
 
     if args.consolidate:
-        consolidate()
+        consolidate_a()
+        consolidate_b()
 
     print(f"Elapsed time: {time.time() - t_0:.2f} seconds")
 
