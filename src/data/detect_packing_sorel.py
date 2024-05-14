@@ -1,22 +1,23 @@
 """
-Detect whether samples of SOREL collection are packed or not using Detect-It-Easy (DiE).
+Detect whether executable samples are packed or not using Detect-It-Easy (DiE).
 
 Usage
 -----
 1. Prepare the script for embarassingly parallel execution by creating a list of shas
 for each worker to process. Use either the filter_mode or num_shards method of splitting
-the SOREL collection across workers (filter_mode=4 is recommended for better load balancing).
+the SOREL collection across workers (--filter_mode=4 is recommended for load balancing).
 
-    python detect_packing_sorel.py --prepare --filter_mode=FILTER_MODE
+    python detect_packing_sorel.py --dataset=DATASET --prepare --filter_mode=FILTER_MODE
 
 or
 
-    python detect_packing_sorel.py --prepare --num_shards=NUM_SHARDS
+    python detect_packing_sorel.py --dataset=DATASET --prepare --num_shards=NUM_SHARDS
 
 2. Run the script to download, analyze, and save the results for each sample.
 
 The SOREL binaries will be temporarily saved in the P_DOWNLOAD directory, but will be
-deleted after processing each file.
+deleted after processing each file. Datasets like BODMAS will not be downloaded and/or
+deleted because they are assumed to already exist on disk.
 
     | -- P_ROOT
         | -- P_DOWNLOAD
@@ -25,22 +26,26 @@ deleted after processing each file.
 
 You can run the program for every file at once in a single process (no parallelism)
 
-    python detect_packing_sorel.py --run
+    python detect_packing_sorel.py --dataset=DATASET --run
 
 or split the load across the individual workers using the sharded approach you prepared for
 in step 1 (recommended).
 
-    python detect_packing_sorel.py --run --filter_idx=FILTER_IDX
+    python detect_packing_sorel.py --dataset=DATASET --run --filter_idx=FILTER_IDX
 
 or
 
-    python detect_packing_sorel.py --run --shard_idx=SHARD_IDX
+    python detect_packing_sorel.py --dataset=DATASET --run --shard_idx=SHARD_IDX
 
 Its recommended to use a tool like GNU-parallel to run all shards at once, e.g.,
 
-    parallel --bar -j 48 'python src/data/detect_packing_sorel.py --run --filter_idx={1} --filter_mode=4 > ./logs/packing_python_{1}.log 2>&1' ::: $(printf "%04x\n" {0..65535})
+    parallel --bar -j 48 'python src/data/detect_packing_sorel.py --dataset=DATASET --run --filter_idx={1} --filter_mode=4 > ./logs/packing_4_{1}.log 2>&1' ::: $(printf "%04x\n" {0..65535})
 
-Either way, this will produce a set of JSON-ish files for each sample in the SOREL collection
+or
+
+    parallel --bar -j 48 'python src/data/detect_packing_sorel.py --dataset=DATASET --run --filter_idx={1} --filter_mode=2 > ./logs/packing_2_{1}.log 2>&1' ::: $(printf "%02x\n" {0..255})
+
+Either way, this will produce a set of JSON-ish files for each sample in the dataset
 
     | -- P_ROOT
         | -- P_RAW
@@ -66,12 +71,12 @@ hence our decision to use the .txt extension instead of .json.
 If you want DO NOT want to ignore files that have already been processed (process them again),
 then use the --dont_ignore_complete flag.
 
-    python detect_packing_sorel.py --run --dont_ignore_complete
+    python detect_packing_sorel.py --dataset=DATASET --run --dont_ignore_complete
 
 3. After all the samples have been processed, merge the results from each mode of DIEC
 into a single JSON file for each sample.
 
-    python detect_packing_sorel.py --merge
+    python detect_packing_sorel.py --dataset=DATASET --merge
 
 This will produce one JSON files for each sample in the SOREL collection
 
@@ -88,7 +93,9 @@ This will produce one JSON files for each sample in the SOREL collection
 4. Finally, consolidate the results into a single file for the entire collection
 for usage in downstream ML tasks.
 
-    python detect_packing_sorel.py --consolidate
+    python detect_packing_sorel.py --dataset=DATASET --consolidate_partials
+    python detect_packing_sorel.py --dataset=DATASET --consolidate_final
+
 
 This will produce a single JSON file for the entire SOREL collection (and some temporary files).
 
@@ -100,7 +107,6 @@ This will produce a single JSON file for the entire SOREL collection (and some t
 """
 
 from argparse import ArgumentParser
-import asyncio
 from collections.abc import Iterable
 from collections import UserDict
 from functools import partial
@@ -116,7 +122,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Generator, Literal, Optional
+from typing import Generator, Literal, Optional, Protocol
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -126,459 +132,484 @@ if __name__ == "__main__":
 import psutil
 from tqdm import tqdm
 
-from src.utils import batched
-from src.data.cfg import SOREL_BUCKET, SOREL_PREFIX
+from src.data.cfg import BODMAS_PATH, SOREL_PATH, DATASET_TO_FILES, SOREL_BUCKET, SOREL_PREFIX
 from src.data.prepare_datasets import s3_dataset_generator
-from src.data.utils import stream_sorel_meta, Decompressor, read_binary_files_asynch, write_binary_files_asynch
+from src.data.utils import stream_sorel_meta, Decompressor
 
 
+HEX = tuple(hex(i)[2:] for i in range(16))
 DIEC_MODES = ("recursive", "deep", "heuristic")
 DiecMode = Literal["recursive", "deep", "heuristic"]
-DIEC_TIMEOUT = 10
-MERGE_CHUNK_SIZE = 100000
-CONSOLIDATE_CHUNK_SIZE = 100000
-DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
-HEX = tuple(hex(i)[2:] for i in range(16))
-
-P_ROOT = Path("/home/lk3591/Documents/datasets/Sorel/diec")
-P_PREP = P_ROOT / "prep"
-P_DOWNLOAD = P_ROOT / "download"
-P_RAW = P_ROOT / "raw"
-P_MODES = {m: P_RAW / m for m in DIEC_MODES}
-P_MERGED = P_ROOT / "merged"
-P_CONSOLIDATED = P_ROOT / "consolidated"
 
 
-################################################################################
-# Helper functions
-################################################################################
+def find_files_with_null(directory: Path | str) -> list[os.PathLike]:
+    command = ['grep', '-l', '-r', 'null', str(directory)]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as err:
+        print(f"{err.stdout=}\n{err.stderr=}")
+        raise err
+    file_paths = result.stdout.splitlines()
+    return file_paths
 
 
-def diec_args(mode: str, file: Path | str) -> list[str]:
-    return ["diec", f"--{mode}scan", "--json", str(file)]
+class ShasStreamer(Protocol):
+
+    def __call__(self) -> Generator[str, None, None]:
+        ...
 
 
-def analyze_sample(b: bytes, sha: str, diec_timeout: int) -> None:
-
-    file = (P_DOWNLOAD / sha).with_suffix(".exe")
-    with open(file, "wb") as fp:
-        fp.write(b)
-
-    for mode in DIEC_MODES:
-        outfile = P_MODES[mode] / sha[0] / f"{sha}.txt"
-        try:
-            subprocess.run(
-                diec_args(mode, file),
-                stdout=open(outfile, "w"),
-                timeout=diec_timeout,
-                check=True,
-                capture_output=False,
-            )
-        except subprocess.TimeoutExpired:
-            print(f"TimeoutExpired: {mode} {sha}")
-        except subprocess.CalledProcessError as err:
-            if "SIGSEGV" in str(err):
-                print(f"SIGSEGV 11: {mode} {sha}")
-            else:
-                raise err
-        except OSError as err:
-            if "Errno 28" in str(err):
-                print(f"Errno 28: {mode} {sha}")
-            else:
-                raise err
-
-    file.unlink()
+def sorel_shas() -> Generator[str, None, None]:
+    for s in stream_sorel_meta():
+        yield s.sha256
 
 
-def analyze_samples(files: Iterable[str], diec_timeout: int) -> None:
+def bodmas_shas() -> Generator[str, None, None]:
+    for f in DATASET_TO_FILES["binaries"]["bodmas_pe"]():
+        yield f.stem
 
+
+class SampleStreamer(Protocol):
+
+    def __call__(self, shas: list[str]) -> Generator[tuple[bytes | Path, str], None, None]:
+        ...
+
+
+def sorel_streamer(shas: list[str]) -> Generator[tuple[bytes, str], None, None]:
     generator = s3_dataset_generator(
-        files=files,
+        files=shas,
         num_bytes=sys.maxsize,
         max_length=sys.maxsize,
         bucket=SOREL_BUCKET,
         prefix=SOREL_PREFIX,
         errors=2,
-        decompress=DECOMPRESSOR,
+        decompress=Decompressor(Decompressor.ZLIB, must_decompress=True),
     )
-
-    pbar = tqdm(generator, total=len(files))
-    for sample in pbar:
-        pbar.set_description(f"Processing: {sample['name']}")
-        analyze_sample(sample["bytes"], sample["name"], diec_timeout)
+    for sample in generator:
+        yield sample["bytes"], sample["name"]
 
 
-def infer_completed_samples(all_modes: bool = True) -> set[str]:
-    completed = set()
+def bodmas_streamer(shas: list[str]) -> Generator[tuple[bytes, str], None, None]:
+    for s in shas:
+        yield BODMAS_PATH / "binaries" / f"{s}.exe", s
 
-    for d in tqdm(P_MODES.values(), total=3, desc="Scanning for completed..."):
-        c = set()
-        for h in tqdm(HEX, leave=False):
-            c.update(f.stem for f in (d / h).iterdir() if f.stat().st_size > 0)
 
-        if not completed:
-            completed = c
+class PackingAnalyzerDirectory:
+
+    def __init__(self, p_root: Path) -> None:
+        self.p_root = p_root
+        self.p_prep = p_root / "prep"
+        self.p_download = p_root / "download"
+        self.p_raw = p_root / "raw"
+        self.p_modes = {m: self.p_raw / m for m in DIEC_MODES}
+        self.p_merged = p_root / "merged"
+        self.p_consolidated = p_root / "consolidated"
+
+    def mkdir(self) -> None:
+        self.p_root.mkdir(exist_ok=True)
+        self.p_prep.mkdir(exist_ok=True)
+        self.p_raw.mkdir(exist_ok=True)
+        for p in self.p_modes.values():
+            p.mkdir(exist_ok=True)
+            for h in HEX:
+                (p / h).mkdir(exist_ok=True)
+        self.p_merged.mkdir(exist_ok=True)
+        for h in HEX:
+            (self.p_merged / h).mkdir(exist_ok=True)
+        self.p_consolidated.mkdir(exist_ok=True)
+
+
+class PackingAnalyzer:
+
+    def __init__(
+        self,
+        p_root: Path,
+        all_shas: Optional[ShasStreamer] = None,
+        streamer: Optional[SampleStreamer] = None,
+        filter_mode: Optional[int] = None,
+        filter_idx: Optional[int] = None,
+        num_shards: Optional[int] = None,
+        shard_idx: Optional[int] = None,
+        diec_timeout: int = 10,
+        merge_chunk_size: int = 100000,
+        consolidate_chunk_size: int = 100000,
+    ) -> None:
+        self.paths = PackingAnalyzerDirectory(p_root)
+        self.all_shas = all_shas
+        self.streamer = streamer
+        self.filter_mode = filter_mode
+        self.filter_idx = filter_idx
+        self.num_shards = num_shards
+        self.shard_idx = shard_idx
+        self.diec_timeout = diec_timeout
+        self.merge_chunk_size = merge_chunk_size
+        self.consolidate_chunk_size = consolidate_chunk_size
+
+        if (self.filter_mode is not None) and (self.num_shards is not None):
+            raise ValueError("Must use filter or shard API, not both.")
+
+    def __call__(self, ignore_complete: bool = False) -> None:
+        self.paths.mkdir()
+        self.prepare(ignore_complete)
+        self.run(ignore_complete)
+        self.merge(ignore_complete)
+        self.consolidate_partials()
+        self.consolidate_final()
+
+    def mkdir(self) -> None:
+        self.paths.mkdir()
+
+    def prepare(self, ignore_complete: bool = False) -> None:
+
+        for f in self.paths.p_prep.iterdir():
+            f.unlink()
+
+        shas = sorted(islice(self.all_shas(), None))
+        print(f"{len(shas)=}")
+
+        if ignore_complete:
+            completed = self.infer_completed_samples_run()
+            print(f"Ignoring {len(completed)} completed files")
         else:
-            if all_modes:
-                completed = completed.intersection(c)
-            else:
-                completed = completed.union(c)
+            completed = set()
 
-    return completed
+        if isinstance(self.num_shards, int):
+            shard_size = (len(shas) // self.num_shards) + 1
+            print(f"{shard_size=}")
+            for shard_idx in range(self.num_shards):
+                idx_start = shard_idx * shard_size
+                idx_end = (shard_idx + 1) * shard_size
+                shard_file = self.paths.p_prep / f"packingPrep_{shard_idx}.txt"
+                print(str(shard_file))
+                with open(shard_file, "w") as fp:
+                    for i in range(idx_start, min(idx_end, len(shas) - 1)):
+                        fp.write(f"{shas[i]}\n")
+            return
 
+        if isinstance(self.filter_mode, int):
+            num_filters = 16 ** self.filter_mode
+            print(f"{num_filters=}")
+            start = 0
+            finish = len(shas)
+            for filter_idx in range(16 ** self.filter_mode):
+                filter_ = hex(filter_idx)[2:]
+                filter_ = ("0" * (self.filter_mode - len(filter_))) + filter_
+                filter_file = self.paths.p_prep / f"packingPrep_{filter_}.txt"
+                print(str(filter_file))
+                for i in range(start, len(shas)):
+                    if shas[i][0:self.filter_mode] != filter_:
+                        if i == start:
+                            raise RuntimeError("This should never happen. Try reducing the filter_mode value.")
+                        finish = i
+                        break
 
-def find_files_with_null(directory: Path | str) -> list[os.PathLike]:
-    command = ['grep', '-l', '-r', 'null', str(directory)]
-    result = subprocess.run(command, capture_output=True, text=True, check=True)
-    file_paths = result.stdout.splitlines()
-    return file_paths
+                with open(filter_file, "w") as fp:
+                    for f in shas[start:finish]:
+                        if f not in completed:
+                            fp.write(f"{f}\n")
 
+                start = finish
+                finish = len(shas)
+            return
 
-def process_hex(h: str, all_modes: bool = True) -> set[str]:
-    p = P_MERGED / h
-    completed = set(f.stem for f in p.iterdir() if f.stat().st_size > 0)
-    if all_modes:
-        null_files = set(Path(f).stem for f in find_files_with_null(str(p)))
-        completed.difference_update(null_files)
-    return completed
+        raise RuntimeError()
 
+    def run(self, ignore_complete: bool = False) -> None:
 
-def infer_completed_samples_merge(all_modes: bool = True) -> set:
-    """
-    Takes about 5 minutes when all_modes=True.
-    """
-    iterable = [(h, all_modes) for h in HEX]
-    with mp.Pool(len(HEX)) as pool:
-        results = list(tqdm(
-            pool.starmap(process_hex, iterable),
-            total=len(iterable),
-            desc="Scanning for completed merged...",
-        ))
-    completed = set()
-    for result in results:
-        completed.update(result)
-    return completed
+        if isinstance(self.shard_idx, int):
+            idx = self.shard_idx
+        elif isinstance(self.filter_idx, str):
+            idx = self.filter_idx
+        else:
+            idx = None
 
+        # Get the files for this shard (or all files)
+        if idx is not None:
+            file = self.paths.p_prep / f"packingPrep_{idx}.txt"
+            with open(file, "r") as fp:
+                shas = [l.strip() for l in fp.readlines()]
+            if ignore_complete:
+                pass  # Already handled in the preparation :)
+        else:
+            shas = sorted(islice(self.all_shas(), None))
+            if ignore_complete:
+                completed = self.infer_completed_samples_run()
+                shas = [s for s in shas if s not in completed]
+        print(f"{len(shas)=}")
 
-################################################################################
-# Main pipeline
-################################################################################
+        for data, sha in tqdm(self.streamer(shas), total=len(shas)):
+            self.analyze_sample(data, sha)
 
+    def merge(self, ignore_complete: bool = False) -> None:
 
-def consolidate_a():
+        iterables = []
+        for d in self.paths.p_modes.values():
+            for h in HEX:
+                p = d / h
+                iterables.append(p.iterdir())
+        files = list(f for f in tqdm(chain.from_iterable(iterables), desc="Initial Scan..."))
+        shas = set(file.stem for file in files)
+        print(f"{len(files)} reports from {len(shas)} unique files.")
 
+        if ignore_complete:
+            print("Locating merged files...")
+            complete = self.infer_completed_samples_merge()
+            print(f"Found {len(complete)=}")
+            files = [f for f in files if f.stem not in complete]
+            shas = set(file.stem for file in files)
+            print(f"{len(files)} reports from {len(shas)} unique files.")
 
-    def packeds_decision(packeds: list[bool]) -> bool:
-        return any(packeds)
+        del iterables, files
 
+        errors: tuple[list[str], list[str], list[str]] = ([], [], [])
+        pbar = tqdm(shas)
+        for sha in pbar:
+            pbar.set_description(f"Processing: {sha}")
+            files = {alg: (path / sha[0] / sha).with_suffix(".txt") for alg, path in self.paths.p_modes.items()}
+            data = {}
+            for alg, file in files.items():
+                s = str(Path(file.parent.parent.name) / file.name[0] / file.name)
+                if not file.exists():
+                    print(f"File not found: {s}")
+                    d = None
+                    errors[0].append(s)
+                elif file.stat().st_size == 0:
+                    print(f"File is empty: {s}")
+                    d = None
+                    errors[1].append(s)
+                else:
 
-    def packers_decision(packers: list[str]) -> list[str]:
-        packers = [p if p != "Packer detected" else "Heursitic" for p in packers]
-        return list(set(packers) - {""})
+                    with open(file, "r") as fp:
+                        raw = fp.read()
+                    content = raw[raw.find("{"):raw.rfind("}") + 1].strip()
 
+                    try:
+                        d = json.loads(content)
+                    except json.JSONDecodeError as err:
+                        print(f"JSONDecodeError: {s}")
+                        print(err)
+                        print(f"*****{content}*****")
+                        errors[2].append(s)
+                        d = None
 
-    def parse_values_blob(values: list[dict]) -> tuple[bool, list[str]]:
-        packeds: list[bool] = []
-        packers: list[str] = []
-        for value in values:
-            if "values" in value:
-                packed, packer = parse_values_blob(value.get("values"))
-            elif value.get("type") == "Packer":
-                packed = True
-                packer = [value.get("name", "")]
-            else:
-                packed = False
-                packer = [""]
+                data[alg] = d
 
-            packeds.append(packed)
-            packers.extend(packer)
+            outfile = (self.paths.p_merged / sha[0] / sha).with_suffix(".json")
+            with open(outfile, "w") as fp:
+                json.dump(data, fp, indent=4)
 
-        return packeds_decision(packeds), packers_decision(packers)
+        print("ERRORS\n------")
+        print(f"\tFile not found: {len(errors[0])}")
+        print(f"\tFile is empty: {len(errors[1])}")
+        print(f"\tJSONDecodeError: {len(errors[2])}")
 
+        print("Logging to logs/merge_errors.log")
+        with open("logs/merge_errors.log", "w") as fp:
+            fp.write("File not found\n")
+            for s in errors[0]:
+                fp.write(f"{s}\n")
+            fp.write("\nFile is empty\n")
+            for s in errors[1]:
+                fp.write(f"{s}\n")
+            fp.write("\nJSONDecodeError\n")
+            for s in errors[2]:
+                fp.write(f"{s}\n")
 
-    def parse_detects_blob(detects: list[dict]) -> tuple[bool, list[str]]:
-        packeds: list[bool] = []
-        packers: list[str] = []
+    def consolidate_partials(self) -> None:
 
-        for detect in detects:
-            packed, packer = parse_values_blob(detect.get("values", []))
-            packeds.append(packed)
-            packers.extend(packer)
+        def packeds_decision(packeds: list[bool]) -> bool:
+            return any(packeds)
 
-        return packeds_decision(packeds), packers_decision(packers)
+        def packers_decision(packers: list[str]) -> list[str]:
+            packers = [p if p != "Packer detected" else "Heursitic" for p in packers]
+            return list(set(packers) - {""})
 
+        def parse_values_blob(values: list[dict]) -> tuple[bool, list[str]]:
+            packeds: list[bool] = []
+            packers: list[str] = []
+            for value in values:
+                if "values" in value:
+                    packed, packer = parse_values_blob(value.get("values"))
+                elif value.get("type") == "Packer":
+                    packed = True
+                    packer = [value.get("name", "")]
+                else:
+                    packed = False
+                    packer = [""]
 
-    # Remove old temporary files.
-    for f in P_CONSOLIDATED.glob("tmp_*.json"):
-        f.unlink()
+                packeds.append(packed)
+                packers.extend(packer)
 
-    # Iterate over the merged JSON files.
-    output = {}
-    total = sum(1 for _ in tqdm(P_MERGED.rglob("*.json"), desc="Initial Scan..."))
-    pbar = tqdm(P_MERGED.rglob("*.json"), total=total)
-    for i, file in enumerate(pbar):
-        sha = file.stem
-        pbar.set_description(f"Processing: {sha}")
+            return packeds_decision(packeds), packers_decision(packers)
 
-        # Process the data from the merged JSON file into a concise summary and store it in memory.
-        with open(file, "r") as fp:
-            data = json.load(fp)
-        output[sha] = {}
-        for mode, d in data.items():
-            if d is None:
-                output[sha][mode] = None
-                continue
-            packed, packer = parse_detects_blob(d.get("detects", []))
-            output[sha][mode] = {"packed": packed, "packer": packer}
+        def parse_detects_blob(detects: list[dict]) -> tuple[bool, list[str]]:
+            packeds: list[bool] = []
+            packers: list[str] = []
 
-        # Write the output to a temporary file and clear up in-memory data structures.
-        if (i + 1) % CONSOLIDATE_CHUNK_SIZE == 0:
+            for detect in detects:
+                packed, packer = parse_values_blob(detect.get("values", []))
+                packeds.append(packed)
+                packers.extend(packer)
+
+            return packeds_decision(packeds), packers_decision(packers)
+
+        def save_partial(output: dict, i: int):
             mem_0 = psutil.virtual_memory().used
-            with open(P_CONSOLIDATED / f"tmp_{i}.json", "w") as fp:
+            with open(self.paths.p_consolidated / f"tmp_{i}.json", "w") as fp:
                 json.dump(output, fp, indent=4)
-            output = {}
+            output.clear()
             gc.collect()
             mem_1 = psutil.virtual_memory().used
             print(f"Partial file: {i}. Freed: {round((mem_1 - mem_0) / 1e6)} MB. Used: {round(mem_1 / 1e6)} MB")
 
 
-def consolidate_b():
+        # Remove old temporary files.
+        for f in self.paths.p_consolidated.glob("tmp_*.json"):
+            f.unlink()
 
-    # Parse the temporary files and consolidate them into a single JSON file.
-    files = sorted(P_CONSOLIDATED.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
-    with open(P_CONSOLIDATED / "output.json", "w") as fp_w:
-        fp_w.write("{")
+        # Iterate over the merged JSON files.
+        output = {}
+        total = sum(1 for _ in tqdm(self.paths.p_merged.rglob("*.json"), desc="Initial Scan..."))
+        pbar = tqdm(self.paths.p_merged.rglob("*.json"), total=total)
+        for i, file in enumerate(pbar):
+            sha = file.stem
+            pbar.set_description(f"Processing: {sha}")
 
-        for i, f in enumerate(tqdm(files, desc="Merging temporary consolidation files.")):
-            with open(f, "r") as fp_r:
-                lines = fp_r.readlines()
-
-            for j, line in enumerate(lines):
-                if j == 0:  # Skip the initial bracket
-                    fp_w.write("\n")
+            # Process the data from the merged JSON file into a concise summary and store it in memory.
+            with open(file, "r") as fp:
+                data = json.load(fp)
+            output[sha] = {}
+            for mode, d in data.items():
+                if d is None:
+                    output[sha][mode] = None
                     continue
-                if j == len(lines) - 1:  # Skip the final bracket
-                    break
-                if j == len(lines) - 2:  # Add a comma to the end of the line
-                    if i == len(files) - 1:  # Skip if this is the final file
-                        pass
-                    else:
-                        line = line.rstrip("\n") + ","
-                fp_w.write(line)
+                packed, packer = parse_detects_blob(d.get("detects", []))
+                output[sha][mode] = {"packed": packed, "packer": packer}
 
-        if i != (len(files) - 1):
-            fp_w.write("\n")
-        fp_w.write("}")
+            # Write the output to a temporary file and clear up in-memory data structures.
+            if (i + 1) % self.consolidate_chunk_size == 0:
+                save_partial(output, i)
 
+        if output:
+            save_partial(output, i + len(output))
 
-def merge(ignore_complete: bool):
+    def consolidate_final(self) -> None:
 
-    iterables = []
-    for d in P_MODES.values():
-        for h in HEX:
-            p = d / h
-            iterables.append(p.iterdir())
-    files = list(f for f in tqdm(chain.from_iterable(iterables), desc="Initial Scan..."))
-    shas = set(file.stem for file in files)
-    print(f"{len(files)} reports from {len(shas)} unique files.")
+        # Parse the temporary files and consolidate them into a single JSON file.
+        files = sorted(self.paths.p_consolidated.glob("tmp_*.json"), key=lambda f: int(f.stem.split("_")[1]))
+        with open(self.paths.p_consolidated / "output.json", "w") as fp_w:
+            fp_w.write("{")
 
-    if ignore_complete:
-        print("Locating merged files...")
-        complete = infer_completed_samples_merge()
-        print(f"Found {len(complete)=}")
-        files = [f for f in files if f.stem not in complete]
-        shas = set(file.stem for file in files)
-        print(f"{len(files)} reports from {len(shas)} unique files.")
+            i = None
+            for i, f in enumerate(tqdm(files, desc="Merging temporary consolidation files.")):
+                with open(f, "r") as fp_r:
+                    lines = fp_r.readlines()
 
-    del iterables, files
+                for j, line in enumerate(lines):
+                    if j == 0:  # Skip the initial bracket
+                        fp_w.write("\n")
+                        continue
+                    if j == len(lines) - 1:  # Skip the final bracket
+                        break
+                    if j == len(lines) - 2:  # Add a comma to the end of the line
+                        if i == len(files) - 1:  # Skip if this is the final file
+                            pass
+                        else:
+                            line = line.rstrip("\n") + ","
+                    fp_w.write(line)
 
-    errors: tuple[list[str], list[str], list[str]] = ([], [], [])
-    pbar = tqdm(shas)
-    for sha in pbar:
-        pbar.set_description(f"Processing: {sha}")
-        files = {alg: (path / sha[0] / sha).with_suffix(".txt") for alg, path in P_MODES.items()}
-        data = {}
-        for alg, file in files.items():
-            s = str(Path(file.parent.parent.name) / file.name[0] / file.name)
-            if not file.exists():
-                print(f"File not found: {s}")
-                d = None
-                errors[0].append(s)
-            elif file.stat().st_size == 0:
-                print(f"File is empty: {s}")
-                d = None
-                errors[1].append(s)
-            else:
+            if i is None:
+                raise RuntimeError()
 
-                with open(file, "r") as fp:
-                    raw = fp.read()
-                content = raw[raw.find("{"):raw.rfind("}") + 1].strip()
+            if i != (len(files) - 1):
+                fp_w.write("\n")
+            fp_w.write("}")
 
-                try:
-                    d = json.loads(content)
-                except json.JSONDecodeError as err:
-                    print(f"JSONDecodeError: {s}")
-                    print(err)
-                    print(f"*****{content}*****")
-                    errors[2].append(s)
-                    d = None
+    def analyze_sample(self, data: bytes | Path, sha: str) -> None:
 
-            data[alg] = d
-
-        outfile = (P_MERGED / sha[0] / sha).with_suffix(".json")
-        with open(outfile, "w") as fp:
-            json.dump(data, fp, indent=4)
-
-    print("ERRORS\n------")
-    print(f"\tFile not found: {len(errors[0])}")
-    print(f"\tFile is empty: {len(errors[1])}")
-    print(f"\tJSONDecodeError: {len(errors[2])}")
-
-    print("Logging to logs/merge_errors.log")
-    with open("logs/merge_errors.log", "w") as fp:
-        fp.write("File not found\n")
-        for s in errors[0]:
-            fp.write(f"{s}\n")
-        fp.write("\nFile is empty\n")
-        for s in errors[1]:
-            fp.write(f"{s}\n")
-        fp.write("\nJSONDecodeError\n")
-        for s in errors[2]:
-            fp.write(f"{s}\n")
+        def args(mode: str, file: Path | str) -> list[str]:
+            return ["diec", f"--{mode}scan", "--json", str(file)]
 
 
-def run(filter_idx: Optional[int], shard_idx: Optional[int], ignore_complete: bool, diec_timeout: int) -> None:
-    if (filter_idx is None) == (shard_idx is None):
-        raise ValueError("Must use filter or shard API, not both.")
-
-    # Get the files for this shard (or all files)
-    if isinstance(shard_idx, int) or isinstance(filter_idx, str):
-        file = P_PREP / f"packingPrep_{shard_idx if shard_idx else filter_idx}.txt"
-        with open(file, "r") as fp:
-            files = [l.strip() for l in fp.readlines()]
-        if ignore_complete:
-            pass  # Already handled in the preparation :)
-    else:
-        files = (s.sha256 for s in stream_sorel_meta() if s.is_malware)
-        files = sorted(islice(files, None))
-        if ignore_complete:
-            completed = infer_completed_samples()
-            files = [f for f in files if f not in completed]
-    print(f"{len(files)=}")
-    analyze_samples(files, diec_timeout)
+        if isinstance(data, bytes):
+            file = (self.paths.p_download / sha).with_suffix(".exe")
+            with open(file, "wb") as fp:
+                fp.write(data)
+            unlink = True
+        elif isinstance(data, (Path, str)):
+            file = Path(data)
+            unlink = False
+        else:
+            raise TypeError(f"Unacceptable type: {type(data)}")
 
 
-def prepare(filter_mode: Optional[int], num_shards: Optional[int], ignore_complete: bool) -> None:
-    if (filter_mode is None) == (num_shards is None):
-        raise ValueError("Must use filter or shard API, not both.")
-    print(f"{ignore_complete=}")
+        for mode in DIEC_MODES:
+            outfile = self.paths.p_modes[mode] / sha[0] / f"{sha}.txt"
+            try:
+                subprocess.run(
+                    args(mode, file),
+                    stdout=open(outfile, "w"),
+                    timeout=self.diec_timeout,
+                    check=True,
+                    capture_output=False,
+                )
+            except subprocess.TimeoutExpired:
+                print(f"TimeoutExpired: {mode} {sha}")
+            except subprocess.CalledProcessError as err:
+                if "SIGSEGV" in str(err):
+                    print(f"SIGSEGV 11: {mode} {sha}")
+                else:
+                    raise err
+            except OSError as err:
+                if "Errno 28" in str(err):
+                    print(f"Errno 28: {mode} {sha}")
+                else:
+                    raise err
 
-    for f in P_PREP.iterdir():
-        f.unlink()
+        if unlink:
+            file.unlink()
 
-    files = (s.sha256 for s in stream_sorel_meta() if s.is_malware)
-    files = sorted(islice(files, None))
-    print(f"{len(files)=}")
-    print(f"mem(files)={int(sys.getsizeof(files[0]) * len(files) // 1e6)}MB")
-
-    if ignore_complete:
-        completed = infer_completed_samples()
-        print(f"Ignoring {len(completed)} completed files")
-        # files = [f for f in files if f not in completed]  # premature filtering fucks up some other stuff
-    else:
+    def infer_completed_samples_run(self, all_modes: bool = True) -> set[str]:
         completed = set()
 
-    if num_shards:
-        shard_size = (len(files) // num_shards) + 1
-        print(f"{shard_size=}")
-        for shard_idx in range(num_shards):
-            idx_start = shard_idx * shard_size
-            idx_end = (shard_idx + 1) * shard_size
-            shard_file = P_PREP / f"packingPrep_{shard_idx}.txt"
-            print(str(shard_file))
-            with open(shard_file, "w") as fp:
-                for i in range(idx_start, min(idx_end, len(files) - 1)):
-                    fp.write(f"{files[i]}\n")
-        return
+        for d in tqdm(self.paths.p_modes.values(), total=3, desc="Scanning for completed..."):
+            c = set()
+            for h in tqdm(HEX, leave=False):
+                c.update(f.stem for f in (d / h).iterdir() if f.stat().st_size > 0)
 
-    if filter_mode:
-        num_filters = 16 ** filter_mode
-        print(f"{num_filters=}")
-        start = 0
-        finish = len(files)
-        for filter_idx in range(16 ** filter_mode):
-            filter_ = hex(filter_idx)[2:]
-            filter_ = ("0" * (filter_mode - len(filter_))) + filter_
-            filter_file = P_PREP / f"packingPrep_{filter_}.txt"
-            print(str(filter_file))
-            for i in range(start, len(files)):
-                if files[i][0:filter_mode] != filter_:
-                    if i == start:
-                        raise RuntimeError("This should never happen.")
-                    finish = i
-                    break
+            if not completed:
+                completed = c
+            else:
+                if all_modes:
+                    completed = completed.intersection(c)
+                else:
+                    completed = completed.union(c)
 
-            with open(filter_file, "w") as fp:
-                for f in files[start:finish]:
-                    if f not in completed:
-                        fp.write(f"{f}\n")
+        return completed
 
-            start = finish
-            finish = len(files)
-        return
+    def infer_completed_samples_merge(self, all_modes: bool = True) -> set:
+
+        iterable = [(self.paths.p_merged / h, all_modes) for h in HEX]
+        with mp.Pool(len(HEX)) as pool:
+            results = list(tqdm(
+                pool.starmap(_infer_completed_samples_merge, iterable),
+                total=len(iterable),
+                desc="Scanning for completed merged...",
+            ))
+        completed = set()
+        for result in results:
+            completed.update(result)
+        return completed
 
 
-def pipeline():
-
-    parser = ArgumentParser()
-    parser.add_argument("--prepare", action="store_true")
-    parser.add_argument("--run", action="store_true")
-    parser.add_argument("--merge", action="store_true")
-    parser.add_argument("--consolidate", action="store_true")
-    parser.add_argument("--dont_ignore_complete", action="store_true")
-    parser.add_argument("--diec_timeout", type=int, default=10)
-    parser.add_argument("--filter_mode", type=int, default=None,
-        help="Parallel with 16 ** `filter_mode` processes. Required for --prepare and --run.")
-    parser.add_argument("--filter_idx", type=str, default=None,
-        help="Required for --run.")
-    parser.add_argument("--num_shards", type=int, default=None,
-        help="Parallel with `num_shards` processes. Required for --prepare and --run.")
-    parser.add_argument("--shard_idx", type=int, default=None,
-        help="Required for --run.")
-    args = parser.parse_args()
-
-    P_ROOT.mkdir(exist_ok=True)
-    P_PREP.mkdir(exist_ok=True)
-    P_RAW.mkdir(exist_ok=True)
-    for p in P_MODES.values():
-        p.mkdir(exist_ok=True)
-        for h in HEX:
-            (p / h).mkdir(exist_ok=True)
-    P_MERGED.mkdir(exist_ok=True)
-    for h in HEX:
-        (P_MERGED / h).mkdir(exist_ok=True)
-
-    t_0 = time.time()
-
-    if args.prepare:
-        prepare(args.filter_mode, args.num_shards, not args.dont_ignore_complete)
-
-    if args.run:
-        run(args.filter_idx, args.shard_idx, not args.dont_ignore_complete, args.diec_timeout)
-
-    if args.merge:
-        merge(not args.dont_ignore_complete)
-
-    if args.consolidate:
-        consolidate_a()
-        consolidate_b()
-
-    print(f"Elapsed time: {time.time() - t_0:.2f} seconds")
-
-
-################################################################################
-# Module endpoint
-################################################################################
+def _infer_completed_samples_merge(p: Path, all_modes: bool = True) -> set[str]:
+    completed = set(f.stem for f in p.iterdir() if f.stat().st_size > 0)
+    if all_modes:
+        empty = next(p.iterdir(), None) is None
+        if not empty:
+            null_files = set(Path(f).stem for f in find_files_with_null(str(p)))
+            completed.difference_update(null_files)
+    return completed
 
 
 class PackingMap(UserDict):
@@ -613,6 +644,7 @@ class PackingMap(UserDict):
 
     def __init__(
         self,
+        root: Path | str = str(SOREL_PATH / "diec"),
         include: tuple[DiecMode] = tuple(DIEC_MODES),
         lazy: bool = False,
         chunked: bool = False,
@@ -622,6 +654,7 @@ class PackingMap(UserDict):
             print("`chunked` is False, but multiple workers were requested. Setting `chunked` to True.")
             chunked = True
 
+        self.p_consolidated = PackingAnalyzerDirectory(root).p_consolidated
         self.include = tuple(include)
         self.lazy = lazy
         self.chunked = chunked
@@ -637,14 +670,14 @@ class PackingMap(UserDict):
 
     @property
     def partial_files(self) -> list[os.PathLike]:
-        files = list(P_CONSOLIDATED.glob("tmp_*.json"))
+        files = list(self.p_consolidated.glob("tmp_*.json"))
         files.sort(key=lambda f: int(f.stem.split("_")[1]))
         files = [str(f) for f in files]
         return files
 
     @property
     def complete_file(self) -> os.PathLike:
-        return str(P_CONSOLIDATED / "output.json")
+        return str(self.p_consolidated / "output.json")
 
     def get_packing_map(self) -> dict[str, bool]:
         if self.chunked:
@@ -830,5 +863,74 @@ def unpack_samples(
         outdir.rmdir()
 
 
+def main():
+
+    parser = ArgumentParser()
+    parser.add_argument("--dataset", choices=["sorel", "bodmas"], default="sorel")
+    parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--run", action="store_true")
+    parser.add_argument("--merge", action="store_true")
+    parser.add_argument("--consolidate_partials", action="store_true")
+    parser.add_argument("--consolidate_final", action="store_true")
+    parser.add_argument("--dont_ignore_complete", action="store_true")
+    parser.add_argument("--diec_timeout", type=int, default=10)
+    parser.add_argument("--filter_mode", type=int, default=None,
+        help="Parallel with 16 ** `filter_mode` processes. Required for --prepare and --run.")
+    parser.add_argument("--filter_idx", type=str, default=None,
+        help="Required for --run.")
+    parser.add_argument("--num_shards", type=int, default=None,
+        help="Parallel with `num_shards` processes. Required for --prepare and --run.")
+    parser.add_argument("--shard_idx", type=int, default=None,
+        help="Required for --run.")
+    args = parser.parse_args()
+
+    if args.dataset == "sorel":
+        p_root = SOREL_PATH / "diec"
+        all_shas = sorel_shas
+        streamer = sorel_streamer
+    elif args.dataset == "bodmas":
+        p_root = BODMAS_PATH / "diec"
+        all_shas = bodmas_shas
+        streamer = bodmas_streamer
+
+    analyzer = PackingAnalyzer(
+        p_root,
+        all_shas,
+        streamer,
+        args.filter_mode,
+        args.filter_idx,
+        args.num_shards,
+        args.shard_idx,
+        args.diec_timeout,
+    )
+
+    analyzer.mkdir()
+
+    if args.prepare:
+        t = time.time()
+        analyzer.prepare(not args.dont_ignore_complete)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+    if args.run:
+        t = time.time()
+        analyzer.run(not args.dont_ignore_complete)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+    if args.merge:
+        t = time.time()
+        analyzer.merge(not args.dont_ignore_complete)
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+    if args.consolidate_partials:
+        t = time.time()
+        analyzer.consolidate_partials()
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+    if args.consolidate_final:
+        t = time.time()
+        analyzer.consolidate_final()
+        print(f"Elapsed time: {time.time() - t:.2f} seconds")
+
+
 if __name__ == "__main__":
-    pipeline()
+    main()
