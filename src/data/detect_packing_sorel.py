@@ -491,7 +491,7 @@ class PackingAnalyzer:
                 save_partial(output, i)
 
         if output:
-            save_partial(output, i + len(output))
+            save_partial(output, i + len(output) if total > self.consolidate_chunk_size else i)
 
     def consolidate_final(self) -> None:
 
@@ -866,7 +866,7 @@ def unpack_samples(
 def main():
 
     parser = ArgumentParser()
-    parser.add_argument("--dataset", choices=["sorel", "bodmas"], default="sorel")
+    parser.add_argument("--dataset", choices=["sorel", "bodmas"], required=True)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--merge", action="store_true")
