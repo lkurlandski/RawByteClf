@@ -197,13 +197,13 @@ def bodmas_streamer(shas: list[str]) -> Generator[tuple[bytes, str], None, None]
 class PackingAnalyzerDirectory:
 
     def __init__(self, p_root: Path) -> None:
-        self.p_root = p_root
-        self.p_prep = p_root / "prep"
-        self.p_download = p_root / "download"
-        self.p_raw = p_root / "raw"
+        self.p_root = Path(p_root)
+        self.p_prep = self.p_root / "prep"
+        self.p_download = self.p_root / "download"
+        self.p_raw = self.p_root / "raw"
         self.p_modes = {m: self.p_raw / m for m in DIEC_MODES}
-        self.p_merged = p_root / "merged"
-        self.p_consolidated = p_root / "consolidated"
+        self.p_merged = self.p_root / "merged"
+        self.p_consolidated = self.p_root / "consolidated"
 
     def mkdir(self) -> None:
         self.p_root.mkdir(exist_ok=True)
@@ -770,6 +770,18 @@ class PackingMap(UserDict):
             if report[mode]["packed"]:
                 return True
         return False
+
+
+def universal_packing_map(**kwds) -> dict[str, bool]:
+    ROOTS = [
+        SOREL_PATH / "diec",
+        BODMAS_PATH / "diec",
+    ]
+    all_maps = {}
+    for root in ROOTS:
+        m = PackingMap(root, **kwds)
+        all_maps.update(dict(m))
+    return all_maps
 
 
 def unpack(
