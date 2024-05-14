@@ -993,6 +993,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             top_k=args.top_k,
             min_freq=args.min_freq,
+            remove_packed=args.remove_packed,
         )
     elif args.task == "clf-ksc":
         materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(

@@ -29,7 +29,7 @@ from tqdm import tqdm
 
 from src.utils import get_max_keys_from_dict
 from src.data.cfg import SOREL_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_META_CSV
-from src.data.detect_packing_sorel import PackingMap
+from src.data.detect_packing_sorel import PackingMap, universal_packing_map
 from src.data.label_datasets import (
     get_label_mapping_virus_total_reports_sorel,
     ThreatLabelExtractor,
@@ -322,6 +322,41 @@ def filter_file_label_map(
     return files_and_labels
 
 
+def filter_packed_files(files: list[str], root: Optional[str | Path] = None) -> list[str]:
+
+    def path_to_key(f: Path) -> str:
+        return f.stem
+
+    def str_to_key(f: str) -> str:
+        return os.path.splitext(os.path.basename(f))[0]
+
+    if isinstance(files[0], str):
+        fn = str_to_key
+    elif isinstance(files[0], Path):
+        fn = path_to_key
+    else:
+        raise TypeError(f"Invalid type: {type(files[0])}")
+
+    kwds = {
+        "lazy": False,
+        "chunked": True,
+        "num_workers": len(os.sched_getaffinity(0)),
+    }
+    if root is not None:
+        is_packed = PackingMap(root=root, **kwds)
+    else:
+        is_packed = universal_packing_map(**kwds)
+    print(f"{len(is_packed)=}")
+
+
+    print(f"Packing Negative, Positive, and Unknown: {len(files)=}")
+    files = [f for f in files if is_packed.get(fn(f)) is not None]
+    print(f"Packing Negative and Positive: {len(files)=}")
+    files = [f for f in files if is_packed[fn(f)] is False]
+    print(f"Packing Negative: {len(files)=}")
+    return files
+
+
 def get_bodmas_file_label_map() -> dict[os.PathLike, str]:
     """
     Get the files and labels associated with the BODMAS corpus.
@@ -375,14 +410,7 @@ def get_materials_pretrain_sorel(
 ) -> Materials:
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     if remove_packed:
-        is_packed = PackingMap(
-            lazy=False, chunked=True, num_workers=len(os.sched_getaffinity(0)),
-        )
-        print(f"Packing Negative, Positive, and Unknown: {len(files)=}")
-        files = [f for f in files if is_packed.get(os.path.splitext(os.path.basename(f))[0]) is not None]
-        print(f"Packing Negative and Positive: {len(files)=}")
-        files = [f for f in files if is_packed[os.path.splitext(os.path.basename(f))[0]] is False]
-        print(f"Packing Negative: {len(files)=}")
+        files = filter_packed_files(files)
 
     tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
     return Materials(files=tr_vl_ts_files)
@@ -396,10 +424,15 @@ def get_materials_clf(
     top_k: Optional[int] = None,
     min_freq: Optional[int] = None,
     min_size: int = 0,
+    remove_packed: bool = False,
 ) -> Materials:
 
     num_splits = 2 if vl_size == 0 or tr_size == 0 else 3
     min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * num_splits if min_freq is None else min_freq
+
+    if remove_packed:
+        files_to_keep = filter_packed_files(list(files_and_labels.keys()))
+        files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
     # Filter out the files that are not in the top_k most frequent labels
     files_and_labels = filter_file_label_map(files_and_labels, top_k, min_freq, min_size)
