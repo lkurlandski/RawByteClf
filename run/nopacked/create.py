@@ -76,9 +76,10 @@ src/learn/train.py \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
---warmup_ratio=0.0 \\
---weight_decay=0.01 \\
---adam_beta2=0.999 \\
+--warmup_ratio=0.05 \\
+--weight_decay=0.10 \\
+--adam_beta1=0.900 \\
+--adam_beta2=0.990 \\
 --max_grad_norm=1.0 \\
 --save_total_limit=-1 \\
 --model_name_or_path={MODEL_NAME_OR_PATH} \\
