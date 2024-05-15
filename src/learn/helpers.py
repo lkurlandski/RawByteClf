@@ -427,14 +427,15 @@ class OutputHelper:
         return self.path / "LOCK"
 
     def mkdir(self) -> Path:
+        # Confusingly, `exist_ok=True` and `parents=True` seems to be needed. Maybe race condition?
         ancestor: Path = None
         for p in reversed(self.path.parents):
             if not p.exists():
-                p.mkdir()
+                p.mkdir(exist_ok=True, parents=True)
                 ancestor = p if ancestor is None else ancestor
 
         if not self.path.exists():
-            self.path.mkdir()
+            self.path.mkdir(exist_ok=True, parents=True)
 
         with open(self.lock_file, "w") as fp:
             fp.write("")
