@@ -92,7 +92,12 @@ from transformers.trainer_utils import (
     PREFIX_CHECKPOINT_DIR,
 )
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
-from transformers.utils import CONFIG_NAME, is_ninja_available
+from transformers.utils import (
+    CONFIG_NAME,
+    is_ninja_available,
+    is_torch_bf16_available,
+    is_torch_tf32_available,
+)
 try:
     from ray import tune
     from ray.tune.search.hyperopt import HyperOptSearch
@@ -319,6 +324,21 @@ class TrainingArguments(HfTrainingArguments):
         if kwds.pop("gradient_checkpointing", False):
             if kwds["gradient_checkpointing_kwargs"] is None:
                 kwds["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
+
+        # Assumes we will not be using mixed precision on the CPU.
+        if not is_torch_bf16_available():
+            if kwds["bf16"]:
+                warnings.warn("UnavailableNumericType: Requested bf16. Using fp16 instead.")
+                kwds["fp16"] = True
+                kwds["bf16"] = False
+            if kwds["bf16_full_eval"]:
+                kwds["fp16_full_eval"] = True
+                kwds["bf16_full_eval"] = False
+                warnings.warn("UnavailableNumericType: Requested bf16_full_eval. Using fp16 instead.")
+        if not is_torch_tf32_available():
+            if kwds["tf32"]:
+                warnings.warn("UnavailableNumericType: Requested tf32. Using fp32 instead.")
+                kwds["tf32"] = False
 
         super().__init__(**kwds)
 
