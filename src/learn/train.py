@@ -95,7 +95,7 @@ from transformers.models.reformer.modeling_reformer import _get_least_common_mul
 from transformers.utils import (
     CONFIG_NAME,
     is_ninja_available,
-    is_torch_bf16_available,
+    is_torch_bf16_gpu_available,
     is_torch_tf32_available,
 )
 try:
@@ -187,6 +187,7 @@ except (ModuleNotFoundError, ImportError) as err:
         raise NotImplementedError()
     hp_space_mymalconv = hp_space_malconv = hp_space_malconvgct = hp_space_longformer = hp_space_hrrformer = _hp_space
 
+from src.learn.printers import print_tokenizer, print_data_collator, print_config
 from src.learn.utils import (
     pad_to_multiple_of_fn,
     find_two_largest_factors,
@@ -327,7 +328,7 @@ class TrainingArguments(HfTrainingArguments):
                 kwds["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
 
         # Assumes we will not be using mixed precision on the CPU.
-        if not is_torch_bf16_available():
+        if not is_torch_bf16_gpu_available():
             if kwds["bf16"]:
                 warnings.warn("UnavailableNumericType: Requested bf16. Using fp16 instead.")
                 kwds["fp16"] = True
@@ -936,9 +937,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     np.random.seed(training_arguments.seed)
     torch.random.manual_seed(training_arguments.seed)
 
-    m = get_mem(unit="MB")
-    print(f"MEMORY: mem_used={m[2]}, mem_avail={m[1]}, mem_total={m[0]}", flush=True)
-    print(f"{args=}", flush=True)
+    print(f"args={pformat(args)}")
 
     MODEL_TYPE: Literal["HF", "MC"] = get_model_type(args.model_name_or_path)
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
@@ -988,9 +987,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
         tokenizer.model_input_names.append("token_type_ids")
 
-    print(f"{tokenizer=}")
-    pprint({k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)})
-    print(f"{tokenizer.model_input_names=}")
+    print_tokenizer(tokenizer)
     print(BR, flush=True)
 
 
@@ -1164,7 +1161,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         id2label=id2label,
         label2id=label2id,
     )
-    print(f"{config=}")
+    print_config(config)
     print(BR, flush=True)
 
 
@@ -1202,7 +1199,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         )
         compute_metrics = None
 
-    print(f"{data_collator=}")
+    print_data_collator(data_collator)
     print(f"{compute_metrics=}")
     print(BR, flush=True)
 
