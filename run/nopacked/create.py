@@ -1,4 +1,9 @@
 """
+
+FIXME:
+- The casual language models, especially with 16-bit byte representation,
+ require more than 2 days. The 8-bit and 16-bit representations likely require
+ 02-20:00:00 and 04-12:00:00 respectively.
 """
 
 import os
@@ -6,17 +11,18 @@ from pathlib import Path
 
 
 SEEDS = [0, 1, 2, 3, 4]
+REPRESENTATIONS = [8, 16]
 
 
 ROOT = "./output/nopacked"
 MODEL_NAME_OR_PATH = "mamba"
-ARCH_CONFIG = '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256}'
+ARCH_CONFIG = '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": EMBEDDING_SIZE}'
 PER_DEVICE_TRAIN_BATCH_SIZE = 64
 PER_DEVICE_EVAL_BATCH_SIZE = 64
 SEED = "SEED"
 MAX_LENGTH = 2 ** 16
 DATA_READ_BYTES = 2 ** 16
-BF_OR_FP = "fp"
+BF_OR_FP = "bf"
 TF32 = "true"
 LOGGING_STEPS = 10
 
@@ -36,7 +42,7 @@ BODY_LM = f"""#!/bin/bash -l
 #SBATCH --time=02-00:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks={6}
+#SBATCH --ntasks={4}
 #SBATCH --mem={64}G
 #SBATCH --gres=gpu:a100:1
 
@@ -58,9 +64,9 @@ src/learn/train.py \\
 --streaming=true \\
 --skip_eval_check=false \\
 --dataset_backend="HF" \\
---representation=8 \\
+--representation=REPRESENTATION \\
 --algorithm="Raw" \\
---vocab_size=256 \\
+--vocab_size=VOCAB_SIZE \\
 --tr_size={LM_TR_SIZE} \\
 --vl_size={LM_VL_SIZE} \\
 --ts_size=0 \\
@@ -72,7 +78,7 @@ src/learn/train.py \\
 --logging_steps={LOGGING_STEPS} \\
 --save_steps={LM_SAVE_EVAL_STEPS} \\
 --eval_steps={LM_SAVE_EVAL_STEPS} \\
---dataloader_num_workers={5} \\
+--dataloader_num_workers={3} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
@@ -104,11 +110,11 @@ BODY_CLF = f"""#!/bin/bash -l
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-6:00:00
+#SBATCH --time=00-2:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks={4}
-#SBATCH --mem={64}G
+#SBATCH --mem={16}G
 #SBATCH --gres=gpu:a100:1
 
 
@@ -128,32 +134,31 @@ src/learn/train.py \\
 --pretraining_task=PRETRAINING_TASK \\
 --remove_packed \\
 --streaming=false \\
---skip_eval_check=true \\
+--skip_eval_check=false \\
 --top_k=10 \\
 --dataset_backend="HF" \\
---representation=8 \\
+--representation=REPRESENTATION \\
 --algorithm="Raw" \\
---vocab_size=256 \\
+--vocab_size=VOCAB_SIZE \\
 --tr_size=0.85 \\
 --vl_size=0.15 \\
 --ts_size=0.0 \\
 --do_train \\
 --output_dir=tmp \\
---save_strategy="steps" \\
---evaluation_strategy="steps" \\
---num_train_epochs=5 \\
+--save_strategy="epoch" \\
+--evaluation_strategy="epoch" \\
+--num_train_epochs=10 \\
 --logging_steps={LOGGING_STEPS} \\
---save_steps=2 \\
---eval_steps=2 \\
 --dataloader_num_workers={3} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
 --warmup_ratio=0.00 \\
 --weight_decay=0.01 \\
+--adam_beta1=0.900 \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
---save_total_limit=3 \\
+--save_total_limit=2 \\
 --model_name_or_path={MODEL_NAME_OR_PATH} \\
 --max_length={MAX_LENGTH} \\
 --data_read_bytes={DATA_READ_BYTES} \\
@@ -171,27 +176,62 @@ src/learn/train.py \\
 
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
+for f in OUTPUT.glob("*.sh"):
+    f.unlink()
 
 
-body = BODY_LM.replace("JOB_NAME", "nopack-clm.sh")
-with open(OUTPUT / "nopack-clm.sh", "w") as fp:
-    fp.write(body)
+outfiles = []
 
 
-for seed in SEEDS:
-    jobname = f"nopack-clf-{seed}"
-    body = BODY_CLF \
+for representation in REPRESENTATIONS:
+    jobname = f"nopack-clm-{representation}-0"
+    vocab_size = int(2 ** representation)
+    embedding_size = max(8, int(256 / (2 ** (representation - 8))))
+    body = BODY_LM \
         .replace("JOB_NAME", jobname) \
-        .replace("SEED", str(seed)) \
-        .replace("PRETRAINING_TASK", "None")
-    with open((OUTPUT / jobname).with_suffix(".sh"), "w") as fp:
+        .replace("REPRESENTATION", str(representation)) \
+        .replace("VOCAB_SIZE", str(vocab_size)) \
+        .replace("EMBEDDING_SIZE", str(embedding_size))
+    outfile = (OUTPUT / jobname).with_suffix(".sh")
+    with open(outfile, "w") as fp:
         fp.write(body)
+    outfiles.append(outfile)
 
-    jobname = f"nopack-ft-{seed}"
-    body = BODY_CLF \
-        .replace("JOB_NAME", jobname) \
-        .replace("SEED", str(seed)) \
-        .replace("PRETRAINING_TASK", "clm")
-    with open((OUTPUT / jobname).with_suffix(".sh"), "w") as fp:
-        fp.write(body)
 
+for representation in REPRESENTATIONS:
+    vocab_size = int(2 ** representation)
+    embedding_size = max(8, int(256 / (2 ** (representation - 8))))
+    for seed in SEEDS:
+        jobname = f"nopack-clf-{representation}-{seed}"
+        body = BODY_CLF \
+            .replace("JOB_NAME", jobname) \
+            .replace("SEED", str(seed)) \
+            .replace("PRETRAINING_TASK", "None") \
+            .replace("REPRESENTATION", str(representation)) \
+            .replace("VOCAB_SIZE", str(vocab_size)) \
+            .replace("EMBEDDING_SIZE", str(embedding_size))
+        outfile = (OUTPUT / jobname).with_suffix(".sh")
+        with open(outfile, "w") as fp:
+            fp.write(body)
+        outfiles.append(outfile)
+
+        jobname = f"nopack-ft-{representation}-{seed}"
+        body = BODY_CLF \
+            .replace("JOB_NAME", jobname) \
+            .replace("SEED", str(seed)) \
+            .replace("PRETRAINING_TASK", "clm") \
+            .replace("REPRESENTATION", str(representation)) \
+            .replace("VOCAB_SIZE", str(vocab_size)) \
+            .replace("EMBEDDING_SIZE", str(embedding_size))
+        outfile = (OUTPUT / jobname).with_suffix(".sh")
+        with open(outfile, "w") as fp:
+            fp.write(body)
+        outfiles.append(outfile)
+
+
+outfiles.sort(key=lambda p: str(p).split("-")[1])
+
+
+with open(OUTPUT / "run.sh", "w") as fp:
+    for f in outfiles:
+        fp.write(f"sbatch {str(f)}\n")
