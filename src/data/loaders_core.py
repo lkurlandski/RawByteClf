@@ -221,7 +221,7 @@ def tr_vl_ts_split_idx_guarentee(
     `samples_per_class` samples from each class are present in each split.
     """
 
-    num_splits = 2 if vl_size == 0 or tr_size == 0 else 3
+    num_splits = 2 if vl_size == 0 or ts_size == 0 else 3
     values, counts = np.unique(labels, return_counts=True)
 
     # Verify there are enough samples per class to guarentee each split has representative samples.
