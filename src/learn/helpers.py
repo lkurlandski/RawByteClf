@@ -30,7 +30,17 @@ from src.utils import get_highest_path, is_jsonable
 from src.learn.utils import str_or_bool_to_str, float_to_int
 
 
-TASKS = ["clm", "mlm", "clf", "clf-bod", "clf-ksc", "clf-lxs"]
+TASKS = [
+    "clm",
+    "mlm",
+    "clf-bod",
+    "clf-ksc",
+    "clf-lxs",
+    "clf-sor-org",
+    "clf-sor-cat",
+    "clf-sor-nam",
+    "clf-sor-lab",
+]
 TOKENIZERS = ["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
 
 
@@ -248,6 +258,11 @@ class OutputHelper:
         elif task == "clf-lxs":
             self._task_args.extend([
                 f"tr_length_cutoff--{tr_length_cutoff}",
+            ])
+        elif task[0:7] == "clf-sor":
+            self._task_args.extend([
+                f"min_freq--{min_freq}",
+                f"top_k--{top_k}",
             ])
         elif task in ("mlm", "clm"):
             self._task_args.extend([

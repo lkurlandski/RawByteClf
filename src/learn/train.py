@@ -155,6 +155,7 @@ from src.architectures.rwkv import (
 from src.data.loaders_core import (
     get_materials_clf_bodmas,
     get_materials_clf_sorel,
+    get_materials_clf_sorel_vt,
     get_materials_clf_bodmas_balanced_slice,
     get_materials_clf_bodmas_with_k_samples_per_class_in_train_set,
     get_materials_pretrain_sorel,
@@ -1006,7 +1007,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             remove_packed=args.remove_packed,
         )
-    elif args.task == "clf" or args.task == "clf-bod":
+    # Straightforward classification tasks.
+    elif args.task == "clf-bod":
         materials = get_materials_clf_bodmas(
             args.tr_size,
             args.vl_size,
@@ -1015,6 +1017,22 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             min_freq=args.min_freq,
             remove_packed=args.remove_packed,
         )
+    elif args.task == "clf-sor-org":
+        materials = get_materials_clf_sorel(
+            args.tr_size,
+            args.vl_size,
+            args.ts_size,
+            remove_packed=args.remove_packed,
+        )
+    elif args.task[0:7] == "clf-sor":
+        materials = get_materials_clf_sorel_vt(
+            args.tr_size,
+            args.vl_size,
+            args.ts_size,
+            extractor={"clf-sor-nam": "name", "clf-sor-cat": "category", "clf-sor-lab": "label"}[args.task],
+            remove_packed=args.remove_packed,
+        )
+    # Complex classification tasks.
     elif args.task == "clf-ksc":
         materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
             args.tr_samples_per_class,
@@ -1031,7 +1049,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dist = materials.dist
         num_classes = len(id2label)
         weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
-    print(f"{dist=}")
+    print(f"{materials=}")
     print(BR, flush=True)
 
 
