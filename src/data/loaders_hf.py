@@ -74,13 +74,21 @@ def generator(
 
 
 def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict):
+
+    print(f"Dataset: {dataset.__class__.__name__}")
+
     for split, d in dataset.items():
         d: Dataset | IterableDataset
-        print(f"{split} -- {d.info}")
+        print(f" {split=}")
+        print(f"  splits={d.info.splits}")
+        print(f"  features={d.info.features}")
 
     if isinstance(dataset, DatasetDict):
         files = [list(f.values())[0] for f in d.cache_files for d in dataset.values()]
-        print(f"Cache Files: {pformat(files)}")
+        print(f" Cache Files: [")
+        for f in files:
+            print(f"  {str(f)},")
+        print(" ]")
 
 
 # TODO: treat the train and test sets differently because we don't really need an iterable test set.
