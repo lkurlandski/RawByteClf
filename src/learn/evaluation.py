@@ -103,6 +103,7 @@ def clf_compute_metrics(
     metrics = {
         "accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
         "f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
+        "f1-weighted": F1.compute(predictions=predictions, references=labels, average="weighted")["f1"],
         "f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
     }
     if single_shot_classes is None or single_shot_classes == []:
@@ -114,6 +115,7 @@ def clf_compute_metrics(
     ss_metrics = {
         "ss_accuracy": ACCURACY.compute(predictions=predictions, references=labels)["accuracy"],
         "ss_f1-macro": F1.compute(predictions=predictions, references=labels, average="macro")["f1"],
+        "ss_f1-weighted": F1.compute(predictions=predictions, references=labels, average="weighted")["f1"],
         "ss_f1-micro": F1.compute(predictions=predictions, references=labels, average="micro")["f1"],
     }
     metrics.update(ss_metrics)
