@@ -51,10 +51,12 @@ def print_options(options: list[str]) -> str:
 def str_to_type(s: Optional[Any], t: type) -> Optional[Any]:
     if s is None:
         return None
-    if isinstance(s, t):
+    if isinstance(s, t) and t != str:  # Let's use the function with `t=str`
         return s
     if not isinstance(s, str):
         raise TypeError(f"Expected a string, got {type(s)}")
+    if s.lower().strip() == "none":
+        return None
     return t(s)
 
 
