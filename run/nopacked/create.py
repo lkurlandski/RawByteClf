@@ -12,6 +12,7 @@ from pathlib import Path
 
 SEEDS = [0, 1, 2, 3, 4]
 REPRESENTATIONS = [8, 16]
+TASKS = ["clf-bod", "clf-sor-nam"]
 
 
 ROOT = "./output/nopacked"
@@ -22,8 +23,6 @@ PER_DEVICE_EVAL_BATCH_SIZE = 64
 SEED = "SEED"
 MAX_LENGTH = 2 ** 16
 DATA_READ_BYTES = 2 ** 16
-BF_OR_FP = "bf"
-TF32 = "true"
 LOGGING_STEPS = 10
 
 LM_TR_SIZE = 2 ** 21  # 2097152
@@ -97,9 +96,9 @@ src/learn/train.py \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
---{BF_OR_FP}16 \\
---{BF_OR_FP}16_full_eval \\
---tf32={TF32} \\
+--bf16 \\
+--bf16_full_eval \\
+--tf32=true \\
 --gradient_checkpointing=true
 """
 
@@ -129,13 +128,14 @@ src/learn/train.py \\
 --root="{ROOT}" \\
 --arch_config='{ARCH_CONFIG}' \\
 --metric_for_best_model="eval_accuracy" \\
---task="clf-bod" \\
+--task=DOWNSTREAM_TASK \\
 --seed=SEED \\
 --pretraining_task=PRETRAINING_TASK \\
 --remove_packed \\
 --streaming=false \\
 --skip_eval_check=false \\
---top_k=10 \\
+--top_k=TOP_K \\
+--min_freq=MIN_FREQ \\
 --dataset_backend="HF" \\
 --representation=REPRESENTATION \\
 --algorithm="Raw" \\
@@ -168,9 +168,9 @@ src/learn/train.py \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
---{BF_OR_FP}16 \\
---{BF_OR_FP}16_full_eval \\
---tf32={TF32} \\
+--bf16 \\
+--bf16_full_eval \\
+--tf32=true \\
 --gradient_checkpointing=true
 """
 
@@ -201,32 +201,41 @@ for representation in REPRESENTATIONS:
 for representation in REPRESENTATIONS:
     vocab_size = int(2 ** representation)
     embedding_size = max(8, int(256 / (2 ** (representation - 8))))
-    for seed in SEEDS:
-        jobname = f"nopack-clf-{representation}-{seed}"
-        body = BODY_CLF \
-            .replace("JOB_NAME", jobname) \
-            .replace("SEED", str(seed)) \
-            .replace("PRETRAINING_TASK", "None") \
-            .replace("REPRESENTATION", str(representation)) \
-            .replace("VOCAB_SIZE", str(vocab_size)) \
-            .replace("EMBEDDING_SIZE", str(embedding_size))
-        outfile = (OUTPUT / jobname).with_suffix(".sh")
-        with open(outfile, "w") as fp:
-            fp.write(body)
-        outfiles.append(outfile)
+    for task in TASKS:
+        top_k = 10 if task == "clf-bod" else None
+        min_freq = None if task == "clf-bod" else 2
+        for seed in SEEDS:
+            jobname = f"nopack-clf-{task}-{representation}-{seed}"
+            body = BODY_CLF \
+                .replace("JOB_NAME", jobname) \
+                .replace("REPRESENTATION", str(representation)) \
+                .replace("VOCAB_SIZE", str(vocab_size)) \
+                .replace("EMBEDDING_SIZE", str(embedding_size)) \
+                .replace("DOWNSTREAM_TASK", task) \
+                .replace("TOP_K", str(top_k)) \
+                .replace("MIN_FREQ", str(min_freq)) \
+                .replace("SEED", str(seed)) \
+                .replace("PRETRAINING_TASK", "None")
+            outfile = (OUTPUT / jobname).with_suffix(".sh")
+            with open(outfile, "w") as fp:
+                fp.write(body)
+            outfiles.append(outfile)
 
-        jobname = f"nopack-ft-{representation}-{seed}"
-        body = BODY_CLF \
-            .replace("JOB_NAME", jobname) \
-            .replace("SEED", str(seed)) \
-            .replace("PRETRAINING_TASK", "clm") \
-            .replace("REPRESENTATION", str(representation)) \
-            .replace("VOCAB_SIZE", str(vocab_size)) \
-            .replace("EMBEDDING_SIZE", str(embedding_size))
-        outfile = (OUTPUT / jobname).with_suffix(".sh")
-        with open(outfile, "w") as fp:
-            fp.write(body)
-        outfiles.append(outfile)
+            jobname = f"nopack-ft-{task}-{representation}-{seed}"
+            body = BODY_CLF \
+                .replace("JOB_NAME", jobname) \
+                .replace("REPRESENTATION", str(representation)) \
+                .replace("VOCAB_SIZE", str(vocab_size)) \
+                .replace("EMBEDDING_SIZE", str(embedding_size)) \
+                .replace("DOWNSTREAM_TASK", task) \
+                .replace("TOP_K", str(top_k)) \
+                .replace("MIN_FREQ", str(min_freq)) \
+                .replace("SEED", str(seed)) \
+                .replace("PRETRAINING_TASK", "clm")
+            outfile = (OUTPUT / jobname).with_suffix(".sh")
+            with open(outfile, "w") as fp:
+                fp.write(body)
+            outfiles.append(outfile)
 
 
 outfiles.sort(key=lambda p: str(p).split("-")[1])
