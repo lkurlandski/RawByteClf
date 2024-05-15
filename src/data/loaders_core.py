@@ -39,6 +39,10 @@ from src.data.label_datasets import (
 
 MIN_SAMPLES_PER_CLASS_PER_SPLIT = 1
 
+################################################################################
+# Utilities
+################################################################################
+
 
 SplitNames = Literal["tr", "vl", "ts"]
 FilesAndLabels = tuple[list[os.PathLike], Optional[Sequence[int]]]
@@ -60,6 +64,50 @@ class Materials:
             f"num_classes={len(self.id2label) if self.id2label is not None else None}\n"
             f"dist={pformat(self.dist) if self.dist is not None else None}"
         )
+
+
+def get_tr_vl_ts_files_and_labels(
+    files: list[os.PathLike],
+    labels: np.ndarray,
+    idx: Optional[dict[SplitNames, Sequence[int]]] = None,
+    tr_idx: Optional[Sequence[int]] = None,
+    vl_idx: Optional[Sequence[int]] = None,
+    ts_idx: Optional[Sequence[int]] = None,
+) -> tuple[dict[SplitNames, list[os.PathLike]], dict[SplitNames, np.ndarray]]:
+
+    if idx is not None:
+        if tr_idx is not None or vl_idx is not None or ts_idx is not None:
+            raise ValueError("Cannot specify both `idx` and `tr_idx`, `vl_idx`, `ts_idx`.")
+        tr_idx, vl_idx, ts_idx = idx["tr"], idx["vl"], idx["ts"]
+
+    labels = np.array(labels) if isinstance(labels, list) else labels
+    files = {
+        "tr": [files[i] for i in tr_idx],
+        "vl": [files[i] for i in vl_idx],
+        "ts": [files[i] for i in ts_idx],
+    }
+    labels = {
+        "tr": labels[tr_idx],
+        "vl": labels[vl_idx],
+        "ts": labels[ts_idx],
+    }
+    return files, labels
+
+
+def select_k_for_each_class(labels: list[int | str], k: int) -> list[int]:
+    unique = set(labels)
+    count = {s : 0 for s in unique}
+    idx = []
+    for i, l in enumerate(labels):
+        if count[l] < k:
+            count[l] += 1
+            idx.append(i)
+    return idx
+
+
+################################################################################
+# Splitting Datasets
+################################################################################
 
 
 def compute_integer_sizes(
@@ -111,17 +159,6 @@ def compute_float_sizes(
         return tr_size, vl_size, ts_size
 
     return tr_size / total, vl_size / total, ts_size / total
-
-
-def select_k_for_each_class(labels: list[int | str], k: int) -> list[int]:
-    unique = set(labels)
-    count = {s : 0 for s in unique}
-    idx = []
-    for i, l in enumerate(labels):
-        if count[l] < k:
-            count[l] += 1
-            idx.append(i)
-    return idx
 
 
 def tr_vl_ts_split_idx(
@@ -270,32 +307,9 @@ def tr_vl_ts_split_guarentee(
         return {s: [collection[i] for i in indices] for s, indices in idx.items()}
 
 
-def get_tr_vl_ts_files_and_labels(
-    files: list[os.PathLike],
-    labels: np.ndarray,
-    idx: Optional[dict[SplitNames, Sequence[int]]] = None,
-    tr_idx: Optional[Sequence[int]] = None,
-    vl_idx: Optional[Sequence[int]] = None,
-    ts_idx: Optional[Sequence[int]] = None,
-) -> tuple[dict[SplitNames, list[os.PathLike]], dict[SplitNames, np.ndarray]]:
-
-    if idx is not None:
-        if tr_idx is not None or vl_idx is not None or ts_idx is not None:
-            raise ValueError("Cannot specify both `idx` and `tr_idx`, `vl_idx`, `ts_idx`.")
-        tr_idx, vl_idx, ts_idx = idx["tr"], idx["vl"], idx["ts"]
-
-    labels = np.array(labels) if isinstance(labels, list) else labels
-    files = {
-        "tr": [files[i] for i in tr_idx],
-        "vl": [files[i] for i in vl_idx],
-        "ts": [files[i] for i in ts_idx],
-    }
-    labels = {
-        "tr": labels[tr_idx],
-        "vl": labels[vl_idx],
-        "ts": labels[ts_idx],
-    }
-    return files, labels
+################################################################################
+# Filtering Datasets
+################################################################################
 
 
 def filter_file_label_map(
@@ -357,6 +371,11 @@ def filter_packed_files(files: list[str], root: Optional[str | Path] = None) -> 
     return files
 
 
+################################################################################
+# Load File-label Maps
+################################################################################
+
+
 def get_bodmas_file_label_map() -> dict[os.PathLike, str]:
     """
     Get the files and labels associated with the BODMAS corpus.
@@ -371,21 +390,22 @@ def get_bodmas_file_label_map() -> dict[os.PathLike, str]:
     return files_and_labels
 
 
-def get_sorel_virus_total_file_label_map() -> dict[os.PathLike, str]:
+def get_sorel_virus_total_file_label_map(
+    extractor: str = "category",
+    refiner: str = "top",
+    k: int = 1,
+) -> dict[os.PathLike, str]:
     """
     Get the files and labels from VirusTotal reports for the SOREL dataset.
     """
 
     files = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
-    extractor = ThreatLabelExtractor.build("category")
-    refiner = ThreatLabelRefiner.build("top", k=1)
-    files_and_labels = get_label_mapping_virus_total_reports_sorel(files, extractor, refiner)
-    files_and_labels = {
-        f: l[0] for f, l in files_and_labels.items()
-        if isinstance(l, (list, tuple))
-    }
-    sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
-    files_and_labels = {os.path.join(sorel_path, sha): l for sha, l in files_and_labels.items()}
+    extractor = ThreatLabelExtractor.build(extractor)
+    refiner = ThreatLabelRefiner.build(refiner, k=k)
+    shas_and_labels = get_label_mapping_virus_total_reports_sorel(files, extractor, refiner)
+    shas_and_labels = {f: l[0] for f, l in shas_and_labels.items() if isinstance(l, (list, tuple))}
+    path = os.path.join(SOREL_PATH.as_posix(), "binaries")
+    files_and_labels = {os.path.join(path, f"{sha}.exe"): l for sha, l in shas_and_labels.items()}
     return files_and_labels
 
 
@@ -400,6 +420,13 @@ def get_sorel_original_labels_file_label_map(**kwds) -> dict[os.PathLike, str]:
     sorel_path = os.path.join(SOREL_PATH.as_posix(), "binaries")
     files_and_labels = {os.path.join(sorel_path, sha): l for sha, l in d.items()}
     return files_and_labels
+
+
+################################################################################
+# Load Materials
+# TODO: Refactor the k_samples_per_class and balanced_slice loaders into separate
+ # classes that are agnostic to whether or not we're using SOREL, EMBER, or BODMAS.
+################################################################################
 
 
 def get_materials_pretrain_sorel(
@@ -427,8 +454,11 @@ def get_materials_clf(
     remove_packed: bool = False,
 ) -> Materials:
 
-    num_splits = 2 if vl_size == 0 or tr_size == 0 else 3
-    min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * num_splits if min_freq is None else min_freq
+    if min_freq is None:
+        if vl_size == 0 or ts_size == 0:
+            min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * 2
+        else:
+            min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * 3
 
     if remove_packed:
         files_to_keep = filter_packed_files(list(files_and_labels.keys()))
@@ -562,6 +592,23 @@ def get_materials_clf_sorel(
 ) -> Materials:
 
     files_and_labels = get_sorel_original_labels_file_label_map()
+    return get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
+
+
+def get_materials_clf_sorel_vt(
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    extractor: str = "category",
+    refiner: str = "top",
+    k: int = 1,
+    **kwds,
+) -> Materials:
+    """
+    For multiclass-singlelabel classification, always use `refiner="top"` and `k=1`.
+    """
+
+    files_and_labels = get_sorel_virus_total_file_label_map(extractor, refiner, k)
     return get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
@@ -792,6 +839,39 @@ def get_materials_clf_goodware_vs_malware(
     return Materials(files, labels, id2label, label2id, dist)
 
 
+################################################################################
+# Scripts
+################################################################################
+
+
+def build_length_extrapolation_cache_files(tr_length_cutoff: int):
+
+    print(tr_length_cutoff)
+
+    tr_length_cutoffs = [
+        (2 ** 17),
+        (2 ** 18),
+        (2 ** 18) + (2 ** 17),
+        (2 ** 19),
+        (2 ** 19) + (2 ** 17),
+        (2 ** 19) + (2 ** 18),
+        (2 ** 19) + (2 ** 18) + (2 ** 17),
+        (2 ** 20),
+    ]
+
+    get_materials_clf_sorel_length_extrapolation(
+        tr_length_cutoff=tr_length_cutoff,
+        tr_size=120000,
+        vl_size=12000,
+        tr_length_cutoffs=tr_length_cutoffs,
+    )
+
+
+################################################################################
+# Tests
+################################################################################
+
+
 def test_get_materials_clf_sorel_length_extrapolation():
 
     print("-" * 100)
@@ -827,29 +907,6 @@ def test_get_materials_clf_sorel_length_extrapolation():
         print(f"{median(lengths)=}")
         if max(lengths) > cutoff:
             print("We have a problem, Watson.")
-
-
-def build_length_extrapolation_cache_files(tr_length_cutoff: int):
-
-    print(tr_length_cutoff)
-
-    tr_length_cutoffs = [
-        (2 ** 17),
-        (2 ** 18),
-        (2 ** 18) + (2 ** 17),
-        (2 ** 19),
-        (2 ** 19) + (2 ** 17),
-        (2 ** 19) + (2 ** 18),
-        (2 ** 19) + (2 ** 18) + (2 ** 17),
-        (2 ** 20),
-    ]
-
-    get_materials_clf_sorel_length_extrapolation(
-        tr_length_cutoff=tr_length_cutoff,
-        tr_size=120000,
-        vl_size=12000,
-        tr_length_cutoffs=tr_length_cutoffs,
-    )
 
 
 def test():
