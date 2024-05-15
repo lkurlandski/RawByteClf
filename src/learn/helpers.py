@@ -18,7 +18,7 @@ from pathlib import Path
 from pprint import pprint
 import shutil
 import sys
-from typing import Any, Hashable, Optional
+from typing import Any, Callable, Optional
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
@@ -48,14 +48,55 @@ def print_options(options: list[str]) -> str:
     return "One of " + ", ".join([f"`{x}`" for x in options[:-1]]) + f", or {options[-1]}."
 
 
+def str_to_type(s: Optional[Any], t: type) -> Optional[Any]:
+    if s is None:
+        return None
+    if isinstance(s, t):
+        return s
+    if not isinstance(s, str):
+        raise TypeError(f"Expected a string, got {type(s)}")
+    return t(s)
+
+
+def str_to_int(s: Optional[str]) -> Optional[int]:
+    return str_to_type(s, int)
+
+
+def str_to_float(s: Optional[str]) -> Optional[float]:
+    return str_to_type(s, float)
+
+
+def str_to_str(s: Optional[str]) -> Optional[str]:
+    return str_to_type(s, str)
+
+
+def str_to_bool(s: Optional[str]) -> Optional[bool]:
+    if s is None:
+        return None
+    if isinstance(s, bool):
+        return s
+    if not isinstance(s, str):
+        raise TypeError(f"Expected a string, got {type(s)}")
+
+    trues = ("true", "t", "yes", "y")
+    falses = ("false", "f", "no", "n")
+
+    if s.lower() in trues:
+        return True
+    if s.lower() in falses:
+        return False
+
+    raise ValueError(f"Got {s}; expected one of {trues + falses}.")
+
+
 @dataclass
 class Args:
 
     model_name_or_path: str = field()
     max_length: int = field()
-    task: str = field(metadata={"help": print_options(TASKS)})
+    task: str = field()
     representation: int = field(default=8)
-    algorithm: str = field(default="Raw", metadata={"help": print_options(TOKENIZERS)})
+    algorithm: str = field(default="Raw")
     vocab_size: Optional[int] = field(default=None)
     depth: int = field(default=1)
     streaming: bool = field(default=False)
@@ -65,20 +106,14 @@ class Args:
     ft_initialize_positional_embeddings: bool = field(default=False)
     root: Path = field(default=OUTPUT_PATH)
     do_tune: bool = field(default=False)
-    min_freq: Optional[int] = field(default=None)
-    top_k: Optional[int] = field(default=None)
-    arch_config_file: Optional[Path] = field(
-        default=None,
-        metadata={"help": "Location of a configuration file to use for the architecture."},
-    )
-    arch_config: Optional[dict | str] = field(
-        default=None,
-        metadata={"help": "Configuration dict to use for the architecture. Mutally exclusive with arch_config_file."},
-    )
+    min_freq: Optional[str] = field(default=None)
+    top_k: Optional[str] = field(default=None)
+    arch_config_file: Optional[Path] = field(default=None)
+    arch_config: Optional[dict | str] = field(default=None)
     subset: Optional[int] = field(default=None)
-    tr_size: float = field(default=0.8, metadata={"help": "If > 1, then it is the number of samples."})
-    vl_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
-    ts_size: float = field(default=0.1, metadata={"help": "If > 1, then it is the number of samples."})
+    tr_size: float = field(default=0.8)
+    vl_size: float = field(default=0.1)
+    ts_size: float = field(default=0.1)
     skip_eval_check: bool = field(default=False)
     auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
     enforce_cutoff: Optional[bool] = field(default=None)
@@ -95,16 +130,21 @@ class Args:
     pretraining_task: Optional[str] = field(default=None)
 
     def __post_init__(self) -> None:
-        self.ft_freeze_positional_embeddings = str_or_bool_to_str(self.ft_freeze_positional_embeddings)
-        self.ft_duplicate_positional_embeddings = str_or_bool_to_str(self.ft_duplicate_positional_embeddings)
-        self.ft_initialize_positional_embeddings = str_or_bool_to_str(self.ft_initialize_positional_embeddings)
-        self.streaming = str_or_bool_to_str(self.streaming)
-        self.exit_after_map = str_or_bool_to_str(self.exit_after_map)
-        self.do_tune = str_or_bool_to_str(self.do_tune)
-        self.skip_eval_check = str_or_bool_to_str(self.skip_eval_check)
-        self.auto_find_batch_size_and_gradient_accumulation_steps = str_or_bool_to_str(self.auto_find_batch_size_and_gradient_accumulation_steps)
-        self.enforce_cutoff = str_or_bool_to_str(self.enforce_cutoff) if self.enforce_cutoff is not None else None
+        # Simple type conversions from string into the appropriate type.
+        self.top_k = str_to_int(self.top_k)
+        self.min_freq = str_to_int(self.min_freq)
+        self.ft_freeze_positional_embeddings = str_to_bool(self.ft_freeze_positional_embeddings)
+        self.ft_duplicate_positional_embeddings = str_to_bool(self.ft_duplicate_positional_embeddings)
+        self.ft_initialize_positional_embeddings = str_to_bool(self.ft_initialize_positional_embeddings)
+        self.streaming = str_to_bool(self.streaming)
+        self.exit_after_map = str_to_bool(self.exit_after_map)
+        self.do_tune = str_to_bool(self.do_tune)
+        self.skip_eval_check = str_to_bool(self.skip_eval_check)
+        self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
+        self.enforce_cutoff = str_to_bool(self.enforce_cutoff)
+        self.pretraining_task = str_to_str(self.pretraining_task)
 
+        # Parse the architecture configuration from JSON or from a file.
         if self.arch_config_file and self.arch_config:
             raise ValueError("Cannot specify both arch_config_file and arch_config.")
         if self.arch_config and isinstance(self.arch_config, str):
@@ -115,6 +155,7 @@ class Args:
             with open(self.arch_config_file) as fp:
                 self.arch_config = json.load(fp)
 
+        # Cast the train, validation, and test size to the appropriate type.
         self.tr_size = float_to_int(self.tr_size) if self.tr_size > 1 else self.tr_size
         self.vl_size = float_to_int(self.vl_size) if self.vl_size > 1 else self.vl_size
         self.ts_size = float_to_int(self.ts_size) if self.ts_size > 1 else self.ts_size
@@ -126,11 +167,9 @@ class Args:
         self.vl_size = IntOrFloat(self.vl_size) if self.vl_size == 0.0 else self.vl_size
         self.ts_size = IntOrFloat(self.ts_size) if self.ts_size == 0.0 else self.ts_size
 
+        # Set dependent default values.
         if self.data_read_bytes is None:
             self.data_read_bytes = int(self.max_length * self.representation // 8)
-
-        if self.pretraining_task is not None and self.pretraining_task.lower() == "none":
-            self.pretraining_task = None
 
 
 class OutputHelper:
