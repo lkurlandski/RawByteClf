@@ -4,6 +4,11 @@ FIXME:
 - The casual language models, especially with 16-bit byte representation,
  require more than 2 days. The 8-bit and 16-bit representations likely require
  02-20:00:00 and 04-12:00:00 respectively.
+- The causal language models probably do not need this much data to converge
+ at the current model sizes. I'd guess that they'd converge to the same loss
+ with half as much data.
+- The classifiers pretty much converge after a single epoch. 10 epochs is simply
+ not nessecary.
 """
 
 import os
