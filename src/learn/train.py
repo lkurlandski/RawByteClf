@@ -1085,7 +1085,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dist = materials.dist
         num_classes = len(id2label)
         weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
-    print(f"{materials=}")
+    print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
 
 
@@ -1111,6 +1111,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             max_length=args.data_read_bytes,
         )
         print_dataset_hf(dataset)
+        print(BR)
 
         if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES + ENCRYPTION_TYPES:
             preprocess_fns = []
@@ -1148,6 +1149,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             num_proc=num_proc,
         ))
         print_dataset_hf(dataset)
+        print(BR)
 
         if args.exit_after_map:
             print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
@@ -1187,6 +1189,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             preprocess_fn=preprocess_fn,
         )
         print_dataset_pt(dataset)
+        print(BR)
 
     config = get_config(
         args.model_name_or_path,
@@ -1237,8 +1240,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         compute_metrics = None
 
     print_data_collator(data_collator)
+    print(BR)
     print(f"{compute_metrics=}")
-    print(BR, flush=True)
+    print(BR)
 
     callbacks = [UtilCallback(False)]
     if args.early_stopping:
@@ -1246,6 +1250,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if MODEL_TYPE == "MC":
         callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")
+    print(BR)
 
     if args.task[0:3] == "clf":
         ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
