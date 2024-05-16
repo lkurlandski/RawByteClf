@@ -298,7 +298,12 @@ MODEL_NAME_TO_CONFIG_CLASS = {
 
 class TrainingArguments(HfTrainingArguments):
 
-    def __init__(self, **kwds):
+    # Analogue to save_steps and eval_steps.
+    # saves_per_epoch: Optional[float] = field(default=None)
+    # evals_per_epoch: Optional[float] = field(default=None)
+
+    def __init__(self, saves_per_epoch: Optional[float] = None, evals_per_epoch: Optional[float] = None, **kwds):
+    # def __init__(self, **kwds):
         # If do_eval flag is not passed, as would be the case when passing do_tune, it is set to
         # True by the transformers.TrainingArguments. When we pass do_tune, we do not want the
         # do_eval flag to be set to True, so we adjust the value as needed at the end of __init__.
@@ -342,6 +347,10 @@ class TrainingArguments(HfTrainingArguments):
                 warnings.warn("UnavailableNumericType: Requested tf32. Using fp32 instead.")
                 kwds["tf32"] = False
 
+        pprint(kwds)
+
+        # self.saves_per_epoch = kwds.pop("saves_per_epoch")
+        # self.evals_per_epoch = kwds.pop("evals_per_epoch")
         super().__init__(**kwds)
 
         # When training with multiple GPUs, if the number of steps is not divisible by the number of
@@ -358,6 +367,41 @@ class TrainingArguments(HfTrainingArguments):
                 self.dispatch_batches = False
 
         self.do_eval = do_eval
+
+    def epochs_to_steps(self, num_train_examples: int) -> tuple[Optional[int], Optional[int], Optional[int]]:
+        """
+        If epoch information, e.g., saves_per_epoch, evals_per_epoch, num_train_epochs is provided, this
+         function will calculate the corresponding values for save_steps, eval_steps, and max_steps.
+         The epoch information for saves_per_epoch and evals_per_epoch is given priority over the save_steps
+         and eval_steps information. If the max_steps is provided, it is given priority over
+         num_train_epochs. This is roughly in-line with the natural behavior of the Trainer.
+
+        Returns
+        -------
+        tuple[Optional[int], Optional[int], Optional[int]]: max_steps, save_steps, eval_steps
+        """
+        max_steps = self.max_steps
+        save_steps = self.save_steps
+        eval_steps = self.eval_steps
+
+        if self.max_steps is not None and self.max_steps != -1:
+            max_steps = compute_total_steps(
+                num_train_examples,
+                self.num_train_epochs,
+                per_device_batch_size=self.per_device_train_batch_size,
+                n_accumulation_steps=self.gradient_accumulation_steps,
+                n_devices=self.world_size,
+            )
+
+        if self.saves_per_epoch is not None:
+            num_evals = math.ceil(self.num_train_epochs * self.saves_per_epoch)
+            save_steps = math.floor(max_steps, num_evals)
+
+        if self.evals_per_epoch is not None:
+            num_saves = math.ceil(self.num_train_epochs * self.evals_per_epoch)
+            eval_steps = math.floor(max_steps, num_saves)
+
+        return max_steps, save_steps, eval_steps
 
     def hf_training_arguments_object(self) -> HfTrainingArguments:
         return object_from_superset_of_constructor_kwds(HfTrainingArguments, **self.__dict__)
@@ -1050,19 +1094,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
 
-    # If we have apriori knowledge of the length of the dataset, we can compute the number of steps
-    # from the number of training epochs. This lets us use `epochs` instead of max_steps from the CLI.
+    # If we know the length of the dataset, we can compute the number of steps from training epochs.
+    # This lets us use epochs for training in streaming mode and eval/save multiple times per epoch.
+    kwds = {}
+    max_steps, save_steps, eval_steps = training_arguments.epochs_to_steps(len(materials.files["tr"]))
     if args.streaming and (training_arguments.max_steps == -1 or training_arguments.max_steps is None):
-        max_steps = compute_total_steps(
-            len(materials.files["tr"]),
-            training_arguments.num_train_epochs,
-            None,
-            training_arguments.per_device_train_batch_size,
-            training_arguments.gradient_accumulation_steps,
-            training_arguments.world_size,
-        )
-        assert isinstance(max_steps, int)
-        training_arguments = replace(training_arguments, max_steps=max_steps)
+        kwds.update({"max_steps": max_steps})
+    if training_arguments.saves_per_epoch is not None:
+        kwds.update({"save_steps": save_steps, "save_strategy": "steps"})
+    if training_arguments.evals_per_epoch is not None:
+        kwds.update({"eval_steps": eval_steps, "eval_strategy": "steps"})
+    training_arguments = replace(training_arguments, **kwds)
+
+    print(f"{training_arguments=}")
+    sys.exit(0)
 
 
     dataset: DatasetDict | IterableDatasetDict | MapBinaryDatasetDict | IterableBinaryDatasetDict

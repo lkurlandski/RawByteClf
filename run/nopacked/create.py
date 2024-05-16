@@ -152,8 +152,10 @@ src/learn/train.py \\
 --output_dir=tmp \\
 --save_strategy="epoch" \\
 --evaluation_strategy="epoch" \\
---num_train_epochs=10 \\
+--num_train_epochs=1 \\
 --logging_steps={LOGGING_STEPS} \\
+--saves_per_epoch=10 \\
+--evals_per_epoch=10 \\
 --dataloader_num_workers={3} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
