@@ -253,6 +253,8 @@ class OutputHelper:
             )
             p = oh.model_path / f"task--{pretraining_task}"
             completed = list(p.rglob(OutputHelper.FINAL_PATH))
+            # Ignore sub-classification experiments.
+            completed = [p for p in completed if all("checkpoint-" not in part for part in p.parts)]
             if len(completed) == 0:
                 raise FileNotFoundError(f"No completed experiments found for {oh.task_path=}")
             if len(completed) > 1:
@@ -323,7 +325,7 @@ class OutputHelper:
         return self.path.as_posix()
 
     def __str__(self) -> str:
-        s += "\n"
+        s = ""
         for i, p in enumerate(self.path.parts):
             s += f"{' ' * (i * 2)} |-- {p}\n"
 

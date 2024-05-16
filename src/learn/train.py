@@ -1005,6 +1005,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.pretraining_task,
     )
     print(f"Output Helper:\n{str(oh)}")
+    print(BR)
 
     prediction_loss_only = args.task in ("mlm", "clm")
     training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
@@ -1327,10 +1328,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             return trainer.predict(dataset["vl"]), batch_size
 
-        print("Initial Evaluation...", flush=True)
         initial_output: PredictionOutput = None
         max_per_device_eval_batch_size: int = None
         if not args.skip_eval_check:
+            print("Initial Evaluation...", flush=True)
             initial_output, max_per_device_eval_batch_size = _eval()  # pylint: disable=no-value-for-parameter
             model = model.to(torch.float32).to("cpu")
             torch.cuda.empty_cache()
