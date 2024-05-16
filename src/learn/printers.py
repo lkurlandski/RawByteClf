@@ -13,16 +13,23 @@ from transformers import (
 
 def print_tokenizer(tokenizer: PreTrainedTokenizerFast) -> None:
     keys = [
-        "name_or_path", "vocab_size", "model_max_length", "is_fast", "padding_side",
-        "truncation_side", "clean_up_tokenization_spaces", "special_tokens_map",
+        "name_or_path",
+        "vocab_size",
+        "model_max_length",
+        "is_fast",
+        "padding_side",
+        "truncation_side",
+        "clean_up_tokenization_spaces",
     ]
+
+    tokens_to_ids = {k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)}
+    specials = [(k, v, tokens_to_ids[v]) for k, v in tokenizer.special_tokens_map.items()]
 
     print(f"Tokenizer: {tokenizer.__class__.__name__}")
     for k in keys:
         print(f"\t{k}: {getattr(tokenizer, k)}")
-    special_token_map = {k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)}
-    print(f"\tspecial_token_map: {special_token_map}")
     print(f"\tmodel_input_names: {tokenizer.model_input_names}")
+    print(f"\tspecials: {pformat(specials)}")
 
 
 def print_data_collator(data_collator: DefaultDataCollator) -> None:
