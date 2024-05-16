@@ -666,6 +666,9 @@ class PackingMap(UserDict):
                 if not fp.read(1) == "}".encode():
                     raise ValueError(f"File is invalid JSON: {f}")
 
+        if self.num_workers is not None:
+            self.num_workers = min(self.num_workers, len(self.partial_files))
+
         super().__init__(self.get_packing_map())
 
     @property

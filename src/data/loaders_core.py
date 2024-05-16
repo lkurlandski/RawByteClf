@@ -28,7 +28,7 @@ from sklearn.utils import shuffle
 from tqdm import tqdm
 
 from src.utils import get_max_keys_from_dict
-from src.data.cfg import SOREL_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_META_CSV
+from src.data.cfg import SOREL_PATH, BODMAS_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_META_CSV
 from src.data.detect_packing_sorel import PackingMap, universal_packing_map
 from src.data.label_datasets import (
     get_label_mapping_virus_total_reports_sorel,
@@ -354,7 +354,7 @@ def filter_packed_files(files: list[str], root: Optional[str | Path] = None) -> 
     kwds = {
         "lazy": False,
         "chunked": True,
-        "num_workers": len(os.sched_getaffinity(0)),
+        "num_workers": min(len(os.sched_getaffinity(0)), 20),
     }
     if root is not None:
         is_packed = PackingMap(root=root, **kwds)
@@ -437,7 +437,7 @@ def get_materials_pretrain_sorel(
 ) -> Materials:
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     if remove_packed:
-        files = filter_packed_files(files)
+        files = filter_packed_files(files, root=SOREL_PATH / "diec")
 
     tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
     return Materials(files=tr_vl_ts_files)
@@ -452,6 +452,7 @@ def get_materials_clf(
     min_freq: Optional[int] = None,
     min_size: int = 0,
     remove_packed: bool = False,
+    packing_root: Optional[Path] = None,
 ) -> Materials:
 
     if min_freq is None:
@@ -461,7 +462,7 @@ def get_materials_clf(
             min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * 3
 
     if remove_packed:
-        files_to_keep = filter_packed_files(list(files_and_labels.keys()))
+        files_to_keep = filter_packed_files(list(files_and_labels.keys()), root=packing_root)
         files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
     # Filter out the files that are not in the top_k most frequent labels
@@ -491,7 +492,9 @@ def get_materials_clf_bodmas(
 ) -> Materials:
 
     files_and_labels = get_bodmas_file_label_map()
-    return get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
+    return get_materials_clf(
+        files_and_labels, tr_size, vl_size, ts_size, packing_root=BODMAS_PATH / "diec", **kwds
+    )
 
 
 def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
