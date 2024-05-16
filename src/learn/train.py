@@ -296,29 +296,28 @@ MODEL_NAME_TO_CONFIG_CLASS = {
 }
 
 
+@dataclass
 class TrainingArguments(HfTrainingArguments):
 
     # Analogue to save_steps and eval_steps.
-    # saves_per_epoch: Optional[float] = field(default=None)
-    # evals_per_epoch: Optional[float] = field(default=None)
+    saves_per_epoch: Optional[float] = field(default=None)
+    evals_per_epoch: Optional[float] = field(default=None)
 
-    def __init__(self, saves_per_epoch: Optional[float] = None, evals_per_epoch: Optional[float] = None, **kwds):
-    # def __init__(self, **kwds):
+    def __post_init__(self) -> None:
         # If do_eval flag is not passed, as would be the case when passing do_tune, it is set to
         # True by the transformers.TrainingArguments. When we pass do_tune, we do not want the
         # do_eval flag to be set to True, so we adjust the value as needed at the end of __init__.
-        do_eval = kwds.get("do_eval", False)
+        do_eval = self.do_eval
 
         # If resume_from_checkpoint is passed as a flag without an argument, it is not set to True
         # by the transformers.TrainingArguments. This let's us pass in "true" from the command line,
         # and have the flag be set to True, i.e., resume training from the last checkpoint.
-        if kwds.get("resume_from_checkpoint", None):
-            try:
-                kwds["resume_from_checkpoint"] = str_or_bool_to_str(kwds["resume_from_checkpoint"])
-            except ValueError:
-                pass
+        if isinstance(self.resume_from_checkpoint, str) and self.resume_from_checkpoint.lower() == "true":
+            self.resume_from_checkpoint = True
 
-        kwds["metric_for_best_model"] = kwds.pop("metric_for_best_model", "eval_loss")
+        # If no metric is supplied, eval_loss is a good one :)
+        if self.metric_for_best_model is None:
+            self.metric_for_best_model = "eval_loss"
 
         # Pytorch recommends setting this parameter to False.
         # https://pytorch.org/docs/stable/checkpoint.html
@@ -328,30 +327,26 @@ class TrainingArguments(HfTrainingArguments):
         # but it seems to work in the non-DDP scenario, so let's just keep it as a default.
         # I also cannot figure out how to properly set this from the CLI, so its got to be done
         # within the Python code itself.
-        if kwds.pop("gradient_checkpointing", False):
-            if kwds["gradient_checkpointing_kwargs"] is None:
-                kwds["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
+        if self.gradient_checkpointing:
+            if self.gradient_checkpointing_kwargs is None:
+                self.gradient_checkpointing_kwargs = {"use_reentrant": False}
 
         # Assumes we will not be using mixed precision on the CPU.
         if not is_torch_bf16_gpu_available():
-            if kwds["bf16"]:
+            if self.bf16:
                 warnings.warn("UnavailableNumericType: Requested bf16. Using fp16 instead.")
-                kwds["fp16"] = True
-                kwds["bf16"] = False
-            if kwds["bf16_full_eval"]:
-                kwds["fp16_full_eval"] = True
-                kwds["bf16_full_eval"] = False
+                self.fp16 = True
+                self.bf16 = False
+            if self.bf16_full_eval:
+                self.fp16_full_eval = True
+                self.bf16_full_eval = False
                 warnings.warn("UnavailableNumericType: Requested bf16_full_eval. Using fp16 instead.")
         if not is_torch_tf32_available():
-            if kwds["tf32"]:
+            if self.tf32:
                 warnings.warn("UnavailableNumericType: Requested tf32. Using fp32 instead.")
-                kwds["tf32"] = False
+                self.tf32 = False
 
-        pprint(kwds)
-
-        # self.saves_per_epoch = kwds.pop("saves_per_epoch")
-        # self.evals_per_epoch = kwds.pop("evals_per_epoch")
-        super().__init__(**kwds)
+        super().__post_init__()
 
         # When training with multiple GPUs, if the number of steps is not divisible by the number of
         # devices, the sequence lengths for a batch prepared for one device might not equal the
@@ -384,7 +379,7 @@ class TrainingArguments(HfTrainingArguments):
         save_steps = self.save_steps
         eval_steps = self.eval_steps
 
-        if self.max_steps is not None and self.max_steps != -1:
+        if self.max_steps is None or self.max_steps == -1:
             max_steps = compute_total_steps(
                 num_train_examples,
                 self.num_train_epochs,
@@ -395,11 +390,11 @@ class TrainingArguments(HfTrainingArguments):
 
         if self.saves_per_epoch is not None:
             num_evals = math.ceil(self.num_train_epochs * self.saves_per_epoch)
-            save_steps = math.floor(max_steps, num_evals)
+            save_steps = int(math.floor(max_steps / num_evals))
 
         if self.evals_per_epoch is not None:
             num_saves = math.ceil(self.num_train_epochs * self.evals_per_epoch)
-            eval_steps = math.floor(max_steps, num_saves)
+            eval_steps = int(math.floor(max_steps / num_saves))
 
         return max_steps, save_steps, eval_steps
 
@@ -982,6 +977,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     torch.random.manual_seed(training_arguments.seed)
 
     print(f"args={pformat(args)}")
+    print(BR, flush=True)
+
+    print(f"training_arguments={pformat(training_arguments)}")
+    print(BR, flush=True)
 
     MODEL_TYPE: Literal["HF", "MC"] = get_model_type(args.model_name_or_path)
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
@@ -1008,12 +1007,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{oh=}")
     print(BR, flush=True)
 
-    training_arguments = replace(
-        training_arguments,
-        prediction_loss_only=args.task in ("mlm", "clm"),  # NOTE 0
-    )
-    print(f"{training_arguments=}")
-    print(BR, flush=True)
+    prediction_loss_only = args.task in ("mlm", "clm")
+    training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
 
     tokenizer = get_tokenizer(
         representation=args.representation,
@@ -1103,11 +1098,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if training_arguments.saves_per_epoch is not None:
         kwds.update({"save_steps": save_steps, "save_strategy": "steps"})
     if training_arguments.evals_per_epoch is not None:
-        kwds.update({"eval_steps": eval_steps, "eval_strategy": "steps"})
+        kwds.update({"eval_steps": eval_steps, "evaluation_strategy": "steps"})
     training_arguments = replace(training_arguments, **kwds)
-
-    print(f"{training_arguments=}")
-    sys.exit(0)
 
 
     dataset: DatasetDict | IterableDatasetDict | MapBinaryDatasetDict | IterableBinaryDatasetDict
