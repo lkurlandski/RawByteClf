@@ -104,7 +104,7 @@ src/learn/train.py \\
 --bf16 \\
 --bf16_full_eval \\
 --tf32=true \\
---gradient_checkpointing=true
+--gradient_checkpointing=false
 """
 
 
@@ -178,7 +178,7 @@ src/learn/train.py \\
 --bf16 \\
 --bf16_full_eval \\
 --tf32=true \\
---gradient_checkpointing=true
+--gradient_checkpointing=false
 """
 
 
