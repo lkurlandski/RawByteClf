@@ -114,7 +114,7 @@ BODY_CLF = f"""#!/bin/bash -l
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-2:00:00
+#SBATCH --time=ALLOC_TIME
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks={4}
@@ -211,6 +211,7 @@ for representation in REPRESENTATIONS:
     for task in TASKS:
         top_k = 10 if task == "clf-bod" else None
         min_freq = None if task == "clf-bod" else 2
+        alloc_time = "00-00:30:00" if task == "clf-bod" else "00-03:00:00"
         for seed in SEEDS:
             jobname = f"nopack-clf-{task}-{representation}-{seed}"
             body = BODY_CLF \
@@ -221,6 +222,7 @@ for representation in REPRESENTATIONS:
                 .replace("DOWNSTREAM_TASK", task) \
                 .replace("TOP_K", str(top_k)) \
                 .replace("MIN_FREQ", str(min_freq)) \
+                .replace("ALLOC_TIME", alloc_time) \
                 .replace("SEED", str(seed)) \
                 .replace("PRETRAINING_TASK", "None")
             outfile = (OUTPUT / jobname).with_suffix(".sh")
@@ -237,6 +239,7 @@ for representation in REPRESENTATIONS:
                 .replace("DOWNSTREAM_TASK", task) \
                 .replace("TOP_K", str(top_k)) \
                 .replace("MIN_FREQ", str(min_freq)) \
+                .replace("ALLOC_TIME", alloc_time) \
                 .replace("SEED", str(seed)) \
                 .replace("PRETRAINING_TASK", "clm")
             outfile = (OUTPUT / jobname).with_suffix(".sh")
