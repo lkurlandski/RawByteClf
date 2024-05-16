@@ -257,9 +257,7 @@ class OutputHelper:
                 raise FileNotFoundError(f"No completed experiments found for {oh.task_path=}")
             if len(completed) > 1:
                 raise FileNotFoundError(f"Multiple completed experiments found for {oh.task_path=}")
-            print(completed[0])
             model_name_or_path = get_highest_path(completed[0] / "checkpoints", lstrip="checkpoint-").as_posix()
-            print(f"Finetuning with {model_name_or_path=}")
 
         if Path(model_name_or_path).exists():
             self.root = Path(model_name_or_path)
@@ -325,7 +323,11 @@ class OutputHelper:
         return self.path.as_posix()
 
     def __str__(self) -> str:
-        return self.path.as_posix()
+        s += "\n"
+        for i, p in enumerate(self.path.parts):
+            s += f"{' ' * (i * 2)} |-- {p}\n"
+
+        return s
 
     @property
     def trainer_config(self) -> dict:

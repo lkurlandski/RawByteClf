@@ -1004,8 +1004,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         training_arguments.__dict__,
         args.pretraining_task,
     )
-    print(f"{oh=}")
-    print(BR, flush=True)
+    print(f"Output Helper:\n{str(oh)}")
 
     prediction_loss_only = args.task in ("mlm", "clm")
     training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
@@ -1302,6 +1301,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print(f"{count_parameters(model, requires_grad=False)=}")
             print(f"{count_parameters(model, requires_grad=True)=}")
             print(BR, flush=True)
+
+
+        # Final print-out of the training arguments, after any modifications that may have been made
+        print(f"training_arguments={pformat(training_arguments)}")
+        print(BR, flush=True)
 
 
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
