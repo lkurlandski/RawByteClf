@@ -471,5 +471,5 @@ class OutputHelper:
     def get_trainer_path_args(self) -> list[str]:
         d = {k: self.trainer_config.get(k, None) for k in self.TRAINER_KEYS}
         d = {k: v.value if isinstance(v, Enum) else v for k, v in d.items()}
-        d["per_device_batch_size"] = d["per_device_batch_size"] * d.pop("world_size")
+        d["per_device_train_batch_size"] = d["per_device_train_batch_size"] * self.trainer_config["world_size"]
         return [f"{k}--{v}" for k, v in d.items()]
