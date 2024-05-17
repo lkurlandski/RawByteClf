@@ -118,7 +118,7 @@ BODY_CLF = f"""#!/bin/bash -l
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks={4}
-#SBATCH --mem={16}G
+#SBATCH --mem=MEMORY
 #SBATCH --gres=gpu:a100:1
 
 
@@ -158,9 +158,9 @@ src/learn/train.py \\
 --evals_per_epoch=10 \\
 --dataloader_num_workers={3} \\
 --optim="adamw_torch" \\
---learning_rate="1e-3" \\
+--learning_rate="1e-4" \\
 --lr_scheduler_type="linear" \\
---warmup_ratio=0.00 \\
+--warmup_ratio=0.05 \\
 --weight_decay=0.01 \\
 --adam_beta1=0.900 \\
 --adam_beta2=0.999 \\
@@ -172,6 +172,7 @@ src/learn/train.py \\
 --per_device_train_batch_size={PER_DEVICE_TRAIN_BATCH_SIZE} \\
 --per_device_eval_batch_size={PER_DEVICE_EVAL_BATCH_SIZE} \\
 --gradient_accumulation_steps={CLF_GRADIENT_ACCUMULATION_STEPS} \\
+--eval_accumulation_steps=64 \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
@@ -184,6 +185,8 @@ src/learn/train.py \\
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
 for f in OUTPUT.glob("*.sh"):
+    if f.name == "run.sh":
+        continue
     f.unlink()
 
 
@@ -211,7 +214,8 @@ for representation in REPRESENTATIONS:
     for task in TASKS:
         top_k = 10 if task == "clf-bod" else None
         min_freq = None if task == "clf-bod" else 2
-        alloc_time = "00-00:30:00" if task == "clf-bod" else "00-03:00:00"
+        alloc_time = "00-00:30:00" if task == "clf-bod" else "01-00:00:00"
+        memory = "16G" if task == "clf-bod" else "48G"
         for seed in SEEDS:
             jobname = f"nopack-clf-{task}-{representation}-{seed}"
             body = BODY_CLF \
@@ -223,6 +227,7 @@ for representation in REPRESENTATIONS:
                 .replace("TOP_K", str(top_k)) \
                 .replace("MIN_FREQ", str(min_freq)) \
                 .replace("ALLOC_TIME", alloc_time) \
+                .replace("MEMORY", memory) \
                 .replace("SEED", str(seed)) \
                 .replace("PRETRAINING_TASK", "None")
             outfile = (OUTPUT / jobname).with_suffix(".sh")
@@ -240,6 +245,7 @@ for representation in REPRESENTATIONS:
                 .replace("TOP_K", str(top_k)) \
                 .replace("MIN_FREQ", str(min_freq)) \
                 .replace("ALLOC_TIME", alloc_time) \
+                .replace("MEMORY", memory) \
                 .replace("SEED", str(seed)) \
                 .replace("PRETRAINING_TASK", "clm")
             outfile = (OUTPUT / jobname).with_suffix(".sh")
