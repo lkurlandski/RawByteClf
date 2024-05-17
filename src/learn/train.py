@@ -1007,7 +1007,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.top_k,
         args.tr_samples_per_class,
         args.tr_length_cutoff,
-        training_arguments.__dict__,
+        training_arguments.__dict__ | {"world_size": training_arguments.world_size},
         args.pretraining_task,
     )
     print(f"Output Helper:\n{str(oh)}")
@@ -1371,7 +1371,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 per_device_eval_batch_size=per_device_eval_batch_size,
                 gradient_accumulation_steps=gradient_accumulation_steps,
             )
-            oh.trainer_config = training_arguments.__dict__
+            oh.trainer_config = training_arguments.__dict__ | {"world_size": training_arguments.world_size}
             oh.mkdir()
 
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
@@ -1392,6 +1392,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if args.auto_find_batch_size_and_gradient_accumulation_steps:
             trainer_output: TrainOutput = _train()  # pylint: disable=no-value-for-parameter
         else:
+            oh.trainer_config = training_arguments.__dict__ | {"world_size": training_arguments.world_size}
             oh.mkdir()
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
             trainer = ModelTrainer(

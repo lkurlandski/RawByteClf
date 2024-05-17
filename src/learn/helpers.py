@@ -1,8 +1,10 @@
 """
 Utilies to help with the output of the training process.
 
-# FIXME: put seed at the very end. Include num_train_epochs, etc. Do a big refactor of this after
-# next round of experiments is complete.
+FIXME:
+ - add world_size to the output path instead of multiplying with per_device_train_batch_size
+ - the mutability of the OutputHelper's trainer_config is confusing; 
+    refactor to contain a reference to a TrainingArguments?
 """
 
 # pylint: disable=wrong-import-position
@@ -313,6 +315,8 @@ class OutputHelper:
         else:
             raise ValueError(f"Unknown task: {task}")
 
+        if "world_size" not in trainer_config:
+            raise KeyError("world_size not found in trainer_config.")
         self._trainer_config = trainer_config
         self._trainer_args = self.get_trainer_path_args()
 
@@ -337,6 +341,8 @@ class OutputHelper:
 
     @trainer_config.setter
     def trainer_config(self, config: dict) -> None:
+        if "world_size" not in config:
+            raise KeyError("world_size not found in trainer_config.")
         self._trainer_config = config
         self._trainer_args = self.get_trainer_path_args()
 
@@ -465,4 +471,5 @@ class OutputHelper:
     def get_trainer_path_args(self) -> list[str]:
         d = {k: self.trainer_config.get(k, None) for k in self.TRAINER_KEYS}
         d = {k: v.value if isinstance(v, Enum) else v for k, v in d.items()}
+        d["per_device_batch_size"] = d["per_device_batch_size"] * d.pop("world_size")
         return [f"{k}--{v}" for k, v in d.items()]
