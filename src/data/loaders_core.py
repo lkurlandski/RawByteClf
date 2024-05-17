@@ -476,6 +476,8 @@ def get_materials_clf(
     files = list(files_and_labels.keys())
     labels = np.array([label2id[files_and_labels[f]] for f in files])
 
+    files, labels = shuffle(files, labels)
+
     idx = tr_vl_ts_split_idx_guarentee(
         labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT
     )
