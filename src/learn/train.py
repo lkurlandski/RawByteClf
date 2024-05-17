@@ -91,6 +91,7 @@ from transformers.trainer_utils import (
     TrainOutput,
     PREFIX_CHECKPOINT_DIR,
 )
+from transformers.trainer_pt_utils import AcceleratorConfig
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
 from transformers.utils import (
     CONFIG_NAME,
@@ -357,8 +358,13 @@ class TrainingArguments(HfTrainingArguments):
         # per_device_train_batch or simply set the dispatch_batches flag to false.
         if self.world_size > 1:
             if hasattr(self, "accelerator_config"):
-                self.accelerator_config["dispatch_batches"] = False
-            else:
+                if isinstance(self.accelerator_config, AcceleratorConfig):
+                    self.accelerator_config.dispatch_batches = False
+                elif isinstance(self.accelerator_config, dict):
+                    self.accelerator_config["dispatch_batches"] = False
+                else:
+                    raise TypeError(f"Invalid type for accelerator_config: {type(self.accelerator_config)}")
+            else:  # Place this in the else block to avoid a deprecation warning
                 self.dispatch_batches = False
 
         self.do_eval = do_eval
