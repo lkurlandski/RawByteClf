@@ -317,16 +317,23 @@ def filter_file_label_map(
     top_k: Optional[int] = None,
     min_freq: int = 1,
     min_size: int = 0,
+    max_size: int = sys.maxsize,
+    must_exist: bool = True,
 ) -> dict[os.PathLike, str]:
     """
     Remove samples from the file label map whose labels are not in the top_k most frequent labels
     or whose frequency is less than min_freq. The default values do not filter at all.
     """
+    if must_exist:  # Remove files that do not exist on the current system.
+        files_and_labels = {
+            f: l for f, l in files_and_labels.items() if os.path.exists(f)
+        }
+    if min_size > 0 or max_size < sys.maxsize:  # Remove files that are too small or too large, if they exist.
+        files_and_labels = {
+            f: l for f, l in files_and_labels.items() if
+            (not os.path.exists(f) or (min_size <= os.path.getsize(f) <= max_size))
+        }
 
-    files_and_labels = {
-        f: l for f, l in files_and_labels.items()
-        if os.path.exists(f) and os.path.getsize(f) >= min_size
-    }
     dist: Counter[str, int] = Counter(files_and_labels.values())
     keep: list[str] = [l for l, n in dist.most_common(top_k) if n >= min_freq]
     files_and_labels: dict[Path, str] = {
@@ -453,6 +460,7 @@ def get_materials_clf(
     min_size: int = 0,
     remove_packed: bool = False,
     packing_root: Optional[Path] = None,
+    must_exist: bool = True,
 ) -> Materials:
 
     if min_freq is None:
@@ -466,7 +474,13 @@ def get_materials_clf(
         files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
     # Filter out the files that are not in the top_k most frequent labels
-    files_and_labels = filter_file_label_map(files_and_labels, top_k, min_freq, min_size)
+    files_and_labels = filter_file_label_map(
+        files_and_labels,
+        top_k=top_k,
+        min_freq=min_freq,
+        min_size=min_size,
+        must_exist=must_exist,
+    )
 
     # Final collection of data items
     dist: Counter[str, int] = Counter(files_and_labels.values())
