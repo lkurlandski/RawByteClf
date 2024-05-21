@@ -180,8 +180,6 @@ src/learn/train.py \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
---bf16 \\
---bf16_full_eval \\
 --tf32=true \\
 --gradient_checkpointing=false
 """
