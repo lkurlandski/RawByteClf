@@ -233,36 +233,6 @@ class OutputHelper:
         pretraining_task: Optional[str] = None,
     ) -> None:
 
-        if pretraining_task:
-            oh = OutputHelper(
-                root,
-                remove_packed,
-                representation,
-                algorithm,
-                vocab_size,
-                max_length,
-                model_name_or_path,
-                arch_config,
-                pretraining_task,
-                tr_size,
-                depth,
-                min_freq,
-                top_k,
-                tr_samples_per_class,
-                tr_length_cutoff,
-                trainer_config,
-                None,
-            )
-            p = oh.model_path / f"task--{pretraining_task}"
-            completed = list(p.rglob(OutputHelper.FINAL_PATH))
-            # Ignore sub-classification experiments.
-            completed = [p for p in completed if all("checkpoint-" not in part for part in p.parts)]
-            if len(completed) == 0:
-                raise FileNotFoundError(f"No completed experiments found for {oh.task_path=}")
-            if len(completed) > 1:
-                raise FileNotFoundError(f"Multiple completed experiments found for {oh.task_path=}")
-            model_name_or_path = get_highest_path(completed[0] / "checkpoints", lstrip="checkpoint-").as_posix()
-
         if Path(model_name_or_path).exists():
             self.root = Path(model_name_or_path)
             for s in self.root.as_posix().split("/"):
@@ -334,6 +304,20 @@ class OutputHelper:
             s += f"{' ' * (i * 2)} |-- {p}\n"
 
         return s
+
+    @staticmethod
+    def get_finetuning_model_name_or_path(**kwds) -> str:
+        oh = OutputHelper(**kwds | {"pretraining_task": None})
+        p = oh.model_path / f"task--{kwds['pretraining_task']}"
+        completed = list(p.rglob(OutputHelper.FINAL_PATH))
+        # Ignore sub-classification experiments.
+        completed = [p for p in completed if all("checkpoint-" not in part for part in p.parts)]
+        if len(completed) == 0:
+            raise FileNotFoundError(f"No completed experiments found for {oh.task_path=}")
+        if len(completed) > 1:
+            raise FileNotFoundError(f"Multiple completed experiments found for {oh.task_path=}")
+        model_name_or_path = get_highest_path(completed[0] / "checkpoints", lstrip="checkpoint-")
+        return model_name_or_path.as_posix()
 
     @property
     def trainer_config(self) -> dict:

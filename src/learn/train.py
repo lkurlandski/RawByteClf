@@ -730,10 +730,12 @@ def get_config(
             kwds.pop(k)
 
     if Path(model_name_or_path).exists():
+        print("Getting config from disk.")
         return get_config_from_path(model_name_or_path, **kwds)
 
-    # Handle float values when hyperparameter tuning.
-    # TODO: this probably got broken at some point.
+    print("Creating new config.")
+
+    # When hyperparameter tuning, some of these can get turned into floats for some weird reason.
     float_to_int_kwds = [
         "num_hidden_layers",
         "num_attention_heads",
@@ -879,6 +881,7 @@ def get_model(
 
     # Get model from disk
     if model_name_or_path is not None and Path(model_name_or_path).exists():
+        print("Getting model from disk.")
         model_name = object_to_model_name(model_name_or_path)
         if task[0:3] == "clf":
             if model_name == "hrrformer":
@@ -904,6 +907,7 @@ def get_model(
 
     # Get model from config
     if config:
+        print("Creating new model.")
         if task[0:3] == "clf":
             if isinstance(config, MalConvConfig):
                 return MalConv(config)
@@ -991,25 +995,30 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     MODEL_TYPE: Literal["HF", "MC"] = get_model_type(args.model_name_or_path)
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
 
-    oh = OutputHelper(
-        args.root,
-        args.remove_packed,
-        args.representation,
-        args.algorithm,
-        args.vocab_size,
-        args.max_length,
-        args.model_name_or_path,
-        args.arch_config,
-        args.task,
-        args.tr_size,
-        args.depth,
-        args.min_freq,
-        args.top_k,
-        args.tr_samples_per_class,
-        args.tr_length_cutoff,
-        training_arguments.__dict__ | {"world_size": training_arguments.world_size},
-        args.pretraining_task,
-    )
+    kwds = {
+        "root": args.root,
+        "remove_packed": args.remove_packed,
+        "representation": args.representation,
+        "algorithm": args.algorithm,
+        "vocab_size": args.vocab_size,
+        "max_length": args.max_length,
+        "model_name_or_path": args.model_name_or_path,
+        "task": args.task,
+        "arch_config": args.arch_config,
+        "pretraining_task": args.pretraining_task,
+        "tr_size": args.tr_size,
+        "depth": args.depth,
+        "min_freq": args.min_freq,
+        "top_k": args.top_k,
+        "tr_samples_per_class": args.tr_samples_per_class,
+        "tr_length_cutoff": args.tr_length_cutoff,
+        "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
+        "pretraining_task": args.pretraining_task,
+    }
+    if args.pretraining_task is not None and not Path(args.pretraining_task).exists():
+        args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(**kwds)
+        kwds["model_name_or_path"] = args.model_name_or_path
+    oh = OutputHelper(**kwds)
     print(f"Output Helper:\n{str(oh)}")
     print(BR)
 
