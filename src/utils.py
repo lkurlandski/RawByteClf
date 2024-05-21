@@ -173,6 +173,25 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
     args = [a for a in args if not a.startswith("#")]
     args = [a.replace('"', "").replace("'", "").replace("\\", "").rstrip() for a in args]
     args = [f'"{a}"' for a in args]
+
+    # Take string like:
+     # '"--arch_config={mode: uni, num_hidden_layers: 8, hidden_size: 256, embedding_size: 256}"'
+    # and convert it to:
+     # '"--arch_config={\"mode\": \"uni\", \"hidden_size\": 256, \"num_hidden_layers\": 8, \"embedding_size\": 256}"'
+    # S = '\\\"'
+
+    # for i, a in enumerate(args):
+    #     if "--arch_config" in a:
+    #         # d = json.loads(a.split("=")[1].replace("\"", ""))
+    #         break
+
+    # s = "{"
+    # for k, v in d.items():
+    #     s += f"{S}{k}{S}: {S if v.isdigit() else ''}{v}{S if v.isdigit() else ''}, "
+    # s = s[:-2] + "}"
+
+    # args[i] = s
+
     return ", ".join(args)
 
 
