@@ -18,23 +18,25 @@ from pathlib import Path
 SEEDS = [0, 1, 2, 3, 4]
 REPRESENTATIONS = [8, 16]
 TASKS = ["clf-bod", "clf-sor-nam"]
-
+NUM_GPUS = 2
 
 ROOT = "./output/nopacked"
 MODEL_NAME_OR_PATH = "mamba"
 ARCH_CONFIG = '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": EMBEDDING_SIZE}'
-PER_DEVICE_TRAIN_BATCH_SIZE = 64
-PER_DEVICE_EVAL_BATCH_SIZE = 64
-SEED = "SEED"
-MAX_LENGTH = 2 ** 16
-DATA_READ_BYTES = 2 ** 16
+MAX_LENGTH = 2 ** 12
+DATA_READ_BYTES = 2 ** 12
 LOGGING_STEPS = 10
 
-LM_TR_SIZE = 2 ** 21  # 2097152
-LM_VL_SIZE = 2 ** 14  # 16384
-LM_SAVE_EVAL_STEPS = 512
-LM_GRADIENT_ACCUMULATION_STEPS = 8
+LM_TR_SIZE = 350000 # 2 ** 21  # 2097152
+LM_VL_SIZE = 14868  # 16384
+LM_SAVE_EVAL_STEPS = 128
 
+LM_TRAIN_BATCH_SIZE = 256
+LM_EVAL_BATCH_SIZE = 256
+LM_GRADIENT_ACCUMULATION_STEPS = 1
+
+CLF_TRAIN_BATCH_SIZE = 64
+CLF_EVAL_BATCH_SIZE = 256
 CLF_GRADIENT_ACCUMULATION_STEPS = 1
 
 BODY_LM = f"""#!/bin/bash -l
@@ -48,7 +50,7 @@ BODY_LM = f"""#!/bin/bash -l
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks={4}
 #SBATCH --mem={64}G
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:a100:{NUM_GPUS}
 
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -57,6 +59,7 @@ conda activate RawByteClf2
 module unload blindfold
 
 
+torchrun --no-python --nnodes=1 --nproc_per_node={NUM_GPUS} \\
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
@@ -65,7 +68,7 @@ src/learn/train.py \\
 --task="clm" \\
 --seed=0 \\
 --remove_packed \\
---streaming=true \\
+--streaming=false \\
 --skip_eval_check=false \\
 --dataset_backend="HF" \\
 --representation=REPRESENTATION \\
@@ -78,7 +81,7 @@ src/learn/train.py \\
 --output_dir=tmp \\
 --save_strategy="steps" \\
 --evaluation_strategy="steps" \\
---num_train_epochs=1 \\
+--num_train_epochs=2 \\
 --logging_steps={LOGGING_STEPS} \\
 --save_steps={LM_SAVE_EVAL_STEPS} \\
 --eval_steps={LM_SAVE_EVAL_STEPS} \\
@@ -95,8 +98,8 @@ src/learn/train.py \\
 --model_name_or_path={MODEL_NAME_OR_PATH} \\
 --max_length={MAX_LENGTH} \\
 --data_read_bytes={DATA_READ_BYTES} \\
---per_device_train_batch_size={PER_DEVICE_TRAIN_BATCH_SIZE} \\
---per_device_eval_batch_size={PER_DEVICE_EVAL_BATCH_SIZE} \\
+--per_device_train_batch_size={LM_TRAIN_BATCH_SIZE} \\
+--per_device_eval_batch_size={LM_EVAL_BATCH_SIZE} \\
 --gradient_accumulation_steps={LM_GRADIENT_ACCUMULATION_STEPS} \\
 --load_best_model_at_end \\
 --early_stopping=false \\
@@ -119,7 +122,7 @@ BODY_CLF = f"""#!/bin/bash -l
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks={4}
 #SBATCH --mem=MEMORY
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:a100:{NUM_GPUS}
 
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -128,6 +131,7 @@ conda activate RawByteClf2
 module unload blindfold
 
 
+torchrun --no-python --nnodes=1 --nproc_per_node={NUM_GPUS} \\
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
@@ -169,8 +173,8 @@ src/learn/train.py \\
 --model_name_or_path={MODEL_NAME_OR_PATH} \\
 --max_length={MAX_LENGTH} \\
 --data_read_bytes={DATA_READ_BYTES} \\
---per_device_train_batch_size={PER_DEVICE_TRAIN_BATCH_SIZE} \\
---per_device_eval_batch_size={PER_DEVICE_EVAL_BATCH_SIZE} \\
+--per_device_train_batch_size={CLF_TRAIN_BATCH_SIZE} \\
+--per_device_eval_batch_size={CLF_EVAL_BATCH_SIZE} \\
 --gradient_accumulation_steps={CLF_GRADIENT_ACCUMULATION_STEPS} \\
 --eval_accumulation_steps=64 \\
 --load_best_model_at_end \\
@@ -185,7 +189,7 @@ src/learn/train.py \\
 
 OUTPUT = Path(os.path.realpath(__file__)).parent
 for f in OUTPUT.glob("*.sh"):
-    if f.name == "run.sh":
+    if f.name[0:3] == "run":
         continue
     f.unlink()
 
@@ -260,3 +264,7 @@ outfiles.sort(key=lambda p: str(p).split("-")[1])
 with open(OUTPUT / "run.sh", "w") as fp:
     for f in outfiles:
         fp.write(f"sbatch {str(f)}\n")
+
+with open(OUTPUT / "runArmitage.sh", "w") as fp:
+    for f in outfiles:
+        fp.write(f"CUDA_VISIBLE_DEVICES=0,1 bash {str(f)} &> ./logs/{f.stem}.out\n")
