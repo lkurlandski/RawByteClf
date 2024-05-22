@@ -133,9 +133,8 @@ BODY_CLF = f"""#!/bin/bash -l
 
 
 source ~/anaconda3/etc/profile.d/conda.sh
-conda activate RawByteClf
-conda activate RawByteClf2
-module unload blindfold
+conda activate RawByteClf{2 if SYSTEM == System.RC else ""}
+{"module unload blindfold" if SYSTEM == System.RC else ""}
 
 
 torchrun --no-python --nnodes=1 --nproc_per_node={CLF_NGPUS} \\
@@ -256,10 +255,10 @@ with open(OUTPUT / "run.sh", "w") as fp:
             pos = ""
         else:
             if "clm" in f.name:
-                ngpus = CLM_NGPUS
+                gpus = [str(i) for i in range(CLM_NGPUS)]
             else:
-                ngpus = CLF_NGPUS
-            pre = f"CUDA_VISIBLE_DEVICES={','.join(ngpus)} bash"
+                gpus = [str(i) for i in range(CLF_NGPUS)]
+            pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
             pos = f"&> ./logs/{f.stem}.out"   
         fp.write(f"{pre} {str(f)} {pos}\n")
 
