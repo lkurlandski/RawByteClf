@@ -76,6 +76,22 @@ def count_parameters(model: nn.Module, requires_grad: bool = False) -> int:
     return sum(p.numel() for p in model.parameters() if (not requires_grad or p.requires_grad))
 
 
+def detect_anomalous_parameters(model: nn.Module) -> tuple[bool, bool]:
+    has_nan = any(torch.isnan(p).any() for p in model.parameters())
+    has_inf = any(torch.isinf(p).any() for p in model.parameters())
+    return has_nan, has_inf
+
+
+def detect_anomalous_gradients(model: nn.Module) -> tuple[bool, bool]:
+    has_nan = any(p.grad is not None and torch.isnan(p.grad).any() for p in model.parameters())
+    has_inf = any(p.grad is not None and torch.isinf(p.grad).any() for p in model.parameters())
+    return has_nan, has_inf
+
+
+def compute_gradient_norm(model: nn.Module) -> Tensor:
+    return sum(p.grad.data.to(torch.float64).norm(2) ** 2 for p in model.parameters()) ** .5
+
+
 def remove_empty_directories(directory: str, missing_ok: bool = False) -> None:
     if missing_ok and not os.path.exists(directory):
         return
