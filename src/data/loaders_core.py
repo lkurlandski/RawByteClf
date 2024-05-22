@@ -14,6 +14,7 @@ from pprint import pprint, pformat
 import random
 import sys
 from statistics import mean, median
+import time
 from typing import Callable, Literal, Optional
 
 # pylint: disable=wrong-import-position
@@ -363,11 +364,13 @@ def filter_packed_files(files: list[str], root: Optional[str | Path] = None) -> 
         "chunked": True,
         "num_workers": min(len(os.sched_getaffinity(0)), 20),
     }
+    print(f"Getting packing map ({root=})")
+    t_0 = time.time()
     if root is not None:
         is_packed = PackingMap(root=root, **kwds)
     else:
         is_packed = universal_packing_map(**kwds)
-    print(f"{len(is_packed)=}")
+    print(f"Got packing map in {round(time.time() - t_0, 2)} seconds. {len(is_packed)=}")
 
 
     print(f"Packing Negative, Positive, and Unknown: {len(files)=}")
