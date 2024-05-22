@@ -1015,7 +1015,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
         "pretraining_task": args.pretraining_task,
     }
-    if args.pretraining_task is not None and not Path(args.pretraining_task).exists():
+    if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(**kwds)
         kwds["model_name_or_path"] = args.model_name_or_path
     oh = OutputHelper(**kwds)
