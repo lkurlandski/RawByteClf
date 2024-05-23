@@ -69,7 +69,7 @@ conda activate RawByteClf{2 if SYSTEM == System.RC else ""}
 {"module unload blindfold" if SYSTEM == System.RC else ""}
 
 
-{"torchrun --no-python --nnodes=1 --nproc_per_node=" + CLM_NGPUS + " " + DOUBLE_BACKLASH if CLM_NGPUS > 1 else ""}
+{"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(CLM_NGPUS) + " " + DOUBLE_BACKSLASH if CLM_NGPUS > 1 else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
@@ -138,7 +138,7 @@ conda activate RawByteClf{2 if SYSTEM == System.RC else ""}
 {"module unload blindfold" if SYSTEM == System.RC else ""}
 
 
-{"torchrun --no-python --nnodes=1 --nproc_per_node=" + CLF_NGPUS + " " + DOUBLE_BACKLASH if CLF_NGPUS > 1 else ""}
+{"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(CLF_NGPUS) + " " + DOUBLE_BACKSLASH if CLF_NGPUS > 1 else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
