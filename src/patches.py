@@ -27,17 +27,17 @@ from src.utils import (
 )
 
 
-def my_clip_grad_norm_(
-        parameters: Tensor | Iterable[Tensor],
-        max_norm: float,
-        norm_type: float = 2.0,
-        error_if_nonfinite: bool = False,
-        foreach: Optional[bool] = None,
-        resist_overflow: bool = True,
+def my_clip_grad_norm_V_20X_(
+    parameters: Tensor | Iterable[Tensor],
+    max_norm: float,
+    norm_type: float = 2.0,
+    error_if_nonfinite: bool = False,
+    foreach: Optional[bool] = None,
+    resist_overflow: bool = True,
     ) -> torch.Tensor:
     """Clips gradient norm of an iterable of parameters even if it is infinite.
     """
-    warnings.warn("Using patched version of torch.nn.utils.clip_grad_norm_")
+    warnings.warn("Using patched version of torch.nn.utils.clip_grad_norm_ for pytorch 2.0.x")
 
     if isinstance(parameters, torch.Tensor):
         parameters = [parameters]
@@ -104,6 +104,92 @@ def my_clip_grad_norm_(
                 g.detach().mul_(clip_coef_clamped_device)
 
     return total_norm
+
+
+def my_clip_grad_norm_V_22X_(
+    parameters: Tensor | Iterable[Tensor],
+    max_norm: float,
+    norm_type: float = 2.0,
+    error_if_nonfinite: bool = False,
+    foreach: Optional[bool] = None,
+    resist_overflow: bool = True,
+    ) -> torch.Tensor:
+    warnings.warn("Using patched version of torch.nn.utils.clip_grad_norm_ for pytorch 2.2.x")
+
+    if isinstance(parameters, torch.Tensor):
+        parameters = [parameters]
+    grads = [p.grad for p in parameters if p.grad is not None]
+
+    # <\CHANGED>
+    DTYPE = grads[0].dtype
+    # <CHANGED/>
+
+    max_norm = float(max_norm)
+    norm_type = float(norm_type)
+    if len(grads) == 0:
+        return torch.tensor(0.)
+    first_device = grads[0].device
+    grouped_grads: Dict[Tuple[torch.device, torch.dtype], List[List[Tensor]]] \
+        = _group_tensors_by_device_and_dtype([[g.detach() for g in grads]])  # type: ignore[assignment]
+
+    if norm_type == inf:
+        norms = [torch.linalg.vector_norm(g.detach(), inf).to(first_device) for g in grads]
+        total_norm = norms[0] if len(norms) == 1 else torch.max(torch.stack(norms))
+    else:
+        norms = []
+        for ((device, _), ([grads], _)) in grouped_grads.items():  # type: ignore[assignment]
+            if (foreach is None or foreach) and _has_foreach_support(grads, device=device):
+                norms.extend(torch._foreach_norm(grads, norm_type))
+            elif foreach:
+                raise RuntimeError(f'foreach=True was passed, but can\'t use the foreach API on {device.type} tensors')
+            else:
+                norms.extend([torch.linalg.vector_norm(g, norm_type) for g in grads])
+
+        # <\CHANGED>
+        if resist_overflow:
+            total_norm = torch.linalg.vector_norm(torch.stack([norm.to(first_device) for norm in norms]), norm_type, dtype=torch.float64)
+        else:
+            total_norm = torch.linalg.vector_norm(torch.stack([norm.to(first_device) for norm in norms]), norm_type)
+        # <CHANGED/>
+
+    if error_if_nonfinite and torch.logical_or(total_norm.isnan(), total_norm.isinf()):
+        raise RuntimeError(
+            f'The total norm of order {norm_type} for gradients from '
+            '`parameters` is non-finite, so it cannot be clipped. To disable '
+            'this error and scale the gradients by the non-finite norm anyway, '
+            'set `error_if_nonfinite=False`')
+
+    # <\CHANGED>
+    if resist_overflow and total_norm > torch.finfo(torch.float32).max:
+        clip_coef = max_norm / torch.tensor(torch.finfo(torch.float32).max, dtype=DTYPE, device=total_norm.device)
+    else:
+        clip_coef = max_norm / (total_norm + 1e-6)
+    # <CHANGED/>
+
+    # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
+    # avoids a `if clip_coef < 1:` conditional which can require a CPU <=> device synchronization
+    # when the gradients do not reside in CPU memory.
+    clip_coef_clamped = torch.clamp(clip_coef, max=1.0)
+    for ((device, _), ([grads], _)) in grouped_grads.items():  # type: ignore[assignment]
+        if (foreach is None or foreach) and _has_foreach_support(grads, device=device):  # type: ignore[arg-type]
+            torch._foreach_mul_(grads, clip_coef_clamped.to(device))  # type: ignore[call-overload]
+        elif foreach:
+            raise RuntimeError(f'foreach=True was passed, but can\'t use the foreach API on {device.type} tensors')
+        else:
+            clip_coef_clamped_device = clip_coef_clamped.to(device)
+            for g in grads:
+                g.detach().mul_(clip_coef_clamped_device)
+
+    return total_norm
+
+
+if torch.__version__[0:3] == "2.0":
+    my_clip_grad_norm_ = my_clip_grad_norm_V_20X_
+elif torch.__version__[0:3] == "2.2":
+    my_clip_grad_norm_ = my_clip_grad_norm_V_22X_
+else:
+    warnings.warn(f"Unsupported version of torch: {torch.__version__}")
+    my_clip_grad_norm_ = my_clip_grad_norm_V_20X_
 
 
 class SimpleNet(torch.nn.Module):
