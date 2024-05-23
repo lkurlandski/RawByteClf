@@ -8,6 +8,9 @@ from pprint import pprint
 import sys
 
 
+DOUBLE_BACKSLASH = """\\"""
+
+
 class System(Enum):
     RC = 0
     ARMITAGE = 1
@@ -66,7 +69,7 @@ conda activate RawByteClf{2 if SYSTEM == System.RC else ""}
 {"module unload blindfold" if SYSTEM == System.RC else ""}
 
 
-torchrun --no-python --nnodes=1 --nproc_per_node={CLM_NGPUS} \\
+{"torchrun --no-python --nnodes=1 --nproc_per_node=" + CLM_NGPUS + " " + DOUBLE_BACKLASH if CLM_NGPUS > 1 else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
@@ -111,8 +114,6 @@ src/learn/train.py \\
 --load_best_model_at_end \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
---bf16 \\
---bf16_full_eval \\
 --tf32=true \\
 --gradient_checkpointing=false
 """
@@ -137,7 +138,7 @@ conda activate RawByteClf{2 if SYSTEM == System.RC else ""}
 {"module unload blindfold" if SYSTEM == System.RC else ""}
 
 
-torchrun --no-python --nnodes=1 --nproc_per_node={CLF_NGPUS} \\
+{"torchrun --no-python --nnodes=1 --nproc_per_node=" + CLF_NGPUS + " " + DOUBLE_BACKLASH if CLF_NGPUS > 1 else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
@@ -223,7 +224,7 @@ for representation in REPRESENTATIONS:
     for task in TASKS:
         top_k = 10 if task == "clf-bod" else None
         min_freq = None if task == "clf-bod" else 2
-        alloc_time = "00-00:30:00" if task == "clf-bod" else "01-00:00:00"
+        alloc_time = "00-00:30:00" if task == "clf-bod" else "01-04:00:00"
         memory = "16G" if task == "clf-bod" else "48G"
         for pretraining_task in PRETRAINING_TASKS:
             name = "clf" if pretraining_task == "None" else "ft"
