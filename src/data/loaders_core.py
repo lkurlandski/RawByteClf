@@ -362,7 +362,7 @@ def filter_packed_files(files: list[str], root: Optional[str | Path] = None) -> 
     kwds = {
         "lazy": False,
         "chunked": True,
-        "num_workers": min(len(os.sched_getaffinity(0)), 20),
+        "num_workers": min(len(os.sched_getaffinity(0)), 20) if os.environ.get("DEBUG") != "1" else 8,
     }
     print(f"Getting packing map ({root=})")
     t_0 = time.time()
