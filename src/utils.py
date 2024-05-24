@@ -88,13 +88,16 @@ def detect_anomalous_gradients(model: nn.Module) -> tuple[bool, bool]:
     return has_nan, has_inf
 
 
-def compute_gradient_norm(model: nn.Module, dtype: Optional[torch.dtype] = torch.float64) -> float:
-    return torch.norm(
-        torch.stack([p.grad.norm() for p in model.parameters() if p.grad is not None]),
-        dtype=dtype,
-    ).item()
-
-    # return (sum(p.grad.data.to(torch.float64).norm(2) ** 2 for p in model.parameters()) ** .5).detach().item()
+def compute_gradient_norm(
+    model: nn.Module,
+    norm_type: float = 2.0,
+    dtype: torch.dtype = None,
+) -> float:
+    norm = 0
+    for p in model.parameters():
+        norm += p.grad.data.norm(norm_type, dtype=dtype) ** 2
+    norm = norm ** .5
+    return norm.detach().cpu().item()
 
 
 def remove_empty_directories(directory: str, missing_ok: bool = False) -> None:
