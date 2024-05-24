@@ -875,7 +875,7 @@ def get_model(
 ) -> PreTrainedModel | MalConv | MalConvGCT:
     if model_name_or_path is None and config is None:
         raise ValueError("Must specify `model_name_or_path` or `config`.")
-    if model_name_or_path is None == config is None:
+    if model_name_or_path is None == config is None:  # FIXME: roken.
         warnings.warn(
             f"Specified both `model_name_or_path` or `config`. {model_name_or_path=} will take "
             f"precidence over {type(config)=} if its a path that exists."
@@ -892,15 +892,64 @@ def get_model(
         model_name = object_to_model_name(model_name_or_path)
         if task[0:3] == "clf":
             if model_name == "hrrformer":
-                return HRRForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
-            if model_name == "rwkv":
-                return RwkvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
-            if model_name == "mamba":
-                return MambaForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
-            if get_model_type(model_name_or_path) == "HF":
-                return AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
-            if get_model_type(model_name_or_path) == "MC":
-                return AutoMalConvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                model = HRRForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                _config = HRRConfig.from_pretrained(model_name_or_path)
+                _head_names = ["classifier"]
+            elif model_name == "rwkv":
+                model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                _config = RwkvConfig.from_pretrained(model_name_or_path)
+                _head_names = ["classifier"]
+            elif model_name == "mamba":
+                model = MambaForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                _config = MambaConfig.from_pretrained(model_name_or_path)  # FIXME: what the fuck.
+                _head_names = ["clf_head"]
+            elif get_model_type(model_name_or_path) == "HF":
+                model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                _config = AutoConfig.from_pretrained(model_name_or_path)
+                _head_names = []
+            elif get_model_type(model_name_or_path) == "MC":
+                model = AutoMalConvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                _config = MalConvConfig.from_pretrained(model_name_or_path)
+                _head_names = ["mlp"]
+            else:
+                raise ValueError(f"Invalid model name: {model_name}")
+
+            # If we're loading a non-classification model for a classification task, we may need
+            # to initialize the head weights. This is a bizarre bug that I can't figure out the origin
+            # of, but whatever. When loading the config of a language model, the config automatically
+            # get populated with some placeholder id2label values and stuff. We can use some crude
+            # heuristics to determine if we're loading a classification model from a pretrained LM.
+            _config: PretrainedConfig
+            is_not_for_classification = all([
+                _config.num_labels == 2,
+                _config.label2id == {'LABEL_0': 0, 'LABEL_1': 1},
+                _config.id2label=={0: 'LABEL_0', 1: 'LABEL_1'},
+                not any("ForClassification" in a for a in _config.architectures),
+            ])
+            if is_not_for_classification:
+                print(f"Checking the following classification heads for anamalous weights: {_head_names}")
+                for h in _head_names:
+                    l: torch.nn.Linear = getattr(model, h)
+                    if not isinstance(l, torch.nn.Linear):
+                        raise TypeError(f"Expected torch.nn.Linear, got {type(l)}")
+                    w: Tensor = l.weight.to(torch.float64)
+                    m: float = w.mean().cpu().item()
+                    s: float = w.std().cpu().item()
+                    anomalous_mean = any([math.isnan(m), math.isinf(m), m <= -1, m >= 1])
+                    anomalous_std = any([math.isnan(s), math.isinf(s), s <= 0, s >= 2 * _config.initializer_range])
+                    if anomalous_mean or anomalous_std:
+                        warnings.warn(
+                            f"Detected anamalous weights in {model_name}'s {h}. "
+                            f"Since we're creating a new classification head, we expect the "
+                            f"weights to be Guassian with N(0, {_config.initializer_range}) but "
+                            f"the weights have a mean of {m} and a std of {s}."
+                        )
+                        l.weight.data.normal_(mean=0.0, std=_config.initializer_range)
+            else:
+                print("Pretrained model is for classification, so we shouldn't check the classification head.")
+
+            return model
+
         if task == "mlm":
             if model_name == "hrrformer":
                 return HRRForMaskedLM.from_pretrained(model_name_or_path, **kwds)
