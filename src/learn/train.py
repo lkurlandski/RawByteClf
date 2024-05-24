@@ -332,7 +332,12 @@ class TrainingArguments(HfTrainingArguments):
         # within the Python code itself.
         if self.gradient_checkpointing:
             if self.gradient_checkpointing_kwargs is None:
-                self.gradient_checkpointing_kwargs = {"use_reentrant": False}
+                ...
+                # This is now causing an error:
+                  # mamba_ssm/ops/selective_scan_interface.py, line 235, in backward
+                  # conv1d_out, delta, A, B, C, D, delta_bias, scan_intermediates, out) = ctx.saved_tensors
+                  # RuntimeError: !grad_accumulator_.expired() INTERNAL ASSERT FAILED at "/opt/conda/conda-bld/pytorch_1682343995026/work/torch/csrc/autograd/saved_variable.cpp":226, please report a bug to PyTorch. No grad accumulator for a saved leaf
+                # self.gradient_checkpointing_kwargs = {"use_reentrant": False}
 
         # Assumes we will not be using mixed precision on the CPU.
         if not is_torch_bf16_gpu_available():
