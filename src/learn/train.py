@@ -47,8 +47,8 @@ import warnings
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-    import src.patches
-    src.patches.main()
+    # import src.patches
+    # src.patches.main()
 # pylint: enable=wrong-import-position
 
 from datasets import (
