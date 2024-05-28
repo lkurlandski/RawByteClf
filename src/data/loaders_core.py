@@ -258,7 +258,7 @@ def tr_vl_ts_split_idx_guarentee(
         elif vl_size > 0 and vl_dist[l] < samples_per_class:
             vl_dist[l] += 1
             vl_idx.append(i)
-        elif ts_size > 0 and tr_dist[l] < samples_per_class:
+        elif ts_size > 0 and ts_dist[l] < samples_per_class:
             ts_dist[l] += 1
             ts_idx.append(i)
 
