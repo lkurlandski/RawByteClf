@@ -18,6 +18,13 @@ class System(Enum):
 
 SYSTEM = System(int(sys.argv[1]))
 
+if len(sys.argv) > 2:
+    DEBUG = int(sys.argv[2]) == 1
+    if DEBUG:
+        print("Debugging Mode.")
+else:
+    DEBUG = False
+
 CLM_NGPUS = 1 if SYSTEM == System.RC else 2
 CLF_NGPUS = 1 if SYSTEM == System.RC else 2
 CLM_NTASKS = 4
@@ -54,7 +61,7 @@ BODY_CLM = f"""#!/bin/bash -l
 
 #SBATCH --job-name=JOB_NAME
 #SBATCH --account=admalware
-#SBATCH --partition=tier3
+#SBATCH --partition={'debug' if DEBUG else 'tier3'}
 #SBATCH --output=./logs/%x_%j.out
 #SBATCH --time=02-00:00:00
 #SBATCH --nodes=1
@@ -121,15 +128,15 @@ src/learn/train.py \\
 
 BODY_CLF = f"""#!/bin/bash -l
 
-#SBATCH --job-name=JOB_NAME
+#SBATCH --job-name={'debug-' if DEBUG else ''}JOB_NAME
 #SBATCH --account=admalware
-#SBATCH --partition=tier3
+#SBATCH --partition={'debug' if DEBUG else 'tier3'}
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=ALLOC_TIME
+#SBATCH --time={'00-01:00:00' if DEBUG else 'ALLOC_TIME'}
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks={CLF_NTASKS}
-#SBATCH --mem={CLF_MEM}
+#SBATCH --ntasks={1 if DEBUG else CLF_NTASKS}
+#SBATCH --mem={'16G' if DEBUG else CLF_MEM}
 #SBATCH --gres=gpu:a100:{CLF_NGPUS}
 
 
@@ -148,8 +155,8 @@ src/learn/train.py \\
 --seed=SEED \\
 --pretraining_task=PRETRAINING_TASK \\
 --remove_packed \\
---streaming=false \\
---skip_eval_check=false \\
+--streaming={'true' if DEBUG else 'false'} \\
+--skip_eval_check={'true' if DEBUG else 'false'} \\
 --top_k=TOP_K \\
 --min_freq=MIN_FREQ \\
 --dataset_backend="HF" \\
@@ -167,7 +174,7 @@ src/learn/train.py \\
 --logging_steps=1 \\
 --saves_per_epoch=10 \\
 --evals_per_epoch=10 \\
---dataloader_num_workers={3} \\
+--dataloader_num_workers={1 if DEBUG else 3} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-4" \\
 --lr_scheduler_type="linear" \\
@@ -188,7 +195,7 @@ src/learn/train.py \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
 --tf32=true \\
---gradient_checkpointing=false
+--gradient_checkpointing=true
 """
 
 
@@ -224,7 +231,21 @@ for representation in REPRESENTATIONS:
     for task in TASKS:
         top_k = 10 if task == "clf-bod" else None
         min_freq = None if task == "clf-bod" else 2
-        alloc_time = "00-00:30:00" if task == "clf-bod" else "01-04:00:00"
+
+        alloc_time = None
+        if task == "clf-bod":
+            if representation == 8:
+                alloc_time = "00-01:00:00"
+            elif representation == 16:
+                alloc_time = "00-00:40:00"
+        elif task == "clf-sor-nam":
+            if representation == 8:
+                alloc_time = "01-12:00:00"
+            elif representation == 16:
+                alloc_time = "01-00:00:00"
+        if alloc_time is None:
+            raise RuntimeError(f"{representation=} {task=}")
+
         memory = "16G" if task == "clf-bod" else "48G"
         for pretraining_task in PRETRAINING_TASKS:
             name = "clf" if pretraining_task == "None" else "ft"
