@@ -5,8 +5,6 @@ FIXME:
  - add world_size to the output path instead of multiplying with per_device_train_batch_size
  - the mutability of the OutputHelper's trainer_config is confusing; 
     refactor to contain a reference to a TrainingArguments?
- - pretraining task seems to be unused!!!
- - Issue with parsing the model name when finetuning.
 """
 
 from __future__ import annotations
