@@ -1061,7 +1061,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "model_name_or_path": args.model_name_or_path,
         "task": args.task,
         "arch_config": args.arch_config,
-        "pretraining_task": args.pretraining_task,
         "tr_size": args.tr_size,
         "depth": args.depth,
         "min_freq": args.min_freq,
@@ -1069,7 +1068,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "tr_samples_per_class": args.tr_samples_per_class,
         "tr_length_cutoff": args.tr_length_cutoff,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
-        "pretraining_task": args.pretraining_task,
     }
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(**kwds)

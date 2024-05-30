@@ -5,11 +5,11 @@ FIXME:
  - add world_size to the output path instead of multiplying with per_device_train_batch_size
  - the mutability of the OutputHelper's trainer_config is confusing; 
     refactor to contain a reference to a TrainingArguments?
+ - pretraining task seems to be unused!!!
+ - Issue with parsing the model name when finetuning.
 """
 
-# pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
-
+from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -22,9 +22,12 @@ import shutil
 import sys
 from typing import Any, Callable, Optional
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+else:
+    print(f"Entered {__file__=}")
 # pylint: enable=wrong-import-position
 
 from src.cfg import OUTPUT_PATH
@@ -91,6 +94,15 @@ def str_to_bool(s: Optional[str]) -> Optional[bool]:
         return False
 
     raise ValueError(f"Got {s}; expected one of {trues + falses}.")
+
+
+def str_to_probable_type(s: str) -> Optional[str | int | float | bool]:
+    for f in (str_to_bool, str_to_int, str_to_float, str_to_str):
+        try:
+            return f(s)
+        except ValueError:
+            pass
+    raise RuntimeError(f"Could not convert {s} to a type.")
 
 
 @dataclass
@@ -230,14 +242,13 @@ class OutputHelper:
         tr_samples_per_class: Optional[int],
         tr_length_cutoff: Optional[int],
         trainer_config: Optional[dict] = None,
-        pretraining_task: Optional[str] = None,
     ) -> None:
 
         if Path(model_name_or_path).exists():
             self.root = Path(model_name_or_path)
             for s in self.root.as_posix().split("/"):
                 if s.startswith("model_name--"):
-                    self.model_name = s[7:]
+                    self.model_name = s[len("model_name--"):]
                     break
             else:
                 raise ValueError(f"Could not find model_name in {self.root=}")
@@ -295,6 +306,9 @@ class OutputHelper:
         if all(hasattr(self, a) for a in attrs):
             self.lock_file.unlink(missing_ok=True)
 
+    def __eq__(self, other: OutputHelper) -> bool:
+        return self.path == other.path
+
     def __repr__(self) -> str:
         return self.path.as_posix()
 
@@ -306,18 +320,118 @@ class OutputHelper:
         return s
 
     @staticmethod
-    def get_finetuning_model_name_or_path(**kwds) -> str:
-        oh = OutputHelper(**kwds | {"pretraining_task": None})
-        p = oh.model_path / f"task--{kwds['pretraining_task']}"
+    def get_finetuning_model_name_or_path(pretraining_task: str, **kwds) -> str:
+        oh = OutputHelper(**kwds)
+
+        p = oh.model_path / f"task--{pretraining_task}"
         completed = list(p.rglob(OutputHelper.FINAL_PATH))
-        # Ignore sub-classification experiments.
         completed = [p for p in completed if all("checkpoint-" not in part for part in p.parts)]
+
         if len(completed) == 0:
             raise FileNotFoundError(f"No completed experiments found for {oh.task_path=}")
         if len(completed) > 1:
             raise FileNotFoundError(f"Multiple completed experiments found for {oh.task_path=}")
+
         model_name_or_path = get_highest_path(completed[0] / "checkpoints", lstrip="checkpoint-")
         return model_name_or_path.as_posix()
+
+    @classmethod
+    def from_path(cls, path: Path) -> OutputHelper:
+        if not path.exists():
+            raise FileNotFoundError(f"Path {path} does not exist.")
+        if not path.name == OutputHelper.FINAL_PATH:
+            raise ValueError(f"Expected {path.name=} to be {OutputHelper.FINAL_PATH=}")
+
+        kwds = {
+            "remove_packed": None,
+            "representation": None,
+            "algorithm": None,
+            "vocab_size": None,
+            "max_length": None,
+            "task": None,
+            "tr_size": None,
+            "depth": None,
+            "min_freq": None,
+            "top_k": None,
+            "tr_samples_per_class": None,
+            "tr_length_cutoff": None,
+        }
+
+        trainer_config = {
+            k : None for k in OutputHelper.TRAINER_KEYS
+        } | {"world_size": 1}
+
+        arch_config = {}
+
+        root = None
+
+        finetuning = path.parts.count(OutputHelper.FINAL_PATH) == 2
+        if finetuning:
+            delay, model_name_or_path = True, []
+        else:
+            delay, model_name_or_path = None, None
+
+        for i, p in enumerate(path.parts):
+            # Establish the root, and exhaust the path until after root is established
+            if len(p.split("--")) == 2:
+                if root is None:
+                    root = Path(*path.parts[:i])
+            else:
+                if root is None:
+                    continue
+
+            # If we are finetuning, skip until the pretrained model path is exhausted
+            if finetuning:
+                if delay:
+                    model_name_or_path.append(p)
+                if delay and p.startswith("checkpoint-"):
+                    delay = False
+                    model_name_or_path = root / Path(*model_name_or_path)
+                    continue
+                if delay:
+                    continue
+
+            parsed = False
+            # Parse as meta or task hyperparameter
+            for k in kwds:
+                if p.startswith(f"{k}--"):
+                    kwds[k] = p.split("--")[1]
+                    parsed = True
+            if parsed:
+                continue
+            # Parse as a training hyperparameter
+            for k in trainer_config:
+                if p.startswith(f"{k}--"):
+                    trainer_config[k] = p.split("--")[1]
+                    parsed = True
+            if parsed:
+                continue
+            # Special case for model_name_or_path
+            if p.startswith("model_name--"):
+                if not finetuning:
+                    model_name_or_path = p.split("--")[1]
+                parsed = True
+            if parsed:
+                continue
+            # Parse as a model hyperparameter
+            if len(p.split("--")) == 2:
+                k, v = p.split("--")
+                arch_config[k] = str_to_probable_type(v)  # FIXME parsed and continue
+                parsed = True
+            if parsed:
+                continue
+
+        if finetuning and not model_name_or_path.exists():
+            raise RuntimeError(f"You done fucked up: {model_name_or_path=}")
+
+        oh = cls(
+            root=root,
+            model_name_or_path=model_name_or_path,
+            arch_config=arch_config,
+            trainer_config=trainer_config,
+            **kwds,
+        )
+        return oh
 
     @property
     def trainer_config(self) -> dict:

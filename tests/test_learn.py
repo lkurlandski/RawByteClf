@@ -4,18 +4,20 @@ Tests for the learn module.
 
 import math
 import os
+from pathlib import Path
 import shutil
 import sys
 import unittest
 
 import torch
 from torch import Tensor
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, TrainingArguments
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.architectures.mamba_hf import MambaConfig, MambaForCausalLM, MambaForSequenceClassification
+from src.learn.helpers import OutputHelper
 from src.learn.train import get_model
 
 
@@ -115,6 +117,65 @@ class TestGetModel(unittest.TestCase):
         )
         # print(model)
         self.check_clf_head(model)
+
+
+class TestOutputHelper(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.root = Path("/tmp/output/")
+        self.root.mkdir(parents=True, exist_ok=True)
+
+        training_arguments = TrainingArguments(self.root)
+        self.kwds = {
+            "root": self.root,
+            "remove_packed": True,
+            "representation": 8,
+            "algorithm": "Raw",
+            "vocab_size": 256,
+            "max_length": 65536,
+            "arch_config": {"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256},
+            "tr_size": 0.85,
+            "depth": 1,
+            "min_freq": None,
+            "top_k": 10,
+            "tr_samples_per_class": None,
+            "tr_length_cutoff": None,
+            "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
+        }
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def test_from_path(self) -> None:
+
+        oh_clm = OutputHelper(**self.kwds | {"task": "clm", "model_name_or_path": "mamba"})
+        oh_clm.path.mkdir(parents=True, exist_ok=True)
+        oh = OutputHelper.from_path(oh_clm.path)
+        assert oh_clm == oh, f"Expected \"\"\"\n{oh_clm}\n\"\"\", got \"\"\"\n{oh}\n\"\"\""
+
+        oh_clf = OutputHelper(**self.kwds | {"task": "clf-bod", "model_name_or_path": "mamba"})
+        oh_clf.path.mkdir(parents=True, exist_ok=True)
+        oh = OutputHelper.from_path(oh_clf.path)
+        assert oh_clf == oh, f"Expected \"\"\"\n{oh_clf}\n\"\"\", got \"\"\"\n{oh}\n\"\"\""
+
+        model_name_or_path = oh_clm.checkpoints_dir / "checkpoint-666"
+        model_name_or_path.mkdir(parents=True, exist_ok=True)
+        oh_ft = OutputHelper(**self.kwds | {"task": "clf-bod", "model_name_or_path": model_name_or_path})
+        oh_ft.path.mkdir(parents=True, exist_ok=True)
+        oh = OutputHelper.from_path(oh_ft.path)
+        assert oh_ft == oh, f"Expected \"\"\"\n{oh_ft}\n\"\"\", got \"\"\"\n{oh}\n\"\"\""
+
+    def test_get_finetuning_model_name_or_path(self) -> None:
+        oh = OutputHelper(**self.kwds | {"task": "clm", "model_name_or_path": "mamba"})
+        oh.checkpoints_dir.mkdir(exist_ok=True, parents=True)
+        for i in [100, 200, 300]:
+            (oh.checkpoints_dir / f"checkpoint-{i}").mkdir()
+
+        p = OutputHelper.get_finetuning_model_name_or_path(
+            "clm", **self.kwds | {"task": "clf-bod", "model_name_or_path": "mamba"}
+        )
+        highest = oh.checkpoints_dir / "checkpoint-300"
+        assert p == highest.as_posix(), f"Expected \"{highest}\", got \"{p}\""
 
 
 if __name__ == "__main__":
