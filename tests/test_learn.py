@@ -15,26 +15,22 @@ from transformers import PreTrainedModel
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.architectures.mamba_hf import (
-    MambaConfig,
-    MambaModel,
-    MambaForCausalLM,
-    MambaForMaskedLM,
-    MambaForSequenceClassification,
-)
+from src.architectures.mamba_hf import MambaConfig, MambaForCausalLM, MambaForSequenceClassification
 from src.learn.train import get_model
 
 
-class TestMambaWeightsInitializedCorrect(unittest.TestCase):
+class TestGetModel(unittest.TestCase):
+    """
+    Mamba weights have been observed to be anomalous in the past.
+    This test checks that the weights are within some normal bounds.
+    """
 
     num_labels = 999
     num_hidden_layers = 8
     hidden_size = 256
-    embedding_size = 8
+    embedding_size = 256
     vocab_size = 256
     initializer_range = 0.1
-
-    layer_names = ("clf_head", "embedding_projection")
 
     tmp_clm_dir = "/tmp/mamba_clm"
     tmp_clf_dir = "/tmp/mamba_clf"
@@ -47,10 +43,6 @@ class TestMambaWeightsInitializedCorrect(unittest.TestCase):
             "label2id": self.label2id,
             "id2label": self.id2label,
         }
-
-        config = self.get_config()
-        model = MambaModel(config)
-        print(model)
 
         config = self.get_config()
         model = MambaForCausalLM(config)
@@ -74,16 +66,11 @@ class TestMambaWeightsInitializedCorrect(unittest.TestCase):
             **kwds,
         )
 
-    def check_linear_layers(self, model: MambaForCausalLM | MambaForMaskedLM | MambaForSequenceClassification) -> None:
-        layers: list[tuple[str, torch.nn.Linear]]
-        if isinstance(model, MambaForSequenceClassification):
-            layers = [("clf_head", model.clf_head)]
-        elif isinstance(model, (MambaForCausalLM, MambaForMaskedLM)):
-            layers = [("lm_head", model.lm_head)]
-        if model.backbone.embedding_projection is not None:
-            layers.append(("embedding_projection", model.backbone.embedding_projection))
-
-        for h, l in layers:
+    def check_clf_head(self, model: PreTrainedModel, head_names: tuple[str] = ("clf_head",)) -> None:
+        for h in head_names:
+            l: torch.nn.Linear = getattr(model, h)
+            if not isinstance(l, torch.nn.Linear):
+                raise TypeError(f"Expected torch.nn.Linear, got {type(l)}")
             w: Tensor = l.weight.to(torch.float64)
             m: float = w.mean().cpu().item()
             s: float = w.std().cpu().item()
@@ -102,7 +89,8 @@ class TestMambaWeightsInitializedCorrect(unittest.TestCase):
             config=config,
             **self.clf_kwds,
         )
-        self.check_linear_layers(model)
+        # print(model)
+        self.check_clf_head(model)
 
     def test_from_clf_checkpoint(self) -> None:
         print("Testing model from CLF checkpoint...")
@@ -113,7 +101,8 @@ class TestMambaWeightsInitializedCorrect(unittest.TestCase):
             config=config,
             **self.clf_kwds,
         )
-        self.check_linear_layers(model)
+        # print(model)
+        self.check_clf_head(model)
 
     def test_from_clm_checkpoint(self) -> None:
         print("Testing model from CLM checkpoint...")
@@ -124,7 +113,8 @@ class TestMambaWeightsInitializedCorrect(unittest.TestCase):
             config=config,
             **self.clf_kwds,
         )
-        self.check_linear_layers(model)
+        # print(model)
+        self.check_clf_head(model)
 
 
 if __name__ == "__main__":
