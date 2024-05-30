@@ -12,8 +12,10 @@ from io import BytesIO
 from itertools import islice
 import json
 import lzma
+import math
 import os
 from pathlib import Path
+import re
 import sys
 import time
 from typing import Any, Callable, Literal, Optional
@@ -217,6 +219,32 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
     # args[i] = s
 
     return ", ".join(args)
+
+
+UPCAST_TENSOR = {
+    torch.int8: torch.int16,
+    torch.int16: torch.int32,
+    torch.int32: torch.int64,
+
+    torch.bfloat16: torch.float32,
+    torch.float16: torch.float32,
+    torch.float32: torch.float64,
+}
+
+
+def basic_tensor_stats(x: Tensor) -> tuple[float, float, float, float]:
+    _mean = x.mean().cpu().item()
+    _std = x.std().cpu().item()
+    _min = x.min().cpu().item()
+    _max = x.max().cpu().item()
+    r = (_mean, _std, _min, _max)
+
+    upcast = UPCAST_TENSOR.get(x.dtype, None)
+
+    if upcast is not None and any(math.isnan(v) or math.isinf(v) for v in r):
+        return basic_tensor_stats(x.to(upcast))
+
+    return r
 
 
 def log_tensor(path: str | Path, x: Tensor, name: str) -> None:
