@@ -128,7 +128,7 @@ class TestOutputHelper(unittest.TestCase):
         training_arguments = TrainingArguments(self.root)
         self.kwds = {
             "root": self.root,
-            "remove_packed": True,
+            "packing_protocol": "any",
             "representation": 8,
             "algorithm": "Raw",
             "vocab_size": 256,
