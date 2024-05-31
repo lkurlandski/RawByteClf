@@ -339,6 +339,13 @@ class TrainingArguments(HfTrainingArguments):
                   # RuntimeError: !grad_accumulator_.expired() INTERNAL ASSERT FAILED at "/opt/conda/conda-bld/pytorch_1682343995026/work/torch/csrc/autograd/saved_variable.cpp":226, please report a bug to PyTorch. No grad accumulator for a saved leaf
                 # self.gradient_checkpointing_kwargs = {"use_reentrant": False}
 
+        if self.use_cpu or self.no_cuda:
+            self.fp16 = False
+            self.fp16_full_eval = False
+            self.bf16 = False
+            self.bf16_full_eval = False
+            self.tf32 = False
+
         # Assumes we will not be using mixed precision on the CPU.
         if not is_torch_bf16_gpu_available():
             if self.bf16:
@@ -1147,6 +1154,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif args.task == "clf-lxs":
         raise NotImplementedError()
 
+    oh.update(tr_size=len(materials.files["tr"]))
 
     if args.task[0:3] == "clf":
         id2label = materials.id2label

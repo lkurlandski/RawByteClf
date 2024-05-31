@@ -573,3 +573,24 @@ class OutputHelper:
         d = {k: v.value if isinstance(v, Enum) else v for k, v in d.items()}
         d["per_device_train_batch_size"] = d["per_device_train_batch_size"] * self.trainer_config["world_size"]
         return [f"{k}--{v}" for k, v in d.items()]
+
+    def update(self, **kwds) -> None:
+        collections = (
+            self._meta_args,
+            self._model_args,
+            self._task_args,
+            self._trainer_args,
+        )
+        for k, v in kwds.items():
+            found = False
+            for collection in collections:
+                for i in range(len(collection)):
+                    if f"{k}--" in collection[i]:
+                        if found is False:
+                            collection[i] = f"{k}--{v}"
+                            found = True
+                        else:
+                            raise RuntimeError(f"{k=} was already found!")
+            if not found:
+                raise RuntimeError(f"Could not find {k=}")
+

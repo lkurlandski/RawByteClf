@@ -465,6 +465,9 @@ def get_materials_pretrain_sorel(
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     files = filter_packed_files(files, packing_protocol, root=SOREL_PATH / "diec")
 
+    if tr_size == -1 or (isinstance(tr_size, int) and tr_size >= (len(files) - vl_size - ts_size)):
+        tr_size = len(files) - vl_size - ts_size
+
     tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
     return Materials(files=tr_vl_ts_files)
 
