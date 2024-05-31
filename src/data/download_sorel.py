@@ -26,6 +26,7 @@ from src.data.cfg import (
 )
 from src.data.utils import stream_sorel_meta, Decompressor
 from src.data.detect_packing_sorel import PackingMap
+from src.data.loaders_core import filter_packed_files
 
 
 DECOMPRESSOR = Decompressor(Decompressor.ZLIB, must_decompress=True)
@@ -79,7 +80,7 @@ def main():
     parser.add_argument("--num_samples", type=int, default=sys.maxsize)
     parser.add_argument("--num_bytes", type=int, default=sys.maxsize)
     parser.add_argument("--max_length", type=int, default=sys.maxsize)
-    parser.add_argument("--remove_packed", action="store_true")
+    parser.add_argument("--packing_protocol", default="any", choices=["yes", "no", "unk", "any"])
     parser.add_argument("--shard_idx", type=int, default=None)
     parser.add_argument("--num_shards", type=int, default=None)
     parser.add_argument(
@@ -95,26 +96,28 @@ def main():
         ),
     )
     parser.add_argument("--run_async", action="store_true")
+    parser.add_argument("--include_shas", type=str, default=None)
+    parser.add_argument("--exclude_shas", type=str, default=None)
     args = parser.parse_args()
     print(f"{args=}")
 
-    is_packed = None
-    if args.remove_packed:
-        is_packed = PackingMap(lazy=False, chunked=True, num_workers=None)  # Low-memory, but fastish
 
-    files = sorted(
-        map(
-            lambda s: s.sha256,
-            islice(
-                filter(
-                    lambda s: s.is_malware and (is_packed is None or is_packed.get(s.sha256, None) is False),
-                    stream_sorel_meta(),
-                ),
-                args.num_samples
-            )
-        )
-    )
+    if args.include_shas is not None:
+        with open(args.include_shas, "r") as fp:
+            files = [f.strip() for f in fp]
+    else:
+        files = [s.sha256 for s in tqdm(stream_sorel_meta(), total=10000000, desc="Gathering Sorel SHAs...") if s.is_malware]
+        files = filter_packed_files(files, args.packing_protocol)
+
+    exclude = set(f.stem for f in args.output_root.iterdir())
+    if args.exclude_shas is not None:
+        with open(args.exclude_shas, "r") as fp:
+            exclude.union([f.strip() for f in fp])
+    files = [f for f in files if f not in exclude]
+
+    files = sorted(files)[0:args.num_samples]
     print(f"{len(files)=}")
+
 
     if args.shard_idx > -1:
         shard_size = (len(files) // args.num_shards) + 1
