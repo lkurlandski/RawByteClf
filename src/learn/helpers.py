@@ -140,7 +140,7 @@ class Args:
     compression_level: int = field(default=9)
     tr_samples_per_class: Optional[int] = field(default=None)  # FIXME: make default argument 1?
     vl_samples_per_class: Optional[int] = field(default=1)  # FIXME: add to output path
-    remove_packed: bool = field(default=False)
+    packing_protocol: str = field(default="Any")
     pretraining_task: Optional[str] = field(default=None)
 
     def __post_init__(self) -> None:
@@ -185,6 +185,10 @@ class Args:
         if self.data_read_bytes is None:
             self.data_read_bytes = int(self.max_length * self.representation // 8)
 
+        self.packing_protocol = self.packing_protocol.lower()
+        if self.packing_protocol not in ("yes", "no", "unk", "any"):
+            raise ValueError(f"packing_protocol must be one of 'yes', 'no', 'unk' or 'any'. Got {self.packing_protocol=}")
+
 
 class OutputHelper:
 
@@ -225,7 +229,7 @@ class OutputHelper:
     def __init__(
         self,
         root: Path,
-        remove_packed: bool,
+        packing_protocol: str,
         representation: int,
         algorithm: str,
         vocab_size: Optional[int],
@@ -255,7 +259,7 @@ class OutputHelper:
             self.model_name = model_name_or_path
 
         self._meta_args = [
-            f"remove_packed--{remove_packed}",
+            f"packing_protocol--{packing_protocol}",
             f"representation--{representation}",
             f"algorithm--{algorithm}",
             f"vocab_size--{vocab_size if vocab_size is not None else 2 ** representation}",
@@ -341,7 +345,7 @@ class OutputHelper:
             raise ValueError(f"Expected {path.name=} to be {OutputHelper.FINAL_PATH=}")
 
         kwds = {
-            "remove_packed": None,
+            "packing_protocol": None,
             "representation": None,
             "algorithm": None,
             "vocab_size": None,

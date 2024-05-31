@@ -1053,7 +1053,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     kwds = {
         "root": args.root,
-        "remove_packed": args.remove_packed,
+        "packing_protocol": args.packing_protocol,
         "representation": args.representation,
         "algorithm": args.algorithm,
         "vocab_size": args.vocab_size,
@@ -1110,7 +1110,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.tr_size,
             args.vl_size,
             args.ts_size,
-            remove_packed=args.remove_packed,
+            packing_protocol=args.packing_protocol,
         )
     # Straightforward classification tasks.
     elif args.task == "clf-bod":
@@ -1120,14 +1120,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             top_k=args.top_k,
             min_freq=args.min_freq,
-            remove_packed=args.remove_packed,
+            packing_protocol=args.packing_protocol,
         )
     elif args.task == "clf-sor-org":
         materials = get_materials_clf_sorel(
             args.tr_size,
             args.vl_size,
             args.ts_size,
-            remove_packed=args.remove_packed,
+            packing_protocol=args.packing_protocol,
         )
     elif args.task[0:7] == "clf-sor":
         materials = get_materials_clf_sorel_vt(
@@ -1135,7 +1135,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.vl_size,
             args.ts_size,
             extractor={"clf-sor-nam": "name", "clf-sor-cat": "category", "clf-sor-lab": "label"}[args.task],
-            remove_packed=args.remove_packed,
+            packing_protocol=args.packing_protocol,
         )
     # Complex classification tasks.
     elif args.task == "clf-ksc":

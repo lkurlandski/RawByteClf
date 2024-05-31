@@ -344,13 +344,22 @@ def filter_file_label_map(
     return files_and_labels
 
 
-def filter_packed_files(files: list[str], root: Optional[str | Path] = None) -> list[str]:
+def filter_packed_files(
+    files: list[str],
+    packing_protocol: Literal["yes", "no", "any", "unk"],
+    root: Optional[str | Path] = None,
+) -> list[str]:
+
+    if packing_protocol == "any":
+        return files
+
 
     def path_to_key(f: Path) -> str:
         return f.stem
 
     def str_to_key(f: str) -> str:
         return os.path.splitext(os.path.basename(f))[0]
+
 
     if isinstance(files[0], str):
         fn = str_to_key
@@ -359,26 +368,34 @@ def filter_packed_files(files: list[str], root: Optional[str | Path] = None) -> 
     else:
         raise TypeError(f"Invalid type: {type(files[0])}")
 
-    kwds = {
-        "lazy": False,
-        "chunked": True,
-        "num_workers": min(len(os.sched_getaffinity(0)), 20) if os.environ.get("DEBUG") != "1" else 8,
-    }
+
+    num_workers = min(len(os.sched_getaffinity(0)), 20) if os.environ.get("DEBUG") != "1" else 8
     print(f"Getting packing map ({root=})")
     t_0 = time.time()
     if root is not None:
-        is_packed = PackingMap(root=root, **kwds)
+        is_packed = PackingMap(root=root, lazy=False, chunked=True, num_workers=num_workers)
     else:
-        is_packed = universal_packing_map(**kwds)
-    print(f"Got packing map in {round(time.time() - t_0, 2)} seconds. {len(is_packed)=}")
+        is_packed = universal_packing_map(lazy=False, chunked=True, num_workers=num_workers)
+    print(f"Got packing map ({len(is_packed)=}) in {round(time.time() - t_0, 2)} seconds.")
 
 
-    print(f"Packing Negative, Positive, and Unknown: {len(files)=}")
-    files = [f for f in files if is_packed.get(fn(f)) is not None]
-    print(f"Packing Negative and Positive: {len(files)=}")
-    files = [f for f in files if is_packed[fn(f)] is False]
-    print(f"Packing Negative: {len(files)=}")
-    return files
+    n_negative = sum(1 for f in files if is_packed.get(fn(f)) is False)
+    n_positive = sum(1 for f in files if is_packed.get(fn(f)) is True)
+    n_unknown = sum(1 for f in files if is_packed.get(fn(f)) is None)
+    print(f"Packing Distribution for {len(files)=}:")
+    print(f"\t{n_negative=}")
+    print(f"\t{n_positive=}")
+    print(f"\t{n_unknown=}")
+
+
+    if packing_protocol == "no":
+        return [f for f in files if is_packed.get(fn(f)) is False]
+    if packing_protocol == "yes":
+        return [f for f in files if is_packed.get(fn(f)) is True]
+    if packing_protocol == "unk":
+        return [f for f in files if is_packed.get(fn(f)) is None]
+
+    raise ValueError(f"Invalid: {packing_protocol=}")
 
 
 ################################################################################
@@ -443,11 +460,10 @@ def get_materials_pretrain_sorel(
     tr_size: int | float,
     vl_size: int | float,
     ts_size: int | float,
-    remove_packed: bool = False,
+    packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
 ) -> Materials:
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
-    if remove_packed:
-        files = filter_packed_files(files, root=SOREL_PATH / "diec")
+    files = filter_packed_files(files, packing_protocol, root=SOREL_PATH / "diec")
 
     tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
     return Materials(files=tr_vl_ts_files)
@@ -461,7 +477,7 @@ def get_materials_clf(
     top_k: Optional[int] = None,
     min_freq: Optional[int] = None,
     min_size: int = 0,
-    remove_packed: bool = False,
+    packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path] = None,
     must_exist: bool = True,
 ) -> Materials:
@@ -472,9 +488,8 @@ def get_materials_clf(
         else:
             min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * 3
 
-    if remove_packed:
-        files_to_keep = filter_packed_files(list(files_and_labels.keys()), root=packing_root)
-        files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
+    files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
+    files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
     # Filter out the files that are not in the top_k most frequent labels
     files_and_labels = filter_file_label_map(
