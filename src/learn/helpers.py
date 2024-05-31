@@ -123,7 +123,7 @@ class Args:
     min_freq: Optional[str] = field(default=None)
     top_k: Optional[str] = field(default=None)
     arch_config_file: Optional[Path] = field(default=None)
-    arch_config: Optional[dict | str] = field(default=None)
+    arch_config: Optional[str] = field(default=None)
     subset: Optional[int] = field(default=None)
     tr_size: float = field(default=0.8)
     vl_size: float = field(default=0.1)
