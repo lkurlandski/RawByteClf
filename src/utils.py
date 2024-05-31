@@ -474,6 +474,14 @@ def is_jsonable(x: Any) -> bool:
         return False
 
 
+def flatten(xs):
+    for x in xs:
+        if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
+            yield from flatten(x)
+        else:
+            yield x
+
+
 COMPRESSION_TYPES = ("gzip", "bzip2", "lzma", "zlib", "7z")
 
 
