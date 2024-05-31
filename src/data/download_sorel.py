@@ -108,15 +108,16 @@ def main():
     else:
         files = [s.sha256 for s in tqdm(stream_sorel_meta(), total=10000000, desc="Gathering Sorel SHAs...") if s.is_malware]
         files = filter_packed_files(files, args.packing_protocol)
+    print(f"Eligible shas: {len(files)=}")
 
-    exclude = set(f.stem for f in args.output_root.iterdir())
     if args.exclude_shas is not None:
         with open(args.exclude_shas, "r") as fp:
-            exclude.union([f.strip() for f in fp])
-    files = [f for f in files if f not in exclude]
+            exclude = set([f.strip() for f in fp])
+        print(f"Removing {len(exclude)=} shas.")
+        files = [f for f in files if f not in exclude]
 
     files = sorted(files)[0:args.num_samples]
-    print(f"{len(files)=}")
+    print(f"Eligible shas: {len(files)=}")
 
 
     if args.shard_idx > -1:
