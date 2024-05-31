@@ -25,7 +25,7 @@ if len(sys.argv) > 2:
 else:
     DEBUG = False
 
-CLM_NGPUS = 1 if SYSTEM == System.RC else 2
+CLM_NGPUS = 2 if SYSTEM == System.RC else 2
 CLF_NGPUS = 1 if SYSTEM == System.RC else 2
 CLM_NTASKS = 4
 CLF_NTASKS = 4
@@ -36,6 +36,7 @@ SEEDS = [0, 1, 2, 3, 4]
 REPRESENTATIONS = [8, 16]
 TASKS = ["clf-bod", "clf-sor-nam"]
 PRETRAINING_TASKS = ["None", "clm"]
+REMOVE_PACKED = [True, False]
 
 ROOT = "./output/nopacked"
 MODEL_NAME_OR_PATH = "mamba"
@@ -48,7 +49,7 @@ CLM_VL_SIZE = 2 ** 14 if SYSTEM == System.RC else 14868
 CLM_TRAIN_BATCH_SIZE = 512
 CLM_PER_DEVICE_TRAIN_BATCH_SIZE = CLM_TRAIN_BATCH_SIZE // CLM_NGPUS
 CLM_GRADIENT_ACCUMULATION_STEPS = 1
-CLM_PER_DEVICE_EVAL_BATCH_SIZE = 64
+CLM_PER_DEVICE_EVAL_BATCH_SIZE = "CLM_PER_DEVICE_EVAL_BATCH_SIZE"
 CLM_SAVE_EVAL_STEPS = 512 if SYSTEM == System.RC else 128
 
 CLF_TRAIN_BATCH_SIZE = 64
@@ -59,15 +60,15 @@ CLF_PER_DEVICE_EVAL_BATCH_SIZE = "CLF_PER_DEVICE_EVAL_BATCH_SIZE"
 
 BODY_CLM = f"""#!/bin/bash -l
 
-#SBATCH --job-name=JOB_NAME
+#SBATCH --job-name={'debug-' if DEBUG else ''}JOB_NAME
 #SBATCH --account=admalware
 #SBATCH --partition={'debug' if DEBUG else 'tier3'}
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=02-00:00:00
+#SBATCH --time={'00-01:00:00' if DEBUG else '02-00:00:00'}
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks={CLM_NTASKS}
-#SBATCH --mem={CLM_MEM}
+#SBATCH --ntasks={1 if DEBUG else CLM_NTASKS}
+#SBATCH --mem={'16G' if DEBUG else CLM_MEM}
 #SBATCH --gres=gpu:a100:{CLM_NGPUS}
 
 
@@ -84,9 +85,9 @@ src/learn/train.py \\
 --metric_for_best_model="eval_loss" \\
 --task="clm" \\
 --seed=0 \\
---remove_packed \\
---streaming=false \\
---skip_eval_check=false \\
+--remove_packed=REMOVE_PACKED \\
+--streaming={'true' if DEBUG else 'true'} \\
+--skip_eval_check={'true' if DEBUG else 'false'} \\
 --dataset_backend="HF" \\
 --representation=REPRESENTATION \\
 --algorithm="Raw" \\
@@ -102,7 +103,7 @@ src/learn/train.py \\
 --logging_steps=1 \\
 --save_steps={CLM_SAVE_EVAL_STEPS} \\
 --eval_steps={CLM_SAVE_EVAL_STEPS} \\
---dataloader_num_workers={3} \\
+--dataloader_num_workers={0 if DEBUG else CLM_NTASKS - 1} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
@@ -122,7 +123,9 @@ src/learn/train.py \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
 --tf32=true \\
---gradient_checkpointing=false
+--bf16=true \\
+--fp16=false \\
+--gradient_checkpointing=true
 """
 
 
@@ -154,8 +157,8 @@ src/learn/train.py \\
 --task=DOWNSTREAM_TASK \\
 --seed=SEED \\
 --pretraining_task=PRETRAINING_TASK \\
---remove_packed \\
---streaming={'true' if DEBUG else 'false'} \\
+--remove_packed=REMOVE_PACKED \\
+--streaming={'true' if DEBUG else 'true'} \\
 --skip_eval_check={'true' if DEBUG else 'false'} \\
 --top_k=TOP_K \\
 --min_freq=MIN_FREQ \\
@@ -174,7 +177,7 @@ src/learn/train.py \\
 --logging_steps=1 \\
 --saves_per_epoch=10 \\
 --evals_per_epoch=10 \\
---dataloader_num_workers={1 if DEBUG else 3} \\
+--dataloader_num_workers={0 if DEBUG else CLF_NTASKS} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-4" \\
 --lr_scheduler_type="linear" \\
@@ -195,6 +198,8 @@ src/learn/train.py \\
 --early_stopping=false \\
 --auto_find_batch_size_and_gradient_accumulation_steps \\
 --tf32=true \\
+--bf16=false \\
+--fp16=false \\
 --gradient_checkpointing=true
 """
 
@@ -209,69 +214,83 @@ for f in OUTPUT.glob("*.sh"):
 outfiles = []
 
 
-for representation in REPRESENTATIONS:
-    jobname = f"nopack-clm-{representation}-0"
-    vocab_size = int(2 ** representation)
-    embedding_size = max(8, int(256 / (2 ** (representation - 8))))
-    body = BODY_CLM \
-        .replace("JOB_NAME", jobname) \
-        .replace("REPRESENTATION", str(representation)) \
-        .replace("VOCAB_SIZE", str(vocab_size)) \
-        .replace("EMBEDDING_SIZE", str(embedding_size))
-    outfile = (OUTPUT / jobname).with_suffix(".sh")
-    with open(outfile, "w") as fp:
-        fp.write(body)
-    outfiles.append(outfile)
+for remove_packed in REMOVE_PACKED:
+    core = "nopack" if remove_packed else "pack"
+    for representation in REPRESENTATIONS:
+
+        vocab_size = int(2 ** representation)
+        embedding_size = max(8, int(256 / (2 ** (representation - 8))))
+        per_device_eval_batch_size = 32 if representation == 16 else 64
+
+        # Langauge modeling        
+        jobname = f"{core}-clm-{representation}-0"
+        body = BODY_CLM \
+            .replace("JOB_NAME", jobname) \
+            .replace("REMOVE_PACKED", "true" if remove_packed is True else "false") \
+            .replace("REPRESENTATION", str(representation)) \
+            .replace("VOCAB_SIZE", str(vocab_size)) \
+            .replace("EMBEDDING_SIZE", str(embedding_size)) \
+            .replace("CLM_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size))
+        outfile = (OUTPUT / jobname).with_suffix(".sh")
+        with open(outfile, "w") as fp:
+            fp.write(body)
+        outfiles.append(outfile)
+
+        # Classification
+        for task in TASKS:
+            top_k = 10 if task == "clf-bod" else None
+            min_freq = None if task == "clf-bod" else 2
+
+            alloc_time = None  # FIXME: determine alloc_time for packed
+            if task == "clf-bod":
+                if representation == 8:
+                    alloc_time = "00-01:00:00"
+                elif representation == 16:
+                    alloc_time = "00-00:40:00"
+            elif task == "clf-sor-nam":
+                if representation == 8:
+                    alloc_time = "01-12:00:00"
+                elif representation == 16:
+                    alloc_time = "01-00:00:00"
+            if alloc_time is None:
+                raise RuntimeError(f"{representation=} {task=}")
+
+            memory = "16G" if task == "clf-bod" else "48G"
+            for pretraining_task in PRETRAINING_TASKS:
+                name = "clf" if pretraining_task == "None" else "ft"
+                for seed in SEEDS:
+                    jobname = f"{core}-{name}-{task}-{representation}-{seed}"
+                    body = BODY_CLF \
+                        .replace("JOB_NAME", jobname) \
+                        .replace("REMOVE_PACKED", "true" if remove_packed is True else "false") \
+                        .replace("REPRESENTATION", str(representation)) \
+                        .replace("VOCAB_SIZE", str(vocab_size)) \
+                        .replace("EMBEDDING_SIZE", str(embedding_size)) \
+                        .replace("CLF_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size)) \
+                        .replace("DOWNSTREAM_TASK", task) \
+                        .replace("TOP_K", str(top_k)) \
+                        .replace("MIN_FREQ", str(min_freq)) \
+                        .replace("ALLOC_TIME", alloc_time) \
+                        .replace("MEMORY", memory) \
+                        .replace("SEED", str(seed)) \
+                        .replace("PRETRAINING_TASK", pretraining_task)
+                    outfile = (OUTPUT / jobname).with_suffix(".sh")
+                    with open(outfile, "w") as fp:
+                        fp.write(body)
+                    outfiles.append(outfile)
 
 
-for representation in REPRESENTATIONS:
-    vocab_size = int(2 ** representation)
-    embedding_size = max(8, int(256 / (2 ** (representation - 8))))
-    per_device_eval_batch_size = 32 if representation == 16 else 64
-    for task in TASKS:
-        top_k = 10 if task == "clf-bod" else None
-        min_freq = None if task == "clf-bod" else 2
-
-        alloc_time = None
-        if task == "clf-bod":
-            if representation == 8:
-                alloc_time = "00-01:00:00"
-            elif representation == 16:
-                alloc_time = "00-00:40:00"
-        elif task == "clf-sor-nam":
-            if representation == 8:
-                alloc_time = "01-12:00:00"
-            elif representation == 16:
-                alloc_time = "01-00:00:00"
-        if alloc_time is None:
-            raise RuntimeError(f"{representation=} {task=}")
-
-        memory = "16G" if task == "clf-bod" else "48G"
-        for pretraining_task in PRETRAINING_TASKS:
-            name = "clf" if pretraining_task == "None" else "ft"
-            for seed in SEEDS:
-                jobname = f"nopack-{name}-{task}-{representation}-{seed}"
-                body = BODY_CLF \
-                    .replace("JOB_NAME", jobname) \
-                    .replace("REPRESENTATION", str(representation)) \
-                    .replace("VOCAB_SIZE", str(vocab_size)) \
-                    .replace("EMBEDDING_SIZE", str(embedding_size)) \
-                    .replace("CLF_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size)) \
-                    .replace("DOWNSTREAM_TASK", task) \
-                    .replace("TOP_K", str(top_k)) \
-                    .replace("MIN_FREQ", str(min_freq)) \
-                    .replace("ALLOC_TIME", alloc_time) \
-                    .replace("MEMORY", memory) \
-                    .replace("SEED", str(seed)) \
-                    .replace("PRETRAINING_TASK", pretraining_task)
-                outfile = (OUTPUT / jobname).with_suffix(".sh")
-                with open(outfile, "w") as fp:
-                    fp.write(body)
-                outfiles.append(outfile)
+def key(s: str) -> tuple:
+    out = s.split("-")
+    for i in range(len(out)):
+        o = out[i]
+        if o.isdigit():
+            out[i] == float(o)
+    return out
 
 
 with open(OUTPUT / "run.sh", "w") as fp:
-    for f in sorted(outfiles, key=lambda p: str(p).split("-")[1]):
+    for f in sorted(outfiles, key=lambda p: key(str(p.name))):
         if SYSTEM == System.RC:
             pre = "sbatch"
             pos = ""
