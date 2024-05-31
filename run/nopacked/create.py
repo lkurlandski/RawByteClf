@@ -36,9 +36,9 @@ SEEDS = [0, 1, 2, 3, 4]
 REPRESENTATIONS = [8, 16]
 TASKS = ["clf-bod", "clf-sor-nam"]
 PRETRAINING_TASKS = ["None", "clm"]
-REMOVE_PACKED = [True, False]
+PACKING_PROTOCOLS = ["yes", "no", "any"]
 
-ROOT = "./output/nopacked"
+ROOT = "./output/main"
 MODEL_NAME_OR_PATH = "mamba"
 ARCH_CONFIG = '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": EMBEDDING_SIZE}'
 MAX_LENGTH = 2 ** 16 if SYSTEM == System.RC else 2 ** 12
@@ -85,7 +85,7 @@ src/learn/train.py \\
 --metric_for_best_model="eval_loss" \\
 --task="clm" \\
 --seed=0 \\
---remove_packed=REMOVE_PACKED \\
+--packing_protocol=PACKING_PROTOCOL \\
 --streaming={'true' if DEBUG else 'true'} \\
 --skip_eval_check={'true' if DEBUG else 'false'} \\
 --dataset_backend="HF" \\
@@ -157,7 +157,7 @@ src/learn/train.py \\
 --task=DOWNSTREAM_TASK \\
 --seed=SEED \\
 --pretraining_task=PRETRAINING_TASK \\
---remove_packed=REMOVE_PACKED \\
+--packing_protocol=PACKING_PROTOCOL \\
 --streaming={'true' if DEBUG else 'true'} \\
 --skip_eval_check={'true' if DEBUG else 'false'} \\
 --top_k=TOP_K \\
@@ -214,8 +214,7 @@ for f in OUTPUT.glob("*.sh"):
 outfiles = []
 
 
-for remove_packed in REMOVE_PACKED:
-    core = "nopack" if remove_packed else "pack"
+for packing_protocol in PACKING_PROTOCOLS:
     for representation in REPRESENTATIONS:
 
         vocab_size = int(2 ** representation)
@@ -223,10 +222,10 @@ for remove_packed in REMOVE_PACKED:
         per_device_eval_batch_size = 32 if representation == 16 else 64
 
         # Langauge modeling        
-        jobname = f"{core}-clm-{representation}-0"
+        jobname = f"{packing_protocol}-clm-{representation}-0"
         body = BODY_CLM \
             .replace("JOB_NAME", jobname) \
-            .replace("REMOVE_PACKED", "true" if remove_packed is True else "false") \
+            .replace("PACKING_PROTOCOL", packing_protocol) \
             .replace("REPRESENTATION", str(representation)) \
             .replace("VOCAB_SIZE", str(vocab_size)) \
             .replace("EMBEDDING_SIZE", str(embedding_size)) \
@@ -259,10 +258,10 @@ for remove_packed in REMOVE_PACKED:
             for pretraining_task in PRETRAINING_TASKS:
                 name = "clf" if pretraining_task == "None" else "ft"
                 for seed in SEEDS:
-                    jobname = f"{core}-{name}-{task}-{representation}-{seed}"
+                    jobname = f"{packing_protocol}-{name}-{task}-{representation}-{seed}"
                     body = BODY_CLF \
                         .replace("JOB_NAME", jobname) \
-                        .replace("REMOVE_PACKED", "true" if remove_packed is True else "false") \
+                        .replace("PACKING_PROTOCOL", packing_protocol) \
                         .replace("REPRESENTATION", str(representation)) \
                         .replace("VOCAB_SIZE", str(vocab_size)) \
                         .replace("EMBEDDING_SIZE", str(embedding_size)) \
