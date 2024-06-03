@@ -1077,7 +1077,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
-        args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(**kwds)
+        args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
+            args.pretraining_task, **kwds,
+        )
         kwds["model_name_or_path"] = args.model_name_or_path
     oh = OutputHelper(**kwds)
     print(f"Output Helper:\n{str(oh)}")
@@ -1119,6 +1121,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             packing_protocol=args.packing_protocol,
         )
+        # FIXME: this is really stupid and should be improved.
+        oh.update(tr_size=len(materials.files["tr"]))
     # Straightforward classification tasks.
     elif args.task == "clf-bod":
         materials = get_materials_clf_bodmas(
@@ -1154,7 +1158,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif args.task == "clf-lxs":
         raise NotImplementedError()
 
-    oh.update(tr_size=len(materials.files["tr"]))
 
     if args.task[0:3] == "clf":
         id2label = materials.id2label
