@@ -22,6 +22,8 @@ Train and evaluate the models for malware family classification.
     sized test dataset.
 
 FIXME: always use bos and eos tokens as this simplifies the preprocessing logic.
+FIXME: when streaming in classification mode with num_train epochs, the output helper gets 
+     set in max_steps mode after CUDA OOMs.
 """
 
 # pylint: disable=wrong-import-position
