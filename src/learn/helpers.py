@@ -5,6 +5,10 @@ FIXME:
  - add world_size to the output path instead of multiplying with per_device_train_batch_size
  - the mutability of the OutputHelper's trainer_config is confusing; 
     refactor to contain a reference to a TrainingArguments?
+
+TODO:
+ - after adding an update method, it seems pertinent to simply save the configuration values
+  as instance variables then make the _{}_args private functions.
 """
 
 from __future__ import annotations

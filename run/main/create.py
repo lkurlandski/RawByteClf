@@ -1,6 +1,8 @@
 """
+Create pretraining, classification, and finetuning bash scripts.
 """
 
+from argparse import ArgumentParser
 from enum import Enum
 import os
 from pathlib import Path
@@ -12,21 +14,18 @@ DOUBLE_BACKSLASH = """\\"""
 
 
 class System(Enum):
-    RC = 0
-    ARMITAGE = 1
+    RC = "RC"
+    ARMITAGE = "ARMITAGE"
 
 
-SYSTEM = System(int(sys.argv[1]))
+parser = ArgumentParser()
+parser.add_argument("--system", type=System, required=True)
+parser.add_argument("--clm_ngpus", type=int, default=1)
+parser.add_argument("--clf_ngpus", type=int, default=1)
+parser.add_argument("--debug", action="store_true")
+args = parser.parse_args()
 
-if len(sys.argv) > 2:
-    DEBUG = int(sys.argv[2]) == 1
-    if DEBUG:
-        print("Debugging Mode.")
-else:
-    DEBUG = False
 
-CLM_NGPUS = 2 if SYSTEM == System.RC else 2
-CLF_NGPUS = 1 if SYSTEM == System.RC else 2
 CLM_NTASKS = 4
 CLF_NTASKS = 4
 CLM_MEM = "64G"
@@ -41,43 +40,123 @@ PACKING_PROTOCOLS = ["yes", "no", "any"]
 ROOT = "./output/main"
 MODEL_NAME_OR_PATH = "mamba"
 ARCH_CONFIG = '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": EMBEDDING_SIZE}'
-MAX_LENGTH = 2 ** 16 if SYSTEM == System.RC else 2 ** 12
-DATA_READ_BYTES = 2 ** 16 if SYSTEM == System.RC else 2 ** 12
+MAX_LENGTH = 2 ** 16 if args.system == System.RC else 2 ** 12
+DATA_READ_BYTES = 2 ** 16 if args.system == System.RC else 2 ** 12
 
-CLM_TR_SIZE = 2 ** 21 if SYSTEM == System.RC else 350000
-CLM_VL_SIZE = 2 ** 14 if SYSTEM == System.RC else 14868
+CLM_TR_SIZE = 2 ** 21 if args.system == System.RC else 350000
+CLM_VL_SIZE = 2 ** 14 if args.system == System.RC else 14868
 CLM_TRAIN_BATCH_SIZE = 512
-CLM_PER_DEVICE_TRAIN_BATCH_SIZE = CLM_TRAIN_BATCH_SIZE // CLM_NGPUS
+CLM_PER_DEVICE_TRAIN_BATCH_SIZE = CLM_TRAIN_BATCH_SIZE // args.clm_ngpus
 CLM_GRADIENT_ACCUMULATION_STEPS = 1
 CLM_PER_DEVICE_EVAL_BATCH_SIZE = "CLM_PER_DEVICE_EVAL_BATCH_SIZE"
-CLM_SAVE_EVAL_STEPS = 512 if SYSTEM == System.RC else 128
+CLM_SAVE_EVAL_STEPS = 512 if args.system == System.RC else 128
 
 CLF_TRAIN_BATCH_SIZE = 64
-CLF_PER_DEVICE_TRAIN_BATCH_SIZE = CLF_TRAIN_BATCH_SIZE // CLF_NGPUS
+CLF_PER_DEVICE_TRAIN_BATCH_SIZE = CLF_TRAIN_BATCH_SIZE // args.clf_ngpus
 CLF_GRADIENT_ACCUMULATION_STEPS = 1
 CLF_PER_DEVICE_EVAL_BATCH_SIZE = "CLF_PER_DEVICE_EVAL_BATCH_SIZE"
 
 
+def get_clf_alloc_time(
+    packing_protocol: str,
+    representation: int,
+    task: str,
+) -> str:
+    alloc_time = None
+
+    if packing_protocol == "no":
+        if task == "clf-bod":
+            if representation == 8:
+                alloc_time = "00-01:00:00"
+            elif representation == 16:
+                alloc_time = "00-00:40:00"
+        elif task == "clf-sor-nam":  # tr_size ~= 350000; vl_size ~= 60000
+            if representation == 8:
+                alloc_time = "01-12:00:00"
+            elif representation == 16:
+                alloc_time = "01-00:00:00"
+
+    elif packing_protocol == "yes":
+        if task == "clf-bod":
+            if representation == 8:
+                alloc_time = "00-06:00:00"
+            elif representation == 16:
+                alloc_time = "00-04:00:00"
+        elif task == "clf-sor-nam":  # tr_size == 336828; vl_size == 59687
+            if representation == 8:
+                alloc_time = "01-12:00:00"
+            elif representation == 16:
+                alloc_time = "01-00:00:00"
+
+    elif packing_protocol == "any": 
+        if task == "clf-bod":
+            if representation == 8:
+                alloc_time = "00-06:00:00"
+            elif representation == 16:
+                alloc_time = "00-04:00:00"
+        elif task == "clf-sor-nam":  # tr_size == 651339; vl_size == 115334
+            if representation == 8:
+                alloc_time = "03-00:00:00"
+            elif representation == 16:
+                alloc_time = "02-00:00:00"
+
+    if alloc_time is None:
+        raise RuntimeError()
+
+    return alloc_time
+
+
+def get_clf_memory(
+    packing_protocol: str,
+    representation: int,
+    task: str,
+) -> str:
+    memory = None
+
+    if packing_protocol == "no":  # tr_size ~= 350000; vl_size ~= 60000
+        if task == "clf-bod":
+            memory = "16G"
+        elif task == "clf-sor-nam":
+            memory = "48G"
+
+    elif packing_protocol == "yes":  # tr_size == 336828; vl_size == 59687
+        if task == "clf-bod":
+            memory = "32G"
+        elif task == "clf-sor-nam":
+            memory = "48G"
+
+    elif packing_protocol == "any":  # tr_size == 651339; vl_size == 115334
+        if task == "clf-bod":
+            memory = "32G"
+        elif task == "clf-sor-nam":
+            memory = "64G"
+
+    if memory is None:
+        raise RuntimeError()
+
+    return memory
+
+
 BODY_CLM = f"""#!/bin/bash -l
 
-#SBATCH --job-name={'debug-' if DEBUG else ''}JOB_NAME
+#SBATCH --job-name={'debug-' if args.debug else ''}JOB_NAME
 #SBATCH --account=admalware
-#SBATCH --partition={'debug' if DEBUG else 'tier3'}
+#SBATCH --partition={'debug' if args.debug else 'tier3'}
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time={'00-01:00:00' if DEBUG else '02-00:00:00'}
+#SBATCH --time={'00-01:00:00' if args.debug else '02-00:00:00'}
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks={1 if DEBUG else CLM_NTASKS}
-#SBATCH --mem={'16G' if DEBUG else CLM_MEM}
-#SBATCH --gres=gpu:a100:{CLM_NGPUS}
+#SBATCH --ntasks={1 if args.debug else CLM_NTASKS}
+#SBATCH --mem={'16G' if args.debug else CLM_MEM}
+#SBATCH --gres=gpu:a100:{args.clm_ngpus}
 
 
 source ~/anaconda3/etc/profile.d/conda.sh
-conda activate RawByteClf{2 if SYSTEM == System.RC else ""}
-{"module unload blindfold" if SYSTEM == System.RC else ""}
+conda activate RawByteClf{2 if args.system == System.RC else ""}
+{"module unload blindfold" if args.system == System.RC else ""}
 
 
-{"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(CLM_NGPUS) + " " + DOUBLE_BACKSLASH if CLM_NGPUS > 1 else ""}
+{"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(args.clm_ngpus) + " " + DOUBLE_BACKSLASH if args.clm_ngpus > 1 else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
@@ -86,8 +165,8 @@ src/learn/train.py \\
 --task="clm" \\
 --seed=0 \\
 --packing_protocol=PACKING_PROTOCOL \\
---streaming={'true' if DEBUG else 'true'} \\
---skip_eval_check={'true' if DEBUG else 'false'} \\
+--streaming={'true' if args.debug else 'true'} \\
+--skip_eval_check={'true' if args.debug else 'false'} \\
 --dataset_backend="HF" \\
 --representation=REPRESENTATION \\
 --algorithm="Raw" \\
@@ -103,7 +182,7 @@ src/learn/train.py \\
 --logging_steps=1 \\
 --save_steps={CLM_SAVE_EVAL_STEPS} \\
 --eval_steps={CLM_SAVE_EVAL_STEPS} \\
---dataloader_num_workers={0 if DEBUG else CLM_NTASKS - 1} \\
+--dataloader_num_workers={0 if args.debug else CLM_NTASKS - 1} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-3" \\
 --lr_scheduler_type="linear" \\
@@ -131,24 +210,24 @@ src/learn/train.py \\
 
 BODY_CLF = f"""#!/bin/bash -l
 
-#SBATCH --job-name={'debug-' if DEBUG else ''}JOB_NAME
+#SBATCH --job-name={'debug-' if args.debug else ''}JOB_NAME
 #SBATCH --account=admalware
-#SBATCH --partition={'debug' if DEBUG else 'tier3'}
+#SBATCH --partition={'debug' if args.debug else 'tier3'}
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time={'00-01:00:00' if DEBUG else 'ALLOC_TIME'}
+#SBATCH --time={'00-01:00:00' if args.debug else 'ALLOC_TIME'}
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks={1 if DEBUG else CLF_NTASKS}
-#SBATCH --mem={'16G' if DEBUG else CLF_MEM}
-#SBATCH --gres=gpu:a100:{CLF_NGPUS}
+#SBATCH --ntasks={1 if args.debug else CLF_NTASKS}
+#SBATCH --mem={'16G' if args.debug else CLF_MEM}
+#SBATCH --gres=gpu:a100:{args.clf_ngpus}
 
 
 source ~/anaconda3/etc/profile.d/conda.sh
-conda activate RawByteClf{2 if SYSTEM == System.RC else ""}
-{"module unload blindfold" if SYSTEM == System.RC else ""}
+conda activate RawByteClf{2 if args.system == System.RC else ""}
+{"module unload blindfold" if args.system == System.RC else ""}
 
 
-{"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(CLF_NGPUS) + " " + DOUBLE_BACKSLASH if CLF_NGPUS > 1 else ""}
+{"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(args.clf_ngpus) + " " + DOUBLE_BACKSLASH if args.clf_ngpus > 1 else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
@@ -158,8 +237,8 @@ src/learn/train.py \\
 --seed=SEED \\
 --pretraining_task=PRETRAINING_TASK \\
 --packing_protocol=PACKING_PROTOCOL \\
---streaming={'true' if DEBUG else 'true'} \\
---skip_eval_check={'true' if DEBUG else 'false'} \\
+--streaming={'true' if args.debug else 'true'} \\
+--skip_eval_check={'true' if args.debug else 'false'} \\
 --top_k=TOP_K \\
 --min_freq=MIN_FREQ \\
 --dataset_backend="HF" \\
@@ -177,7 +256,7 @@ src/learn/train.py \\
 --logging_steps=1 \\
 --saves_per_epoch=10 \\
 --evals_per_epoch=10 \\
---dataloader_num_workers={0 if DEBUG else CLF_NTASKS} \\
+--dataloader_num_workers={0 if args.debug else CLF_NTASKS - 1} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-4" \\
 --lr_scheduler_type="linear" \\
@@ -240,21 +319,8 @@ for packing_protocol in PACKING_PROTOCOLS:
             top_k = 10 if task == "clf-bod" else None
             min_freq = None if task == "clf-bod" else 2
 
-            alloc_time = None  # FIXME: determine alloc_time for packed
-            if task == "clf-bod":
-                if representation == 8:
-                    alloc_time = "00-01:00:00"
-                elif representation == 16:
-                    alloc_time = "00-00:40:00"
-            elif task == "clf-sor-nam":
-                if representation == 8:
-                    alloc_time = "01-12:00:00"
-                elif representation == 16:
-                    alloc_time = "01-00:00:00"
-            if alloc_time is None:
-                raise RuntimeError(f"{representation=} {task=}")
-
-            memory = "16G" if task == "clf-bod" else "48G"
+            alloc_time = get_clf_alloc_time(packing_protocol, representation, task)
+            memory = get_clf_memory(packing_protocol, representation, task)
             for pretraining_task in PRETRAINING_TASKS:
                 name = "clf" if pretraining_task == "None" else "ft"
                 for seed in SEEDS:
@@ -290,14 +356,14 @@ def key(s: str) -> tuple:
 
 with open(OUTPUT / "run.sh", "w") as fp:
     for f in sorted(outfiles, key=lambda p: key(str(p.name))):
-        if SYSTEM == System.RC:
+        if args.system == System.RC:
             pre = "sbatch"
             pos = ""
         else:
             if "clm" in f.name:
-                gpus = [str(i) for i in range(CLM_NGPUS)]
+                gpus = [str(i) for i in range(args.clm_ngpus)]
             else:
-                gpus = [str(i) for i in range(CLF_NGPUS)]
+                gpus = [str(i) for i in range(args.clf_ngpus)]
             pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
             pos = f"&> ./logs/{f.stem}.out"   
         fp.write(f"{pre} {str(f)} {pos}\n")
