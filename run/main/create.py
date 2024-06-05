@@ -38,8 +38,11 @@ PRETRAINING_TASKS = ["None", "clm"]
 PACKING_PROTOCOLS = ["yes", "no", "any"]
 
 ROOT = "./output/main"
-MODEL_NAME_OR_PATH = "mamba"
-ARCH_CONFIG = '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": EMBEDDING_SIZE}'
+MODEL_NAME_OR_PATHS = ["mamba", "malconv"]
+ARCH_CONFIGS = {
+    "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": EMBEDDING_SIZE}',
+    "malconv": '{"channels": 128, "stride": 512, "kernel_size": 512, "embedding_size": EMBEDDING_SIZE}',
+}
 MAX_LENGTH = 2 ** 16 if args.system == System.RC else 2 ** 12
 DATA_READ_BYTES = 2 ** 16 if args.system == System.RC else 2 ** 12
 
@@ -57,84 +60,49 @@ CLF_GRADIENT_ACCUMULATION_STEPS = 1
 CLF_PER_DEVICE_EVAL_BATCH_SIZE = "CLF_PER_DEVICE_EVAL_BATCH_SIZE"
 
 
-def get_clf_alloc_time(
-    packing_protocol: str,
-    representation: int,
-    task: str,
-) -> str:
-    alloc_time = None
-
-    if packing_protocol == "no":
-        if task == "clf-bod":
-            if representation == 8:
-                alloc_time = "00-01:00:00"
-            elif representation == 16:
-                alloc_time = "00-00:40:00"
-        elif task == "clf-sor-nam":  # tr_size ~= 350000; vl_size ~= 60000
-            if representation == 8:
-                alloc_time = "01-12:00:00"
-            elif representation == 16:
-                alloc_time = "01-00:00:00"
-
-    elif packing_protocol == "yes":
-        if task == "clf-bod":
-            if representation == 8:
-                alloc_time = "00-06:00:00"
-            elif representation == 16:
-                alloc_time = "00-04:00:00"
-        elif task == "clf-sor-nam":  # tr_size == 336828; vl_size == 59687
-            if representation == 8:
-                alloc_time = "01-12:00:00"
-            elif representation == 16:
-                alloc_time = "01-00:00:00"
-
-    elif packing_protocol == "any": 
-        if task == "clf-bod":
-            if representation == 8:
-                alloc_time = "00-06:00:00"
-            elif representation == 16:
-                alloc_time = "00-04:00:00"
-        elif task == "clf-sor-nam":  # tr_size == 651339; vl_size == 115334
-            if representation == 8:
-                alloc_time = "03-00:00:00"
-            elif representation == 16:
-                alloc_time = "02-00:00:00"
-
-    if alloc_time is None:
-        raise RuntimeError()
-
-    return alloc_time
+# no - # tr_size ~= 350000; vl_size ~= 60000
+# yes - # tr_size == 336828; vl_size == 59687
+# any - # tr_size == 651339; vl_size == 115334
 
 
-def get_clf_memory(
-    packing_protocol: str,
-    representation: int,
-    task: str,
-) -> str:
-    memory = None
+CLF_ALLOC_TIME: dict[tuple[str, str, int, str], str] = {
+    ("mamba", "no", 8, "clf-bod"): "00-01:00:00",
+    ("mamba", "no", 16, "clf-bod"): "00-00:40:00",
+    ("mamba", "no", 8, "clf-sor-nam"): "01-12:00:00",
+    ("mamba", "no", 16, "clf-sor-nam"): "01-00:00:00",
+    ("mamba", "yes", 8, "clf-bod"): "00-06:00:00",
+    ("mamba", "yes", 16, "clf-bod"): "00-04:00:00",
+    ("mamba", "yes", 8, "clf-sor-nam"): "01-12:00:00",
+    ("mamba", "yes", 16, "clf-sor-nam"): "01-00:00:00",
+    ("mamba", "any", 8, "clf-bod"): "00-06:00:00",
+    ("mamba", "any", 16, "clf-bod"): "00-04:00:00",
+    ("mamba", "any", 8, "clf-sor-nam"): "03-00:00:00",
+    ("mamba", "any", 16, "clf-sor-nam"): "02-00:00:00",
 
-    if packing_protocol == "no":  # tr_size ~= 350000; vl_size ~= 60000
-        if task == "clf-bod":
-            memory = "16G"
-        elif task == "clf-sor-nam":
-            memory = "48G"
+    ("malconv", "no", 8, "clf-bod"): "00-01:00:00",
+    ("malconv", "no", 16, "clf-bod"): "00-01:00:00",
+    ("malconv", "no", 8, "clf-sor-nam"): "00-01:00:00",
+    ("malconv", "no", 16, "clf-sor-nam"): "00-01:00:00",
+    ("malconv", "yes", 8, "clf-bod"): "00-01:00:00",
+    ("malconv", "yes", 16, "clf-bod"): "00-01:00:00",
+    ("malconv", "yes", 8, "clf-sor-nam"): "00-01:00:00",
+    ("malconv", "yes", 16, "clf-sor-nam"): "00-01:00:00",
+    ("malconv", "any", 8, "clf-bod"): "00-01:00:00",
+    ("malconv", "any", 16, "clf-bod"): "00-01:00:00",
+    ("malconv", "any", 8, "clf-sor-nam"): "00-01:00:00",
+    ("malconv", "any", 16, "clf-sor-nam"): "00-01:00:00",
+}
 
-    elif packing_protocol == "yes":  # tr_size == 336828; vl_size == 59687
-        if task == "clf-bod":
-            memory = "32G"
-        elif task == "clf-sor-nam":
-            memory = "48G"
 
-    elif packing_protocol == "any":  # tr_size == 651339; vl_size == 115334
-        if task == "clf-bod":
-            memory = "32G"
-        elif task == "clf-sor-nam":
-            memory = "64G"
+CLF_ALLOC_MEM: dict[tuple[str, str], str] = {
+    ("no", "clf-bod"): "16G",
+    ("no", "clf-sor-nam"): "48G",
+    ("yes", "clf-bod"): "32G",
+    ("yes", "clf-sor-nam"): "48G",
+    ("any", "clf-bod"): "32G",
+    ("any", "clf-sor-nam"): "64G",
+}
 
-    if memory is None:
-        raise RuntimeError()
-
-    return memory
 
 
 BODY_CLM = f"""#!/bin/bash -l
@@ -160,7 +128,7 @@ conda activate RawByteClf{2 if args.system == System.RC else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
---arch_config='{ARCH_CONFIG}' \\
+--arch_config='ARCH_CONFIG' \\
 --metric_for_best_model="eval_loss" \\
 --task="clm" \\
 --seed=0 \\
@@ -192,7 +160,7 @@ src/learn/train.py \\
 --adam_beta2=0.990 \\
 --max_grad_norm=1.0 \\
 --save_total_limit=-1 \\
---model_name_or_path={MODEL_NAME_OR_PATH} \\
+--model_name_or_path=MODEL_NAME_OR_PATH \\
 --max_length={MAX_LENGTH} \\
 --data_read_bytes={DATA_READ_BYTES} \\
 --per_device_train_batch_size={CLM_PER_DEVICE_TRAIN_BATCH_SIZE} \\
@@ -231,7 +199,7 @@ conda activate RawByteClf{2 if args.system == System.RC else ""}
 python -u \\
 src/learn/train.py \\
 --root="{ROOT}" \\
---arch_config='{ARCH_CONFIG}' \\
+--arch_config='ARCH_CONFIG' \\
 --metric_for_best_model="eval_accuracy" \\
 --task=DOWNSTREAM_TASK \\
 --seed=SEED \\
@@ -266,7 +234,7 @@ src/learn/train.py \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
 --save_total_limit=2 \\
---model_name_or_path={MODEL_NAME_OR_PATH} \\
+--model_name_or_path=MODEL_NAME_OR_PATH \\
 --max_length={MAX_LENGTH} \\
 --data_read_bytes={DATA_READ_BYTES} \\
 --per_device_train_batch_size={CLF_PER_DEVICE_TRAIN_BATCH_SIZE} \\
@@ -279,7 +247,7 @@ src/learn/train.py \\
 --tf32=true \\
 --bf16=false \\
 --fp16=false \\
---gradient_checkpointing=true
+--gradient_checkpointing=GRADIENT_CHECKPOINTING
 """
 
 
@@ -293,56 +261,68 @@ for f in OUTPUT.glob("*.sh"):
 outfiles = []
 
 
-for packing_protocol in PACKING_PROTOCOLS:
-    for representation in REPRESENTATIONS:
+for model_name in MODEL_NAME_OR_PATHS:
+    arch_config = ARCH_CONFIGS[model_name]
+    gradient_checkpointing = "true" if model_name == "mamba" else "false"
+    for packing_protocol in PACKING_PROTOCOLS:
+        for representation in REPRESENTATIONS:
 
-        vocab_size = int(2 ** representation)
-        embedding_size = max(8, int(256 / (2 ** (representation - 8))))
-        per_device_eval_batch_size = 32 if representation == 16 else 64
+            vocab_size = int(2 ** representation)
+            embedding_size = max(8, int(256 / (2 ** (representation - 8))))
+            per_device_eval_batch_size = 32 if representation == 16 else 64
 
-        # Langauge modeling        
-        jobname = f"{packing_protocol}-clm-{representation}-0"
-        body = BODY_CLM \
-            .replace("JOB_NAME", jobname) \
-            .replace("PACKING_PROTOCOL", packing_protocol) \
-            .replace("REPRESENTATION", str(representation)) \
-            .replace("VOCAB_SIZE", str(vocab_size)) \
-            .replace("EMBEDDING_SIZE", str(embedding_size)) \
-            .replace("CLM_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size))
-        outfile = (OUTPUT / jobname).with_suffix(".sh")
-        with open(outfile, "w") as fp:
-            fp.write(body)
-        outfiles.append(outfile)
+            # Langauge modeling
+            if model_name == "mamba":
+                jobname = f"{packing_protocol}-{model_name}-clm-{representation}-0"
+                body = BODY_CLM \
+                    .replace("JOB_NAME", jobname) \
+                    .replace("MODEL_NAME_OR_PATH", model_name) \
+                    .replace("ARCH_CONFIG", arch_config) \
+                    .replace("PACKING_PROTOCOL", packing_protocol) \
+                    .replace("REPRESENTATION", str(representation)) \
+                    .replace("VOCAB_SIZE", str(vocab_size)) \
+                    .replace("EMBEDDING_SIZE", str(embedding_size)) \
+                    .replace("CLM_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size)) \
+                    .replace("GRADIENT_CHECKPOINTING", gradient_checkpointing)
+                outfile = (OUTPUT / jobname).with_suffix(".sh")
+                with open(outfile, "w") as fp:
+                    fp.write(body)
+                outfiles.append(outfile)
 
-        # Classification
-        for task in TASKS:
-            top_k = 10 if task == "clf-bod" else None
-            min_freq = None if task == "clf-bod" else 2
+            # Classification
+            for task in TASKS:
+                top_k = 10 if task == "clf-bod" else None
+                min_freq = None if task == "clf-bod" else 2
 
-            alloc_time = get_clf_alloc_time(packing_protocol, representation, task)
-            memory = get_clf_memory(packing_protocol, representation, task)
-            for pretraining_task in PRETRAINING_TASKS:
-                name = "clf" if pretraining_task == "None" else "ft"
-                for seed in SEEDS:
-                    jobname = f"{packing_protocol}-{name}-{task}-{representation}-{seed}"
-                    body = BODY_CLF \
-                        .replace("JOB_NAME", jobname) \
-                        .replace("PACKING_PROTOCOL", packing_protocol) \
-                        .replace("REPRESENTATION", str(representation)) \
-                        .replace("VOCAB_SIZE", str(vocab_size)) \
-                        .replace("EMBEDDING_SIZE", str(embedding_size)) \
-                        .replace("CLF_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size)) \
-                        .replace("DOWNSTREAM_TASK", task) \
-                        .replace("TOP_K", str(top_k)) \
-                        .replace("MIN_FREQ", str(min_freq)) \
-                        .replace("ALLOC_TIME", alloc_time) \
-                        .replace("MEMORY", memory) \
-                        .replace("SEED", str(seed)) \
-                        .replace("PRETRAINING_TASK", pretraining_task)
-                    outfile = (OUTPUT / jobname).with_suffix(".sh")
-                    with open(outfile, "w") as fp:
-                        fp.write(body)
-                    outfiles.append(outfile)
+                alloc_time = CLF_ALLOC_TIME[(model_name, packing_protocol, representation, task)]
+                memory = CLF_ALLOC_MEM[( packing_protocol, task)]
+                for pretraining_task in PRETRAINING_TASKS:
+                    if model_name == "malconv" and pretraining_task == "clm":
+                        continue
+                    name = "clf" if pretraining_task == "None" else "ft"
+                    for seed in SEEDS:
+                        jobname = f"{packing_protocol}-{model_name}-{name}-{task}-{representation}-{seed}"
+                        body = BODY_CLF \
+                            .replace("JOB_NAME", jobname) \
+                            .replace("MODEL_NAME_OR_PATH", model_name) \
+                            .replace("ARCH_CONFIG", arch_config) \
+                            .replace("PACKING_PROTOCOL", packing_protocol) \
+                            .replace("REPRESENTATION", str(representation)) \
+                            .replace("VOCAB_SIZE", str(vocab_size)) \
+                            .replace("EMBEDDING_SIZE", str(embedding_size)) \
+                            .replace("CLF_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size)) \
+                            .replace("GRADIENT_CHECKPOINTING", gradient_checkpointing) \
+                            .replace("DOWNSTREAM_TASK", task) \
+                            .replace("TOP_K", str(top_k)) \
+                            .replace("MIN_FREQ", str(min_freq)) \
+                            .replace("ALLOC_TIME", alloc_time) \
+                            .replace("MEMORY", memory) \
+                            .replace("SEED", str(seed)) \
+                            .replace("PRETRAINING_TASK", pretraining_task)
+                        outfile = (OUTPUT / jobname).with_suffix(".sh")
+                        with open(outfile, "w") as fp:
+                            fp.write(body)
+                        outfiles.append(outfile)
 
 
 def key(s: str) -> tuple:
