@@ -24,9 +24,6 @@ Train and evaluate the models for malware family classification.
 FIXME: always use bos and eos tokens as this simplifies the preprocessing logic.
 """
 
-# pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
-
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -44,11 +41,11 @@ import os
 import sys
 import warnings
 
+# pylint: disable=wrong-import-position
+print(f"Entered {__file__=}")
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-    # import src.patches
-    # src.patches.main()
 # pylint: enable=wrong-import-position
 
 from datasets import (
@@ -121,14 +118,10 @@ from src.utils import (
     compose_functions,
     remove_empty_directories,
 )
-from src.architectures.malconv import (
-    AutoMalConvForSequenceClassification,
+from src.architectures.malconv_hf import (
     MalConvConfig,
-    MalConvGCTConfig,
-    MyMalConvConfig,
-    MalConv,
-    MalConvGCT,
-    MyMalConv,
+    MalConvForSequenceClassification,
+    MalConvPreTrainedModel,
 )
 from src.architectures.hrrformer import (
     HRRConfig,
@@ -178,9 +171,7 @@ from src.learn.preprocessing import (
 )
 try:
     from src.learn.tuning import (
-        hp_space_mymalconv,
         hp_space_malconv,
-        hp_space_malconvgct,
         hp_space_longformer,
         hp_space_hrrformer,
     )
@@ -188,7 +179,9 @@ except (ModuleNotFoundError, ImportError) as err:
     print(err)
     def _hp_space(trial: Any) -> dict[str, float | int]:
         raise NotImplementedError()
-    hp_space_mymalconv = hp_space_malconv = hp_space_malconvgct = hp_space_longformer = hp_space_hrrformer = _hp_space
+    hp_space_malconv = _hp_space
+    hp_space_longformer = _hp_space 
+    hp_space_hrrformer = _hp_space
 
 from src.learn.printers import print_tokenizer, print_data_collator, print_config
 from src.learn.utils import (
@@ -238,8 +231,6 @@ MODEL_NAMES = [
     "nystromformer",
     "fnet",
     "malconv",
-    "malconvgct",
-    "mymalconv",
     "hrrformer",
     "rwkv",
     "mamba",
@@ -291,8 +282,6 @@ MODEL_NAME_TO_CONFIG_CLASS = {
     "nystromformer": NystromformerConfig,
     "fnet": FNetConfig,
     "malconv": MalConvConfig,
-    "malconvgct": MalConvGCTConfig,
-    "mymalconv": MyMalConvConfig,
     "hrrformer": HRRConfig,
     "rwkv": RwkvConfig,
     "mamba": MambaConfig,
@@ -496,7 +485,7 @@ def hp_model_init(
     num_labels: Optional[int] = None,
     id2label: Optional[dict[int, str]] = None,
     label2id: Optional[dict[str, int]] = None,
-) -> PreTrainedModel | MalConv | MalConvGCT:
+) -> PreTrainedModel:
     """
     Create new model for Optuna hyperaparameter tuning.
 
@@ -559,10 +548,6 @@ def object_to_model_name(obj: PretrainedConfig | str | Path) -> str:
         return "mamba"
     if isinstance(obj, (MalConvConfig,)):
         return "malconv"
-    if isinstance(obj, (MalConvGCTConfig,)):
-        return "malconvgct"
-    if isinstance(obj, (MyMalConvConfig,)):
-        return "mymalconv"
     if isinstance(obj, (str, Path)) and Path(obj).exists():
         try:
             return object_to_model_name(AutoConfig.from_pretrained(str(obj)))
@@ -669,9 +654,7 @@ def modify_positional_embeddings_allowed(model: Any) -> bool:
     incompatible = [
         RwkvPreTrainedModel,
         MambaPreTrainedModel,
-        MalConv,
-        MalConvGCT,
-        MyMalConv,
+        MalConvPreTrainedModel,
     ]
     if isinstance(model, tuple(incompatible)):
         return False
@@ -846,28 +829,10 @@ def get_config(
 
     if model_name_or_path.lower() == "malconv":
         kwds = kwds | dict(
-            out_size=kwds["num_labels"],
-            pad_idx=tokenizer.pad_token_id,
-            num_embd=vocab_size,
+            vocab_size=vocab_size,
+            pad_token_id=tokenizer.pad_token_id,
         )
         return MalConvConfig(**kwds)
-
-    if model_name_or_path.lower() == "malconvgct":
-        kwds = kwds | dict(
-            out_size=kwds["num_labels"],
-            pad_idx=tokenizer.pad_token_id,
-            num_embd=vocab_size,
-        )
-        return MalConvGCTConfig(**kwds)
-
-    if model_name_or_path.lower() == "mymalconv":
-        kwds = kwds | dict(
-            out_size=kwds["num_labels"],
-            pad_idx=tokenizer.pad_token_id,
-            num_embd=vocab_size,
-            max_length=max_posititional_embeddings,
-        )
-        return MyMalConvConfig(**kwds)
 
     # pylint: enable=use-dict-literal
 
@@ -879,7 +844,7 @@ def get_model(
     model_name_or_path: Optional[str] = None,
     config: Optional[PretrainedConfig] = None,
     **kwds,
-) -> PreTrainedModel | MalConv | MalConvGCT:
+) -> PreTrainedModel:
     if model_name_or_path is None and config is None:
         raise ValueError("Must specify `model_name_or_path` or `config`.")
     if model_name_or_path is None == config is None:  # FIXME: roken.
@@ -910,14 +875,14 @@ def get_model(
                 model = MambaForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
                 _config = MambaConfig.from_pretrained(model_name_or_path)  # FIXME: what the fuck.
                 _head_names = ["clf_head"]
+            elif model_name == "malconv":
+                model = MalConvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                _config = MalConvConfig.from_pretrained(model_name_or_path)
+                _head_names = ["clf_head"]
             elif get_model_type(model_name_or_path) == "HF":
                 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
                 _config = AutoConfig.from_pretrained(model_name_or_path)
                 _head_names = []
-            elif get_model_type(model_name_or_path) == "MC":
-                model = AutoMalConvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
-                _config = MalConvConfig.from_pretrained(model_name_or_path)
-                _head_names = ["mlp"]
             else:
                 raise ValueError(f"Invalid model name: {model_name}")
 
@@ -973,12 +938,7 @@ def get_model(
         print("Creating new model.")
         if task[0:3] == "clf":
             if isinstance(config, MalConvConfig):
-                return MalConv(config)
-            if isinstance(config, MalConvGCTConfig):
-                print(config)
-                return MalConvGCT(config)
-            if isinstance(config, MyMalConvConfig):
-                return MyMalConv(config)
+                return MalConvForSequenceClassification(config)
             if isinstance(config, HRRConfig):
                 return HRRForSequenceClassification(config)
             if isinstance(config, RwkvConfig):
@@ -1296,7 +1256,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.task[0:3] == "clf":
         data_collator = DataCollatorWithPadding(
             tokenizer=tokenizer,
-            padding="max_length" if MODEL_TYPE == "MC" else "longest",  # malconv needs padding to its max_length
+            padding="longest",
             pad_to_multiple_of=pad_to_multiple_of,
             max_length=args.max_length,  # hopefully, the sequences were truncated before hand...
         )
@@ -1324,7 +1284,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     callbacks = [UtilCallback(False)]
     if args.early_stopping:
         callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
-    if MODEL_TYPE == "MC":
+    if MODEL_TYPE == "MC":  # FIXME: wtf is this doing?
         callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")
     print(BR)
@@ -1582,10 +1542,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             hp_space = hp_space_hrrformer
         elif isinstance(config, (MalConvConfig,)):
             hp_space = hp_space_malconv
-        elif isinstance(config, (MalConvGCTConfig,)):
-            hp_space = hp_space_malconvgct
-        elif isinstance(config, (MyMalConvConfig,)):
-            hp_space = hp_space_mymalconv
         else:
             raise ValueError(f"No hyperparameter space defined for this model: {type(config)=}")
 
