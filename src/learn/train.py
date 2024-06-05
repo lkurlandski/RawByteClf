@@ -1017,7 +1017,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"training_arguments={pformat(training_arguments)}")
     print(BR, flush=True)
 
-    MODEL_TYPE: Literal["HF", "MC"] = get_model_type(args.model_name_or_path)
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
 
     kwds = {
@@ -1289,8 +1288,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     callbacks = [UtilCallback(False)]
     if args.early_stopping:
         callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
-    if MODEL_TYPE == "MC":  # FIXME: wtf is this doing?
-        callbacks.append(SaveConfigToCheckpointCallback())
     print(f"{callbacks=}")
     print(BR)
 
