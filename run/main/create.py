@@ -79,18 +79,18 @@ CLF_ALLOC_TIME: dict[tuple[str, str, int, str], str] = {
     ("mamba", "any", 8, "clf-sor-nam"): "03-00:00:00",
     ("mamba", "any", 16, "clf-sor-nam"): "02-00:00:00",
 
-    ("malconv", "no", 8, "clf-bod"): "00-01:00:00",
-    ("malconv", "no", 16, "clf-bod"): "00-01:00:00",
-    ("malconv", "no", 8, "clf-sor-nam"): "00-01:00:00",
-    ("malconv", "no", 16, "clf-sor-nam"): "00-01:00:00",
-    ("malconv", "yes", 8, "clf-bod"): "00-01:00:00",
-    ("malconv", "yes", 16, "clf-bod"): "00-01:00:00",
-    ("malconv", "yes", 8, "clf-sor-nam"): "00-01:00:00",
-    ("malconv", "yes", 16, "clf-sor-nam"): "00-01:00:00",
-    ("malconv", "any", 8, "clf-bod"): "00-01:00:00",
-    ("malconv", "any", 16, "clf-bod"): "00-01:00:00",
-    ("malconv", "any", 8, "clf-sor-nam"): "00-01:00:00",
-    ("malconv", "any", 16, "clf-sor-nam"): "00-01:00:00",
+    ("malconv", "no", 8, "clf-bod"): "00-00:30:00",
+    ("malconv", "no", 16, "clf-bod"): "00-00:30:00",
+    ("malconv", "no", 8, "clf-sor-nam"): "00-06:00:00",
+    ("malconv", "no", 16, "clf-sor-nam"): "00-06:00:00",
+    ("malconv", "yes", 8, "clf-bod"): "00-00:30:00",
+    ("malconv", "yes", 16, "clf-bod"): "00-00:30:00",
+    ("malconv", "yes", 8, "clf-sor-nam"): "00-06:00:00",
+    ("malconv", "yes", 16, "clf-sor-nam"): "00-06:00:00",
+    ("malconv", "any", 8, "clf-bod"): "00-00:30:00",
+    ("malconv", "any", 16, "clf-bod"): "00-00:30:00",
+    ("malconv", "any", 8, "clf-sor-nam"): "00-12:00:00",
+    ("malconv", "any", 16, "clf-sor-nam"): "00-12:00:00",
 }
 
 
@@ -264,12 +264,12 @@ outfiles = []
 for model_name in MODEL_NAME_OR_PATHS:
     arch_config = ARCH_CONFIGS[model_name]
     gradient_checkpointing = "true" if model_name == "mamba" else "false"
+    per_device_eval_batch_size = 512 if model_name == "malconv" else 64
     for packing_protocol in PACKING_PROTOCOLS:
         for representation in REPRESENTATIONS:
 
             vocab_size = int(2 ** representation)
             embedding_size = max(8, int(256 / (2 ** (representation - 8))))
-            per_device_eval_batch_size = 32 if representation == 16 else 64
 
             # Langauge modeling
             if model_name == "mamba":
