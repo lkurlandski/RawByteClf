@@ -252,32 +252,6 @@ REQ_TOKEN_TYPE_IDS = [
     "hrrformer",
 ]
 
-REQ_CLS_TOKEN = [
-    "longformer",
-    "reformer",
-    "nystromformer",
-    "fnet",
-    "hrrformer",
-]
-
-REQ_SEP_TOKEN = [
-    "longformer",
-    "reformer",
-    "nystromformer",
-    "fnet",
-    "hrrformer",
-]
-
-REQ_BOS_TOKEN = [
-    "rwkv",
-    "mamba",
-]
-
-REQ_EOS_TOKEN = [
-    "rwkv",
-    "mamba",
-]
-
 MODEL_NAME_TO_CONFIG_CLASS = {
     "longformer": LongformerConfig,
     "reformer": ReformerConfig,
@@ -1165,9 +1139,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 bits_in_byte=args.representation,
                 num_special_ids=len(tokenizer.all_special_ids),
                 max_length=args.max_length,
-                cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
-                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_BOS_TOKEN else None,
-                eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+                bos_token_id=tokenizer.bos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
             ))
             preprocess_fn = compose_functions(*preprocess_fns)
             num_proc = NUM_PROC
@@ -1211,9 +1184,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 bits_in_byte=args.representation,
                 num_special_ids=len(tokenizer.all_special_ids),
                 max_length=args.max_length,
-                cls_token_id=tokenizer.cls_token_id if MODEL_NAME in REQ_CLS_TOKEN else None,
-                bos_token_id=tokenizer.bos_token_id if MODEL_NAME in REQ_BOS_TOKEN else None,
-                eos_token_id=tokenizer.eos_token_id if MODEL_NAME in REQ_EOS_TOKEN else None,
+                bos_token_id=tokenizer.bos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
             ))
             preprocess_fn = compose_functions(*preprocess_fns)
         else:
