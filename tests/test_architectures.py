@@ -22,62 +22,75 @@ class TestMalConvForSequenceClassification(unittest.TestCase):
     pad_token_id = 0
     bos_token_id = 1
     eos_token_id = 2
+    max_length_pow = 16
+    batch_size = 2
 
     def setUp(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.max_length_pow = 16
-        self.config = MalConvConfig(
-            model_max_length=2**self.max_length_pow,
+
+        self.config_normal = MalConvConfig(
             vocab_size=256,
             embedding_size=8,
             pad_token_id=0,
-            window_size=512,
             channels=128,
-            stride=512,
+            stride=256,
+            kernel_size=512,
         )
-        self.model = MalConvForSequenceClassification(self.config).to(self.device)
-        self.bos = torch.tensor([self.bos_token_id])
-        self.eos = torch.tensor([self.eos_token_id])
+        self.config_weird = MalConvConfig(
+            vocab_size=79,
+            embedding_size=17,
+            pad_token_id=0,
+            channels=97,
+            stride=269,
+            kernel_size=271,
+        )
 
-    def _test_input_length(self, length: int):
-        x = torch.randint(3, self.config.vocab_size, (length - 2,))
-        x = torch.cat([self.bos, x, self.eos], dim=0)
-        x = x.unsqueeze(0).to(self.device)
-        self.model(x)
+        self.lengths = list(range(1024, 2049))
+        self.lengths += [2 ** i - 1 for i in range(1024, self.max_length_pow + 1)]
+        self.lengths += [2 ** i for i in range(1024, self.max_length_pow + 1)]
+        self.lengths += [2 ** i + 1 for i in range(1024, self.max_length_pow + 1)]
+        self.lengths = sorted(self.lengths)
+
+        if not torch.cuda.is_available():
+            self.lengths = self.lengths[0:10] + self.lengths[-10:None]
+
+        print(f"Testing {len(self.lengths)=} from {min(self.lengths)=} to {max(self.lengths)=}.")
+
+    def _get_input_tensor(self, vocab_size: int, length: int) -> torch.Tensor:
+        bos = torch.tensor([self.bos_token_id], dtype=torch.long).repeat(self.batch_size, 1)
+        eos = torch.tensor([self.eos_token_id], dtype=torch.long).repeat(self.batch_size, 1)
+        inputs = torch.randint(3, vocab_size, (self.batch_size, length - 2))
+        x = torch.cat([bos, inputs, eos], dim=1)
+        return x
+
+    def _test_input_length(self, model: MalConvForSequenceClassification, length: int):
+        x = self._get_input_tensor(model.config.vocab_size, length).to(self.device)
+        model(x)
         torch.cuda.empty_cache()
         gc.collect()
 
-    def test_input_length_too_short(self):
-
-        for l in range(3, self.config.window_size):
-            with self.assertRaises(ValueError, msg=f"Failed for input size: {l}"):
-                self._test_input_length(l)
-
-    def test_input_length_just_right(self):
-
-        lengths = [self.config.window_size + i for i in range(self.config.window_size)]
-        lengths += [2 ** i - 1 for i in range(2, self.max_length_pow + 2)]
-        lengths += [2 ** i for i in range(2, self.max_length_pow + 2)]
-        lengths += [2 ** i + 1 for i in range(2, self.max_length_pow + 2)]
-        lengths = [l for l in lengths if l >= self.config.window_size]
-        lengths = sorted(lengths)
-
-        print(f"Testing {len(lengths)=} from {min(lengths)=} to {max(lengths)=}.")
-
+    def _test_model(self, config: MalConvConfig):
+        model = MalConvForSequenceClassification(config).to(self.device)
         errors = {}
-        pbar = tqdm(lengths)
+        pbar = tqdm(self.lengths)
         for l in pbar:
             pbar.set_description(f"Testing input size: {l=}")
             try:
-                self._test_input_length(l)
+                self._test_input_length(model, l)
             except Exception as e:
                 errors[l] = e
                 pbar.set_description(f"Testing input size: {l=} -- FAILED")
             else:
                 pbar.set_description(f"Testing input size: {l=} -- PASSED")
 
-        msg = f"Failed for inputs sized: {pformat(errors)}"
+        msg = f"Failed {len(errors)} times for inputs sized:\n{pformat(errors)}"
         self.assertEqual(errors, {}, msg)
+
+    def test_normal(self):
+        self._test_model(self.config_normal)
+
+    def test_wierd(self):
+        self._test_model(self.config_weird)
 
 
 if __name__ == "__main__":

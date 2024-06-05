@@ -1,14 +1,16 @@
 """
 A huggingface-compatible implementation of MalConv.
+
+TODO:
+ - remove some of the comments and assertions...
 """
 
-# pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
-
+import math
 import os
 import sys
 from typing import Optional
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
@@ -23,22 +25,35 @@ from transformers.modeling_outputs import SequenceClassifierOutput, BaseModelOut
 
 class MalConvConfig(PretrainedConfig):
 
+    """
+    Configuration used by original authors:
+
+        >>> MalConvConfig(
+                vocab_size=257,
+                embedding_size=8,
+                pad_token_id=0,
+                channels=128,
+                stride=500,
+                kernel_size=500,
+            )
+    """
+
     def __init__(
         self,
-        vocab_size: int = 257,
-        embedding_size: int = 8,
+        vocab_size: int = 264,
+        embedding_size: int = 256,
         pad_token_id: int = 0,
-        window_size: int = 512,
         channels: int = 128,
         stride: int = 512,
-        **kwds
+        kernel_size: int = 512,
+        **kwds,
     ) -> None:
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
         self.pad_token_id = pad_token_id
-        self.window_size = window_size
         self.channels = channels
         self.stride = stride
+        self.kernel_size = kernel_size
         super().__init__(**kwds)
 
 
@@ -62,10 +77,8 @@ class MalConvPreTrainedModel(PreTrainedModel):
 
 class MalConv(MalConvPreTrainedModel):
     """
-    Adapted from:
-        https://github.com/Alexander-H-Liu/MalConv-Pytorch/blob/master/src/model.py
-        https://github.com/elastic/ember/blob/master/malconv/malconv.py
-        https://github.com/lkurlandski/MalConv2/blob/main/LowMemConv.py
+    Based on Figure 6 in the full-length MalConv paper, accessible here:
+        https://www.semanticscholar.org/reader/4417dfcfc722b8b31278a0ebcc1595963dab5a1c
     """
 
     def __init__(self, config: MalConvConfig):
@@ -78,50 +91,52 @@ class MalConv(MalConvPreTrainedModel):
             padding_idx=config.pad_token_id,
         )
         self.conv_1 = nn.Conv1d(
-            int(config.embedding_size / 2),
-            config.channels,
-            config.window_size,
-            stride=config.window_size,
-            bias=True,
+            in_channels=config.embedding_size,
+            out_channels=config.channels,
+            kernel_size=config.kernel_size,
+            stride=config.stride,
         )
         self.conv_2 = nn.Conv1d(
-            int(config.embedding_size / 2),
-            config.channels,
-            config.window_size,
-            stride=config.window_size,
-            bias=True,
+            in_channels=config.embedding_size,
+            out_channels=config.channels,
+            kernel_size=config.kernel_size,
+            stride=config.stride,
         )
         self.pooling = nn.AdaptiveMaxPool1d(1)
 
-    def forward(self,
-        input_ids: Tensor,
-        labels: Optional[Tensor] = None,
-    ) -> BaseModelOutput:
-        x = input_ids
-        if x.dim() not in (1, 2):
-            raise ValueError(f"Expected 1D or 2D input, got {x.dim()}D input.")
-        if x.dim() == 1:
-            x = x.unsqueeze(0)
-        if x.shape[1] < 3:
-            raise ValueError("Expecting input of length at least 3 [BOS, ..., EOS]")
-        if x.shape[1] < self.config.window_size:
-            raise ValueError(f"Expecting input of length at least {self.config.window_size=}")
+    def forward(self, input_ids: Tensor) -> BaseModelOutput:
 
-        x: Tensor = self.embed(input_ids)
-        x: Tensor = torch.transpose(x, -1, -2)
+        # Annotations:
+        # B: batch size
+        # L: sequence length
+        # E: embedding size
+        # C: channels
+        # S: stride
 
-        cnn_1_input: Tensor = x.narrow(-2, 0, 4)
-        cnn_1_value: Tensor = self.conv_1(cnn_1_input)
+        B = input_ids.shape[0]
+        L = input_ids.shape[1]
+        E = self.config.embedding_size
+        C = self.config.channels
+        S = math.floor((L - self.config.kernel_size) / self.config.stride + 1)
 
-        cnn_2_input = x.narrow(-2, 4, 4)
-        cnn_2_value = self.conv_2(cnn_2_input)
-        gating_weight: Tensor = F.sigmoid(cnn_2_value)
+        input_ids: Tensor  # [B, L]
+        input_embeddings: Tensor = self.embed(input_ids).transpose(1, 2)  # [B, E, L]
+        assert tuple(input_embeddings.shape) == (B, E, L), f"{input_embeddings.shape=} != {(B, E, L)}"
 
-        x: Tensor = cnn_1_value * gating_weight
-        x: Tensor = self.pooling(x)
-        x: Tensor = x.view(-1, self.config.channels)
+        cnn_1_value: Tensor = self.conv_1(input_embeddings)  # [B, C, S - 1]
+        cnn_2_value: Tensor = self.conv_2(input_embeddings)  # [B, C, S - 1]
+        assert tuple(cnn_1_value.shape) == (B, C, S), f"{cnn_1_value.shape=} != {(B, C, S)}"
+        assert tuple(cnn_2_value.shape) == (B, C, S), f"{cnn_2_value.shape=} != {(B, C, S)}"
 
-        return BaseModelOutput(last_hidden_state=x)
+        gating_value: Tensor = cnn_1_value * F.sigmoid(cnn_2_value)  # [B, C, S - 1]
+        assert tuple(gating_value.shape) == (B, C, S), f"{gating_value.shape=} != {(B, C, S)}"
+        pooled_value: Tensor = self.pooling(gating_value)  # [B, C, 1]
+        assert tuple(pooled_value.shape) == (B, C, 1), f"{pooled_value.shape=} != {(B, C, 1)}"
+
+        hidden_states: Tensor = pooled_value.squeeze(-1)  # [B, C]
+        assert tuple(hidden_states.shape) == (B, C), f"{hidden_states.shape=} != {(B, C)}"
+
+        return BaseModelOutput(hidden_states)
 
 
 class MalConvForSequenceClassification(MalConvPreTrainedModel):
@@ -136,7 +151,7 @@ class MalConvForSequenceClassification(MalConvPreTrainedModel):
         input_ids: Tensor,
         labels: Optional[Tensor] = None,
     ) -> SequenceClassifierOutput:
-        x: Tensor = self.malconv(input_ids, labels=labels)[0]
+        x: Tensor = self.malconv(input_ids)[0]
         x: Tensor = self.clf_head(x)
 
         logits = x
@@ -146,3 +161,29 @@ class MalConvForSequenceClassification(MalConvPreTrainedModel):
             loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
 
         return SequenceClassifierOutput(loss=loss, logits=logits)
+
+
+def test():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config = MalConvConfig(
+        vocab_size=256,
+        embedding_size=256,
+        pad_token_id=0,
+        channels=128,
+        stride=256,
+        kernel_size=512,
+    )
+    model = MalConvForSequenceClassification(config).to(device)
+
+    length = 2 ** 19 + 1
+    bos = torch.tensor([1])
+    eos = torch.tensor([2])
+    x = torch.randint(3, config.vocab_size, (length - 2,))
+    x = torch.cat([bos, x, eos], dim=0)
+    x = x.unsqueeze(0).to(device)
+
+    model(x)
+
+
+if __name__ == "__main__":
+    test()
