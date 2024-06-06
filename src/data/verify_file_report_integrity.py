@@ -5,6 +5,7 @@ Verify that VirusTotal reports and malware are correctly organized.
 from argparse import ArgumentParser
 from hashlib import sha256
 import json
+import multiprocessing as mp
 from pathlib import Path
 from pprint import pprint
 import shutil
@@ -127,6 +128,12 @@ def rename_reports(files: list[Path], dry_run: bool = True) -> None:
     rename_sha_based_files(incorrect, dry_run)
 
 
+def get_file_sha(f: Path) -> str:
+    with open(f, "rb") as fp:
+        b = fp.read()
+    return sha256(b).hexdigest()
+
+
 def verify_binaries(
     files: list[Path],
     platform: Optional[Literal["PE", "ELF", "MACHO"]] = None,
@@ -135,30 +142,21 @@ def verify_binaries(
 
     incorrect = []
     if platform is not None:
-        pbar = tqdm(files)
-        for f in pbar:
-            pbar.set_description(f"Scanning {f.name}")
-            t = get_file_type(f)
-            if t not in ("IGNORE", platform):
-                incorrect.append((f, t))
+        with mp.Pool(16) as pool:
+            file_types = pool.map(get_file_type, files)
+        incorrect = [(f, t) for f, t in zip(files, file_types) if t not in ("IGNORE", platform)]
 
+    for f, t in incorrect:
+        print(f"{f} {t}")
+    print(f"{len(incorrect)=} / {len(files)=} bad files.")
     if incorrect:
-        for f, t in incorrect:
-            print(f"{f} {t}")
-        print(f"Found {len(incorrect)=} bad files.")
         sys.exit(1)
 
-    incorrect = []
-    pbar = tqdm(files)
-    for f in pbar:
-        pbar.set_description(f"Scanning: {f.name}")
-        b = f.read_bytes()
-        s = sha256(b).hexdigest()
-        if s != f.stem:
-            incorrect.append((f, s))
+    with mp.Pool(16) as pool:
+        shas = pool.map(get_file_sha, files)
+    incorrect = [(f, s) for f, s in zip(files, shas) if f.stem != s]
 
     rename_sha_based_files(incorrect, dry_run)
-
 
 
 def main():

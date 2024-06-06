@@ -10,6 +10,7 @@ directories=(
   /home/lk3591/Documents/datasets/VirusShare/VirusShare_ELF_20200405/reports
   /home/lk3591/Documents/datasets/VirusShare/VirusShare_Linux_20160715/reports
   /home/lk3591/Documents/datasets/MalwareBazaar/elf/reports/
+  /home/lk3591/Documents/datasets/VirusTotal/extracted/*/ELF/reports
 )
 for directory in "${directories[@]}"; do
   echo "Verifying the integrity of the reports in $directory"
@@ -25,8 +26,9 @@ directories=(
   /home/lk3591/Documents/datasets/VirusShare/VirusShare_ELF_20140617/binaries
   /home/lk3591/Documents/datasets/VirusShare/VirusShare_ELF_20190212/binaries
   /home/lk3591/Documents/datasets/VirusShare/VirusShare_ELF_20200405/binaries
-  /home/lk3591/Documents/datasets/VirusShare/VirusShare_Linux_20160715/binaries
+  # /home/lk3591/Documents/datasets/VirusShare/VirusShare_Linux_20160715/binaries
   /home/lk3591/Documents/datasets/MalwareBazaar/elf/binaries/
+  /home/lk3591/Documents/datasets/VirusTotal/extracted/*/ELF/binaries
 )
 for directory in "${directories[@]}"; do
   echo "Verifying the integrity of the binaries in $directory"
