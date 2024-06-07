@@ -697,6 +697,17 @@ def get_materials_pretrain_elf(
     files = sorted(map(lambda p: p.as_posix(), files))
     files = filter_packed_files(files, packing_protocol, root=[PACKING_ROOTS[d] for d in ELF_CLASSIFICATION_DATASETS])
 
+    # Filter duplicates
+    shas = set()
+    remove = set()
+    for i in range(len(files)):
+        sha = os.path.basename(files[i]).split(".")[0]
+        if sha in shas:
+            remove.add(i)
+        else:
+            shas.add(sha)
+    files = [f for i, f in enumerate(files) if i not in remove]
+
     if tr_size == -1 or (isinstance(tr_size, int) and tr_size >= (len(files) - vl_size - ts_size)):
         tr_size = len(files) - vl_size - ts_size
 
@@ -711,19 +722,19 @@ def get_materials_clf_elf_vt(
     extractor: str = "category",
     refiner: str = "top",
     k: int = 1,
+    filter_excess: bool = True,  # TODO: figure out a more intelligent way of balancing things.
     **kwds,
 ) -> Materials:
     files_and_labels = get_elf_virus_total_file_label_map(extractor, refiner, k)
     files_and_labels = {f: l for f, l in files_and_labels.items() if l is not None}
 
     # This just caps the number of samples in gafgyt and mirai to 5000.
-    # TODO: figure out a more intelligent way of balancing things.
-    if extractor == "name":
+    if filter_excess and extractor == "name":
         c = {"gafgyt": 0, "mirai": 0}
         for f in list(files_and_labels.keys()):
             l = files_and_labels[f]
             if l in c:
-                if c[l] > 5000:
+                if c[l] >= 5000:
                     del files_and_labels[f]
                 else:
                     c[l] += 1
@@ -1089,5 +1100,17 @@ def test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set():
 if __name__ == "__main__":
     m = get_materials_clf_elf_vt(0.85, 0.15, 0.0, extractor="name")
     print(m)
-    sys.exit()
-    # test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set()
+    samples = m.files["tr"] + m.files["vl"] + m.files["ts"]
+    samples = [Path(s).stem for s in samples]
+    pprint(samples[0:4])
+    print(f"{len(samples)=}")
+    print(f"{len(set(samples))=}")
+
+    # m = get_materials_pretrain_elf(0.85, 0.15, 0.0)
+    # print(m)
+
+    # samples = m.files["tr"] + m.files["vl"] + m.files["ts"]
+    # samples = [Path(s).stem for s in samples]
+    # pprint(samples[0:4])
+    # print(f"{len(samples)=}")
+    # print(f"{len(set(samples))=}")
