@@ -33,8 +33,8 @@ CLF_MEM = "MEMORY"
 
 SEEDS = [0, 1, 2, 3, 4]
 REPRESENTATIONS = [8, 16]
-TASKS = ["clf-bod", "clf-sor-nam"]
-PRETRAINING_TASKS = ["None", "clm"]
+TASKS = ["clf-bod", "clf-sor-nam", "clf-elf-nam"]
+PRETRAINING_TASKS = ["None", "clm", "clm-elf"]
 PACKING_PROTOCOLS = ["yes", "no", "any"]
 
 ROOT = "./output/main"
@@ -46,8 +46,8 @@ ARCH_CONFIGS = {
 MAX_LENGTH = 2 ** 16 if args.system == System.RC else 2 ** 12
 DATA_READ_BYTES = 2 ** 16 if args.system == System.RC else 2 ** 12
 
-CLM_TR_SIZE = 2 ** 21 if args.system == System.RC else 350000
-CLM_VL_SIZE = 2 ** 14 if args.system == System.RC else 14868
+CLM_TR_SIZE = 2 ** 21
+CLM_VL_SIZE = 2 ** 14
 CLM_TRAIN_BATCH_SIZE = 512
 CLM_PER_DEVICE_TRAIN_BATCH_SIZE = CLM_TRAIN_BATCH_SIZE // args.clm_ngpus
 CLM_GRADIENT_ACCUMULATION_STEPS = 1
@@ -104,6 +104,17 @@ CLF_ALLOC_MEM: dict[tuple[str, str], str] = {
 }
 
 
+# ELF dataset is about same size as BODMAS, so we're just going to update the
+# structures for clf-elf-name to be the same as clf-bod.
+for k in list(CLF_ALLOC_TIME.keys()):
+    m, p, r, t = k
+    if t == "clf-bod":
+        CLF_ALLOC_TIME[(m, p, r, "clf-elf-nam")] = CLF_ALLOC_TIME[k]
+for k in list(CLF_ALLOC_MEM.keys()):
+    p, t = k
+    if t == "clf-bod":
+        CLF_ALLOC_MEM[(p, "clf-elf-nam")] = CLF_ALLOC_MEM[k]
+
 
 BODY_CLM = f"""#!/bin/bash -l
 
@@ -130,7 +141,7 @@ src/learn/train.py \\
 --root="{ROOT}" \\
 --arch_config='ARCH_CONFIG' \\
 --metric_for_best_model="eval_loss" \\
---task="clm" \\
+--task=DOWNSTREAM_TASK \\
 --seed=0 \\
 --packing_protocol=PACKING_PROTOCOL \\
 --streaming={'true' if args.debug else 'true'} \\
@@ -220,7 +231,7 @@ src/learn/train.py \\
 --output_dir=tmp \\
 --save_strategy="epoch" \\
 --evaluation_strategy="epoch" \\
---num_train_epochs=1 \\
+--num_train_epochs=NUM_TRAIN_EPOCHS \\
 --logging_steps=1 \\
 --saves_per_epoch=10 \\
 --evals_per_epoch=10 \\
@@ -261,19 +272,41 @@ for f in OUTPUT.glob("*.sh"):
 outfiles = []
 
 
+def get_jobname(
+    packing_protocol: str,
+    model_name: str,
+    pretraining_task: str,
+    downstream_task: str,
+    representation: int,
+    seed: int,
+) -> str:
+    args = [
+        packing_protocol,
+        model_name,
+        pretraining_task,
+        downstream_task,
+        str(representation),
+        str(seed),
+    ]
+    return "--".join(args)
+
+
 for model_name in MODEL_NAME_OR_PATHS:
     arch_config = ARCH_CONFIGS[model_name]
     gradient_checkpointing = "true" if model_name == "mamba" else "false"
     per_device_eval_batch_size = 512 if model_name == "malconv" else 64
-    for packing_protocol in PACKING_PROTOCOLS:
-        for representation in REPRESENTATIONS:
 
+    for packing_protocol in PACKING_PROTOCOLS:
+
+        for representation in REPRESENTATIONS:
             vocab_size = int(2 ** representation)
             embedding_size = max(8, int(256 / (2 ** (representation - 8))))
 
-            # Langauge modeling
-            if model_name == "mamba":
-                jobname = f"{packing_protocol}-{model_name}-clm-{representation}-0"
+            for pretraining_task in PRETRAINING_TASKS:
+                if pretraining_task == "None" or model_name != "mamba":
+                    continue
+
+                jobname = get_jobname(packing_protocol, model_name, "None", pretraining_task, representation, 0)
                 body = BODY_CLM \
                     .replace("JOB_NAME", jobname) \
                     .replace("MODEL_NAME_OR_PATH", model_name) \
@@ -283,7 +316,8 @@ for model_name in MODEL_NAME_OR_PATHS:
                     .replace("VOCAB_SIZE", str(vocab_size)) \
                     .replace("EMBEDDING_SIZE", str(embedding_size)) \
                     .replace("CLM_PER_DEVICE_EVAL_BATCH_SIZE", str(per_device_eval_batch_size)) \
-                    .replace("GRADIENT_CHECKPOINTING", gradient_checkpointing)
+                    .replace("GRADIENT_CHECKPOINTING", gradient_checkpointing) \
+                    .replace("DOWNSTREAM_TASK", pretraining_task)
                 outfile = (OUTPUT / jobname).with_suffix(".sh")
                 with open(outfile, "w") as fp:
                     fp.write(body)
@@ -293,15 +327,15 @@ for model_name in MODEL_NAME_OR_PATHS:
             for task in TASKS:
                 top_k = 10 if task == "clf-bod" else None
                 min_freq = None if task == "clf-bod" else 2
-
                 alloc_time = CLF_ALLOC_TIME[(model_name, packing_protocol, representation, task)]
-                memory = CLF_ALLOC_MEM[( packing_protocol, task)]
+                memory = CLF_ALLOC_MEM[(packing_protocol, task)]
+                num_train_epochs = 5 if task == "clf-elf-nam" else 1
+
                 for pretraining_task in PRETRAINING_TASKS:
-                    if model_name == "malconv" and pretraining_task == "clm":
+                    if model_name == "malconv" and pretraining_task != "None":
                         continue
-                    name = "clf" if pretraining_task == "None" else "ft"
                     for seed in SEEDS:
-                        jobname = f"{packing_protocol}-{model_name}-{name}-{task}-{representation}-{seed}"
+                        jobname = get_jobname(packing_protocol, model_name, pretraining_task, task, representation, seed)
                         body = BODY_CLF \
                             .replace("JOB_NAME", jobname) \
                             .replace("MODEL_NAME_OR_PATH", model_name) \
@@ -317,6 +351,7 @@ for model_name in MODEL_NAME_OR_PATHS:
                             .replace("MIN_FREQ", str(min_freq)) \
                             .replace("ALLOC_TIME", alloc_time) \
                             .replace("MEMORY", memory) \
+                            .replace("NUM_TRAIN_EPOCHS", str(num_train_epochs)) \
                             .replace("SEED", str(seed)) \
                             .replace("PRETRAINING_TASK", pretraining_task)
                         outfile = (OUTPUT / jobname).with_suffix(".sh")
