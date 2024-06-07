@@ -137,14 +137,11 @@ import psutil
 from tqdm import tqdm
 
 from src.data.cfg import (
-    BODMAS_PATH,
     SOREL_PATH,
-    VIRUS_SHARE_PATH,
-    MALWARE_BAZAAR_PATH,
-    VIRUS_TOTAL_PATH,
     DATASET_TO_FILES,
     SOREL_BUCKET,
     SOREL_PREFIX,
+    PACKING_ROOTS,
 )
 from src.data.prepare_datasets import s3_dataset_generator
 from src.data.utils import stream_sorel_meta, Decompressor
@@ -536,7 +533,7 @@ class PackingAnalyzer:
             if (i + 1) % self.consolidate_chunk_size == 0:
                 save_partial(output, i)
 
-        if output:
+        if output:  # pylint: disable=undefined-loop-variable
             save_partial(output, i + len(output) if total > self.consolidate_chunk_size else i)
 
     def consolidate_final(self) -> None:
@@ -821,13 +818,18 @@ class PackingMap(UserDict):
         return False
 
 
-def universal_packing_map(**kwds) -> dict[str, bool]:
-    ROOTS = [
-        SOREL_PATH / "diec",
-        BODMAS_PATH / "diec",
-    ]
+def universal_packing_map(roots: Optional[Path | list[Path]] = None, **kwds) -> dict[str, bool]:
+    if roots is None:
+        roots = list(PACKING_ROOTS.values()) if roots is None else roots
+    elif isinstance(roots, (Path, str)):
+        roots = [roots]
+    elif isinstance(roots, Iterable):
+        roots = list(roots)
+        if not isinstance(roots[0], (Path, str)):
+            raise TypeError(f"Unacceptable type: {type(roots[0])}")
+
     all_maps = {}
-    for root in ROOTS:
+    for root in roots:
         m = PackingMap(root, **kwds)
         all_maps.update(dict(m))
     return all_maps
@@ -927,7 +929,7 @@ def unpack_samples(
 def main():
 
     parser = ArgumentParser()
-    parser.add_argument("--dataset", choices=["sorel", "bodmas", "virus_share_elf", "malware_bazaar_elf", "virus_total_elf"], required=True)
+    parser.add_argument("--dataset", choices=["sorel_pe", "bodmas_pe", "virus_share_elf", "malware_bazaar_elf", "virus_total_elf"], required=True)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--merge", action="store_true")
@@ -945,27 +947,26 @@ def main():
         help="Required for --run.")
     args = parser.parse_args()
 
-    if args.dataset == "sorel":
-        p_root = SOREL_PATH / "diec"
+    if args.dataset == "sorel_pe":
+        p_root = PACKING_ROOTS["sorel_pe"]
         all_shas = sorel_shas
         streamer = sorel_streamer
-    elif args.dataset == "bodmas":
-        p_root = BODMAS_PATH / "diec"
+    elif args.dataset == "bodmas_pe":
+        p_root = PACKING_ROOTS["bodmas_pe"]
         all_shas = bodmas_shas
         streamer = bodmas_streamer
     elif args.dataset == "virus_share_elf":
-        p_root = VIRUS_SHARE_PATH / "diec"
+        p_root = PACKING_ROOTS["virus_share_elf"]
         all_shas = virus_share_elf_shas
         streamer = virus_share_elf_streamer
     elif args.dataset == "malware_bazaar_elf":
-        p_root = MALWARE_BAZAAR_PATH / "elf" / "diec"
+        p_root = PACKING_ROOTS["malware_bazaar_elf"]
         all_shas = malware_bazaar_elf_shas
         streamer = malware_bazaar_elf_streamer
     elif args.dataset == "virus_total_elf":
-        p_root = VIRUS_TOTAL_PATH.parent / "diec"
+        p_root = PACKING_ROOTS["virus_total_elf"]
         all_shas = virus_total_elf_shas
         streamer = virus_total_elf_streamer
-
 
     analyzer = PackingAnalyzer(
         p_root,

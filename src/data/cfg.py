@@ -38,6 +38,9 @@ VIRUS_SHARE_ELF_COLLECTION_PATHS = {
 SOREL_META_CSV = SOREL_PATH / "meta.csv"
 SOREL_LABEL_CACHE_DIR = SOREL_PATH / "labels"
 
+ELF_CLASSIFICATION_DATASETS = ("malware_bazaar_elf", "virus_share_elf", "virus_total_elf")
+ELF_LABEL_CACHE_DIR = Path("./cache") / "labels" / "elf"
+
 DATASET_NAMES = [
     "bodmas_pe",
     "local_pe",
@@ -55,6 +58,14 @@ DATASET_NAMES = [
     "virus_total_exe",
     "virus_total_macho",
 ]
+
+PACKING_ROOTS = {
+    "bodmas_pe": BODMAS_PATH / "diec",
+    "malware_bazaar_elf": MALWARE_BAZAAR_PATH / "elf" / "diec",
+    "sorel_pe": SOREL_PATH / "diec",
+    "virus_share_elf": VIRUS_SHARE_PATH / "diec",
+    "virus_total_elf": VIRUS_TOTAL_PATH.parent / "diec",
+}
 
 
 def _dataset_to_report_files_and_binaries(
