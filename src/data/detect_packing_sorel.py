@@ -45,6 +45,10 @@ or
 
     parallel --bar -j 48 'python src/data/detect_packing_sorel.py --dataset=DATASET --run --filter_idx={1} --filter_mode=2 > ./logs/packing_2_{1}.log 2>&1' ::: $(printf "%02x\n" {0..255})
 
+or
+
+    parallel --bar -j 16 'python src/data/detect_packing_sorel.py --dataset=DATASET --run --shard_idx={1} --num_shards=16 > ./logs/packing_16_{1}.log 2>&1' ::: {0..15}
+
 Either way, this will produce a set of JSON-ish files for each sample in the dataset
 
     | -- P_ROOT
@@ -117,7 +121,7 @@ import json
 import multiprocessing as mp
 import os
 from pathlib import Path
-from pprint import pformat
+from pprint import pformat, pprint
 import subprocess
 import sys
 import tempfile
@@ -132,7 +136,16 @@ if __name__ == "__main__":
 import psutil
 from tqdm import tqdm
 
-from src.data.cfg import BODMAS_PATH, SOREL_PATH, DATASET_TO_FILES, SOREL_BUCKET, SOREL_PREFIX
+from src.data.cfg import (
+    BODMAS_PATH,
+    SOREL_PATH,
+    VIRUS_SHARE_PATH,
+    MALWARE_BAZAAR_PATH,
+    VIRUS_TOTAL_PATH,
+    DATASET_TO_FILES,
+    SOREL_BUCKET,
+    SOREL_PREFIX,
+)
 from src.data.prepare_datasets import s3_dataset_generator
 from src.data.utils import stream_sorel_meta, Decompressor
 
@@ -164,9 +177,25 @@ def sorel_shas() -> Generator[str, None, None]:
         yield s.sha256
 
 
-def bodmas_shas() -> Generator[str, None, None]:
-    for f in DATASET_TO_FILES["binaries"]["bodmas_pe"]():
+def basal_shas(name: str) -> Generator[str, None, None]:
+    for f in DATASET_TO_FILES["binaries"][name]():
         yield f.stem
+
+
+def bodmas_shas() -> Generator[str, None, None]:
+    return basal_shas("bodmas_pe")
+
+
+def virus_share_elf_shas() -> Generator[str, None, None]:
+    return basal_shas("virus_share_elf")
+
+
+def malware_bazaar_elf_shas() -> Generator[str, None, None]:
+    return basal_shas("malware_bazaar_elf")
+
+
+def virus_total_elf_shas() -> Generator[str, None, None]:
+    return basal_shas("virus_total_elf")
 
 
 class SampleStreamer(Protocol):
@@ -189,9 +218,26 @@ def sorel_streamer(shas: list[str]) -> Generator[tuple[bytes, str], None, None]:
         yield sample["bytes"], sample["name"]
 
 
-def bodmas_streamer(shas: list[str]) -> Generator[tuple[bytes, str], None, None]:
+def basal_file_streamer(shas: list[str], name: str) -> Generator[tuple[Path, str], None, None]:
+    sha_map = {f.stem : f for f in DATASET_TO_FILES["binaries"][name]() if f.stem in shas}
     for s in shas:
-        yield BODMAS_PATH / "binaries" / f"{s}.exe", s
+        yield sha_map[s], s
+
+
+def bodmas_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "bodmas_pe")
+
+
+def virus_share_elf_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "virus_share_elf")
+
+
+def malware_bazaar_elf_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "malware_bazaar_elf")
+
+
+def virus_total_elf_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "virus_total_elf")
 
 
 class PackingAnalyzerDirectory:
@@ -881,7 +927,7 @@ def unpack_samples(
 def main():
 
     parser = ArgumentParser()
-    parser.add_argument("--dataset", choices=["sorel", "bodmas"], required=True)
+    parser.add_argument("--dataset", choices=["sorel", "bodmas", "virus_share_elf", "malware_bazaar_elf", "virus_total_elf"], required=True)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--merge", action="store_true")
@@ -907,6 +953,19 @@ def main():
         p_root = BODMAS_PATH / "diec"
         all_shas = bodmas_shas
         streamer = bodmas_streamer
+    elif args.dataset == "virus_share_elf":
+        p_root = VIRUS_SHARE_PATH / "diec"
+        all_shas = virus_share_elf_shas
+        streamer = virus_share_elf_streamer
+    elif args.dataset == "malware_bazaar_elf":
+        p_root = MALWARE_BAZAAR_PATH / "elf" / "diec"
+        all_shas = malware_bazaar_elf_shas
+        streamer = malware_bazaar_elf_streamer
+    elif args.dataset == "virus_total_elf":
+        p_root = VIRUS_TOTAL_PATH.parent / "diec"
+        all_shas = virus_total_elf_shas
+        streamer = virus_total_elf_streamer
+
 
     analyzer = PackingAnalyzer(
         p_root,
