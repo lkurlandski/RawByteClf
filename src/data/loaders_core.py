@@ -29,10 +29,19 @@ from sklearn.utils import shuffle
 from tqdm import tqdm
 
 from src.utils import get_max_keys_from_dict
-from src.data.cfg import SOREL_PATH, BODMAS_PATH, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_META_CSV
+from src.data.cfg import (
+    SOREL_PATH,
+    BODMAS_PATH,
+    BODMAS_LABELS_FILE,
+    DATASET_TO_FILES,
+    SOREL_META_CSV,
+    ELF_CLASSIFICATION_DATASETS,
+    PACKING_ROOTS,
+)
 from src.data.detect_packing_sorel import PackingMap, universal_packing_map
 from src.data.label_datasets import (
     get_label_mapping_virus_total_reports_sorel,
+    get_label_mapping_virus_total_reports_elf,
     ThreatLabelExtractor,
     ThreatLabelRefiner,
 )
@@ -347,7 +356,7 @@ def filter_file_label_map(
 def filter_packed_files(
     files: list[str],
     packing_protocol: Literal["yes", "no", "any", "unk"],
-    root: Optional[str | Path] = None,
+    root: Optional[str | Path | list[str | Path]] = None,
 ) -> list[str]:
 
     if packing_protocol == "any":
@@ -372,10 +381,7 @@ def filter_packed_files(
     num_workers = min(len(os.sched_getaffinity(0)), 20) if os.environ.get("DEBUG") != "1" else 8
     print(f"Getting packing map ({root=})")
     t_0 = time.time()
-    if root is not None:
-        is_packed = PackingMap(root=root, lazy=False, chunked=True, num_workers=num_workers)
-    else:
-        is_packed = universal_packing_map(lazy=False, chunked=True, num_workers=num_workers)
+    is_packed = universal_packing_map(root, lazy=False, chunked=True, num_workers=num_workers)
     print(f"Got packing map ({len(is_packed)=}) in {round(time.time() - t_0, 2)} seconds.")
 
 
@@ -463,7 +469,7 @@ def get_materials_pretrain_sorel(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
 ) -> Materials:
     files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
-    files = filter_packed_files(files, packing_protocol, root=SOREL_PATH / "diec")
+    files = filter_packed_files(files, packing_protocol, root=PACKING_ROOTS["sorel_pe"])
 
     if tr_size == -1 or (isinstance(tr_size, int) and tr_size >= (len(files) - vl_size - ts_size)):
         tr_size = len(files) - vl_size - ts_size
@@ -481,7 +487,7 @@ def get_materials_clf(
     min_freq: Optional[int] = None,
     min_size: int = 0,
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
-    packing_root: Optional[Path] = None,
+    packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
 ) -> Materials:
 
@@ -530,7 +536,7 @@ def get_materials_clf_bodmas(
 
     files_and_labels = get_bodmas_file_label_map()
     return get_materials_clf(
-        files_and_labels, tr_size, vl_size, ts_size, packing_root=BODMAS_PATH / "diec", **kwds
+        files_and_labels, tr_size, vl_size, ts_size, packing_root=PACKING_ROOTS["bodmas_pe"], **kwds
     )
 
 
@@ -650,6 +656,86 @@ def get_materials_clf_sorel_vt(
 
     files_and_labels = get_sorel_virus_total_file_label_map(extractor, refiner, k)
     return get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
+
+
+def get_elf_virus_total_file_label_map(
+    extractor: str = "category",
+    refiner: str = "top",
+    k: int = 1,
+) -> dict[os.PathLike, Optional[str]]:
+
+    extractor = ThreatLabelExtractor.build(extractor)
+    refiner = ThreatLabelRefiner.build(refiner, k=k)
+
+    files = chain.from_iterable((DATASET_TO_FILES["binaries"][d]() for d in ELF_CLASSIFICATION_DATASETS))
+    reports = chain.from_iterable((DATASET_TO_FILES["reports"][d]() for d in ELF_CLASSIFICATION_DATASETS))
+
+    shas_and_files: dict[str, os.PathLike] = {
+        f.stem: str(f) for f in files
+    }
+    shas_and_labels: dict[str, Optional[list[str]]] = get_label_mapping_virus_total_reports_elf(
+        reports, extractor, refiner,
+    )
+    shas_and_labels: dict[str, Optional[str]] = {
+        s: l[0] if isinstance(l, (list, tuple)) else None
+        for s, l in shas_and_labels.items()
+    }
+    file_label_map = {
+        file: shas_and_labels.get(sha, None) for sha, file in shas_and_files.items()
+    }
+    return file_label_map
+
+
+def get_materials_pretrain_elf(
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
+) -> Materials:
+
+    files = chain.from_iterable((DATASET_TO_FILES["binaries"][d]() for d in ELF_CLASSIFICATION_DATASETS))
+    files = sorted(map(lambda p: p.as_posix(), files))
+    files = filter_packed_files(files, packing_protocol, root=[PACKING_ROOTS[d] for d in ELF_CLASSIFICATION_DATASETS])
+
+    if tr_size == -1 or (isinstance(tr_size, int) and tr_size >= (len(files) - vl_size - ts_size)):
+        tr_size = len(files) - vl_size - ts_size
+
+    tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
+    return Materials(files=tr_vl_ts_files)
+
+
+def get_materials_clf_elf_vt(
+    tr_size: int | float,
+    vl_size: int | float,
+    ts_size: int | float,
+    extractor: str = "category",
+    refiner: str = "top",
+    k: int = 1,
+    **kwds,
+) -> Materials:
+    files_and_labels = get_elf_virus_total_file_label_map(extractor, refiner, k)
+    files_and_labels = {f: l for f, l in files_and_labels.items() if l is not None}
+
+    # This just caps the number of samples in gafgyt and mirai to 5000.
+    # TODO: figure out a more intelligent way of balancing things.
+    if extractor == "name":
+        c = {"gafgyt": 0, "mirai": 0}
+        for f in list(files_and_labels.keys()):
+            l = files_and_labels[f]
+            if l in c:
+                if c[l] > 5000:
+                    del files_and_labels[f]
+                else:
+                    c[l] += 1
+
+    return get_materials_clf(
+        files_and_labels,
+        tr_size,
+        vl_size,
+        ts_size,
+        packing_root=[PACKING_ROOTS[d] for d in ELF_CLASSIFICATION_DATASETS],
+        **kwds,
+    )
 
 
 class GetMaterialsClfLengthExtrapolation:
@@ -1001,4 +1087,7 @@ def test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set():
 
 
 if __name__ == "__main__":
-    test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set()
+    m = get_materials_clf_elf_vt(0.85, 0.15, 0.0, extractor="name")
+    print(m)
+    sys.exit()
+    # test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set()
