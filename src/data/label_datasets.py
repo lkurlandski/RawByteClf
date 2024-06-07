@@ -5,6 +5,7 @@ Apply labels to the malware datasets.
 from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Generator, Iterable
+from itertools import chain
 from functools import partial
 import json
 import os
@@ -26,7 +27,14 @@ from tqdm import tqdm
 
 from src.cfg import INPUT_PATH, TMP_DIR
 from src.utils import batched
-from src.data.cfg import MAX_SHARD_SIZE, BODMAS_LABELS_FILE, DATASET_TO_FILES, SOREL_LABEL_CACHE_DIR
+from src.data.cfg import (
+    MAX_SHARD_SIZE,
+    BODMAS_LABELS_FILE,
+    DATASET_TO_FILES,
+    SOREL_LABEL_CACHE_DIR,
+    ELF_LABEL_CACHE_DIR,
+    ELF_CLASSIFICATION_DATASETS,
+)
 from src.data.utils import PerDatasetArgumentParser
 
 
@@ -331,7 +339,8 @@ def get_label_mapping_virus_total_reports(
     return labels
 
 
-def get_label_mapping_virus_total_reports_sorel(
+def get_label_mapping_virus_total_reports_with_cache(
+    cache_file: Path,
     report_files: Iterable[os.PathLike],
     extractor: ThreatLabelExtractor,
     refiner: ThreatLabelRefiner,
@@ -340,20 +349,8 @@ def get_label_mapping_virus_total_reports_sorel(
     create_cache: bool = True,
     overwrite_cache: bool = False,
 ) -> dict[str, Optional[tuple[str]]]:
-    """Get a label mapping for the Sorel dataset.
-    """
-
-    cache_file = Path(
-        SOREL_LABEL_CACHE_DIR,
-        f"extractor--{ThreatLabelExtractor.name(extractor)}",
-        ThreatLabelExtractor.descriptor(extractor),
-        f"refiner--{ThreatLabelRefiner.name(refiner)}",
-        ThreatLabelRefiner.descriptor(refiner),
-        "file_label_map.json"
-    )
-
     if cache_file.exists() and not use_cache and not overwrite_cache:
-        raise ValueError()
+        raise ValueError(f"{use_cache=}, {overwrite_cache=} and file exists ({cache_file=}).")
 
     if cache_file.exists() and use_cache:
         print(f"Getting labels from cache: {cache_file=}", flush=True)
@@ -379,6 +376,72 @@ def get_label_mapping_virus_total_reports_sorel(
                 with open(cache_file, "w") as fp:
                     json.dump(files_and_labels, fp, indent=4, sort_keys=True)
     return files_and_labels
+
+
+def get_label_mapping_virus_total_reports_sorel(
+    report_files: Iterable[os.PathLike],
+    extractor: ThreatLabelExtractor,
+    refiner: ThreatLabelRefiner,
+    asynch: bool = False,
+    use_cache: bool = True,
+    create_cache: bool = True,
+    overwrite_cache: bool = False,
+) -> dict[str, Optional[tuple[str]]]:
+    """Get a label mapping for the Sorel dataset.
+    """
+
+    cache_file = Path(
+        SOREL_LABEL_CACHE_DIR,
+        f"extractor--{ThreatLabelExtractor.name(extractor)}",
+        ThreatLabelExtractor.descriptor(extractor),
+        f"refiner--{ThreatLabelRefiner.name(refiner)}",
+        ThreatLabelRefiner.descriptor(refiner),
+        "file_label_map.json"
+    )
+
+    return get_label_mapping_virus_total_reports_with_cache(
+        cache_file,
+        report_files,
+        extractor,
+        refiner,
+        asynch,
+        use_cache,
+        create_cache,
+        overwrite_cache,
+    )
+
+
+def get_label_mapping_virus_total_reports_elf(
+    report_files: Iterable[os.PathLike],
+    extractor: ThreatLabelExtractor,
+    refiner: ThreatLabelRefiner,
+    asynch: bool = False,
+    use_cache: bool = True,
+    create_cache: bool = True,
+    overwrite_cache: bool = False,
+) -> dict[str, Optional[tuple[str]]]:
+    """Get a label mapping for the ELF dataset.
+    """
+
+    cache_file = Path(
+        ELF_LABEL_CACHE_DIR,
+        f"extractor--{ThreatLabelExtractor.name(extractor)}",
+        ThreatLabelExtractor.descriptor(extractor),
+        f"refiner--{ThreatLabelRefiner.name(refiner)}",
+        ThreatLabelRefiner.descriptor(refiner),
+        "file_label_map.json"
+    )
+
+    return get_label_mapping_virus_total_reports_with_cache(
+        cache_file,
+        report_files,
+        extractor,
+        refiner,
+        asynch,
+        use_cache,
+        create_cache,
+        overwrite_cache,
+    )
 
 
 def apply_labels_virus_total_reports(
@@ -487,8 +550,11 @@ def main() -> None:
         )
 
 
-def generate_sorel_label_caches():
-    files = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
+def generate_label_caches():
+    files_sorel = sorted(list(map(str, DATASET_TO_FILES["reports"]["sorel_pe"]())))
+    files_elf = sorted(chain.from_iterable(
+        (DATASET_TO_FILES["reports"][d]() for d in ELF_CLASSIFICATION_DATASETS)
+    ))
     extractors = [
         ThreatLabelExtractor.build("category"),
         ThreatLabelExtractor.build("name"),
@@ -502,10 +568,14 @@ def generate_sorel_label_caches():
     for extractor in extractors:
         for refiner in refiners:
             get_label_mapping_virus_total_reports_sorel(
-                files, extractor, refiner, use_cache=False, asynch=False
+                files_sorel, extractor, refiner, use_cache=False, overwrite_cache=True, asynch=False
+            )
+            get_label_mapping_virus_total_reports_elf(
+                files_elf, extractor, refiner, use_cache=False, overwrite_cache=True, asynch=False,
             )
 
 
 if __name__ == "__main__":
-    main()
+    generate_label_caches()
+    # main()
     # generate_sorel_label_caches()
