@@ -47,6 +47,11 @@ TASKS = [
     "clf-sor-cat",
     "clf-sor-nam",
     "clf-sor-lab",
+    "clm-elf",
+    "mlm-elf",
+    "clf-elf-cat",
+    "clf-elf-nam",
+    "clf-elf-lab",
 ]
 TOKENIZERS = ["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
 
@@ -294,7 +299,12 @@ class OutputHelper:
                 f"min_freq--{min_freq}",
                 f"top_k--{top_k}",
             ])
-        elif task in ("mlm", "clm"):
+        elif task[0:7] == "clf-elf":
+            self._task_args.extend([
+                f"min_freq--{min_freq}",
+                f"top_k--{top_k}",
+            ])
+        elif task[0:3] in ("mlm", "clm"):
             self._task_args.extend([
                 f"tr_size--{tr_size}",
                 f"depth--{depth}",
@@ -597,4 +607,3 @@ class OutputHelper:
                             raise RuntimeError(f"{k=} was already found!")
             if not found:
                 raise RuntimeError(f"Could not find {k=}")
-

@@ -153,10 +153,12 @@ from src.architectures.rwkv import (
 from src.data.loaders_core import (
     get_materials_clf_bodmas,
     get_materials_clf_sorel,
+    get_materials_clf_elf_vt,
     get_materials_clf_sorel_vt,
     get_materials_clf_bodmas_balanced_slice,
     get_materials_clf_bodmas_with_k_samples_per_class_in_train_set,
     get_materials_pretrain_sorel,
+    get_materials_pretrain_elf,
     get_materials_clf_sorel_length_extrapolation,
 )
 from src.data.loaders_hf import get_dataset_hf, print_dataset_hf
@@ -182,7 +184,7 @@ except (ModuleNotFoundError, ImportError) as err:
     def _hp_space(trial: Any) -> dict[str, float | int]:
         raise NotImplementedError()
     hp_space_malconv = _hp_space
-    hp_space_longformer = _hp_space 
+    hp_space_longformer = _hp_space
     hp_space_hrrformer = _hp_space
 
 from src.learn.printers import print_tokenizer, print_data_collator, print_config
@@ -898,13 +900,13 @@ def get_model(
 
             return model
 
-        if task == "mlm":
+        if task[0:3] == "mlm":
             if model_name == "hrrformer":
                 return HRRForMaskedLM.from_pretrained(model_name_or_path, **kwds)
             if model_name == "mamba":
                 return MambaForMaskedLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
-        if task == "clm":
+        if task[0:3] == "clm":
             if model_name == "mamba":
                 return MambaForCausalLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
@@ -923,7 +925,7 @@ def get_model(
                 return MambaForSequenceClassification(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForSequenceClassification.from_config(config)
-        if task == "mlm":
+        if task[0:3] == "mlm":
             if isinstance(config, HRRConfig):
                 return HRRForMaskedLM(config)
             if isinstance(config, RwkvConfig):
@@ -932,7 +934,7 @@ def get_model(
                 return MambaForMaskedLM(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForMaskedLM.from_config(config)
-        if task == "clm":
+        if task[0:3] == "clm":
             if isinstance(config, HRRConfig):
                 raise NotImplementedError()
             if isinstance(config, RwkvConfig):
@@ -992,6 +994,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
+    USING_EPOCHS = training_arguments.max_steps is None or training_arguments.max_steps <= 0
 
     kwds = {
         "root": args.root,
@@ -1020,7 +1023,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"Output Helper:\n{str(oh)}")
     print(BR)
 
-    prediction_loss_only = args.task in ("mlm", "clm")
+    prediction_loss_only = args.task[0:3] in ("mlm", "clm")
     training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
 
     tokenizer = get_tokenizer(
@@ -1056,8 +1059,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             packing_protocol=args.packing_protocol,
         )
-        # FIXME: this is really stupid and should be improved.
-        oh.update(tr_size=len(materials.files["tr"]))
+        oh.update(tr_size=len(materials.files["tr"]))    # TODO: improve
+    if args.task in ("clm-elf", "mlm-elf"):
+        materials = get_materials_pretrain_elf(
+            args.tr_size,
+            args.vl_size,
+            args.ts_size,
+            packing_protocol=args.packing_protocol,
+        )
+        oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
     # Straightforward classification tasks.
     elif args.task == "clf-bod":
         materials = get_materials_clf_bodmas(
@@ -1081,6 +1091,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.vl_size,
             args.ts_size,
             extractor={"clf-sor-nam": "name", "clf-sor-cat": "category", "clf-sor-lab": "label"}[args.task],
+            packing_protocol=args.packing_protocol,
+        )
+    elif args.task[0:7] == "clf-elf":
+        materials = get_materials_clf_elf_vt(
+            args.tr_size,
+            args.vl_size,
+            args.ts_size,
+            extractor={"clf-elf-nam": "name", "clf-elf-cat": "category", "clf-elf-lab": "label"}[args.task],
             packing_protocol=args.packing_protocol,
         )
     # Complex classification tasks.
@@ -1108,7 +1126,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     # This lets us use epochs for training in streaming mode and eval/save multiple times per epoch.
     kwds = {}
     max_steps, save_steps, eval_steps = training_arguments.epochs_to_steps(len(materials.files["tr"]))
-    if args.streaming and (training_arguments.max_steps == -1 or training_arguments.max_steps is None):
+    if args.streaming and USING_EPOCHS:
         kwds.update({"max_steps": max_steps})
     if training_arguments.saves_per_epoch is not None:
         kwds.update({"save_steps": save_steps, "save_strategy": "steps"})
@@ -1237,14 +1255,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             max_length=args.max_length,  # hopefully, the sequences were truncated before hand...
         )
         compute_metrics = clf_compute_metrics
-    elif args.task == "mlm":
+    elif args.task[0:3] == "mlm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=True,
             pad_to_multiple_of=pad_to_multiple_of,
         )
         compute_metrics = None
-    elif args.task == "clm":
+    elif args.task[0:3] == "clm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=False,
@@ -1265,7 +1283,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.task[0:3] == "clf":
         ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
-    elif args.task in ("mlm", "clm"):
+    elif args.task[0:3] in ("mlm", "clm"):
         ModelTrainer = Trainer
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
@@ -1376,7 +1394,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 per_device_eval_batch_size=per_device_eval_batch_size,
                 gradient_accumulation_steps=gradient_accumulation_steps,
             )
-            oh.trainer_config = training_arguments.__dict__ | {"world_size": training_arguments.world_size}
+            oh.trainer_config = training_arguments.__dict__ | {
+                "world_size": training_arguments.world_size,
+                "max_steps": -1 if USING_EPOCHS else training_arguments.max_steps
+            }
             oh.mkdir()
 
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
@@ -1397,7 +1418,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if args.auto_find_batch_size_and_gradient_accumulation_steps:
             trainer_output: TrainOutput = _train()  # pylint: disable=no-value-for-parameter
         else:
-            oh.trainer_config = training_arguments.__dict__ | {"world_size": training_arguments.world_size}
+            oh.trainer_config = training_arguments.__dict__ | {
+                "world_size": training_arguments.world_size,
+                "max_steps": -1 if USING_EPOCHS else training_arguments.max_steps
+            }
             oh.mkdir()
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
             trainer = ModelTrainer(
