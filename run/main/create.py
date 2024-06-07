@@ -1,5 +1,9 @@
 """
 Create pretraining, classification, and finetuning bash scripts.
+
+TODO:
+ - reduce eval_per_epoch for clf-elf-nam
+ - increase alloc_time for clf-elf-nam
 """
 
 from argparse import ArgumentParser
@@ -70,50 +74,57 @@ CLF_ALLOC_TIME: dict[tuple[str, str, int, str], str] = {
     ("mamba", "no", 16, "clf-bod"): "00-00:40:00",
     ("mamba", "no", 8, "clf-sor-nam"): "01-12:00:00",
     ("mamba", "no", 16, "clf-sor-nam"): "01-00:00:00",
+    ("mamba", "no", 8, "clf-elf-nam"): "00-09:00:00",
+    ("mamba", "no", 16, "clf-elf-nam"): "00-06:00:00",
+    
     ("mamba", "yes", 8, "clf-bod"): "00-06:00:00",
     ("mamba", "yes", 16, "clf-bod"): "00-04:00:00",
     ("mamba", "yes", 8, "clf-sor-nam"): "01-12:00:00",
     ("mamba", "yes", 16, "clf-sor-nam"): "01-00:00:00",
+    ("mamba", "yes", 8, "clf-elf-nam"): "00-03:00:00",
+    ("mamba", "yes", 16, "clf-elf-nam"): "00-02:00:00",
+    
     ("mamba", "any", 8, "clf-bod"): "00-06:00:00",
     ("mamba", "any", 16, "clf-bod"): "00-04:00:00",
     ("mamba", "any", 8, "clf-sor-nam"): "03-00:00:00",
     ("mamba", "any", 16, "clf-sor-nam"): "02-00:00:00",
+    ("mamba", "any", 8, "clf-elf-nam"): "00-09:00:00",
+    ("mamba", "any", 16, "clf-elf-nam"): "00-06:00:00",
 
     ("malconv", "no", 8, "clf-bod"): "00-00:30:00",
     ("malconv", "no", 16, "clf-bod"): "00-00:30:00",
     ("malconv", "no", 8, "clf-sor-nam"): "00-06:00:00",
     ("malconv", "no", 16, "clf-sor-nam"): "00-06:00:00",
+    ("malconv", "no", 8, "clf-elf-nam"): "00-01:00:00",
+    ("malconv", "no", 16, "clf-elf-nam"): "00-01:00:00",
+
     ("malconv", "yes", 8, "clf-bod"): "00-00:30:00",
     ("malconv", "yes", 16, "clf-bod"): "00-00:30:00",
     ("malconv", "yes", 8, "clf-sor-nam"): "00-06:00:00",
     ("malconv", "yes", 16, "clf-sor-nam"): "00-06:00:00",
+    ("malconv", "yes", 8, "clf-elf-nam"): "00-01:00:00",
+    ("malconv", "yes", 16, "clf-elf-nam"): "00-01:00:00",
+
     ("malconv", "any", 8, "clf-bod"): "00-00:30:00",
     ("malconv", "any", 16, "clf-bod"): "00-00:30:00",
     ("malconv", "any", 8, "clf-sor-nam"): "00-12:00:00",
     ("malconv", "any", 16, "clf-sor-nam"): "00-12:00:00",
+    ("malconv", "any", 8, "clf-elf-nam"): "00-01:00:00",
+    ("malconv", "any", 16, "clf-elf-nam"): "00-01:00:00",
 }
 
 
 CLF_ALLOC_MEM: dict[tuple[str, str], str] = {
     ("no", "clf-bod"): "16G",
     ("no", "clf-sor-nam"): "48G",
+    ("no", "clf-elf-nam"): "16G",
     ("yes", "clf-bod"): "32G",
     ("yes", "clf-sor-nam"): "48G",
+    ("yes", "clf-elf-nam"): "16G",
     ("any", "clf-bod"): "32G",
     ("any", "clf-sor-nam"): "64G",
+    ("any", "clf-elf-nam"): "16G",
 }
-
-
-# ELF dataset is about same size as BODMAS, so we're just going to update the
-# structures for clf-elf-name to be the same as clf-bod.
-for k in list(CLF_ALLOC_TIME.keys()):
-    m, p, r, t = k
-    if t == "clf-bod":
-        CLF_ALLOC_TIME[(m, p, r, "clf-elf-nam")] = CLF_ALLOC_TIME[k]
-for k in list(CLF_ALLOC_MEM.keys()):
-    p, t = k
-    if t == "clf-bod":
-        CLF_ALLOC_MEM[(p, "clf-elf-nam")] = CLF_ALLOC_MEM[k]
 
 
 BODY_CLM = f"""#!/bin/bash -l
@@ -216,7 +227,7 @@ src/learn/train.py \\
 --seed=SEED \\
 --pretraining_task=PRETRAINING_TASK \\
 --packing_protocol=PACKING_PROTOCOL \\
---streaming={'true' if args.debug else 'true'} \\
+--streaming={'true' if args.debug else 'STREAMING'} \\
 --skip_eval_check={'true' if args.debug else 'false'} \\
 --top_k=TOP_K \\
 --min_freq=MIN_FREQ \\
@@ -233,8 +244,8 @@ src/learn/train.py \\
 --evaluation_strategy="epoch" \\
 --num_train_epochs=NUM_TRAIN_EPOCHS \\
 --logging_steps=1 \\
---saves_per_epoch=10 \\
---evals_per_epoch=10 \\
+--saves_per_epoch=SAVES_EVALS_PER_EPOCH \\
+--evals_per_epoch=SAVES_EVALS_PER_EPOCH \\
 --dataloader_num_workers={0 if args.debug else CLF_NTASKS - 1} \\
 --optim="adamw_torch" \\
 --learning_rate="1e-4" \\
@@ -330,6 +341,8 @@ for model_name in MODEL_NAME_OR_PATHS:
                 alloc_time = CLF_ALLOC_TIME[(model_name, packing_protocol, representation, task)]
                 memory = CLF_ALLOC_MEM[(packing_protocol, task)]
                 num_train_epochs = 5 if task == "clf-elf-nam" else 1
+                saves_evals_per_epoch = 3 if task == "clf-elf-nam" else 10
+                streaming = num_train_epochs <= 1
 
                 for pretraining_task in PRETRAINING_TASKS:
                     if model_name == "malconv" and pretraining_task != "None":
@@ -352,6 +365,8 @@ for model_name in MODEL_NAME_OR_PATHS:
                             .replace("ALLOC_TIME", alloc_time) \
                             .replace("MEMORY", memory) \
                             .replace("NUM_TRAIN_EPOCHS", str(num_train_epochs)) \
+                            .replace("SAVES_EVALS_PER_EPOCH", str(saves_evals_per_epoch)) \
+                            .replace("STREAMING", "true" if streaming else "false") \
                             .replace("SEED", str(seed)) \
                             .replace("PRETRAINING_TASK", pretraining_task)
                         outfile = (OUTPUT / jobname).with_suffix(".sh")
@@ -369,7 +384,7 @@ def key(s: str) -> tuple:
     return out
 
 
-with open(OUTPUT / "run.sh", "w") as fp:
+with open(OUTPUT / "runAll.sh", "w") as fp:
     for f in sorted(outfiles, key=lambda p: key(str(p.name))):
         if args.system == System.RC:
             pre = "sbatch"
@@ -383,3 +398,28 @@ with open(OUTPUT / "run.sh", "w") as fp:
             pos = f"&> ./logs/{f.stem}.out"   
         fp.write(f"{pre} {str(f)} {pos}\n")
 
+
+
+with open(OUTPUT / "run.sh", "w") as fp:
+    for f in sorted(outfiles, key=lambda p: key(str(p.name))):
+        if "16" in f.name:
+            continue
+        if "clf-sor-nam" in f.name:
+            continue
+        if "clf-bod" in f.name:
+            continue
+        if "None--clm" in f.name and "None--clm-elf" not in f.name:
+            continue
+
+        if args.system == System.RC:
+            pre = "sbatch"
+            pos = ""
+        else:
+            if "clm" in f.name:
+                gpus = [str(i) for i in range(args.clm_ngpus)]
+            else:
+                gpus = [str(i) for i in range(args.clf_ngpus)]
+            pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
+            pos = f"&> ./logs/{f.stem}.out"   
+
+        fp.write(f"{pre} {str(f)} {pos}\n")
