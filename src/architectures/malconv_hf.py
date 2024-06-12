@@ -31,10 +31,10 @@ class MalConvConfig(PretrainedConfig):
         >>> MalConvConfig(
                 vocab_size=257,
                 embedding_size=8,
-                pad_token_id=0,
                 channels=128,
                 stride=500,
                 kernel_size=500,
+                pad_token_id=0,
             )
     """
 
@@ -42,18 +42,18 @@ class MalConvConfig(PretrainedConfig):
         self,
         vocab_size: int = 264,
         embedding_size: int = 256,
-        pad_token_id: int = 0,
         channels: int = 128,
         stride: int = 512,
         kernel_size: int = 512,
+        pad_token_id: int = 0,
         **kwds,
     ) -> None:
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
-        self.pad_token_id = pad_token_id
         self.channels = channels
         self.stride = stride
         self.kernel_size = kernel_size
+        self.pad_token_id = pad_token_id
         super().__init__(**kwds)
 
 
@@ -62,17 +62,6 @@ class MalConvPreTrainedModel(PreTrainedModel):
     config_class = MalConvConfig
     base_model_prefix = "malconv"
     supports_gradient_checkpointing = False
-
-    # def _init_weights(self, module):
-    #     """Initialize the weights"""
-    #     if isinstance(module, nn.Linear):
-    #         module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-    #         if module.bias is not None:
-    #             module.bias.data.zero_()
-    #     elif isinstance(module, nn.Embedding):
-    #         module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-    #         if module.padding_idx is not None:
-    #             module.weight.data[module.padding_idx].zero_()
 
 
 class MalConv(MalConvPreTrainedModel):
@@ -168,10 +157,10 @@ def test():
     config = MalConvConfig(
         vocab_size=256,
         embedding_size=256,
-        pad_token_id=0,
         channels=128,
         stride=256,
         kernel_size=512,
+        pad_token_id=0,
     )
     model = MalConvForSequenceClassification(config).to(device)
 

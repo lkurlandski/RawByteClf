@@ -125,6 +125,11 @@ from src.architectures.malconv_hf import (
     MalConvForSequenceClassification,
     MalConvPreTrainedModel,
 )
+from src.architectures.malconv2 import (
+    MalConv2Config,
+    MalConv2ForSequenceClassification,
+    MalConv2PreTrainedModel,
+)
 from src.architectures.hrrformer import (
     HRRConfig,
     HRRForSequenceClassification,
@@ -235,6 +240,7 @@ MODEL_NAMES = [
     "nystromformer",
     "fnet",
     "malconv",
+    "malconv2",
     "hrrformer",
     "rwkv",
     "mamba",
@@ -260,6 +266,7 @@ MODEL_NAME_TO_CONFIG_CLASS = {
     "nystromformer": NystromformerConfig,
     "fnet": FNetConfig,
     "malconv": MalConvConfig,
+    "malconv2": MalConv2Config,
     "hrrformer": HRRConfig,
     "rwkv": RwkvConfig,
     "mamba": MambaConfig,
@@ -526,6 +533,8 @@ def object_to_model_name(obj: PretrainedConfig | str | Path) -> str:
         return "mamba"
     if isinstance(obj, (MalConvConfig,)):
         return "malconv"
+    if isinstance(obj, (MalConv2Config,)):
+        return "malconv2"
     if isinstance(obj, (str, Path)) and Path(obj).exists():
         try:
             return object_to_model_name(AutoConfig.from_pretrained(str(obj)))
@@ -633,6 +642,7 @@ def modify_positional_embeddings_allowed(model: Any) -> bool:
         RwkvPreTrainedModel,
         MambaPreTrainedModel,
         MalConvPreTrainedModel,
+        MalConv2PreTrainedModel,
     ]
     if isinstance(model, tuple(incompatible)):
         return False
@@ -812,6 +822,13 @@ def get_config(
         )
         return MalConvConfig(**kwds)
 
+    if model_name_or_path.lower() == "malconv2":
+        kwds = kwds | dict(
+            vocab_size=vocab_size,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+        return MalConv2Config(**kwds)
+
     # pylint: enable=use-dict-literal
 
     raise ValueError(f"Invalid model name or path: {model_name_or_path}")
@@ -857,6 +874,10 @@ def get_model(
                 model = MalConvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
                 _config = MalConvConfig.from_pretrained(model_name_or_path)
                 _head_names = ["clf_head"]
+            elif model_name == "malconv2":
+                model = MalConv2ForSequenceClassification.from_pretrained(model_name_or_path)
+                _config = MalConv2Config.from_pretrained(model_name_or_path)
+                _head_names = []
             elif get_model_type(model_name_or_path) == "HF":
                 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
                 _config = AutoConfig.from_pretrained(model_name_or_path)
@@ -917,6 +938,8 @@ def get_model(
         if task[0:3] == "clf":
             if isinstance(config, MalConvConfig):
                 return MalConvForSequenceClassification(config)
+            if isinstance(config, MalConv2Config):
+                return MalConv2ForSequenceClassification(config)
             if isinstance(config, HRRConfig):
                 return HRRForSequenceClassification(config)
             if isinstance(config, RwkvConfig):

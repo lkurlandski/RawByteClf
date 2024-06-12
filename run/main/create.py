@@ -38,10 +38,11 @@ PRETRAINING_TASKS = ["None", "clm", "clm-elf"]
 PACKING_PROTOCOLS = ["yes", "no", "any"]
 
 ROOT = "./output/main"
-MODEL_NAME_OR_PATHS = ["mamba", "malconv"]
+MODEL_NAME_OR_PATHS = ["mamba", "malconv", "malconv2"]
 ARCH_CONFIGS = {
     "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": EMBEDDING_SIZE}',
     "malconv": '{"channels": 128, "stride": 512, "kernel_size": 512, "embedding_size": EMBEDDING_SIZE}',
+    "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": EMBEDDING_SIZE}',
 }
 MAX_LENGTH = 2 ** 16 if args.system == System.RC else 2 ** 12
 DATA_READ_BYTES = 2 ** 16 if args.system == System.RC else 2 ** 12
@@ -92,8 +93,10 @@ CLF_ALLOC_TIME: dict[tuple[str, str, int, str], str] = {
     ("malconv", "any", 8, "clf-sor-nam"): "00-12:00:00",
     ("malconv", "any", 16, "clf-sor-nam"): "00-12:00:00",
 }
-
-
+for k, v in list(CLF_ALLOC_TIME.items()):
+    m, p, r, t = k
+    CLF_ALLOC_TIME[("malconv2", p, r, t)] = v
+    
 CLF_ALLOC_MEM: dict[tuple[str, str], str] = {
     ("no", "clf-bod"): "16G",
     ("no", "clf-sor-nam"): "48G",
@@ -294,7 +297,7 @@ def get_jobname(
 for model_name in MODEL_NAME_OR_PATHS:
     arch_config = ARCH_CONFIGS[model_name]
     gradient_checkpointing = "true" if model_name == "mamba" else "false"
-    per_device_eval_batch_size = 512 if model_name == "malconv" else 64
+    per_device_eval_batch_size = 512 if model_name in ("malconv", "malconv2") else 64
 
     for packing_protocol in PACKING_PROTOCOLS:
 
@@ -332,7 +335,7 @@ for model_name in MODEL_NAME_OR_PATHS:
                 num_train_epochs = 5 if task == "clf-elf-nam" else 1
 
                 for pretraining_task in PRETRAINING_TASKS:
-                    if model_name == "malconv" and pretraining_task != "None":
+                    if model_name in ("malconv", "malconv2") and pretraining_task != "None":
                         continue
                     for seed in SEEDS:
                         jobname = get_jobname(packing_protocol, model_name, pretraining_task, task, representation, seed)
