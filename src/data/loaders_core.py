@@ -1098,13 +1098,22 @@ def test_get_materials_clf_bodmas_with_k_samples_per_class_in_train_set():
 
 
 if __name__ == "__main__":
-    m = get_materials_clf_elf_vt(0.85, 0.15, 0.0, extractor="name")
-    print(m)
-    samples = m.files["tr"] + m.files["vl"] + m.files["ts"]
-    samples = [Path(s).stem for s in samples]
-    pprint(samples[0:4])
-    print(f"{len(samples)=}")
-    print(f"{len(set(samples))=}")
+    print("ELF")
+    for p in ["any", "yes", "no"]:
+        m = get_materials_clf_elf_vt(0.85, 0.15, 0.0, extractor="name", packing_protocol=p)
+        print(p, len(m.labels["tr"]) + len(m.labels["vl"]))
+    print("-" * 88)
+
+    print("BODMAS")
+    for p in ["any", "yes", "no"]:
+        m = get_materials_clf_bodmas(0.85, 0.15, 0.0, top_k=10, packing_protocol=p)
+        print(p, len(m.labels["tr"]) + len(m.labels["vl"]))
+    print("-" * 88)
+    # samples = m.files["tr"] + m.files["vl"] + m.files["ts"]
+    # samples = [Path(s).stem for s in samples]
+    # pprint(samples[0:4])
+    # print(f"{len(samples)=}")
+    # print(f"{len(set(samples))=}")
 
     # m = get_materials_pretrain_elf(0.85, 0.15, 0.0)
     # print(m)
