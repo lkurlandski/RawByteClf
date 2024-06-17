@@ -18,6 +18,9 @@ AVCLASS_EXE = Path("/home/lk3591/anaconda3/envs/MalwareLabeler/bin/avclass")
 CLARAVY_EXE = Path("/home/lk3591/anaconda3/envs/MalwareLabeler/bin/claravy")
 
 
+NUM_WORKERS = 16
+
+
 KEYS = [
     "class_",  # avclass
     "file",  # claravy
@@ -184,12 +187,13 @@ class Labeler:
             "-ft=1",
             "-vt=1",
             "-pt=1",
+            f"--num-processes={NUM_WORKERS}"
         ]
         print(f"args='{' '.join(args)}'")
         try:
             subprocess.run(args, check=True, capture_output=True)
         except subprocess.CalledProcessError as err:
-            print(err.stderr.decode())
+            print(f"{err.stdout=}\n{err.stderr=}")
             raise
 
     def run_avclass(self) -> None:
@@ -208,6 +212,37 @@ class Labeler:
             print(err.stderr.decode())
             raise
 
+
+        # def get_args(f: Path, o: Path):
+        #     return [
+        #         f"{AVCLASS_EXE.as_posix()}",
+        #         f"-f={f}",
+        #         f"-o={o}",
+        #         "-hash=sha256",
+        #         "-t",
+        #     ]
+
+        # processes: list[subprocess.Popen] = []
+
+        # for f in sorted(self.reports_dir.iterdir()):
+        #     while len(processes) > NUM_WORKERS:
+        #         for i, p in enumerate(processes):
+        #             if p.poll() is not None:
+        #                 if p != 0:
+        #                     raise subprocess.CalledProcessError(p.returncode, p.args)
+        #                 processes[i] = None
+        #         processes = [p for p in processes if p is not None]
+
+        #     f_out = Path("/tmp/avclass/") / f.name
+
+        #     args = get_args(f, f_out)
+        #     p = subprocess.Popen(args)
+        #     r = None
+        #     processes.append([p, r])
+
+        # self.avclass_cache.as_posix()
+
+
     def run_avclass_family(self) -> None:
 
         args = [
@@ -220,7 +255,7 @@ class Labeler:
         try:
             subprocess.run(args, check=True)
         except subprocess.CalledProcessError as err:
-            print(err.stderr.decode())
+            print(f"{err.stdout=}\n{err.stderr=}")
             raise
 
     def parse_claravy(self) -> None:
@@ -288,9 +323,14 @@ def main():
     avclass_family_cache = Path(args.avclass_family_cache)
 
     if args.clean:
-        claravy_cache.unlink(missing_ok=True)
-        avclass_cache.unlink(missing_ok=True)
-        avclass_family_cache.unlink(missing_ok=True)
+        print("To remove old caches, run:\n")
+        print(f"\trm {claravy_cache.as_posix()}")
+        print(f"\trm {avclass_cache.as_posix()}")
+        print(f"\trm {avclass_family_cache.as_posix()}")
+        sys.exit(0)
+        # claravy_cache.unlink(missing_ok=True)
+        # avclass_cache.unlink(missing_ok=True)
+        # avclass_family_cache.unlink(missing_ok=True)
 
     filter_args = FilterArgs()
 
