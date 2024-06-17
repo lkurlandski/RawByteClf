@@ -160,3 +160,15 @@ def hf_bytes_to_input_ids(
             for b in examples["bytes"]
         ]
     }
+
+
+def hf_multilabel_encode(examples: dict[str, list], num_classes: int) -> dict[str, list]:
+    labels: list[list[float]] = []
+    for label in examples["labels"]:
+        label: list[int]
+        x = [0.0] * num_classes
+        for l in label:
+            x[l] = 1.0
+        labels.append(x)
+    examples["labels"] = labels
+    return examples
