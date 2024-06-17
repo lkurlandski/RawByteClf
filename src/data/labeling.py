@@ -7,7 +7,7 @@ TODO
 
 from __future__ import annotations
 from argparse import ArgumentParser
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, UserDict
 from dataclasses import dataclass
 from pathlib import Path
 from pprint import pprint
@@ -49,6 +49,9 @@ class Label:
 
 @dataclass(frozen=True)
 class FilterArgs:
+    """
+    The filtering protocol (top_k, min_freq) for each label.
+    """
     class_: tuple[int, int] = (1, 5)
     file: tuple[int, int] = (1, 5)
     fam: tuple[int, int] = (1, 2)
@@ -72,6 +75,8 @@ class Item:
 
     @classmethod
     def from_tool_output_line(cls, s: str) -> Item:
+        # Extract the sha, the number of AVs that flagged the sample,
+        # and the information extracted from all of the AVs.
         args = s.split()
         sha = args[0]
         flagged = int(args[1]) if args[1].isdigit() else 0
@@ -80,20 +85,46 @@ class Item:
         else:
             information = ""
 
+        # If there was no information about the samples, return None for all fields.
         if information in ("[]", "") or "SINGLETON" in information:
             return Item(sha, flagged)
 
+        # Parse the information extracted from the AVs.
+        # The information string looks roughly like: "{FIELD}:{VALUE}|{COUNT},...,"
         labels = defaultdict(list)
         for piece in information.split(","):
-
             field = piece[0:piece.index(":")]
             value = piece[piece.index(":") + 1:piece.index("|")]
             count = int(piece[piece.index("|") + 1:])
             labels[field].append((value, count))
 
+        # Replace `class` with `class_` to avoid conflicts with the reserved keyword.
         labels = {k.lower(): v for k, v in labels.items()}
         if "class" in labels:
             labels["class_"] = labels.pop("class")
+
+            # class_ can get polluted with some poorly formatted values.
+            # Figure out which values are actually multiple values separated by a colon.
+            append = []
+            remove = []
+            for value, count in labels["class_"]:
+                if ":" not in value:
+                    continue
+                remove.append((value, count))
+                append.extend([(v, count) for v in value.split(":")])
+
+            if remove or append:
+                # These need to be removed and their constituent values need to be added.
+                for r in remove:
+                    labels["class_"].remove(r)
+                for a in append:
+                    labels["class_"].append(a)
+                # The net counts then need to be summed.
+                d = defaultdict(int)
+                for value, count in labels["class_"]:
+                    d[value] += count
+                labels["class_"] = list(d.items())
+
         return Item(sha, flagged, **labels)
 
     def filter(self, args: FilterArgs) -> Label:
@@ -145,23 +176,23 @@ class ToolRunner:
 
     def __call__(self) -> Labeler:
 
-        print("Running CLARAVY...")
+        print("Running CLARAVY...", end="")
         t_0 = time.time()
         if not self.claravy_cache.exists():
             self.run_claravy()
-        print(f"Running CLARAVY took {time.time() - t_0:.2f} seconds")
+        print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
-        print("Running AVCLASS...")
+        print("Running AVCLASS...", end="")
         t_0 = time.time()
         if not self.avclass_cache.exists():
             self.run_avclass()
-        print(f"Running AVCLASS took {time.time() - t_0:.2f} seconds")
+        print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
-        print("Running AVCLASS-family...")
+        print("Running AVCLASS-family...", end="")
         t_0 = time.time()
         if not self.avclass_family_cache.exists():
             self.run_avclass_family()
-        print(f"Running AVCLASS took {time.time() - t_0:.2f} seconds")
+        print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
         return self
 
@@ -234,20 +265,22 @@ class Labeler:
 
     def __call__(self) -> Labeler:
 
-        print("Parsing CLARAVY...")
+        print("Parsing CLARAVY...", end="")
         t_0 = time.time()
         self.parse_claravy()
-        print(f"Parsing CLARAVY took {time.time() - t_0:.2f} seconds")
+        print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
         t_0 = time.time()
-        print("Parsing AVCLASS...")
+        print("Parsing AVCLASS...", end="")
         self.parse_avclass()
-        print(f"Parsing AVCLASS took {time.time() - t_0:.2f} seconds")
+        print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
         t_0 = time.time()
-        print("Parsing AVCLASS-family...")
+        print("Parsing AVCLASS-family...", end="")
         self.parse_avclass_family()
-        print(f"Parsing AVCLASS-family took {time.time() - t_0:.2f} seconds")
+        print(f"Done. Took {time.time() - t_0:.2f} seconds")
+
+        return self
 
     def parse_claravy(self) -> None:
 
@@ -325,9 +358,23 @@ def main():
 
 
 def test():
-    labeler = Labeler()
+
+    labeler = Labeler(
+        "/home/lk3591/Documents/datasets/Sorel/claravy_cache.txt",
+        "/home/lk3591/Documents/datasets/Sorel/avclass_cache.txt",
+        "/home/lk3591/Documents/datasets/Sorel/avclass_family_cache.txt",
+        FilterArgs(*[(1, 1) for _ in range(7)]),
+    )
+
+    labeler = labeler()
+
+    for k in KEYS:
+        print("-" * 40 + f" {k} " + "-" * 40)
+        shas, values = labeler.view(k)
+        counter = Counter([v[0] if isinstance(v, tuple) else v for v in values])
+        pprint(counter)
 
 
 if __name__ == "__main__":
     test()
-    main()
+    # main()
