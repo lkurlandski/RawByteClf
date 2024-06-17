@@ -16,6 +16,7 @@ import math
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import time
 from typing import Any, Callable, Literal, Optional
@@ -34,6 +35,13 @@ def batched(iterable: Iterable, n: int):
     it = iter(iterable)
     while batch := tuple(islice(it, n)):
         yield batch
+
+
+def count_lines_big_file(file: os.PathLike) -> int:
+    args = ["wc", "-l", file]
+    result = subprocess.run(args, check=True, capture_output=True)
+    total = int(result.stdout.split()[0])
+    return total
 
 
 def process_mem(fmt: str = "G") -> str:
