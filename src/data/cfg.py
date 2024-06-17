@@ -37,6 +37,9 @@ VIRUS_SHARE_ELF_COLLECTION_PATHS = {
 
 SOREL_META_CSV = SOREL_PATH / "meta.csv"
 SOREL_LABEL_CACHE_DIR = SOREL_PATH / "labels"
+SOREL_CLARAVY_CACHE = SOREL_PATH / "claravy_cache.txt"
+SOREL_AVCLASS_CACHE = SOREL_PATH / "avclass_cache.txt"
+SOREL_AVCLASS_FAMILY_CACHE = SOREL_PATH / "avclass_family_cache.txt"
 
 ELF_CLASSIFICATION_DATASETS = ("malware_bazaar_elf", "virus_share_elf", "virus_total_elf")
 ELF_LABEL_CACHE_DIR = Path("./cache") / "labels" / "elf"
