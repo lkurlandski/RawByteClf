@@ -1,4 +1,8 @@
 """
+
+TODO
+----
+- Implement an embarassingly parallel system for labeling with AVClass.
 """
 
 from __future__ import annotations
@@ -121,7 +125,11 @@ class Item:
         return Label(class_, file, fam, beh, unk, pack)
 
 
-class Labeler:
+class ToolRunner:
+    """
+    TODO:
+      - Implement an embarassingly parallel system for the AVClass labeling.
+    """
 
     def __init__(
         self,
@@ -129,17 +137,13 @@ class Labeler:
         claravy_cache: Path,
         avclass_cache: Path,
         avclass_family_cache: Path,
-        filter_args: Optional[FilterArgs] = FilterArgs(),
     ) -> None:
         self.reports_dir = Path(reports_dir)
         self.avclass_cache = Path(avclass_cache)
         self.avclass_family_cache = Path(avclass_family_cache)
         self.claravy_cache = Path(claravy_cache)
-        self.filter_args = filter_args
-        self.data: dict[str, Label] = {}
 
     def __call__(self) -> Labeler:
-        print(f"Labeler for {self.reports_dir.as_posix()}")
 
         print("Running CLARAVY...")
         t_0 = time.time()
@@ -158,21 +162,6 @@ class Labeler:
         if not self.avclass_family_cache.exists():
             self.run_avclass_family()
         print(f"Running AVCLASS took {time.time() - t_0:.2f} seconds")
-
-        print("Parsing CLARAVY...")
-        t_0 = time.time()
-        self.parse_claravy()
-        print(f"Parsing CLARAVY took {time.time() - t_0:.2f} seconds")
-
-        t_0 = time.time()
-        print("Parsing AVCLASS...")
-        self.parse_avclass()
-        print(f"Parsing AVCLASS took {time.time() - t_0:.2f} seconds")
-
-        t_0 = time.time()
-        print("Parsing AVCLASS-family...")
-        self.parse_avclass_family()
-        print(f"Parsing AVCLASS-family took {time.time() - t_0:.2f} seconds")
 
         return self
 
@@ -212,37 +201,6 @@ class Labeler:
             print(err.stderr.decode())
             raise
 
-
-        # def get_args(f: Path, o: Path):
-        #     return [
-        #         f"{AVCLASS_EXE.as_posix()}",
-        #         f"-f={f}",
-        #         f"-o={o}",
-        #         "-hash=sha256",
-        #         "-t",
-        #     ]
-
-        # processes: list[subprocess.Popen] = []
-
-        # for f in sorted(self.reports_dir.iterdir()):
-        #     while len(processes) > NUM_WORKERS:
-        #         for i, p in enumerate(processes):
-        #             if p.poll() is not None:
-        #                 if p != 0:
-        #                     raise subprocess.CalledProcessError(p.returncode, p.args)
-        #                 processes[i] = None
-        #         processes = [p for p in processes if p is not None]
-
-        #     f_out = Path("/tmp/avclass/") / f.name
-
-        #     args = get_args(f, f_out)
-        #     p = subprocess.Popen(args)
-        #     r = None
-        #     processes.append([p, r])
-
-        # self.avclass_cache.as_posix()
-
-
     def run_avclass_family(self) -> None:
 
         args = [
@@ -257,6 +215,39 @@ class Labeler:
         except subprocess.CalledProcessError as err:
             print(f"{err.stdout=}\n{err.stderr=}")
             raise
+
+
+class Labeler:
+
+    def __init__(
+        self,
+        claravy_cache: Path,
+        avclass_cache: Path,
+        avclass_family_cache: Path,
+        filter_args: Optional[FilterArgs] = FilterArgs(),
+    ) -> None:
+        self.avclass_cache = Path(avclass_cache)
+        self.avclass_family_cache = Path(avclass_family_cache)
+        self.claravy_cache = Path(claravy_cache)
+        self.filter_args = filter_args
+        self.data: dict[str, Label] = {}
+
+    def __call__(self) -> Labeler:
+
+        print("Parsing CLARAVY...")
+        t_0 = time.time()
+        self.parse_claravy()
+        print(f"Parsing CLARAVY took {time.time() - t_0:.2f} seconds")
+
+        t_0 = time.time()
+        print("Parsing AVCLASS...")
+        self.parse_avclass()
+        print(f"Parsing AVCLASS took {time.time() - t_0:.2f} seconds")
+
+        t_0 = time.time()
+        print("Parsing AVCLASS-family...")
+        self.parse_avclass_family()
+        print(f"Parsing AVCLASS-family took {time.time() - t_0:.2f} seconds")
 
     def parse_claravy(self) -> None:
 
@@ -297,10 +288,6 @@ class Labeler:
                     self.data[sha] = Label()
                 self.data[sha].fam = fam
 
-    def normalize_whitespace(text):
-        # Replace all sequences of whitespace with a single space
-        return re.sub(r'\s+', ' ', text).strip()
-
     def view(self, name: str, shas: Optional[list[str]] = None) -> tuple[list[str], list[str]]:
         shas = list(self.data.keys()) if shas is None else shas
         return shas, [getattr(self.data[sha], name) for sha in shas]
@@ -314,7 +301,6 @@ def main():
     parser.add_argument("--avclass_cache", type=str, required=True)
     parser.add_argument("--avclass_family_cache", type=str, required=True)
     parser.add_argument("--clean", action="store_true")
-    parser.add_argument("--do_anal", action="store_true")
     args = parser.parse_args()
 
     reports_dir = Path(args.reports_dir)
@@ -328,27 +314,20 @@ def main():
         print(f"\trm {avclass_cache.as_posix()}")
         print(f"\trm {avclass_family_cache.as_posix()}")
         sys.exit(0)
-        # claravy_cache.unlink(missing_ok=True)
-        # avclass_cache.unlink(missing_ok=True)
-        # avclass_family_cache.unlink(missing_ok=True)
 
-    filter_args = FilterArgs()
-
-    labeler = Labeler(
+    runner = ToolRunner(
         reports_dir,
         claravy_cache,
         avclass_cache,
         avclass_family_cache,
-        filter_args,
-    )()
+    )
+    runner = runner()
 
-    if args.do_anal:
-        for k in KEYS:
-            print("-" * 40 + f" {k} " + "-" * 40)
-            shas, values = labeler.view(k)
-            counter = Counter([v[0] if isinstance(v, tuple) else v for v in values])
-            pprint(counter)
+
+def test():
+    labeler = Labeler()
 
 
 if __name__ == "__main__":
+    test()
     main()
