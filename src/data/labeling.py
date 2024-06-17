@@ -9,6 +9,7 @@ from __future__ import annotations
 from argparse import ArgumentParser
 from collections import Counter, defaultdict, UserDict
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 from pprint import pprint
 import re
@@ -45,6 +46,10 @@ class Label:
     unk: tuple[str] = None
     pack: tuple[str] = None
     vuln: tuple[str] = None
+
+    @property
+    def is_labeled(self) -> bool:
+        return any(getattr(self, k) for k in KEYS)
 
 
 @dataclass(frozen=True)
@@ -319,11 +324,10 @@ class Labeler:
 
                 if sha not in self.data:
                     self.data[sha] = Label()
-                self.data[sha].fam = fam
+                self.data[sha].fam = (fam,)
 
-    def view(self, name: str, shas: Optional[list[str]] = None) -> tuple[list[str], list[str]]:
-        shas = list(self.data.keys()) if shas is None else shas
-        return shas, [getattr(self.data[sha], name) for sha in shas]
+    def view(self, name: str) -> dict[str, tuple[str]]:
+        return {sha: getattr(self.data[sha], name) for sha in self.data.keys()}
 
 
 def main():
@@ -371,7 +375,7 @@ def test():
     for k in KEYS:
         print("-" * 40 + f" {k} " + "-" * 40)
         shas, values = labeler.view(k)
-        counter = Counter([v[0] if isinstance(v, tuple) else v for v in values])
+        counter = Counter(chain.from_iterable(values))
         pprint(counter)
 
 
