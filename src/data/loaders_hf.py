@@ -22,6 +22,7 @@ from datasets import (
     IterableDatasetDict,
     Value,
     Features,
+    Sequence,
 )
 import numpy as np
 import pandas as pd
@@ -35,8 +36,10 @@ from src.data.loaders_pt import read_binary_files_asynch, read_binary_files
 
 FEATURES_CLM = Features({"name": Value("string"), "bytes": Value("binary")})
 FEATURES_CLF = Features({"name": Value("string"), "bytes": Value("binary"), "labels": Value("int32")})
+FEATURES_CLF_MULTILABEL = Features({"name": Value("string"), "bytes": Value("binary"), "labels": Sequence(Value("int32"))})
 DF_CLM = pd.DataFrame({"name": [""], "bytes": [b""]}).drop(index=0)
 DF_CLF = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [0]}).drop(index=0)
+DF_CLF_MULTILABEL = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [[0]]}).drop(index=0)
 
 
 def generator(
@@ -107,9 +110,17 @@ def get_dataset_hf(
 
     This would look something like the below:
     """
-
-    features = FEATURES_CLF if materials.labels is not None else FEATURES_CLM
-    df = DF_CLF if materials.labels is not None else DF_CLM
+    if materials.problem_type is None:
+        features = FEATURES_CLM
+        df = DF_CLM
+    elif materials.problem_type == "single_label_classification":
+        features = FEATURES_CLF
+        df = DF_CLF
+    elif materials.problem_type == "multi_label_classification":
+        features = FEATURES_CLF_MULTILABEL
+        df = DF_CLF_MULTILABEL
+    else:
+        raise RuntimeError(f"Unknown problem type: {materials.problem_type}")
 
     datasets: dict[SplitNames, Dataset] = {}
     for split in ["tr", "vl", "ts"]:
