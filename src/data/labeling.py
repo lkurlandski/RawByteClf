@@ -9,8 +9,10 @@ from __future__ import annotations
 from argparse import ArgumentParser
 from collections import Counter, defaultdict, UserDict
 from dataclasses import dataclass
+import hashlib
 from itertools import chain
 from pathlib import Path
+import pickle
 from pprint import pprint
 import re
 import subprocess
@@ -267,8 +269,16 @@ class Labeler:
         self.claravy_cache = Path(claravy_cache)
         self.filter_args = filter_args
         self.data: dict[str, Label] = {}
+        self._cache_file = None
 
     def __call__(self) -> Labeler:
+        if self.cache_file.exists():
+            print(f"Loading data from {self.cache_file=}...", end="")
+            t_0 = time.time()
+            with open(self.cache_file, "rb") as fp:
+                self.data = pickle.load(fp)
+            print(f"Done. Took {time.time() - t_0:.2f} seconds")
+            return self
 
         print("Parsing CLARAVY...", end="")
         t_0 = time.time()
@@ -285,7 +295,22 @@ class Labeler:
         self.parse_avclass_family()
         print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
+        print(f"Dumping data to {self.cache_file=}...", end="")
+        t_0 = time.time()
+        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.cache_file, "wb") as fp:
+            pickle.dump(self.data, fp)
+        print(f"Done. Took {time.time() - t_0:.2f} seconds")
+
         return self
+
+    @property
+    def cache_file(self) -> Path:
+        if self._cache_file is not None:
+            return self._cache_file
+        b = self.claravy_cache.read_bytes() + self.avclass_cache.read_bytes() + self.avclass_family_cache.read_bytes()
+        h = hashlib.sha256(b).hexdigest()
+        return Path("./cache") / "labeling" / f"{h}.pkl"
 
     def parse_claravy(self) -> None:
 
