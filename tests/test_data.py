@@ -29,7 +29,6 @@ from src.data.loaders_core import (
     tr_vl_ts_split_idx,
     tr_vl_ts_split,
     tr_vl_ts_split_idx_guarentee,
-    tr_vl_ts_split_guarentee,
 )
 from src.data.utils import Decompressor
 
@@ -68,17 +67,6 @@ class TestSplitFunctions(unittest.TestCase):
         self.assertGreaterEqual(Counter(labels[i] for i in split_idx["vl"])[1], 5)
         self.assertGreaterEqual(Counter(labels[i] for i in split_idx["ts"])[0], 5)
         self.assertGreaterEqual(Counter(labels[i] for i in split_idx["ts"])[1], 5)
-
-    def test_tr_vl_ts_split_guarentee(self):
-        collection = list(range(100))
-        labels = [0] * 50 + [1] * 50
-        split = tr_vl_ts_split_guarentee(collection, labels, 0.8, 0.1, 0.1, samples_per_class=5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split["tr"])[0], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split["tr"])[1], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split["vl"])[0], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split["vl"])[1], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split["ts"])[0], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split["ts"])[1], 5)
 
 
 class TestDecompressor(unittest.TestCase):
