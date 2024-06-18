@@ -11,6 +11,7 @@ from collections import Counter, defaultdict, UserDict
 from dataclasses import dataclass
 import hashlib
 from itertools import chain
+import os
 from pathlib import Path
 import pickle
 from pprint import pprint
@@ -19,6 +20,13 @@ import subprocess
 import sys
 import time
 from typing import Optional
+
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
+
+from src.data.cfg import SOREL_CLARAVY_CACHE, SOREL_AVCLASS_CACHE, SOREL_AVCLASS_FAMILY_CACHE
 
 
 AVCLASS_EXE = Path("/home/lk3591/anaconda3/envs/MalwareLabeler/bin/avclass")
@@ -54,7 +62,7 @@ class Label:
         return any(getattr(self, k) for k in KEYS)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=True, unsafe_hash=True)
 class FilterArgs:
     """
     The filtering protocol (top_k, min_freq) for each label.
@@ -183,19 +191,19 @@ class ToolRunner:
 
     def __call__(self) -> Labeler:
 
-        print("Running CLARAVY...", end="")
+        print("Running CLARAVY...", end="", flush=True)
         t_0 = time.time()
         if not self.claravy_cache.exists():
             self.run_claravy()
         print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
-        print("Running AVCLASS...", end="")
+        print("Running AVCLASS...", end="", flush=True)
         t_0 = time.time()
         if not self.avclass_cache.exists():
             self.run_avclass()
         print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
-        print("Running AVCLASS-family...", end="")
+        print("Running AVCLASS-family...", end="", flush=True)
         t_0 = time.time()
         if not self.avclass_family_cache.exists():
             self.run_avclass_family()
@@ -273,29 +281,29 @@ class Labeler:
 
     def __call__(self) -> Labeler:
         if self.cache_file.exists():
-            print(f"Loading data from {self.cache_file=}...", end="")
+            print(f"Loading data from {self.cache_file=}...", end="", flush=True)
             t_0 = time.time()
             with open(self.cache_file, "rb") as fp:
                 self.data = pickle.load(fp)
             print(f"Done. Took {time.time() - t_0:.2f} seconds")
             return self
 
-        print("Parsing CLARAVY...", end="")
+        print("Parsing CLARAVY...", end="", flush=True)
         t_0 = time.time()
         self.parse_claravy()
         print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
         t_0 = time.time()
-        print("Parsing AVCLASS...", end="")
+        print("Parsing AVCLASS...", end="", flush=True)
         self.parse_avclass()
         print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
         t_0 = time.time()
-        print("Parsing AVCLASS-family...", end="")
+        print("Parsing AVCLASS-family...", end="", flush=True)
         self.parse_avclass_family()
         print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
-        print(f"Dumping data to {self.cache_file=}...", end="")
+        print(f"Dumping data to {self.cache_file=}...", end="", flush=True)
         t_0 = time.time()
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.cache_file, "wb") as fp:
@@ -308,7 +316,10 @@ class Labeler:
     def cache_file(self) -> Path:
         if self._cache_file is not None:
             return self._cache_file
-        b = self.claravy_cache.read_bytes() + self.avclass_cache.read_bytes() + self.avclass_family_cache.read_bytes()
+        b = self.claravy_cache.read_bytes() \
+            + self.avclass_cache.read_bytes() \
+            + self.avclass_family_cache.read_bytes() \
+            + pickle.dumps(self.filter_args)
         h = hashlib.sha256(b).hexdigest()
         return Path("./cache") / "labeling" / f"{h}.pkl"
 
@@ -388,20 +399,46 @@ def main():
 
 def test():
 
-    labeler = Labeler(
-        "/home/lk3591/Documents/datasets/Sorel/claravy_cache.txt",
-        "/home/lk3591/Documents/datasets/Sorel/avclass_cache.txt",
-        "/home/lk3591/Documents/datasets/Sorel/avclass_family_cache.txt",
-        FilterArgs(*[(1, 1) for _ in range(7)]),
-    )
+    # Why do the two run below have different values for views other than the class_ field?
 
-    labeler = labeler()
+    filter_args_a = FilterArgs(
+        class_=(None, 2),
+        file=(1, 2),
+        fam=(1, 2),
+        beh=(None, 2),
+        unk=(None, 2),
+        pack=(None, 1),
+        vuln=(None, 1),
+    )
+    labeler_a = Labeler(
+        SOREL_CLARAVY_CACHE,
+        SOREL_AVCLASS_CACHE,
+        SOREL_AVCLASS_FAMILY_CACHE,
+        filter_args_a
+    )
+    labeler_a = labeler_a()
+
+    filter_args_b = FilterArgs(
+        class_=(1, 2),
+        file=(1, 2),
+        fam=(1, 2),
+        beh=(None, 2),
+        unk=(None, 2),
+        pack=(None, 1),
+        vuln=(None, 1),
+    )
+    labeler_b = Labeler(
+        SOREL_CLARAVY_CACHE,
+        SOREL_AVCLASS_CACHE,
+        SOREL_AVCLASS_FAMILY_CACHE,
+        filter_args_b
+    )
+    labeler_b = labeler_b()
 
     for k in KEYS:
-        print("-" * 40 + f" {k} " + "-" * 40)
-        shas, values = labeler.view(k)
-        counter = Counter(chain.from_iterable(values))
-        pprint(counter)
+        print(f"{k=} {labeler_a.view(k) == labeler_b.view(k)=}")
+
+    print("Done")
 
 
 if __name__ == "__main__":
