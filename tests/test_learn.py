@@ -2,6 +2,7 @@
 Tests for the learn module.
 """
 
+from functools import partial
 import math
 import os
 from pathlib import Path
@@ -9,15 +10,18 @@ import shutil
 import sys
 import unittest
 
+import numpy as np
+from sklearn.datasets import make_classification, make_multilabel_classification
 import torch
 from torch import Tensor
-from transformers import PreTrainedModel, TrainingArguments
+from transformers import PreTrainedModel, TrainingArguments, EvalPrediction
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.architectures.mamba_hf import MambaConfig, MambaForCausalLM, MambaForSequenceClassification
 from src.learn.helpers import OutputHelper
+from src.learn.evaluation import clf_compute_metrics
 from src.learn.train import get_model
 
 
@@ -176,6 +180,40 @@ class TestOutputHelper(unittest.TestCase):
         )
         highest = oh.checkpoints_dir / "checkpoint-300"
         assert p == highest.as_posix(), f"Expected \"{highest}\", got \"{p}\""
+
+
+class TestComputeMetrics(unittest.TestCase):
+
+    seeds = [0, 1, 2, 3, 4]
+
+    # def _test_clf_compute_metrics_binary(self, seed: int) -> None:
+    #     ...
+
+    def _test_clf_compute_metrics_multiclass_singlelabel(self, seed: int) -> None:
+        predictions = np.random.rand(1000, 100)
+        label_ids = make_classification(n_samples=1000, n_classes=100, n_informative=8, random_state=seed)[1]
+        eval_pred = EvalPrediction(predictions, label_ids)
+        report = clf_compute_metrics(eval_pred, problem_type="single_label_classification")
+        print(report)
+
+    def _test_clf_compute_metrics_multiclass_multilabel(self, seed: int) -> None:
+        predictions = np.random.rand(1000, 100)
+        label_ids = make_multilabel_classification(n_samples=1000, n_classes=100, n_labels=5, random_state=seed)[1]
+        eval_pred = EvalPrediction(predictions, label_ids)
+        report = clf_compute_metrics(eval_pred, problem_type="multi_label_classification")
+        print(report)
+
+    def test_clf_compute_metrics_multiclass_multilabel(self) -> None:
+        for seed in self.seeds:
+            self._test_clf_compute_metrics_multiclass_multilabel(seed)
+
+    def test_clf_compute_metrics_multiclass_singlelabel(self) -> None:
+        for seed in self.seeds:
+            self._test_clf_compute_metrics_multiclass_singlelabel(seed)
+
+    # def test_clf_compute_metrics_binary(self) -> None:
+    #     for seed in self.seeds:
+    #         self._test_clf_compute_metrics_binary(seed)
 
 
 if __name__ == "__main__":
