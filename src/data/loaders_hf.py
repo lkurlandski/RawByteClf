@@ -110,7 +110,7 @@ def get_dataset_hf(
 
     This would look something like the below:
     """
-    if materials.problem_type == "pretraining":
+    if materials.problem_type is None:
         features = FEATURES_CLM
         df = DF_CLM
     elif materials.problem_type == "single_label_classification":
