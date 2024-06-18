@@ -37,6 +37,16 @@ def batched(iterable: Iterable, n: int):
         yield batch
 
 
+def get_unique_files(files: list[os.PathLike | Path]) -> list[os.PathLike | Path]:
+    shas, remove = set(), set()
+    for i, f in enumerate(files):
+        sha = Path(f).stem
+        if sha in shas:
+            remove.add(i)
+        shas.add(sha)
+    return [f for i, f in enumerate(files) if i not in remove]
+
+
 def count_lines_big_file(file: os.PathLike) -> int:
     args = ["wc", "-l", file]
     result = subprocess.run(args, check=True, capture_output=True)
