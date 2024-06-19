@@ -1,5 +1,15 @@
 """
 Functions to process bytes into a representation suitable for learning.
+
+NOTE:
+- The functions designed to be used as an argument to Dataset.map() need to be
+  used carefully. Notably, if multiple functions are chained together and passed
+  for a single call to a Dataset.map(), then only the values returned by the
+  final function in the chain will be present during the update with the
+  Dataset.map() internals. Basically, to use these functions safely with
+  compose, you need to ensure that every function takes ALL the values in the
+  dataset as an argugment, e.g,. `examples`, and returns all examples back
+  (returning only a single field is not adequate when using compose).
 """
 
 from functools import reduce, partial
