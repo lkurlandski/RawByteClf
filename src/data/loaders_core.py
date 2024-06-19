@@ -86,6 +86,24 @@ class Materials:
             return None
         return len(self.dist)
 
+    @property
+    def dist_tr(self) -> Counter:
+        if self.labels is None:
+            return None
+        return self.get_split_dist("tr")
+
+    @property
+    def dist_vl(self) -> Counter:
+        if self.labels is None:
+            return None
+        return self.get_split_dist("vl")
+
+    @property
+    def dist_ts(self) -> Counter:
+        if self.labels is None:
+            return None
+        return self.get_split_dist("ts")
+
     def imbalance(self, split: Optional[SplitNames] = None) -> Optional[float]:
         if self.problem_type is None:
             return None
@@ -97,6 +115,15 @@ class Materials:
         if self.problem_type == "multi_label_classification":
             c = Counter(chain.from_iterable(self.labels[split]))
             return c.most_common(1)[0][1] / c.most_common()[-1][1]
+        raise RuntimeError(f"Invalid problem type: {self.problem_type=}")
+
+    def get_split_dist(self, split: SplitNames) -> Counter:
+        if self.labels is None:
+            return None
+        if self.problem_type == "single_label_classification":
+            return Counter([self.id2label[int(i)] for i in self.labels[split]])
+        if self.problem_type == "multi_label_classification":
+            return Counter([self.id2label[int(i)] for i in chain.from_iterable(self.labels[split])])
         raise RuntimeError(f"Invalid problem type: {self.problem_type=}")
 
     def __repr__(self):
@@ -708,6 +735,58 @@ def _get_materials_clf(
     return Materials(files, labels, id2label, label2id, dist)
 
 
+def _get_materials_clf_few_shot_learning(
+    files_and_labels: dict[str, str],
+    tr_samples_per_class: int,
+    vl_min_samples_per_class: int = 1,
+    vl_max_samples_per_class: int = 10,
+    top_k: Optional[int] = None,
+    min_size: int = 0,
+    packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
+    packing_root: Optional[Path | list[Path]] = None,
+    must_exist: bool = True,
+) -> Materials:
+
+    # First, remove the files that we do not want to use.
+    files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
+    files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
+    files_and_labels = filter_file_label_map(
+        files_and_labels,
+        top_k=top_k,
+        min_freq=tr_samples_per_class + vl_min_samples_per_class,
+        min_size=min_size,
+        must_exist=must_exist,
+    )
+
+    # Get a distribution of the labels and their mappings to/from label IDs.
+    dist: Counter[str, int] = Counter(files_and_labels.values())
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    # Get all of the files and their labels, and shuffle them.
+    files = list(files_and_labels.keys())
+    labels = np.array([label2id[files_and_labels[f]] for f in files])
+    files, labels = shuffle(files, labels)
+
+    # Get indices for the train, validation, and test (empty) sets.
+    tr_idx = select_k_for_each_class(labels, k=tr_samples_per_class)
+    vl_idx_and_label = [(i, labels[i]) for i in range(len(files)) if i not in tr_idx]
+    vl_counts = Counter()
+    vl_idx = []
+    for i, l in vl_idx_and_label:
+        if vl_counts[l] < vl_max_samples_per_class:
+            vl_idx.append(i)
+            vl_counts[l] += 1
+        if all(vl_counts[l] >= vl_min_samples_per_class for l in dist):
+            break
+    ts_idx = []
+
+    # Update the distribution to reflect the samples not included.
+    files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, ts_idx)
+    dist = Counter(id2label[i] for i in chain.from_iterable(labels.values()))
+    return Materials(files, labels, id2label, label2id, dist)
+
+
 def _get_materials_clf_multilabel(
     files_and_labels: dict[str, str],
     tr_size: int | float,
@@ -849,52 +928,6 @@ def get_materials_clf_elf(
     )
 
 
-# def get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
-#     tr_samples_per_class: int,
-#     vl_samples_per_class: Optional[int] = None,
-#     top_k: Optional[int] = None,
-# ) -> Materials:
-#     """
-#     Returns a balanced BODMAS dataset with the same number of samples for each class in the
-#     train set. The remainder of the samples are allocated to the validation set.
-#     """
-#     _vl_samples_per_class = 1 if vl_samples_per_class is None else vl_samples_per_class
-#     min_freq = tr_samples_per_class + _vl_samples_per_class
-
-#     files_and_labels = get_bodmas_file_label_map()
-#     files_and_labels = filter_file_label_map(files_and_labels, top_k=top_k, min_freq=min_freq)
-
-#     dist: Counter[str, int] = Counter(files_and_labels.values())
-#     label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
-#     id2label: dict[int, str] = {i: l for l, i in label2id.items()}
-
-#     files = list(files_and_labels.keys())
-#     labels = list(files_and_labels.values())
-#     labels = np.array([label2id[l] for l in labels], dtype=np.int32)
-#     files, labels = shuffle(files, labels)
-
-#     tr_idx = select_k_for_each_class(labels, k=tr_samples_per_class)
-#     if vl_samples_per_class is None:
-#         vl_idx = [i for i in range(len(files_and_labels)) if i not in tr_idx]
-#     else:
-#         # _labels: [(IDX of original file/labels data structure, label)]
-#         _labels = [(i, l) for i, l in enumerate(labels) if i not in tr_idx]
-#         _vl_idx = select_k_for_each_class([l for _, l in _labels], k=vl_samples_per_class)
-#         vl_idx = [i for j, (i, l) in enumerate(_labels) if j in _vl_idx]
-#     ts_idx = []
-
-#     files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, ts_idx)
-
-#     tr_dist = Counter(labels["tr"])
-#     vl_dist = Counter(labels["vl"])
-#     assert len(tr_dist) == len(vl_dist), f"{len(tr_dist)=} != {len(vl_dist)=}"
-#     assert all(tr_dist[l] == tr_samples_per_class for l in tr_dist), f"tr_dist={pformat(tr_dist)}"
-#     assert vl_samples_per_class is None or all(vl_dist[l] == vl_samples_per_class for l in vl_dist), f"vl_dist={pformat(vl_dist)}"
-
-#     dist = Counter(id2label[i] for i in chain.from_iterable(labels.values()))
-#     return Materials(files, labels, id2label, label2id, dist)
-
-
 # def get_materials_clf_bodmas_balanced_slice(
 #     tr_size: int,
 #     vl_size: int,
@@ -940,4 +973,7 @@ def get_materials_clf_elf(
 
 
 if __name__ == "__main__":
-    get_materials_clf_sorel(0.8, 0.2, 0.0, "beh")
+    _get_materials_clf_few_shot_learning(
+        get_bodmas_file_label_map(),
+        tr_samples_per_class=1,
+    )

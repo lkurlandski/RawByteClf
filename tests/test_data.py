@@ -24,11 +24,14 @@ import py7zr
 
 from src.data.detect_packing_sorel import PackingMap, unpack
 from src.data.loaders_core import (
+    Materials,
     compute_integer_sizes,
     compute_float_sizes,
     tr_vl_ts_split_idx,
     tr_vl_ts_split,
     tr_vl_ts_split_idx_guarentee,
+    get_bodmas_file_label_map,
+    _get_materials_clf_few_shot_learning,
 )
 from src.data.utils import Decompressor
 
@@ -250,6 +253,55 @@ class TestUnpacking(unittest.TestCase):
         outfile, byte = unpack(self.unpacked, self.outfile, True, True, 0)
         assert outfile is None
         assert byte is None
+
+
+class TestGetMaterialsClfFewShotLearning(unittest.TestCase):
+
+    def setUp(self):
+        self.files_and_labels = get_bodmas_file_label_map()
+        self.tr_samples_per_class = list(range(1, 10))
+
+    def _test_materials(
+        self,
+        materials: Materials,
+        tr_samples_per_class: int,
+        vl_min_samples_per_class: int,
+        vl_max_samples_per_class,
+    ) -> None:
+        # print(f"{tr_samples_per_class=}\n{materials}\n{'-' * 80}")
+        print(f"{tr_samples_per_class=} {len(materials.dist)=}")
+        n_files = len(materials.files["tr"]) + len(materials.files["vl"])
+        n_unique_files = len(set(materials.files["tr"] + materials.files["vl"]))
+        assert n_files == n_unique_files, f"{n_files=} != {n_unique_files=}"
+        assert all(v == tr_samples_per_class for v in materials.dist_tr.values()), f"{materials.dist_tr=}"
+        assert all(vl_min_samples_per_class <= v <= vl_max_samples_per_class for v in materials.dist_vl.values()), f"{materials.dist_vl=}"
+        assert set(materials.dist.keys()) == (set(materials.dist_tr.keys())) == (set(materials.dist_vl.keys()))
+
+    def test_one(self):
+        vl_min_samples_per_class = 1
+        vl_max_samples_per_class = 10
+        for tr_samples_per_class in self.tr_samples_per_class:
+            materials = _get_materials_clf_few_shot_learning(
+                self.files_and_labels,
+                tr_samples_per_class,
+                vl_min_samples_per_class=vl_min_samples_per_class,
+                vl_max_samples_per_class=vl_max_samples_per_class,
+                top_k=None,
+            )
+            self._test_materials(materials, tr_samples_per_class, vl_min_samples_per_class, vl_max_samples_per_class)
+
+    def test_two(self):
+        vl_min_samples_per_class = 4
+        vl_max_samples_per_class = 20
+        for tr_samples_per_class in self.tr_samples_per_class:
+            materials = _get_materials_clf_few_shot_learning(
+                self.files_and_labels,
+                tr_samples_per_class,
+                vl_min_samples_per_class=vl_min_samples_per_class,
+                vl_max_samples_per_class=vl_max_samples_per_class,
+                top_k=None,
+            )
+            self._test_materials(materials, tr_samples_per_class, vl_min_samples_per_class, vl_max_samples_per_class)
 
 
 if __name__ == "__main__":
