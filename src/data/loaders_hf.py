@@ -76,7 +76,7 @@ def generator(
         yield r
 
 
-def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict):
+def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict, n_samples: int = 0):
 
     print(f"Dataset: {dataset.__class__.__name__}")
 
@@ -85,6 +85,24 @@ def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict):
         print(f" {split=}")
         print(f"  splits={d.info.splits}")
         print(f"  features={d.info.features}")
+
+        if n_samples > 0:
+            for i, items in enumerate(d):
+                fields = list(items.keys())
+                types = [type(v) for v in items.values()]
+                shapes = []
+                for v in items.values():
+                    if hasattr(v, "shape"):
+                        shape = v.shape
+                    elif isinstance(v, list):
+                        shape = len(v)
+                    else:
+                        shape = None
+                    shapes.append(shape)
+                print(f"  row={i}  {fields=}  {types=}  {shapes=}")
+
+                if i == n_samples - 1:
+                    break
 
     if isinstance(dataset, DatasetDict):
         files = [list(f.values())[0] for f in d.cache_files for d in dataset.values()]
