@@ -31,6 +31,48 @@ import torch
 from torch import nn, ByteTensor, LongTensor, Tensor
 
 
+def get_array_datatype(x: Tensor | np.ndarray | list| int | float) -> Literal["int", "float"]:
+
+    def datatype_of_list(x: list) -> Literal["int", "float"]:
+        if isinstance(x[0], list):
+            return datatype_of_list(x[0])
+        return type(x[0]).__name__
+
+    if isinstance(x, Tensor):
+        return str(x.dtype).split(".")[1][:-2]
+    if isinstance(x, np.ndarray):
+        return str(x.dtype)[:-2]
+    if isinstance(x, list):
+        return datatype_of_list(x)
+    if isinstance(x, (int, float)):
+        return type(x).__name__
+
+    raise ValueError(f"Unexpected type: {type(x)=}")
+
+
+def get_array_shape(x: Tensor | np.ndarray | list | int | float) -> tuple[int]:
+
+    def shape_of_list(x: list) -> tuple[int]:
+        if isinstance(x[0], list):
+            return (len(x),) + shape_of_list(x[0])
+        return (len(x),)
+
+    if isinstance(x, Tensor):
+        return tuple(x.shape)
+    if isinstance(x, np.ndarray):
+        return tuple(x.shape)
+    if isinstance(x, list):
+        return shape_of_list(x)
+    if isinstance(x, (int, float)):
+        return tuple()
+
+    raise ValueError(f"Unexpected type: {type(x)=}")
+
+
+def get_array_dim(x: Tensor | np.ndarray | list | int | float) -> tuple[int]:
+    return len(get_array_shape(x))
+
+
 def batched(iterable: Iterable, n: int):
     it = iter(iterable)
     while batch := tuple(islice(it, n)):
