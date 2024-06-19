@@ -297,7 +297,7 @@ def float_to_int(x: float | int) -> int:
 
 def compute_total_steps(
     n_samples: int,
-    n_epochs: int,
+    n_epochs: int | float,
     batch_size: Optional[int] = None,
     per_device_batch_size: Optional[int] = None,
     n_accumulation_steps: Optional[int] = None,
@@ -306,7 +306,6 @@ def compute_total_steps(
 
     # Ray tune seems to fuck up the data types? WTF. Anyway, cast them all to int.
     n_samples = float_to_int(n_samples)
-    n_epochs = float_to_int(n_epochs)
     batch_size = float_to_int(batch_size) if batch_size is not None else None
     per_device_batch_size = float_to_int(per_device_batch_size) if per_device_batch_size is not None else None
     n_accumulation_steps = float_to_int(n_accumulation_steps) if n_accumulation_steps is not None else None
@@ -321,6 +320,7 @@ def compute_total_steps(
             raise ValueError()
 
     q, r = divmod(n_samples * n_epochs, batch_size)
+    q = int(q)
     if r == 0:
         return q
     return q + 1
