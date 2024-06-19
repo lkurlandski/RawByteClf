@@ -34,25 +34,21 @@ else:
 
 from src.cfg import OUTPUT_PATH
 from src.utils import get_highest_path, is_jsonable
+from src.data.labeling import KEYS
 from src.learn.utils import str_or_bool_to_str, float_to_int
 
 
 TASKS = [
-    "clm",
-    "mlm",
-    "clf-bod",
-    "clf-ksc",
-    "clf-lxs",
-    "clf-sor-org",
-    "clf-sor-cat",
-    "clf-sor-nam",
-    "clf-sor-lab",
+    "clm-sor",
     "clm-elf",
+    "mlm-sor",
     "mlm-elf",
-    "clf-elf-cat",
-    "clf-elf-nam",
-    "clf-elf-lab",
+    "clf-bod",
 ]
+TASKS.extend([f"clf-sor-{k}" for k in KEYS])
+TASKS.extend([f"clf-elf-{k}" for k in KEYS])
+
+
 TOKENIZERS = ["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
 
 

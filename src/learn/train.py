@@ -50,6 +50,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
+import datasets
 from datasets import (
     DatasetDict,
     Dataset,
@@ -92,7 +93,7 @@ from transformers.trainer_utils import (
     TrainOutput,
     PREFIX_CHECKPOINT_DIR,
 )
-from transformers.trainer_pt_utils import AcceleratorConfig
+from transformers.trainer_pt_utils import AcceleratorConfig  # pylint: disable=no-name-in-module
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
 from transformers.utils import (
     CONFIG_NAME,
@@ -156,23 +157,22 @@ from src.architectures.rwkv import (
     RwkvForSequenceClassification,
 )
 from src.data.loaders_core import (
-    get_materials_clf_bodmas,
-    get_materials_clf_sorel,
-    get_materials_clf_elf_vt,
-    get_materials_clf_sorel_vt,
-    get_materials_clf_bodmas_balanced_slice,
-    get_materials_clf_bodmas_with_k_samples_per_class_in_train_set,
+    Materials,
     get_materials_pretrain_sorel,
     get_materials_pretrain_elf,
-    get_materials_clf_sorel_length_extrapolation,
+    get_materials_clf_bodmas,
+    get_materials_clf_sorel,
+    get_materials_clf_elf,
 )
 from src.data.loaders_hf import get_dataset_hf, print_dataset_hf
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
+from src.learn.class_weighting import sample_reweighting
 from src.learn.helpers import Args, OutputHelper
 from src.learn.evaluation import clf_compute_metrics
 from src.learn.preprocessing import (
     hf_bytes_to_input_ids,
     hf_tokenize_bytes,
+    hf_multilabel_encode,
     bytes_to_input_ids,
     tokenize_bytes,
     hf_compress_bytes,
@@ -216,6 +216,7 @@ PAD_TO = 8
 
 # Some random temporary flags.
 MOVE_IN_MEMORY = False
+ARMITAGE = False
 
 # Default variables for the datasets.Dataset.map() and datasets.IterableDataset.map()
 BATCH_SIZE: Optional[int] = 1000
@@ -439,6 +440,7 @@ class UtilCallback(TrainerCallback):
 
 
 class ImbalancedClassificationTrainer(Trainer):
+
     def __init__(self, weight: Optional[Tensor] = None, **kwargs):
         super().__init__(**kwargs)
         self.loss_fn = CrossEntropyLoss(weight=weight)
@@ -710,7 +712,7 @@ def get_config(
         num_labels (int): use for classification
     """
     # PretrainedConfig doesn't like None values for num_labels id2label and label2id.
-    for k in ["num_labels", "id2label", "label2id"]:
+    for k in ["num_labels", "id2label", "label2id", "problem_type"]:
         if k in kwds and kwds[k] is None:
             kwds.pop(k)
 
@@ -842,7 +844,7 @@ def get_model(
 ) -> PreTrainedModel:
     if model_name_or_path is None and config is None:
         raise ValueError("Must specify `model_name_or_path` or `config`.")
-    if model_name_or_path is None == config is None:  # FIXME: roken.
+    if model_name_or_path is None == config is None:  # FIXME: broken.
         warnings.warn(
             f"Specified both `model_name_or_path` or `config`. {model_name_or_path=} will take "
             f"precidence over {type(config)=} if its a path that exists."
@@ -983,6 +985,8 @@ def get_map_kwds_for_hf_datasets(
         "num_proc": NUM_PROC,
         "cache_file_names": CACHE_FILE_NAME,
         "writer_batch_size": WRITER_BATCH_SIZE,
+        "features": None,  # IterableDatasetDict does not take features in its map(), but IterableDataset does.
+        "desc": None,
     }
     iterable_style_kwds = {
 
@@ -1002,6 +1006,106 @@ def get_map_kwds_for_hf_datasets(
     })
 
     return kwds
+
+
+def get_processed_dataset_hf(
+    materials: Materials,
+    args: Args,
+    num_shards: Optional[int] = None,
+    tokenizer: Optional[PreTrainedTokenizerFast] = None,
+) -> DatasetDict | IterableDatasetDict:
+
+    dataset = get_dataset_hf(
+        materials,
+        args.streaming,
+        num_shards,
+        max_length=args.data_read_bytes,
+    )
+
+    if materials.problem_type == "multi_label_classification":
+        func = partial(hf_multilabel_encode, num_classes=materials.num_classes)
+        # The one-hot encoding requires floating point one-hot labels.
+        features = datasets.Features({
+            "labels": datasets.Sequence(datasets.Value("float32")),
+            "name": datasets.Value("string"),
+            "bytes": datasets.Value("binary"),
+        })
+        desc = "One-hot encoding labels..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, features=features, desc=desc)
+        dataset = dataset.map(**kwds)
+
+    if args.algorithm in COMPRESSION_TYPES:
+        func = partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level)
+        desc = "Compressing bytes..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
+        dataset = dataset.map(**kwds)
+    if args.algorithm in ENCRYPTION_TYPES:
+        func = partial(hf_encrypt_bytes, encryption_type=args.algorithm, key=None)
+        desc = "Encrypting bytes..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
+        dataset = dataset.map(**kwds)
+
+    if args.algorithm.lower() == "raw" or args.algorithm in (COMPRESSION_TYPES + ENCRYPTION_TYPES):
+        func = partial(
+            hf_bytes_to_input_ids,
+            bits_in_byte=args.representation,
+            num_special_ids=len(tokenizer.all_special_ids),
+            max_length=args.max_length,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+        desc = "Mapping bytes..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, remove_columns=["name", "bytes"], num_proc=NUM_PROC)
+        dataset = dataset.map(**kwds)
+    else:
+        func = partial(hf_tokenize_bytes, tokenizer=tokenizer, max_length=args.max_length)
+        desc = "Tokenizing bytes..."
+        kwds = get_map_kwds_for_hf_datasets(function=func, dataset=dataset, desc=desc, remove_columns=["name", "bytes"], num_proc=None)
+        dataset = dataset.map(**kwds)
+
+    return dataset
+
+
+def get_processed_dataset_pt(
+    materials: Materials,
+    args: Args,
+    num_shards: Optional[int] = None,  # pylint: disable=unused-argument
+    tokenizer: Optional[PreTrainedTokenizerFast] = None,
+):
+
+    if materials.problem_type == "multi_label_classification":
+        raise NotImplementedError()
+
+    preprocess_fns = []
+
+    if args.algorithm in COMPRESSION_TYPES:
+        func = partial(compress, compression_type=args.algorithm, compression_level=args.compression_level)
+        preprocess_fns.append(func)
+    if args.algorithm in ENCRYPTION_TYPES:
+        func = partial(encrypt, encryption_type=args.algorithm, key=None)
+        preprocess_fns.append(func)
+
+    if args.algorithm.lower() == "raw" or args.algorithm in (COMPRESSION_TYPES + ENCRYPTION_TYPES):
+        func = partial(
+            bytes_to_input_ids,
+            bits_in_byte=args.representation,
+            num_special_ids=len(tokenizer.all_special_ids),
+            max_length=args.max_length,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+        preprocess_fns.append(func)
+    else:
+        func = partial(tokenize_bytes, tokenizer=tokenizer, max_length=args.max_length)
+        preprocess_fns.append(func)
+
+    dataset = get_dataset_pt(
+        materials,
+        args.streaming,
+        max_length=args.data_read_bytes,
+        preprocess_fn=compose_functions(*preprocess_fns),
+    )
+    return dataset
 
 
 def main(args: Args, training_arguments: TrainingArguments) -> None:
@@ -1068,22 +1172,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print_tokenizer(tokenizer)
     print(BR, flush=True)
 
-
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
-    id2label: Optional[dict[int, str]] = None
-    label2id: Optional[dict[str, int]] = None
-    dist: Optional[Counter] = None
-    num_classes: Optional[int] = None
-    weight: Optional[Tensor] = None
-    if args.task in ("mlm", "clm"):
+    if args.task in ("mlm-sor", "clm-sor"):
         materials = get_materials_pretrain_sorel(
             args.tr_size,
             args.vl_size,
             args.ts_size,
             packing_protocol=args.packing_protocol,
+            remove_clf_files=not ARMITAGE,
         )
-        oh.update(tr_size=len(materials.files["tr"]))    # TODO: improve
-    if args.task in ("clm-elf", "mlm-elf"):
+        oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
+    elif args.task in ("mlm-elf", "clm-elf"):
         materials = get_materials_pretrain_elf(
             args.tr_size,
             args.vl_size,
@@ -1091,7 +1190,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             packing_protocol=args.packing_protocol,
         )
         oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
-    # Straightforward classification tasks.
     elif args.task == "clf-bod":
         materials = get_materials_clf_bodmas(
             args.tr_size,
@@ -1101,49 +1199,29 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             min_freq=args.min_freq,
             packing_protocol=args.packing_protocol,
         )
-    elif args.task == "clf-sor-org":
+    elif args.task[0:7] == "clf-sor":
         materials = get_materials_clf_sorel(
             args.tr_size,
             args.vl_size,
             args.ts_size,
-            packing_protocol=args.packing_protocol,
-        )
-    elif args.task[0:7] == "clf-sor":
-        materials = get_materials_clf_sorel_vt(
-            args.tr_size,
-            args.vl_size,
-            args.ts_size,
-            extractor={"clf-sor-nam": "name", "clf-sor-cat": "category", "clf-sor-lab": "label"}[args.task],
+            name=args.task[8:],
+            top_k=args.top_k,
+            min_freq=args.min_freq,
             packing_protocol=args.packing_protocol,
         )
     elif args.task[0:7] == "clf-elf":
-        materials = get_materials_clf_elf_vt(
+        materials = get_materials_clf_elf(
             args.tr_size,
             args.vl_size,
             args.ts_size,
-            extractor={"clf-elf-nam": "name", "clf-elf-cat": "category", "clf-elf-lab": "label"}[args.task],
+            name=args.task[8:],
+            top_k=args.top_k,
+            min_freq=args.min_freq,
             packing_protocol=args.packing_protocol,
         )
-    # Complex classification tasks.
-    elif args.task == "clf-ksc":
-        materials = get_materials_clf_bodmas_with_k_samples_per_class_in_train_set(
-            args.tr_samples_per_class,
-            args.vl_samples_per_class,
-            args.top_k,
-        )
-    elif args.task == "clf-lxs":
-        raise NotImplementedError()
 
-
-    if args.task[0:3] == "clf":
-        id2label = materials.id2label
-        label2id = materials.label2id
-        dist = materials.dist
-        num_classes = len(id2label)
-        weight = tensor([1 / freq for freq in [dist[c] for c in label2id.keys()]])
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
-
 
     # If we know the length of the dataset, we can compute the number of steps from training epochs.
     # This lets us use epochs for training in streaming mode and eval/save multiple times per epoch.
@@ -1158,92 +1236,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     training_arguments = replace(training_arguments, **kwds)
 
 
-    dataset: DatasetDict | IterableDatasetDict | MapBinaryDatasetDict | IterableBinaryDatasetDict
     if args.dataset_backend == "HF":
-        dataset = get_dataset_hf(
-            materials,
-            args.streaming,
-            training_arguments.world_size * training_arguments.dataloader_num_workers,
-            max_length=args.data_read_bytes,
-        )
+        num_shards=training_arguments.world_size*training_arguments.dataloader_num_workers
+        dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
         print_dataset_hf(dataset)
         print(BR)
-
-        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES + ENCRYPTION_TYPES:
-            preprocess_fns = []
-            if args.algorithm in COMPRESSION_TYPES:
-                preprocess_fns.append(partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level))
-            elif args.algorithm in ENCRYPTION_TYPES:
-                preprocess_fns.append(partial(hf_encrypt_bytes, encryption_type=args.algorithm, key=None))
-            preprocess_fns.append(partial(
-                hf_bytes_to_input_ids,
-                bits_in_byte=args.representation,
-                num_special_ids=len(tokenizer.all_special_ids),
-                max_length=args.max_length,
-                bos_token_id=tokenizer.bos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-            ))
-            preprocess_fn = compose_functions(*preprocess_fns)
-            num_proc = NUM_PROC
-        else:
-            # TODO: is an attention mask being returned here? If so, we don't need it for most
-            # models...a comment later down indicates that it may be generated and saved for more
-            # convenient cacheing behavior, but this would slow down the iterable versions? On
-            # second thought, its probably very efficient to generate the mask, so the slow down
-            # wouldn't be too significant as long as the data isn't being transferred to the GPU.
-            preprocess_fn = partial(
-                hf_tokenize_bytes,
-                tokenizer=tokenizer,
-                max_length=args.max_length,
-            )
-            num_proc = None
-        dataset = dataset.map(**get_map_kwds_for_hf_datasets(
-            function=preprocess_fn,
-            dataset=dataset,
-            remove_columns=["name", "bytes"],
-            num_proc=num_proc,
-        ))
-        print_dataset_hf(dataset)
-        print(BR)
-
-        if args.exit_after_map:
-            print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
-            sys.exit(0)
-        if MOVE_IN_MEMORY:
-            for s in dataset:
-                dataset[s] = dataset[s].select(range(len(dataset[s])), keep_in_memory=True)
-
     else:
-        if args.algorithm.lower() == "raw" or args.algorithm in COMPRESSION_TYPES + ENCRYPTION_TYPES:
-            preprocess_fns = []
-            if args.algorithm in COMPRESSION_TYPES:
-                preprocess_fns.append(partial(compress, compression_type=args.algorithm, compression_level=args.compression_level))
-            elif args.algorithm in ENCRYPTION_TYPES:
-                preprocess_fns.append(partial(encrypt, encryption_type=args.algorithm, key=None))
-            preprocess_fns.append(partial(
-                bytes_to_input_ids,
-                bits_in_byte=args.representation,
-                num_special_ids=len(tokenizer.all_special_ids),
-                max_length=args.max_length,
-                bos_token_id=tokenizer.bos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-            ))
-            preprocess_fn = compose_functions(*preprocess_fns)
-        else:
-            preprocess_fn = partial(
-                tokenize_bytes,
-                tokenizer=tokenizer,
-                max_length=args.max_length,
-            )
-
-        dataset = get_dataset_pt(
-            materials,
-            args.streaming,
-            max_length=args.data_read_bytes,
-            preprocess_fn=preprocess_fn,
-        )
+        num_shards = None
+        dataset = get_processed_dataset_pt(materials, args, num_shards, tokenizer)
         print_dataset_pt(dataset)
         print(BR)
+    del num_shards
+
 
     config = get_config(
         args.model_name_or_path,
@@ -1251,13 +1255,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.max_length,
         tensor_log_path=oh.tensor_log_path,
         arch_config=args.arch_config,
-        num_labels=num_classes,
-        id2label=id2label,
-        label2id=label2id,
+        num_labels=materials.num_classes,
+        id2label=materials.id2label,
+        label2id=materials.label2id,
+        problem_type=materials.problem_type,
     )
     print_config(config)
     print(BR, flush=True)
-
 
     pad_to_multiple_of = PAD_TO
     if isinstance(config, transformers.ReformerConfig):
@@ -1277,7 +1281,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             pad_to_multiple_of=pad_to_multiple_of,
             max_length=args.max_length,  # hopefully, the sequences were truncated before hand...
         )
-        compute_metrics = clf_compute_metrics
+        compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
     elif args.task[0:3] == "mlm":
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
@@ -1305,7 +1309,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR)
 
     if args.task[0:3] == "clf":
-        ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight)
+        if materials.problem_type == "multi_class_classification":
+            weight = sample_reweighting(materials.dist, beta=0.75)
+            print(f"weight=\n{pformat(weight)}\n{BR}")
+            ModelTrainer = partial(ImbalancedClassificationTrainer, weight=tensor(list(weight.values())))
+        else:
+            ModelTrainer = Trainer
     elif args.task[0:3] in ("mlm", "clm"):
         ModelTrainer = Trainer
 
@@ -1318,9 +1327,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.task,
             args.model_name_or_path,
             config,
-            num_labels=num_classes,
-            id2label=id2label,
-            label2id=label2id,
+            num_labels=materials.num_classes,
+            id2label=materials.id2label,
+            label2id=materials.label2id,
         )
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
@@ -1374,7 +1383,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 train_dataset=dataset["tr"],
                 eval_dataset=dataset["vl"],
                 data_collator=data_collator,
-                tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: args.algorithm.lower() != "raw"
+                tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
@@ -1431,7 +1440,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 train_dataset=dataset["tr"],
                 eval_dataset=dataset["vl"],
                 data_collator=data_collator,
-                tokenizer=tokenizer if args.dataset_backend == "HF" else None,
+                tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
@@ -1479,16 +1488,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 args.task,
                 oh.best_model_dir,
                 None,
-                num_labels=num_classes,
-                id2label=id2label,
-                label2id=label2id,
+                num_labels=materials.num_classes,
+                id2label=materials.id2label,
+                label2id=materials.label2id,
             )
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
 
         if args.task[0:3] == "clf":
-            single_shot_classes = [label2id[l] for l in dist if dist[l] == 3]
+            single_shot_classes = [materials.label2id[l] for l in materials.dist if materials.dist[l] == 3]
             compute_metrics = partial(clf_compute_metrics, single_shot_classes=single_shot_classes)
             print("single_shot_classes=")
             pprint(single_shot_classes)
@@ -1525,9 +1534,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             model_name_or_path=args.model_name_or_path,
             tokenizer=tokenizer,
             max_length=args.max_length,
-            num_labels=num_classes,
-            id2label=id2label,
-            label2id=label2id,
+            num_labels=materials.num_classes,
+            id2label=materials.id2label,
+            label2id=materials.label2id,
         )
         trainer = ModelTrainer(
             model_init=model_init,

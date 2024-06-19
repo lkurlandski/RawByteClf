@@ -19,10 +19,13 @@ from transformers import PreTrainedModel, TrainingArguments, EvalPrediction
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from src.utils import get_array_shape, get_array_datatype, get_array_dim
 from src.architectures.mamba_hf import MambaConfig, MambaForCausalLM, MambaForSequenceClassification
-from src.learn.helpers import OutputHelper
+from src.data.loaders_core import Materials, get_materials_clf_sorel, get_materials_clf_bodmas
+from src.learn.helpers import OutputHelper, Args
 from src.learn.evaluation import clf_compute_metrics
-from src.learn.train import get_model
+from src.learn.tokenization import get_tokenizer
+from src.learn.train import get_model, get_processed_dataset_hf
 
 
 class TestGetModel(unittest.TestCase):
@@ -214,6 +217,103 @@ class TestComputeMetrics(unittest.TestCase):
     # def test_clf_compute_metrics_binary(self) -> None:
     #     for seed in self.seeds:
     #         self._test_clf_compute_metrics_binary(seed)
+
+
+class TestGetProcessedDatasetHF(unittest.TestCase):
+
+    representation = 8
+    algorithm = "raw"
+    vocab_size = 256
+    max_length = 256
+    keys = {"input_ids", "labels"}
+
+    def setUp(self) -> None:
+        self.singlelabel_materials = get_materials_clf_bodmas(0.85, 0.15, 0.0)
+        self.multilabel_materials = get_materials_clf_sorel(0.85, 0.15, 0.0, name="pack")
+        self.num_shards = 1
+        self.tokenizer = get_tokenizer(
+            representation=self.representation,
+            algorithm=self.algorithm,
+            vocab_size=self.vocab_size,
+            model_max_length=self.max_length,
+            add_cls_token=False,
+            add_bos_token=True,
+            add_eos_token=True,
+            add_sep_token=False,
+        )
+        self.nonstreaming_args = self.get_args(False)
+        self.streaming_args = self.get_args(True)
+
+    def get_args(self, streaming: bool):
+        d = {
+            "streaming": streaming,
+            "data_read_bytes": self.max_length,
+            "max_length": self.max_length,
+            "algorithm": self.algorithm,
+            "compression_level": 9,
+            "representation": self.representation,
+        }
+        return type("Args", (), d)
+
+    def _test_multiclass_singlelabel(self, dataset) -> None:
+        for d in dataset["tr"]:
+            assert set(d.keys()) == self.keys, f"Expected \"{self.keys}\", got \"{d.keys()}\""
+            assert isinstance(d["input_ids"], (list, Tensor)), f"Expected sequence, got {type(d['input_ids'])}"
+            assert get_array_datatype(d["input_ids"]) == "int", f"Expected int, got {type(d['input_ids'][0])}"
+            assert get_array_dim(d["input_ids"]) == 1, f"Expected 1-D array, got {get_array_shape(d['input_ids'])}"
+            assert isinstance(d["labels"], (int, Tensor)), f"Expected value, got {type(d['labels'])}"
+            assert get_array_datatype(d["labels"]) == "int", f"Expected int, got {type(d['labels'])}"
+            assert get_array_dim(d["labels"]) == 0, f"Expected 0-D array, got {get_array_shape(d['labels'])}"
+            break
+
+    def _test_multiclass_multilabel(self, dataset) -> None:
+        for d in dataset["tr"]:
+            assert set(d.keys()) == self.keys, f"Expected \"{self.keys}\", got \"{d.keys()}\""
+            assert isinstance(d["input_ids"], (list, Tensor)), f"Expected sequence, got {type(d['input_ids'])}"
+            assert get_array_datatype(d["input_ids"]) == "int", f"Expected int, got {type(d['input_ids'][0])}"
+            assert get_array_dim(d["input_ids"]) == 1, f"Expected 1-D array, got {get_array_shape(d['input_ids'])}"
+            assert isinstance(d["labels"], (list, Tensor)), f"Expected sequence, got {type(d['labels'])}"
+            assert get_array_datatype(d["labels"]) == "float", f"Expected float, got {type(d['labels'])}"
+            assert get_array_dim(d["labels"]) == 1, f"Expected 1-D array, got {get_array_shape(d['labels'])}"
+            break
+
+    def _test_datasets_same(self, dataset_1, dataset_2) -> None:
+        for d_1, d_2 in zip(dataset_1["tr"], dataset_2["tr"]):
+            for k in self.keys:
+                v_1 = d_1[k]
+                if isinstance(v_1, Tensor):
+                    v_1 = v_1.tolist() if v_1.dim() > 0 else v_1.item()
+                v_2 = d_2[k]
+                if isinstance(v_2, Tensor):
+                    v_2 = v_2.tolist() if v_2.dim() > 0 else v_2.item()
+                assert v_1 == v_2, f"Expected \"{v_1}\", got \"{v_2}\""
+            break
+
+    def test_multiclass_singlelabel(self) -> None:
+        dataset = get_processed_dataset_hf(self.singlelabel_materials, self.nonstreaming_args, self.num_shards, self.tokenizer)
+        self._test_multiclass_singlelabel(dataset)
+
+    def test_multiclass_singlelabel_streaming(self) -> None:
+        dataset = get_processed_dataset_hf(self.singlelabel_materials, self.streaming_args, self.num_shards, self.tokenizer)
+        self._test_multiclass_singlelabel(dataset)
+
+    def test_multiclass_singlelabel_same(self) -> None:
+        nonstreaming_dataset = get_processed_dataset_hf(self.singlelabel_materials, self.nonstreaming_args, self.num_shards, self.tokenizer)
+        streaming_dataset = get_processed_dataset_hf(self.singlelabel_materials, self.streaming_args, self.num_shards, self.tokenizer)
+        self._test_datasets_same(nonstreaming_dataset, streaming_dataset)
+
+    def test_multiclass_multilabel(self) -> None:
+        dataset = get_processed_dataset_hf(self.multilabel_materials, self.nonstreaming_args, self.num_shards, self.tokenizer)
+        self._test_multiclass_multilabel(dataset)
+
+    def test_multiclass_multilabel_streaming(self) -> None:
+        dataset = get_processed_dataset_hf(self.multilabel_materials, self.streaming_args, self.num_shards, self.tokenizer)
+        self._test_multiclass_multilabel(dataset)
+
+    def test_multiclass_multilabel_same(self) -> None:
+        nonstreaming_dataset = get_processed_dataset_hf(self.multilabel_materials, self.nonstreaming_args, self.num_shards, self.tokenizer)
+        streaming_dataset = get_processed_dataset_hf(self.multilabel_materials, self.streaming_args, self.num_shards, self.tokenizer)
+        self._test_datasets_same(nonstreaming_dataset, streaming_dataset)
 
 
 if __name__ == "__main__":
