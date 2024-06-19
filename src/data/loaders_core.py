@@ -16,6 +16,7 @@ import sys
 from statistics import mean, median
 import time
 from typing import Callable, Literal, Optional
+import warnings
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -138,7 +139,7 @@ class Materials:
 
 def get_tr_vl_ts_files_and_labels(
     files: list[os.PathLike],
-    labels: np.ndarray,
+    labels: np.ndarray | list[int | Sequence[int]],
     idx: Optional[dict[SplitNames, Sequence[int]]] = None,
     tr_idx: Optional[Sequence[int]] = None,
     vl_idx: Optional[Sequence[int]] = None,
@@ -150,17 +151,26 @@ def get_tr_vl_ts_files_and_labels(
             raise ValueError("Cannot specify both `idx` and `tr_idx`, `vl_idx`, `ts_idx`.")
         tr_idx, vl_idx, ts_idx = idx["tr"], idx["vl"], idx["ts"]
 
-    labels = np.array(labels) if isinstance(labels, list) else labels
     files = {
         "tr": [files[i] for i in tr_idx],
         "vl": [files[i] for i in vl_idx],
         "ts": [files[i] for i in ts_idx],
     }
-    labels = {
-        "tr": labels[tr_idx],
-        "vl": labels[vl_idx],
-        "ts": labels[ts_idx],
-    }
+
+    if not isinstance(labels[0], Sequence):
+        labels = np.array(labels) if isinstance(labels, list) else labels
+        labels = {
+            "tr": labels[tr_idx],
+            "vl": labels[vl_idx],
+            "ts": labels[ts_idx],
+        }
+    else:
+        labels = {
+            "tr": [labels[i] for i in tr_idx],
+            "vl": [labels[i] for i in vl_idx],
+            "ts": [labels[i] for i in ts_idx],
+        }
+
     return files, labels
 
 
@@ -173,6 +183,61 @@ def select_k_for_each_class(labels: list[int | str], k: int) -> list[int]:
             count[l] += 1
             idx.append(i)
     return idx
+
+
+def select_k_for_each_class_multilabel(
+    labels: list[list[int | str]],
+    k: int,
+    max_iter: int = 10,
+    strict: bool = False,
+) -> list[int]:
+    unique = set(chain.from_iterable(labels))
+    count = {s : 0 for s in unique}
+    idx = set()
+
+    # Repeat for a maximum of `max_iter` iterations before greedily adding samples.
+    pbar = tqdm(range(max_iter), total=max_iter, desc="Attempting to find a precise solution...", leave=False)
+    for j in pbar:
+        for i, label in tqdm(enumerate(labels), total=len(labels), leave=False):
+            # If the count for all labels in the label is less than `k`, add the sample.
+            if all(count[l] < k for l in label):
+                for l in label:
+                    count[l] += 1
+                idx.add(i)
+            elif any(count[l] < k for l in label):
+                # If less than j labels have reached their quota, add the sample.
+                if sum(1 for l in label if count[l] >= k) < j:
+                    for l in label:
+                        count[l] += 1
+                    idx.add(i)
+
+        done = sum(1 for l in unique if count[l] >= k)
+        pbar.set_description(f"Found {done} / {len(unique)}")
+        if done == len(unique):
+            break
+
+    if any(count[l] < k for l in unique):
+         for i, label in tqdm(enumerate(labels), total=len(labels), leave=False):
+            if i in idx:
+                continue
+
+            if any(count[l] < k for l in label):
+                for l in label:
+                    count[l] += 1
+                idx.add(i)
+
+            if all(count[l] >= k for l in unique):
+                break
+
+    if any(count[l] != k for l in unique):
+        max_ = Counter(count).most_common(1)[0]
+        min_ = Counter(count).most_common(None)[-1]
+        message = f"Could not perfectly return {k} for each class. Min: ({min_}), Max: ({max_})"
+        warnings.warn(message)
+        if strict:
+            raise RuntimeError(message)
+
+    return list(idx)
 
 
 ################################################################################
@@ -839,6 +904,60 @@ def _get_materials_clf_multilabel(
     )
 
 
+# TODO: this needs a bit more work...
+def _get_materials_clf_multilabel_few_shot_learning(
+    files_and_labels: dict[str, str],
+    tr_samples_per_class: int,
+    vl_min_samples_per_class: int = 1,
+    vl_max_samples_per_class: int = 10,
+    top_k: Optional[int] = None,
+    min_size: int = 0,
+    packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
+    packing_root: Optional[Path | list[Path]] = None,
+    must_exist: bool = True,
+) -> Materials:
+
+    # First, remove the files that we do not want to use.
+    files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
+    files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
+    files_and_labels = filter_file_label_map_multilabel(
+        files_and_labels,
+        top_k=top_k,
+        min_freq=tr_samples_per_class + vl_min_samples_per_class,
+        min_size=min_size,
+        must_exist=must_exist,
+    )
+
+    # Get a distribution of the labels and their mappings to/from label IDs.
+    dist: Counter[str, int] = Counter(chain.from_iterable(files_and_labels.values()))
+    label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
+    id2label: dict[int, str] = {i: l for l, i in label2id.items()}
+
+    # Get all of the files and their labels, and shuffle them.
+    files = list(files_and_labels.keys())
+    labels = [tuple(label2id[l] for l in files_and_labels[file]) for file in files]
+    files, labels = shuffle(files, labels)
+
+    # Get indices for the train, validation, and test (empty) sets.
+    tr_idx = select_k_for_each_class_multilabel(labels, k=tr_samples_per_class)
+    tr_idx = set(tr_idx)
+
+    vl_idx_and_label = [(i, labels[i]) for i in range(len(files)) if i not in tr_idx]
+    _idx = select_k_for_each_class_multilabel([l for _, l in vl_idx_and_label], k=vl_min_samples_per_class)
+    vl_idx = [vl_idx_and_label[i][0] for i in _idx]
+
+    ts_idx = []
+
+    assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
+
+    # Update the distribution to reflect the samples not included.
+    files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, tr_idx, vl_idx, ts_idx)
+    dist = Counter()
+    for l in labels.values():
+        dist.update(id2label[i] for i in chain.from_iterable(l))
+    return Materials(files, labels, id2label, label2id, dist)
+
+
 ################################################################################
 # Load Materials Endpoints
 ################################################################################
@@ -973,7 +1092,10 @@ def get_materials_clf_elf(
 
 
 if __name__ == "__main__":
-    _get_materials_clf_few_shot_learning(
-        get_bodmas_file_label_map(),
-        tr_samples_per_class=1,
+    materials = _get_materials_clf_multilabel_few_shot_learning(
+        get_sorel_file_label_map("beh"),
+        1,
+        vl_min_samples_per_class=1,
+        vl_max_samples_per_class=10,
+        top_k=None,
     )
