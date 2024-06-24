@@ -134,7 +134,9 @@ class Args:
     vocab_size: Optional[int] = field(default=None)
     compression_level: int = field(default=9)
 
-    # Early stopping
+    # Training/Stopping
+    weighted_loss: Optional[str] = field(default=None)
+    beta: Optional[float] = field(default=None)
     early_stopping: bool = field(default=False)
     early_stopping_patience: int = field(default=1)
     early_stopping_threshold: float = field(default=0.0)
@@ -170,6 +172,7 @@ class Args:
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
         self.enforce_cutoff = str_to_bool(self.enforce_cutoff)
         self.pretraining_task = str_to_str(self.pretraining_task)
+        self.weighted_loss = str_to_str(self.weighted_loss)
 
         # Parse the architecture configuration from JSON or from a file.
         if self.arch_config_file and self.arch_config:
@@ -252,6 +255,7 @@ class OutputHelper:
         arch_config: Optional[dict],
         task: str,
         tr_size: int | float,
+        weighted_loss: Optional[str],
         depth: int,
         tr_samples_per_class: Optional[int],
         min_freq: Optional[int],
@@ -284,7 +288,7 @@ class OutputHelper:
         self._model_args.extend([f"{k}--{v}" for k, v in arch_config.items()])
 
         # Experiment hyperparameters
-        self._task_args = [f"task--{task}"]
+        self._task_args = [f"task--{task}", f"weighted_loss--{weighted_loss}"]
         if task[0:3] == "clf":
             self._task_args.extend([
                 f"tr_size--{tr_size}",  # should be None if not doing base classification

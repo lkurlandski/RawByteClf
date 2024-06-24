@@ -1139,6 +1139,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "top_k": args.top_k,
         "tr_samples_per_class": args.tr_samples_per_class,
         "max_imbalance_ratio": args.max_imbalance_ratio,
+        "weighted_loss": args.weighted_loss,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
@@ -1314,15 +1315,27 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{callbacks=}")
     print(BR)
 
-    if args.task[0:3] == "clf":
-        if materials.problem_type == "multi_class_classification":
-            weight = sample_reweighting(materials.dist, beta=0.75)
-            print(f"weight=\n{pformat(weight)}\n{BR}")
-            ModelTrainer = partial(ImbalancedClassificationTrainer, weight=tensor(list(weight.values())))
+    weight = None
+    if args.weighted_loss is not None and args.weighted_loss.lower() != "none":
+        if materials.problem_type == "multi_label_classification":
+            raise NotImplementedError()
+        elif materials.problem_type == "single_label_classification":
+            if args.weighted_loss == "sample_reweighting":
+                weight = sample_reweighting(materials.dist, beta=args.beta)
+                ModelTrainer = partial(
+                    ImbalancedClassificationTrainer,
+                    weight=tensor([weight[materials.label2id[l]] for l in materials.id2label.values()]),
+                )
+            else:
+                raise NotImplementedError()
+        elif materials.problem_type is None:
+            # TODO: use the first ~1000 samples to get an idea of the byte-distribution. Then use
+            # one of the weighted CE strategies.
+            raise NotImplementedError()
         else:
-            ModelTrainer = Trainer
-    elif args.task[0:3] in ("mlm", "clm"):
-        ModelTrainer = Trainer
+            raise RuntimeError()
+    print(f"weight=\n{pformat(weight)}\n{BR}")
+    ModelTrainer = Trainer
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
     if not args.streaming:  # dataset has been processed, so we disable thread-based parallelism
