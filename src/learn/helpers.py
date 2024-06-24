@@ -149,8 +149,8 @@ class Args:
     ts_size: Optional[float] = field(default=None)
     min_freq: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
     top_k: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
-    tr_samples_per_class: Optional[int] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
-    max_imbalance_ratio: Optional[int] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    tr_samples_per_class: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    max_imbalance_ratio: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
 
     # Finetuning
     pretraining_task: Optional[str] = field(default=None)
