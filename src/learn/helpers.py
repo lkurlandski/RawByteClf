@@ -170,7 +170,6 @@ class Args:
         self.do_tune = str_to_bool(self.do_tune)
         self.skip_eval_check = str_to_bool(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
-        self.enforce_cutoff = str_to_bool(self.enforce_cutoff)
         self.pretraining_task = str_to_str(self.pretraining_task)
         self.weighted_loss = str_to_str(self.weighted_loss)
 
