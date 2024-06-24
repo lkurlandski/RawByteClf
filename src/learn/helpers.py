@@ -149,8 +149,8 @@ class Args:
     ts_size: Optional[float] = field(default=None)
     min_freq: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
     top_k: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
-    tr_samples_per_class: Optional[int] = field(default=None)
-    max_imbalance_ratio: Optional[int] = field(default=None)
+    tr_samples_per_class: Optional[int] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    max_imbalance_ratio: Optional[int] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
 
     # Finetuning
     pretraining_task: Optional[str] = field(default=None)
@@ -162,6 +162,9 @@ class Args:
         # Simple type conversions from string into the appropriate type.
         self.top_k = str_to_int(self.top_k)
         self.min_freq = str_to_int(self.min_freq)
+        self.tr_samples_per_class = str_to_int(self.tr_samples_per_class)
+        self.max_imbalance_ratio = str_to_int(self.max_imbalance_ratio)
+
         self.ft_freeze_positional_embeddings = str_to_bool(self.ft_freeze_positional_embeddings)
         self.ft_duplicate_positional_embeddings = str_to_bool(self.ft_duplicate_positional_embeddings)
         self.ft_initialize_positional_embeddings = str_to_bool(self.ft_initialize_positional_embeddings)
@@ -170,6 +173,7 @@ class Args:
         self.do_tune = str_to_bool(self.do_tune)
         self.skip_eval_check = str_to_bool(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
+
         self.pretraining_task = str_to_str(self.pretraining_task)
         self.weighted_loss = str_to_str(self.weighted_loss)
 
