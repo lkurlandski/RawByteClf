@@ -532,23 +532,25 @@ def filter_file_label_map(
     Remove samples from the file label map whose labels are not in the top_k most frequent labels
     or whose frequency is less than min_freq. The default values do not filter at all.
     """
-    if must_exist:  # Remove files that do not exist on the current system.
+    # Remove files that do not exist on the current system.
+    if must_exist:
         files_and_labels = {
             f: l for f, l in files_and_labels.items() if os.path.exists(f)
         }
-    if min_size > 0 or max_size < sys.maxsize:  # Remove files that are too small or too large, if they exist.
+
+    # Remove files that are too small or too large, if they exist.
+    if min_size > 0 or max_size < sys.maxsize:
         files_and_labels = {
             f: l for f, l in files_and_labels.items() if
             (not os.path.exists(f) or (min_size <= os.path.getsize(f) <= max_size))
         }
 
-    dist: Counter[str, int] = Counter(files_and_labels.values())
-    keep: list[str] = [l for l, n in dist.most_common(top_k) if n >= min_freq]
-    files_and_labels: dict[Path, str] = {
-        f: l for f, l in files_and_labels.items()
-        if l in keep
-    }
+    # Remove files not in the top_k most prolific classes or files without min_freq examples.
+    dist = Counter(files_and_labels.values())
+    keep = [l for l, n in dist.most_common(top_k) if n >= min_freq]
+    files_and_labels = {f: l for f, l in files_and_labels.items() if l in keep}
 
+    # Remove some files from prolific classes to prevent the ratio exceeding max_imbalance_ratio.
     if max_imbalance_ratio is not None:
         dist = Counter(files_and_labels.values())
         min_n = dist.most_common(None)[-1][1]
