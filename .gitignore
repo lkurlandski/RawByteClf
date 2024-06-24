@@ -170,3 +170,4 @@ figures
 *.ipynb
 *.sh
 ./config/.system
+config/.system
