@@ -1321,7 +1321,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             raise NotImplementedError()
         elif materials.problem_type == "single_label_classification":
             if args.weighted_loss == "sample_reweighting":
-                weight = sample_reweighting(materials.dist, beta=args.beta)
+                weight = sample_reweighting(materials.dist_tr, beta=args.beta)
                 ModelTrainer = partial(
                     ImbalancedClassificationTrainer,
                     weight=tensor([weight[materials.label2id[l]] for l in materials.id2label.values()]),
