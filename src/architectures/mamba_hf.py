@@ -97,8 +97,9 @@ class MambaConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.mode = mode
 
-        if self.hidden_size != self.embedding_size:
-            kwargs["tie_word_embeddings"] = False
+        # We can still tie the word embeddings so long as we have an out projection layer
+        # if self.hidden_size != self.embedding_size:  
+        #     kwargs["tie_word_embeddings"] = False
 
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
 
@@ -766,13 +767,17 @@ class BiMambaModel(MambaPreTrainedModel):
 class MambaForCausalLM(MambaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
-    def __init__(self, config):
+    def __init__(self, config: MambaConfig):
         if config.mode == "bi":
             raise ValueError("MambaForCausalLM does not support bidirectional models.")
 
         super().__init__(config)
         self.backbone = MambaModel(config)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if self.config.hidden_size != self.config.embedding_size:
+            self.embedding_out_projection = nn.Linear(config.hidden_size, config.embedding_size)
+        else:
+            self.embedding_out_projection = None
+        self.lm_head = nn.Linear(config.embedding_size, config.vocab_size, bias=False)
         self.post_init()
 
     def get_output_embeddings(self):
@@ -837,6 +842,9 @@ class MambaForCausalLM(MambaPreTrainedModel):
         )
         hidden_states = mamba_outputs[0]
 
+        if self.embedding_out_projection is not None:
+            hidden_states = self.embedding_out_projection(hidden_states)
+
         logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
 
         loss = None
@@ -871,7 +879,11 @@ class MambaForMaskedLM(MambaPreTrainedModel):
 
         super().__init__(config)
         self.backbone = BiMambaModel(config)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        if self.config.hidden_size != self.config.embedding_size:
+            self.embedding_out_projection = nn.Linear(config.hidden_size, config.embedding_size)
+        else:
+            self.embedding_out_projection = None
+        self.lm_head = nn.Linear(config.embedding_size, config.vocab_size, bias=False)
         self.post_init()
 
     def get_output_embeddings(self):
@@ -929,6 +941,8 @@ class MambaForMaskedLM(MambaPreTrainedModel):
             use_cache=use_cache,
         )
         hidden_states = mamba_outputs[0]
+        if self.embedding_out_projection is not None:
+            hidden_states = self.embedding_out_projection(hidden_states)
         logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
 
         loss = None
