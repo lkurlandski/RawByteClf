@@ -886,8 +886,6 @@ def _get_materials_clf_multilabel(
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
 ) -> Materials:
-    if max_imbalance_ratio is not None:
-        raise NotImplementedError("This has not yet been implemented.")
 
     if min_freq is None:
         if vl_size == 0 or ts_size == 0:
@@ -919,13 +917,41 @@ def _get_materials_clf_multilabel(
     idx = tr_vl_ts_split_idx_multilabel_guarentee(
         labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT
     )
-    return Materials(
+    materials = Materials(
         {s: [files[i] for i in idx[s]] for s in idx},
         {s: [labels[i] for i in idx[s]] for s in idx},
         id2label,
         label2id,
         dist,
     )
+    if max_imbalance_ratio is None:
+        return materials
+
+    print("Filtering out some samples to prevent imbalance...")
+    new_materials = {"files": {}, "labels": {}}
+    for split, labels in materials.labels.items():
+        split: str
+        labels: list[tuple[int]]
+        dist = materials.get_split_dist(split)
+        min_n = min(dist.values())
+        remove = []
+        remove_counter = Counter()
+        for i, label in enumerate(labels):
+            if all(dist[id2label[l]] / min_n > max_imbalance_ratio for l in label):
+                remove.append(i)
+                for l in label:
+                    l = id2label[l]
+                    remove_counter.update([l])
+                    dist[l] -= 1
+        remove = set(remove)
+        new_materials["files"][split] = [f for i, f in enumerate(materials.files[split]) if i not in remove]
+        new_materials["labels"][split] = [l for i, l in enumerate(materials.labels[split]) if i not in remove]
+        print(f"Removed {len(remove)} samples from {len(remove_counter)} classes for {split=}.")
+
+    dist = Counter()
+    for labels in new_materials["labels"].values():
+        dist.update(map(lambda i: id2label[i], chain.from_iterable(labels)))
+    return Materials(new_materials["files"], new_materials["labels"], id2label, label2id, dist)
 
 
 def _get_materials_clf_multilabel_few_shot_learning(
@@ -1133,10 +1159,19 @@ def get_materials_clf_elf(
 
 
 if __name__ == "__main__":
-    materials = _get_materials_clf_multilabel_few_shot_learning(
+    # materials = _get_materials_clf_multilabel_few_shot_learning(
+    #     get_sorel_file_label_map("beh"),
+    #     1,
+    #     vl_min_samples_per_class=1,
+    #     vl_max_samples_per_class=10,
+    #     top_k=None,
+    # )
+
+    materials = _get_materials_clf_multilabel(
         get_sorel_file_label_map("beh"),
-        1,
-        vl_min_samples_per_class=1,
-        vl_max_samples_per_class=10,
-        top_k=None,
+        tr_size=0.8,
+        vl_size=0.1,
+        ts_size=0.1,
+        must_exist=False,
+        max_imbalance_ratio=100,
     )

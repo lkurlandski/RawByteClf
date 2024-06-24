@@ -7,6 +7,7 @@ from collections import Counter
 from functools import partial
 import gzip
 from io import BytesIO
+from itertools import chain
 import lzma
 import os
 from pathlib import Path
@@ -34,6 +35,7 @@ from src.data.loaders_core import (
     get_bodmas_file_label_map,
     get_sorel_file_label_map,
     _get_materials_clf,
+    _get_materials_clf_multilabel,
     _get_materials_clf_few_shot_learning,
     _get_materials_clf_multilabel_few_shot_learning,
 )
@@ -260,6 +262,113 @@ class TestUnpacking(unittest.TestCase):
         assert byte is None
 
 
+class GetMaterialsClf(unittest.TestCase):
+
+    def setUp(self):
+        self.file_label_map = get_bodmas_file_label_map()
+        self._get_materials_clf = partial(
+            _get_materials_clf,
+            files_and_labels=self.file_label_map,
+            tr_size=0.8,
+            vl_size=0.1,
+            ts_size=0.1,
+            must_exist=False,
+        )
+
+    def _test_materials_object(self, materials: Materials) -> None:
+        tr_classes = set(materials.labels["tr"])
+        vl_classes = set(materials.labels["vl"])
+        ts_classes = set(materials.labels["ts"])
+        assert tr_classes == vl_classes == ts_classes, f"{len(tr_classes)=} {len(vl_classes)=} {len(ts_classes)=}"
+
+    def test_top_k(self):
+        materials = self._get_materials_clf(top_k=10)
+        assert materials.num_classes == 10
+        self._test_materials_object(materials)
+
+    def test_min_freq(self):
+        materials = self._get_materials_clf(min_freq=100)
+        assert all(v >= 100 for v in materials.dist.values())
+        self._test_materials_object(materials)
+
+    def test_max_imbalance_ratio(self):
+        materials_a = self._get_materials_clf(max_imbalance_ratio=None)
+        materials_b = self._get_materials_clf(max_imbalance_ratio=sys.maxsize)
+        materials_c = self._get_materials_clf(max_imbalance_ratio=100)
+
+        self._test_materials_object(materials_a)
+        self._test_materials_object(materials_b)
+        self._test_materials_object(materials_c)
+
+        c_a = set(materials_a.dist.keys())
+        c_b = set(materials_b.dist.keys())
+        c_c = set(materials_c.dist.keys())
+
+        assert len(c_a.difference(c_b)) == 0, f"{c_a.difference(c_b)=}"
+        assert len(c_a.difference(c_c)) == 0, f"{c_a.difference(c_c)=}"
+        assert len(c_b.difference(c_a)) == 0, f"{c_b.difference(c_a)=}"
+        assert len(c_b.difference(c_c)) == 0, f"{c_b.difference(c_c)=}"
+        assert len(c_c.difference(c_a)) == 0, f"{c_c.difference(c_a)=}"
+        assert len(c_c.difference(c_b)) == 0, f"{c_c.difference(c_b)=}"
+
+        assert materials_c.dist.most_common(1)[0][1] <= 100 * materials_c.dist.most_common()[-1][1]
+
+
+class GetMaterialsClfMultilabel(unittest.TestCase):
+
+    def setUp(self):
+        self.file_label_map = get_sorel_file_label_map("beh")
+        self._get_materials_clf_multilabel = partial(
+            _get_materials_clf_multilabel,
+            files_and_labels=self.file_label_map,
+            tr_size=0.8,
+            vl_size=0.1,
+            ts_size=0.1,
+            must_exist=False,
+        )
+
+    def _test_materials_object(self, materials: Materials) -> None:
+        tr_classes = set(chain.from_iterable(materials.labels["tr"]))
+        vl_classes = set(chain.from_iterable(materials.labels["vl"]))
+        ts_classes = set(chain.from_iterable(materials.labels["ts"]))
+        assert tr_classes == vl_classes == ts_classes, f"{len(tr_classes)=} {len(vl_classes)=} {len(ts_classes)=}"
+
+    def test_top_k(self):
+        materials = self._get_materials_clf_multilabel(top_k=10)
+        assert materials.num_classes == 10
+        self._test_materials_object(materials)
+
+    def test_min_freq(self):
+        materials = self._get_materials_clf_multilabel(min_freq=100)
+        assert all(v >= 100 for v in materials.dist.values())
+        self._test_materials_object(materials)
+
+    def test_max_imbalance_ratio(self):
+        materials_a = self._get_materials_clf_multilabel(max_imbalance_ratio=None)
+        materials_b = self._get_materials_clf_multilabel(max_imbalance_ratio=sys.maxsize)
+        materials_c = self._get_materials_clf_multilabel(max_imbalance_ratio=100)
+
+        self._test_materials_object(materials_a)
+        self._test_materials_object(materials_b)
+        self._test_materials_object(materials_c)
+
+        c_a = set(materials_a.dist.keys())
+        c_b = set(materials_b.dist.keys())
+        c_c = set(materials_c.dist.keys())
+
+        assert len(c_a.difference(c_b)) == 0, f"{c_a.difference(c_b)=}"
+        assert len(c_a.difference(c_c)) == 0, f"{c_a.difference(c_c)=}"
+        assert len(c_b.difference(c_a)) == 0, f"{c_b.difference(c_a)=}"
+        assert len(c_b.difference(c_c)) == 0, f"{c_b.difference(c_c)=}"
+        assert len(c_c.difference(c_a)) == 0, f"{c_c.difference(c_a)=}"
+        assert len(c_c.difference(c_b)) == 0, f"{c_c.difference(c_b)=}"
+
+        # The filtering method is approximate in nature and min_freq takes precsedence, so we need some tolerance.
+        assert materials_c.dist_tr.most_common(1)[0][1] <= 10 * 100 * materials_c.dist_tr.most_common()[-1][1], f"{materials_c.dist_tr=}"
+        assert materials_c.dist_vl.most_common(1)[0][1] <= 10 * 100 * materials_c.dist_vl.most_common()[-1][1], f"{materials_c.dist_vl=}"
+        assert materials_c.dist_ts.most_common(1)[0][1] <= 10 * 100 * materials_c.dist_ts.most_common()[-1][1], f"{materials_c.dist_ts=}"
+
+
 class TestGetMaterialsClfFewShotLearning(unittest.TestCase):
 
     def setUp(self):
@@ -355,52 +464,6 @@ class TestGetMaterialsClfMultilabelFewShotLearning(unittest.TestCase):
                 top_k=None,
             )
             self._test_materials(materials, tr_samples_per_class, 20 * tr_samples_per_class, vl_min_samples_per_class, sys.maxsize)
-
-
-class GetMaterialsClf(unittest.TestCase):
-
-    def setUp(self):
-        self.file_label_map = get_bodmas_file_label_map()
-        self._get_materials_clf = partial(
-            _get_materials_clf,
-            files_and_labels=self.file_label_map,
-            tr_size=0.8,
-            vl_size=0.1,
-            ts_size=0.1,
-            must_exist=False,
-        )
-
-    def _test_materials_object(self, materials: Materials) -> None:
-        tr_classes = set(materials.labels["tr"])
-        vl_classes = set(materials.labels["vl"])
-        ts_classes = set(materials.labels["ts"])
-        assert tr_classes == vl_classes == ts_classes, f"{len(tr_classes)=} {len(vl_classes)=} {len(ts_classes)=}"
-
-    def test_top_k(self):
-        materials = self._get_materials_clf(top_k=10)
-        assert materials.num_classes == 10
-        self._test_materials_object(materials)
-
-    def test_min_freq(self):
-        materials = self._get_materials_clf(min_freq=100)
-        assert all(v >= 100 for v in materials.dist.values())
-        self._test_materials_object(materials)
-
-    def test_max_imbalance_ratio(self):
-        materials_a = self._get_materials_clf(max_imbalance_ratio=None)
-        materials_b = self._get_materials_clf(max_imbalance_ratio=sys.maxsize)
-        materials_c = self._get_materials_clf(max_imbalance_ratio=100)
-
-        classes_a = set(materials_a.dist.keys())
-        classes_b = set(materials_b.dist.keys())
-        classes_c = set(materials_c.dist.keys())
-
-        assert classes_a == classes_b == classes_c, f"{len(classes_a)=} {len(classes_b)=} {len(classes_c)=}"
-        assert materials_c.dist.most_common(1)[0][1] <= 100 * materials_c.dist.most_common()[-1][1]
-
-        self._test_materials_object(materials_a)
-        self._test_materials_object(materials_b)
-        self._test_materials_object(materials_c)
 
 
 if __name__ == "__main__":
