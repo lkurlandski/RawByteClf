@@ -5,17 +5,15 @@ Core file operations to construct labeled datasets for classification tasks.
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from itertools import chain, cycle, islice
-import json
+from itertools import chain
 import math
 import os
 from pathlib import Path
 from pprint import pprint, pformat
 import random
 import sys
-from statistics import mean, median
 import time
-from typing import Callable, Literal, Optional
+from typing import Literal, Optional
 import warnings
 
 # pylint: disable=wrong-import-position
@@ -830,7 +828,10 @@ def _get_materials_clf_few_shot_learning(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
+    **kwds,
 ) -> Materials:
+    if invalid := set(kwds) - {"min_freq", "max_imbalance_ratio"}:
+        raise TypeError(f"Function got some unexpected keyword argument(s): {invalid}")
 
     # First, remove the files that we do not want to use.
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
@@ -879,11 +880,14 @@ def _get_materials_clf_multilabel(
     ts_size: int | float,
     top_k: Optional[int] = None,
     min_freq: Optional[int] = None,
+    max_imbalance_ratio: Optional[int] = None,
     min_size: int = 0,
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
 ) -> Materials:
+    if max_imbalance_ratio is not None:
+        raise NotImplementedError("This has not yet been implemented.")
 
     if min_freq is None:
         if vl_size == 0 or ts_size == 0:
@@ -928,13 +932,15 @@ def _get_materials_clf_multilabel_few_shot_learning(
     files_and_labels: dict[str, str],
     tr_samples_per_class: int,
     vl_min_samples_per_class: int = 1,
-    vl_max_samples_per_class: int = 10,  # pylint: disable=unused-argument
     top_k: Optional[int] = None,
     min_size: int = 0,
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
+    **kwds,
 ) -> Materials:
+    if invalid := set(kwds) - {"min_freq", "max_imbalance_ratio", "vl_max_samples_per_class"}:
+        raise TypeError(f"Function got some unexpected keyword argument(s): {invalid}")
 
     raise NotImplementedError("This needs a bit more work. The unit tests are not passing.")  # pylint: disable=unreachable
 
