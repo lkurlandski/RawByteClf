@@ -2,6 +2,7 @@
 Global configurations.
 """
 
+from enum import Enum
 from pathlib import Path
 
 
@@ -21,3 +22,11 @@ OUTPUT_PATH = Path("./output")
 TOKENIZERS_OUTPUT_PATH = OUTPUT_PATH / "tokenizers"
 
 TMP_DIR = Path("/scratch.local") if Path("/scratch.local").exists() else Path(".")
+
+
+class System(Enum):
+    ARMITAGE = "ARMITAGE"
+    RC = "RC"
+
+
+SYSTEM = System(Path("./config/.system").read_text().strip())

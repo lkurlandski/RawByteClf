@@ -5,16 +5,17 @@ Globals and configuration for the data module.
 from collections.abc import Callable, Iterable
 from enum import Enum
 from itertools import chain
+import os
 from pathlib import Path
+import sys
 from typing import Literal
 
 
-class System(Enum):
-    ARMITAGE = "ARMITAGE"
-    RC = "RC"
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from src.cfg import System, SYSTEM
 
-SYSTEM = System(Path("./config/.system").read_text().strip())
 
 if SYSTEM == System.ARMITAGE:
     DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
