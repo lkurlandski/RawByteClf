@@ -108,7 +108,7 @@ try:
 except (ModuleNotFoundError, ImportError) as err:
     print(err)
 
-from src.cfg import BR
+from src.cfg import BR, System, SYSTEM
 from src.utils import (
     count_parameters,
     get_highest_path,
@@ -216,7 +216,6 @@ PAD_TO = 8
 
 # Some random temporary flags.
 MOVE_IN_MEMORY = False
-ARMITAGE = False
 
 # Default variables for the datasets.Dataset.map() and datasets.IterableDataset.map()
 BATCH_SIZE: Optional[int] = 1000
@@ -1180,7 +1179,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.vl_size,
             args.ts_size,
             packing_protocol=args.packing_protocol,
-            remove_clf_files=not ARMITAGE,
+            remove_clf_files=SYSTEM != System.ARMITAGE,
         )
         oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
     elif args.task in ("mlm-elf", "clm-elf"):
