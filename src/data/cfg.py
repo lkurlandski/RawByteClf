@@ -3,12 +3,25 @@ Globals and configuration for the data module.
 """
 
 from collections.abc import Callable, Iterable
+from enum import Enum
 from itertools import chain
 from pathlib import Path
 from typing import Literal
 
 
-DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
+class System(Enum):
+    ARMITAGE = "ARMITAGE"
+    RC = "RC"
+
+
+SYSTEM = System(Path("./config/.system").read_text().strip())
+
+if SYSTEM == System.ARMITAGE:
+    DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
+elif SYSTEM == System.RC:
+    DATASETS_PATH = Path("/shared/rc/admalware")
+else:
+    raise ValueError(f"{SYSTEM=}")
 
 BODMAS_PATH = DATASETS_PATH / "BODMAS"
 MALWARE_BAZAAR_PATH = DATASETS_PATH / "MalwareBazaar"
@@ -90,7 +103,7 @@ def _dataset_to_report_files_and_binaries(
         "local_macho": lambda: (DARWIN_PATH / s).iterdir(),
         "malware_bazaar_elf": lambda: (MALWARE_BAZAAR_PATH / "elf" / s).iterdir(),
         "malware_bazaar_macho": lambda: (MALWARE_BAZAAR_PATH / "macho" / s).iterdir(),
-        "sorel_pe": lambda: (SOREL_PATH / s).iterdir(),
+        "sorel_pe": lambda: (SOREL_PATH / s).rglob("*.exe"),
         "virus_share_dll": lambda: [],
         "virus_share_elf": lambda: chain.from_iterable(
             (p / s).iterdir() for p in VIRUS_SHARE_ELF_COLLECTION_PATHS.values()
