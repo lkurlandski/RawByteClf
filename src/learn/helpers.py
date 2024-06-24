@@ -111,42 +111,50 @@ def str_to_probable_type(s: str) -> Optional[str | int | float | bool]:
 @dataclass
 class Args:
 
-    model_name_or_path: str = field()
-    max_length: int = field()
-    task: str = field()
+    # Programmatic/implementation
+    root: Path = field(default=OUTPUT_PATH)
+    streaming: bool = field(default=False)
+    exit_after_map: bool = field(default=False)
+    do_tune: bool = field(default=False)
+    skip_eval_check: bool = field(default=False)
+    auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
+    dataset_backend: str = field(default="PT")
+
+    # Architecture
+    model_name_or_path: str = field(default="mamba")
+    arch_config_file: Optional[Path] = field(default=None)
+    arch_config: Optional[str] = field(default=None)
+
+    # Data/Representation
+    max_length: int = field(default=4096)
+    data_read_bytes: Optional[int] = field(default=None)
+    packing_protocol: str = field(default="Any")
     representation: int = field(default=8)
     algorithm: str = field(default="Raw")
     vocab_size: Optional[int] = field(default=None)
-    depth: int = field(default=1)
-    streaming: bool = field(default=False)
-    exit_after_map: bool = field(default=False)
-    ft_freeze_positional_embeddings: bool = field(default=False)
-    ft_duplicate_positional_embeddings: bool = field(default=False)
-    ft_initialize_positional_embeddings: bool = field(default=False)
-    root: Path = field(default=OUTPUT_PATH)
-    do_tune: bool = field(default=False)
-    min_freq: Optional[str] = field(default=None)
-    top_k: Optional[str] = field(default=None)
-    arch_config_file: Optional[Path] = field(default=None)
-    arch_config: Optional[str] = field(default=None)
-    subset: Optional[int] = field(default=None)
-    tr_size: float = field(default=0.8)
-    vl_size: float = field(default=0.1)
-    ts_size: float = field(default=0.1)
-    skip_eval_check: bool = field(default=False)
-    auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
-    enforce_cutoff: Optional[bool] = field(default=None)
-    tr_length_cutoff: Optional[int] = field(default=None)
+    compression_level: int = field(default=9)
+
+    # Early stopping
     early_stopping: bool = field(default=False)
     early_stopping_patience: int = field(default=1)
     early_stopping_threshold: float = field(default=0.0)
-    dataset_backend: str = field(default="PT")
-    data_read_bytes: Optional[int] = field(default=None)
-    compression_level: int = field(default=9)
-    tr_samples_per_class: Optional[int] = field(default=None)  # FIXME: make default argument 1?
-    vl_samples_per_class: Optional[int] = field(default=1)  # FIXME: add to output path
-    packing_protocol: str = field(default="Any")
+
+    # Task-specific
+    task: str = field(default="clf-bod")
+    depth: int = field(default=1)
+    tr_size: Optional[float] = field(default=None)
+    vl_size: Optional[float] = field(default=None)
+    ts_size: Optional[float] = field(default=None)
+    min_freq: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    top_k: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    tr_samples_per_class: Optional[int] = field(default=None)
+    max_imbalance_ratio: Optional[int] = field(default=None)
+
+    # Finetuning
     pretraining_task: Optional[str] = field(default=None)
+    ft_freeze_positional_embeddings: bool = field(default=False)
+    ft_duplicate_positional_embeddings: bool = field(default=False)
+    ft_initialize_positional_embeddings: bool = field(default=False)
 
     def __post_init__(self) -> None:
         # Simple type conversions from string into the appropriate type.
@@ -175,9 +183,9 @@ class Args:
                 self.arch_config = json.load(fp)
 
         # Cast the train, validation, and test size to the appropriate type.
-        self.tr_size = float_to_int(self.tr_size) if self.tr_size > 1 else self.tr_size
-        self.vl_size = float_to_int(self.vl_size) if self.vl_size > 1 else self.vl_size
-        self.ts_size = float_to_int(self.ts_size) if self.ts_size > 1 else self.ts_size
+        self.tr_size = float_to_int(self.tr_size) if self.tr_size is not None and self.tr_size > 1 else self.tr_size
+        self.vl_size = float_to_int(self.vl_size) if self.vl_size is not None and self.vl_size > 1 else self.vl_size
+        self.ts_size = float_to_int(self.ts_size) if self.ts_size is not None and self.ts_size > 1 else self.ts_size
         types = [type(x) for x in [self.tr_size, self.vl_size, self.ts_size] if x > 0]
         if len(set(types)) > 1:
             raise TypeError("The semantics of using both float and int is not well defined.")
@@ -234,6 +242,7 @@ class OutputHelper:
     def __init__(
         self,
         root: Path,
+        *,
         packing_protocol: str,
         representation: int,
         algorithm: str,
@@ -244,11 +253,11 @@ class OutputHelper:
         task: str,
         tr_size: int | float,
         depth: int,
+        tr_samples_per_class: Optional[int],
         min_freq: Optional[int],
         top_k: Optional[int],
-        tr_samples_per_class: Optional[int],
-        tr_length_cutoff: Optional[int],
-        trainer_config: Optional[dict] = None,
+        max_imbalance_ratio: Optional[int],
+        trainer_config: Optional[dict],
     ) -> None:
 
         if Path(model_name_or_path).exists():
@@ -276,29 +285,13 @@ class OutputHelper:
 
         # Experiment hyperparameters
         self._task_args = [f"task--{task}"]
-        if task == "clf-bod":
+        if task[0:3] == "clf":
             self._task_args.extend([
+                f"tr_size--{tr_size}",  # should be None if not doing base classification
+                f"tr_samples_per_class--{tr_samples_per_class}",  # should be None if not doing few-shot
+                f"top_k--{top_k}",
                 f"min_freq--{min_freq}",
-                f"top_k--{top_k}",
-            ])
-        elif task == "clf-ksc":
-            self._task_args.extend([
-                f"tr_samples_per_class--{tr_samples_per_class}",
-                f"top_k--{top_k}",
-            ])
-        elif task == "clf-lxs":
-            self._task_args.extend([
-                f"tr_length_cutoff--{tr_length_cutoff}",
-            ])
-        elif task[0:7] == "clf-sor":
-            self._task_args.extend([
-                f"min_freq--{min_freq}",
-                f"top_k--{top_k}",
-            ])
-        elif task[0:7] == "clf-elf":
-            self._task_args.extend([
-                f"min_freq--{min_freq}",
-                f"top_k--{top_k}",
+                f"max_imbalance_ratio--{max_imbalance_ratio}",
             ])
         elif task[0:3] in ("mlm", "clm"):
             self._task_args.extend([
