@@ -998,33 +998,39 @@ def get_materials_pretrain_sorel(
 
 
 def get_materials_clf_bodmas(
-    tr_size: int | float,
-    vl_size: int | float,
-    ts_size: int | float,
+    tr_size: Optional[int | float],
+    vl_size: Optional[int | float],
+    ts_size: Optional[int | float],
+    tr_samples_per_class: Optional[int],
     **kwds,
 ) -> Materials:
     files_and_labels = get_bodmas_file_label_map()
-    return _get_materials_clf(
-        files_and_labels, tr_size, vl_size, ts_size, packing_root=PACKING_ROOTS["bodmas_pe"], **kwds
-    )
+    kwds["packing_root"] = PACKING_ROOTS["bodmas_pe"]
+    if tr_samples_per_class is not None:
+        return _get_materials_clf_few_shot_learning(files_and_labels, tr_samples_per_class, **kwds)
+    return _get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
 def get_materials_clf_sorel(
-    tr_size: int | float,
-    vl_size: int | float,
-    ts_size: int | float,
+    tr_size: Optional[int | float],
+    vl_size: Optional[int | float],
+    ts_size: Optional[int | float],
+    tr_samples_per_class: Optional[int],
     name: str,
     **kwds,
 ) -> Materials:
     files_and_labels = get_sorel_file_label_map(name)
+    kwds["packing_root"] = PACKING_ROOTS["sorel_pe"]
+
     if name in ("fam", "file"):  # We consider these single-label classification tasks.
         files_and_labels = {f: l[0] for f, l in files_and_labels.items()}
-        return _get_materials_clf(
-            files_and_labels, tr_size, vl_size, ts_size, packing_root=PACKING_ROOTS["sorel_pe"], **kwds
-        )
-    return _get_materials_clf_multilabel(
-        files_and_labels, tr_size, vl_size, ts_size, packing_root=PACKING_ROOTS["sorel_pe"], **kwds
-    )
+        if tr_samples_per_class is not None:
+            return _get_materials_clf_few_shot_learning(files_and_labels, tr_samples_per_class, **kwds)
+        return _get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
+
+    if tr_samples_per_class is not None:
+        return _get_materials_clf_multilabel_few_shot_learning(files_and_labels, tr_samples_per_class, **kwds)
+    return _get_materials_clf_multilabel(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
 def get_materials_pretrain_elf(
@@ -1049,19 +1055,27 @@ def get_materials_pretrain_elf(
 
 
 def get_materials_clf_elf(
-    tr_size: int | float,
-    vl_size: int | float,
-    ts_size: int | float,
+    tr_size: Optional[int | float],
+    vl_size: Optional[int | float],
+    ts_size: Optional[int | float],
+    tr_samples_per_class: Optional[int],
     name: str,
     **kwds,
 ) -> Materials:
     raise NotImplementedError()
     # pylint: disable=unreachable
     files_and_labels = get_elf_file_label_map(name)
-    packing_root = [PACKING_ROOTS[d] for d in ELF_CLASSIFICATION_DATASETS]
-    return _get_materials_clf_multilabel(
-        files_and_labels, tr_size, vl_size, ts_size, packing_root=packing_root, **kwds
-    )
+    kwds["packing_root"] = [PACKING_ROOTS[d] for d in ELF_CLASSIFICATION_DATASETS]
+
+    if name in ("fam", "file"):  # We consider these single-label classification tasks.
+        files_and_labels = {f: l[0] for f, l in files_and_labels.items()}
+        if tr_samples_per_class is not None:
+            return _get_materials_clf_few_shot_learning(files_and_labels, tr_samples_per_class, **kwds)
+        return _get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
+
+    if tr_samples_per_class is not None:
+        return _get_materials_clf_multilabel_few_shot_learning(files_and_labels, tr_samples_per_class, **kwds)
+    return _get_materials_clf_multilabel(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
 # def get_materials_clf_bodmas_balanced_slice(
