@@ -1138,7 +1138,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "min_freq": args.min_freq,
         "top_k": args.top_k,
         "tr_samples_per_class": args.tr_samples_per_class,
-        "tr_length_cutoff": args.tr_length_cutoff,
+        "max_imbalance_ratio": args.max_imbalance_ratio,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
@@ -1195,8 +1195,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.tr_size,
             args.vl_size,
             args.ts_size,
+            args.tr_samples_per_class,
             top_k=args.top_k,
             min_freq=args.min_freq,
+            max_imbalance_ratio=args.max_imbalance_ratio,
             packing_protocol=args.packing_protocol,
         )
     elif args.task[0:7] == "clf-sor":
@@ -1204,9 +1206,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.tr_size,
             args.vl_size,
             args.ts_size,
+            args.tr_samples_per_class,
             name=args.task[8:],
             top_k=args.top_k,
             min_freq=args.min_freq,
+            max_imbalance_ratio=args.max_imbalance_ratio,
             packing_protocol=args.packing_protocol,
         )
     elif args.task[0:7] == "clf-elf":
@@ -1214,9 +1218,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.tr_size,
             args.vl_size,
             args.ts_size,
+            args.tr_samples_per_class,
             name=args.task[8:],
             top_k=args.top_k,
             min_freq=args.min_freq,
+            max_imbalance_ratio=args.max_imbalance_ratio,
             packing_protocol=args.packing_protocol,
         )
 
