@@ -1323,7 +1323,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 weight = sample_reweighting(materials.dist_tr, beta=args.beta)
                 ModelTrainer = partial(
                     ImbalancedClassificationTrainer,
-                    weight=tensor([weight[materials.label2id[l]] for l in materials.id2label.values()]),
+                    weight=tensor([weight[l] for l in materials.label2id]),
                 )
             else:
                 raise NotImplementedError()
