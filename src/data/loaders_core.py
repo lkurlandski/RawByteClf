@@ -934,6 +934,8 @@ def _get_materials_clf_multilabel_few_shot_learning(
     must_exist: bool = True,
 ) -> Materials:
 
+    raise NotImplementedError("This needs a bit more work. The unit tests are not passing.")  # pylint: disable=unreachable
+
     # First, remove the files that we do not want to use.
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
     files_and_labels = {f: files_and_labels[f] for f in files_to_keep}

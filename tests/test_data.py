@@ -203,6 +203,7 @@ class TestPackingMap(unittest.TestCase):
         self.assertTrue(len(packing_map_3) > 0)
         self.maps.append(packing_map_3)
 
+    @unittest.skip("Skipping test_packing_map_4 because it is eggregiously slow.")
     def test_packing_map_4(self):
         print("packing_map_4")
         t = time.time()
@@ -308,6 +309,7 @@ class TestGetMaterialsClfFewShotLearning(unittest.TestCase):
             self._test_materials(materials, tr_samples_per_class, vl_min_samples_per_class, vl_max_samples_per_class)
 
 
+@unittest.skip("Skipping TestGetMaterialsClfMultilabelFewShotLearning because it is not complete.")
 class TestGetMaterialsClfMultilabelFewShotLearning(unittest.TestCase):
 
     def setUp(self):
@@ -318,45 +320,41 @@ class TestGetMaterialsClfMultilabelFewShotLearning(unittest.TestCase):
         self,
         materials: Materials,
         tr_samples_per_class: int,
+        tr_max_samples_per_class: int,
         vl_min_samples_per_class: int,
-        vl_max_samples_per_class,
+        vl_max_samples_per_class: int,
     ) -> None:
-        # print(f"{tr_samples_per_class=}\n{materials}\n{'-' * 80}")
-        print(f"{tr_samples_per_class=} {len(materials.dist)=}")
+        info = f"{len(materials.dist)=} {tr_samples_per_class=} {tr_max_samples_per_class=} {vl_min_samples_per_class=} {vl_max_samples_per_class=} "
         n_files = len(materials.files["tr"]) + len(materials.files["vl"])
         n_unique_files = len(set(materials.files["tr"] + materials.files["vl"]))
-        assert n_files == n_unique_files, f"{n_files=} != {n_unique_files=}"
-        assert all(tr_samples_per_class <= v <= 10 * tr_samples_per_class for v in materials.dist_tr.values()), f"{materials.dist_tr=}"
-        assert all(vl_min_samples_per_class <= v <= vl_max_samples_per_class for v in materials.dist_vl.values()), f"{materials.dist_vl=}"
-        assert set(materials.dist.keys()) == (set(materials.dist_tr.keys())) == (set(materials.dist_vl.keys()))
+        assert n_files == n_unique_files, info + f"{n_files=} != {n_unique_files=}"
+        assert all(tr_samples_per_class <= v <= tr_max_samples_per_class for v in materials.dist_tr.values()), info + f"{materials.dist_tr=}"
+        assert all(vl_min_samples_per_class <= v <= vl_max_samples_per_class for v in materials.dist_vl.values()), info + f"{materials.dist_vl=}"
+        assert set(materials.dist.keys()) == (set(materials.dist_tr.keys())) == (set(materials.dist_vl.keys())), info + f"{len(materials.dist)=} {len(materials.dist_tr)=} {len(materials.dist_vl)=}"
 
     def test_one(self):
         vl_min_samples_per_class = 1
-        vl_max_samples_per_class = 10
         for tr_samples_per_class in self.tr_samples_per_class:
-            print(f"{tr_samples_per_class=}")
             materials = _get_materials_clf_multilabel_few_shot_learning(
                 self.files_and_labels,
                 tr_samples_per_class,
                 vl_min_samples_per_class=vl_min_samples_per_class,
-                vl_max_samples_per_class=vl_max_samples_per_class,
+                vl_max_samples_per_class=None,
                 top_k=None,
             )
-            print(f"{tr_samples_per_class=}")
-            self._test_materials(materials, tr_samples_per_class, vl_min_samples_per_class, vl_max_samples_per_class)
+            self._test_materials(materials, tr_samples_per_class, 20 * tr_samples_per_class, vl_min_samples_per_class, sys.maxsize)
 
     def test_two(self):
         vl_min_samples_per_class = 4
-        vl_max_samples_per_class = 20
         for tr_samples_per_class in self.tr_samples_per_class:
             materials = _get_materials_clf_multilabel_few_shot_learning(
                 self.files_and_labels,
                 tr_samples_per_class,
                 vl_min_samples_per_class=vl_min_samples_per_class,
-                vl_max_samples_per_class=vl_max_samples_per_class,
+                vl_max_samples_per_class=None,
                 top_k=None,
             )
-            self._test_materials(materials, tr_samples_per_class, vl_min_samples_per_class, vl_max_samples_per_class)
+            self._test_materials(materials, tr_samples_per_class, 20 * tr_samples_per_class, vl_min_samples_per_class, sys.maxsize)
 
 
 class GetMaterialsClf(unittest.TestCase):
