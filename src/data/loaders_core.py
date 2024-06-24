@@ -273,6 +273,9 @@ def compute_integer_sizes(
     if vl_size > 0:
         vl_size += (total - tr_size - vl_size - ts_size)
 
+    if tr_size + vl_size + ts_size != total:
+        raise ValueError(f"Sum of splits should equal {total=}: {tr_size=} {vl_size=} {ts_size=}")
+
     return tr_size, vl_size, ts_size
 
 
@@ -520,6 +523,7 @@ def filter_file_label_map(
     files_and_labels: dict[os.PathLike, str],
     top_k: Optional[int] = None,
     min_freq: int = 1,
+    max_imbalance_ratio: Optional[int] = None,
     min_size: int = 0,
     max_size: int = sys.maxsize,
     must_exist: bool = True,
@@ -544,6 +548,18 @@ def filter_file_label_map(
         f: l for f, l in files_and_labels.items()
         if l in keep
     }
+
+    if max_imbalance_ratio is not None:
+        dist = Counter(files_and_labels.values())
+        min_n = dist.most_common(None)[-1][1]
+        remove = []
+        for f, l in files_and_labels.items():
+            if dist[l] / min_n > max_imbalance_ratio:
+                remove.append(f)
+            dist[l] -= 1
+        remove = set(remove)
+        files_and_labels = {f: l for f, l in files_and_labels.items() if f not in remove}
+
     return files_and_labels
 
 
@@ -758,6 +774,7 @@ def _get_materials_clf(
     ts_size: int | float,
     top_k: Optional[int] = None,
     min_freq: Optional[int] = None,
+    max_imbalance_ratio: Optional[int] = None,
     min_size: int = 0,
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
@@ -778,6 +795,7 @@ def _get_materials_clf(
         files_and_labels,
         top_k=top_k,
         min_freq=min_freq,
+        max_imbalance_ratio=max_imbalance_ratio,
         min_size=min_size,
         must_exist=must_exist,
     )
@@ -904,12 +922,11 @@ def _get_materials_clf_multilabel(
     )
 
 
-# TODO: this needs a bit more work...
 def _get_materials_clf_multilabel_few_shot_learning(
     files_and_labels: dict[str, str],
     tr_samples_per_class: int,
     vl_min_samples_per_class: int = 1,
-    vl_max_samples_per_class: int = 10,
+    vl_max_samples_per_class: int = 10,  # pylint: disable=unused-argument
     top_k: Optional[int] = None,
     min_size: int = 0,
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
