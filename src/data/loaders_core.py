@@ -929,9 +929,13 @@ def _get_materials_clf_multilabel(
 
     print("Filtering out some samples to prevent imbalance...")
     new_materials = {"files": {}, "labels": {}}
-    for split, labels in materials.labels.items():
-        split: str
-        labels: list[tuple[int]]
+    for split, size in [("tr", tr_size), ("vl", vl_size), ("ts", ts_size)]:
+        if size == 0:
+            new_materials["files"][split] = []
+            new_materials["labels"][split] = []
+            continue
+
+        labels: list[tuple[int]] = materials.labels[split]
         dist = materials.get_split_dist(split)
         min_n = min(dist.values())
         remove = []
@@ -943,6 +947,7 @@ def _get_materials_clf_multilabel(
                     l = id2label[l]
                     remove_counter.update([l])
                     dist[l] -= 1
+
         remove = set(remove)
         new_materials["files"][split] = [f for i, f in enumerate(materials.files[split]) if i not in remove]
         new_materials["labels"][split] = [l for i, l in enumerate(materials.labels[split]) if i not in remove]
