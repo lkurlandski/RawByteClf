@@ -43,7 +43,7 @@ async def download_samples_async(files, output_root: Path, num_bytes: int, max_l
         errors=errors,
         decompress=DECOMPRESSOR,
     ):
-        outfile = (output_root / sample["name"]).with_suffix(SUFFIX)
+        outfile = (output_root / sample["name"][0:2] / sample["name"]).with_suffix(SUFFIX)
         with open(outfile, "wb") as fp:
             fp.write(sample["bytes"])
 
@@ -64,7 +64,7 @@ def download_samples(files, output_root: Path, num_bytes: int, max_length: int, 
     )
 
     for sample in tqdm(generator, total=len(files)):
-        outfile = (output_root / sample["name"]).with_suffix(SUFFIX)
+        outfile = (output_root / sample["name"][0:2] / sample["name"]).with_suffix(SUFFIX)
         with open(outfile, "wb") as fp:
             fp.write(sample["bytes"])
 
@@ -131,6 +131,10 @@ def main():
         gc.collect()
 
     print(f"{len(files)=}")
+
+    for h in tuple(hex(i)[2:] for i in range(256)):
+        h = "0" + h if len(h) == 1 else h
+        (args.output_root / h).mkdir(exist_ok=True)
 
     t_0 = time.time()
     if args.run_async:
