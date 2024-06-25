@@ -23,6 +23,7 @@ parser = ArgumentParser()
 parser.add_argument("--clm_ngpus", type=int, default=1)
 parser.add_argument("--clf_ngpus", type=int, default=1)
 parser.add_argument("--debug", action="store_true")
+parser.add_argument("--dependencies", action="store_true")
 args = parser.parse_args()
 
 
@@ -478,9 +479,18 @@ def main():
 
     with open(OUTPUT / "run.sh", "w") as fp:
         for f in sorted(outfiles, key=lambda p: key(str(p.name))):
+
             if SYSTEM == System.RC:
-                pre = "sbatch"
-                pos = ""
+                if args.dependencies:
+                    if f.stem[-1] == "0":
+                        pre = "jobid=$(sbatch"
+                        pos = "| awk '{print $4}')"
+                    else:
+                        pre = "sbatch --dependency=afterok:$jobid"
+                        pos = ""
+                else:
+                    pre = "sbatch"
+                    pos = ""
             else:
                 if "clm" in f.name:
                     gpus = [str(i) for i in range(args.clm_ngpus)]
