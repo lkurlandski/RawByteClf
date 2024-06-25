@@ -30,13 +30,15 @@ args = parser.parse_args()
 ROOT = "./output/test" if args.debug else "./output/usenix"
 CLM_NTASKS = 4
 CLF_NTASKS = 4
-MAX_LENGTH = 2 ** 12
-DATA_READ_BYTES = 2 ** 12
+MAX_LENGTH = 2 ** 14
+DATA_READ_BYTES = 2 ** 14
 
 # Parameters to vary for the experiments.
 MODEL_NAME_AND_ARCH_CONFIGS = {
-    "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8}',  # 0.50 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8}',  # 0.50 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 128}',  # 0.53 M
+    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8}',  # 2.70 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 128}',  # 2.76 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 8}',  # 3.57 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256}',  # 3.64 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 8}',  # 11.7 M
@@ -50,6 +52,10 @@ PRETRAINING_TASKS = ["None", "clm-sor"]
 TASKS = ["clf-bod"] + [f"clf-sor-{s}" for s in ("class_", "file", "fam", "beh", "pack")]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
 SEEDS = [0, 1, 2, 3, 4]
+
+
+# FIXME:
+TASKS = ["clf-bod"]
 
 
 def get_body_lm(
@@ -169,7 +175,7 @@ def get_body_clf(
     python -u \\
     src/learn/train.py \\
     --root='{ROOT}' \\
-    --streaming='true' \\
+    --streaming='false' \\
     --skip_eval_check='false' \\
     --dataset_backend="HF" \\
 
@@ -184,7 +190,7 @@ def get_body_clf(
     --vocab_size=256 \\
 
     --weighted_loss='{weighted_loss}' \\
-    --beta=0.85 \\
+    --beta=0.80 \\
     --early_stopping=false \\
 
     --task='{downstream_task}' \\
@@ -208,8 +214,8 @@ def get_body_clf(
     --logging_steps=1 \\
     --save_steps=1 \\
     --eval_steps=1 \\
-    --saves_per_epoch={10 if args.debug else 2} \\
-    --evals_per_epoch={10 if args.debug else 2} \\
+    --saves_per_epoch={10 if args.debug else 1} \\
+    --evals_per_epoch={10 if args.debug else 1} \\
     --dataloader_num_workers={0 if args.debug else CLF_NTASKS - 1} \\
     --optim="adamw_torch" \\
     --learning_rate="1e-3" \\
@@ -248,62 +254,139 @@ def get_jobname(
     return "--".join(args)
 
 
+def compute_mem(
+    num_samples: int,
+    max_length: int,
+    bytes_per_token: int = 4,
+) -> str:
+    """Compute the memory requirements of the raw data, then add a bit of buffer."""
+    num_tokens = num_samples * max_length
+    b = num_tokens * bytes_per_token
+    g = b / 1e9
+    e = 16 + (g / 8)
+    t = int(round(g + e))
+    return f"{t}G"
+
+
+def compute_time(
+    tr_num_samples: int,
+    vl_num_samples: int,
+    max_length: int,
+    num_train_epochs: int,
+    model_name: str,
+) -> str:
+    """Compute an estimation of time, then add a bit of buffer. 
+
+    NOTE: the stats were computed in streaming mode with num_data_loaders=0.
+    """
+    if model_name == "mamba":
+        if max_length == 2 ** 14:
+            tr_time_per_sample = 0.0548155737704918000
+            vl_time_per_sample = 0.0146341463414634150
+        if max_length == 2 ** 16:
+            tr_time_per_sample = None
+            vl_time_per_sample = None
+    if model_name == "malconv2":
+        if max_length == 2 ** 14:
+            tr_time_per_sample = 0.0048668032786885250
+            vl_time_per_sample = 0.0040172166427546625
+        if max_length == 2 ** 16:
+            tr_time_per_sample = None
+            vl_time_per_sample = None
+
+
+    tr_time = tr_time_per_sample * tr_num_samples * num_train_epochs
+    vl_time = vl_time_per_sample * vl_num_samples * num_train_epochs
+
+    total_time = tr_time + vl_time
+    total_time = (30 * 60) + (.05 * total_time) + total_time
+
+    total_hours = total_time // 3600
+    if total_hours < 1:
+        days, hours = 0, 1
+    elif total_hours >= 24:
+        days, hours = divmod(total_hours, 24)
+    else:
+        days, hours = 0, round(total_hours)
+
+    days, hours = int(days), int(hours)
+    return f"0{days}-{hours}:00:00"
+
+
 def get_clf_alloc_time_and_mem(
     model_name: str,
     task: str,
     tr_samples_per_class: Optional[int],
+    max_length: int,
+    num_train_epochs: int,
 ) -> tuple[str, str]:
     mem = None
     tim = None
 
     if tr_samples_per_class is None:
         if task == "clf-bod":
-            mem = "32G"
+            tr_num_samples = 40000
+            vl_num_samples = 8000
         elif task == "clf-sor-class_":
-            mem = "32G"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-file":
-            mem = "32G"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-fam":
-            mem = "32G"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-beh":
-            mem = "32G"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-pack":
-            mem = "32G"
+            tr_num_samples = None
+            vl_num_samples = None
     elif tr_samples_per_class == 1:
-        mem = "16G"
+        if task == "clf-bod":
+            tr_num_samples = 400
+            vl_num_samples = 2500
+        elif task == "clf-sor-class_":
+            tr_num_samples = None
+            vl_num_samples = None
+        elif task == "clf-sor-file":
+            tr_num_samples = None
+            vl_num_samples = None
+        elif task == "clf-sor-fam":
+            tr_num_samples = None
+            vl_num_samples = None
+        elif task == "clf-sor-beh":
+            tr_num_samples = None
+            vl_num_samples = None
+        elif task == "clf-sor-pack":
+            tr_num_samples = None
+            vl_num_samples = None
     elif tr_samples_per_class == 5:
-        mem = "16G"
-
-    if model_name == "mamba":
         if task == "clf-bod":
-            tim = "00-01:00:00"
+            tr_num_samples = 1200
+            vl_num_samples = 2000
         elif task == "clf-sor-class_":
-            tim = "00-01:00:00"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-file":
-            tim = "00-01:00:00"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-fam":
-            tim = "00-01:00:00"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-beh":
-            tim = "00-01:00:00"
+            tr_num_samples = None
+            vl_num_samples = None
         elif task == "clf-sor-pack":
-            tim = "00-01:00:00"
-    elif model_name == "malconv2":
-        if task == "clf-bod":
-            tim = "00-01:00:00"
-        elif task == "clf-sor-class_":
-            tim = "00-01:00:00"
-        elif task == "clf-sor-file":
-            tim = "00-01:00:00"
-        elif task == "clf-sor-fam":
-            tim = "00-01:00:00"
-        elif task == "clf-sor-beh":
-            tim = "00-01:00:00"
-        elif task == "clf-sor-pack":
-            tim = "00-01:00:00"
+            tr_num_samples = None
+            vl_num_samples = None
 
-    if tim is None or mem is None:
-        raise RuntimeError(f"{model_name=} {task=} {tr_samples_per_class=}")
-
+    mem = compute_mem(
+        tr_num_samples + vl_num_samples, max_length,
+    )
+    tim = compute_time(
+        tr_num_samples, vl_num_samples, max_length, num_train_epochs, model_name
+    )
     return tim, mem
 
 
@@ -347,8 +430,7 @@ def main():
                 for tr_samples_per_class in TR_SAMPLES_PER_CLASS:
                     if tr_samples_per_class is not None and task not in ("clf-bod", "clf-sor-fam", "clf-sor-file"):
                         continue
-                    alloc_time, alloc_memory = get_clf_alloc_time_and_mem(model_name, task, tr_samples_per_class)
-
+                    
                     if tr_samples_per_class is None:
                         num_train_epochs = 5
                     elif tr_samples_per_class == 5:
@@ -357,6 +439,10 @@ def main():
                         num_train_epochs = 50
                     else:
                         raise ValueError(tr_samples_per_class)
+
+                    alloc_time, alloc_memory = get_clf_alloc_time_and_mem(
+                        model_name, task, tr_samples_per_class, MAX_LENGTH, num_train_epochs,
+                    )
 
                     for seed in SEEDS:
                         jobname = get_jobname(model_name, pretraining_task, task, tr_samples_per_class, seed)
@@ -418,7 +504,8 @@ def main():
         for f in test_files:
             f = OUTPUT / f
             if not f.exists():
-                raise FileNotFoundError(f)
+                # raise FileNotFoundError(f)
+                print(f"FileNorFoundError: {str(f)}")
             if SYSTEM == System.RC:
                 pre = "sbatch"
                 pos = ""
