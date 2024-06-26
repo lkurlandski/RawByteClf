@@ -755,7 +755,6 @@ def _get_materials_pretrain(
     packing_root: Optional[Path | list[Path]] = None,
     remove: tuple[str] = tuple(),
 ) -> Materials:
-    files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     files = filter_packed_files(files, packing_protocol, root=packing_root)
     remove = set(remove)
     files = [f for f in files if f not in remove and os.path.basename(f).split(".")[0] not in remove]
@@ -763,6 +762,7 @@ def _get_materials_pretrain(
     if tr_size == -1 or (isinstance(tr_size, int) and tr_size >= (len(files) - vl_size - ts_size)):
         tr_size = len(files) - vl_size - ts_size
 
+    files.sort()  # Sort after filtering, as the list will be smaller
     tr_vl_ts_files = tr_vl_ts_split(files, tr_size, vl_size, ts_size)
     return Materials(files=tr_vl_ts_files)
 
@@ -1028,7 +1028,7 @@ def get_materials_pretrain_sorel(
     remove_clf_files: bool = True,
     **kwds,
 ) -> Materials:
-    files = sorted(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
+    files = list(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     remove = []
     if remove_clf_files:
         files_and_labels = _get_sorel_file_label_map() | get_bodmas_file_label_map()
@@ -1084,7 +1084,7 @@ def get_materials_pretrain_elf(
     raise NotImplementedError()
     # pylint: disable=unreachable
     files = chain.from_iterable((DATASET_TO_FILES["binaries"][d]() for d in ELF_CLASSIFICATION_DATASETS))
-    files = sorted(get_unique_files(list(map(str, files))))
+    files = get_unique_files(list(map(str, files)))
     packing_root = [PACKING_ROOTS[d] for d in ELF_CLASSIFICATION_DATASETS]
     remove = []
     if remove_clf_files:
