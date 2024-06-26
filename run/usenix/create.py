@@ -21,7 +21,11 @@ DOUBLE_BACKSLASH = """\\"""
 
 parser = ArgumentParser()
 parser.add_argument("--clm_ngpus", type=int, default=1)
+parser.add_argument("--clm_ntasks", type=int, default=4)
+parser.add_argument("--clm_ndataloaderworkers", type=int, default=3)
 parser.add_argument("--clf_ngpus", type=int, default=1)
+parser.add_argument("--clf_ntasks", type=int, default=4)
+parser.add_argument("--clf_ndataloaderworkers", type=int, default=3)
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--dependencies", action="store_true")
 args = parser.parse_args()
@@ -29,8 +33,6 @@ args = parser.parse_args()
 
 # Universal configuration for experments
 ROOT = "./output/test" if args.debug else "./output/usenix"
-CLM_NTASKS = 4
-CLF_NTASKS = 4
 MAX_LENGTH = 2 ** 14
 DATA_READ_BYTES = 2 ** 14
 
@@ -55,10 +57,6 @@ TR_SAMPLES_PER_CLASS = [None, 1, 5]
 SEEDS = [0, 1, 2, 3, 4]
 
 
-# FIXME:
-TASKS = ["clf-bod"]
-
-
 def get_body_lm(
     jobname: str,
     downstream_task: str,
@@ -72,10 +70,10 @@ def get_body_lm(
     #SBATCH --account=admalware
     #SBATCH --partition={'debug' if args.debug else 'tier3'}
     #SBATCH --output=./logs/%x_%j.out
-    #SBATCH --time={'00-01:00:00' if args.debug else '05-00:00:00'}
+    #SBATCH --time={'00-01:00:00' if args.debug else '01-00:00:00'}
     #SBATCH --nodes=1
     #SBATCH --cpus-per-task=1
-    #SBATCH --ntasks={1 if args.debug else CLM_NTASKS}
+    #SBATCH --ntasks={1 if args.debug else args.clm_ntasks}
     #SBATCH --mem={'16G' if args.debug else '64G'}
     #SBATCH --gres=gpu:a100:{args.clm_ngpus}
 
@@ -109,9 +107,9 @@ def get_body_lm(
     --evaluation_strategy="steps" \\
     --num_train_epochs=1 \\
     --logging_steps=1 \\
-    --save_steps={1 if args.debug else 512} \\
-    --eval_steps={1 if args.debug else 512} \\
-    --dataloader_num_workers={0 if args.debug else CLM_NTASKS - 1} \\
+    --save_steps={1 if args.debug else 256} \\
+    --eval_steps={1 if args.debug else 256} \\
+    --dataloader_num_workers={0 if args.debug else args.clm_ndataloaderworkers} \\
     --optim="adamw_torch" \\
     --learning_rate="1e-3" \\
     --lr_scheduler_type="linear" \\
@@ -162,7 +160,7 @@ def get_body_clf(
     #SBATCH --time={'00-01:00:00' if args.debug else alloc_time}
     #SBATCH --nodes=1
     #SBATCH --cpus-per-task=1
-    #SBATCH --ntasks={1 if args.debug else CLF_NTASKS}
+    #SBATCH --ntasks={1 if args.debug else args.clf_ntasks}
     #SBATCH --mem={'16G' if args.debug else alloc_memory}
     #SBATCH --gres=gpu:a100:{args.clf_ngpus}
 
@@ -217,7 +215,7 @@ def get_body_clf(
     --eval_steps=1 \\
     --saves_per_epoch={10 if args.debug else 1} \\
     --evals_per_epoch={10 if args.debug else 1} \\
-    --dataloader_num_workers={0 if args.debug else CLF_NTASKS - 1} \\
+    --dataloader_num_workers={0 if args.debug else args.clf_ndataloaderworkers} \\
     --optim="adamw_torch" \\
     --learning_rate="1e-3" \\
     --lr_scheduler_type="linear" \\
@@ -314,6 +312,22 @@ def compute_time(
     return f"0{days}-{hours}:00:00"
 
 
+TR_VL_SIZES = {
+    ("clf-bod", None): (39191, 6970),
+    ("clf-bod", 1): (382, 2509),
+    ("clf-bod", 5): (1215, 1920),
+    ("clf-sor-fam", None): (283445, 50566),
+    ("clf-sor-fam", 1): (2348, 14255),
+    ("clf-sor-fam", 5): (6700, 10692),
+    ('clf-sor-file', None): (13388, 2372),
+    ('clf-sor-file', 1): (34, 256),
+    ('clf-sor-file', 5): (125, 229),
+    ('clf-sor-beh', None): (36866, 23209),
+    ('clf-sor-class_', None): (12635, 8666),
+    ('clf-sor-pack', None): (4866, 2524),
+}
+
+
 def get_clf_alloc_time_and_mem(
     model_name: str,
     task: str,
@@ -321,72 +335,18 @@ def get_clf_alloc_time_and_mem(
     max_length: int,
     num_train_epochs: int,
 ) -> tuple[str, str]:
-    mem = None
-    tim = None
-
-    if tr_samples_per_class is None:
-        if task == "clf-bod":
-            tr_num_samples = 40000
-            vl_num_samples = 8000
-        elif task == "clf-sor-class_":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-file":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-fam":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-beh":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-pack":
-            tr_num_samples = None
-            vl_num_samples = None
-    elif tr_samples_per_class == 1:
-        if task == "clf-bod":
-            tr_num_samples = 400
-            vl_num_samples = 2500
-        elif task == "clf-sor-class_":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-file":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-fam":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-beh":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-pack":
-            tr_num_samples = None
-            vl_num_samples = None
-    elif tr_samples_per_class == 5:
-        if task == "clf-bod":
-            tr_num_samples = 1200
-            vl_num_samples = 2000
-        elif task == "clf-sor-class_":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-file":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-fam":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-beh":
-            tr_num_samples = None
-            vl_num_samples = None
-        elif task == "clf-sor-pack":
-            tr_num_samples = None
-            vl_num_samples = None
+    tr_num_samples, vl_num_samples = TR_VL_SIZES[(task, tr_samples_per_class)]
 
     mem = compute_mem(
-        tr_num_samples + vl_num_samples, max_length,
+        tr_num_samples + vl_num_samples,
+        max_length,
     )
     tim = compute_time(
-        tr_num_samples, vl_num_samples, max_length, num_train_epochs, model_name
+        tr_num_samples,
+        vl_num_samples,
+        max_length,
+        num_train_epochs,
+        model_name,
     )
     return tim, mem
 
