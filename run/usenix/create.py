@@ -51,8 +51,11 @@ MODEL_NAME_AND_ARCH_CONFIGS = {
     "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
     # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 256}',  # 67.7 M
 }
-PRETRAINING_TASKS = ["None", "clm-sor"]
-TASKS = ["clf-bod"] + [f"clf-sor-{s}" for s in ("class_", "file", "fam", "beh", "pack")]
+PRETRAINING_TASKS = [None, "clm-sor"]
+TASKS_SCMF = ["clf-bod", "clf-sor-fam", "clf-sor-file"]
+TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
+TASKS = TASKS_SCMF + TASKS_MCMF
+MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
 SEEDS = [0, 1, 2, 3, 4]
 
@@ -140,15 +143,16 @@ def get_body_clf(
     alloc_time: str,
     alloc_memory: str,
     downstream_task: str,
-    pretraining_task: str,
+    pretraining_task: Optional[str],
     model_name_or_path: str,
     arch_config: str,
     seed: int,
     gradient_checkpointing: bool,
     num_train_epochs: int,
-    top_k: Optional[int] = None,
-    tr_samples_per_class: Optional[int] = None,
-    weighted_loss: Optional[str] = None,
+    top_k: Optional[int],
+    min_freq: Optional[int],
+    tr_samples_per_class: Optional[int],
+    weighted_loss: Optional[str],
 ) -> str:
 
     return f"""#!/bin/bash -l
@@ -197,7 +201,7 @@ def get_body_clf(
     --tr_size=0.85 \\
     --vl_size=0.15 \\
     --ts_size=0.0 \\
-    --min_freq=2 \\
+    --min_freq={min_freq} \\
     --top_k={top_k} \\
     --tr_samples_per_class={tr_samples_per_class} \\
     --max_imbalance_ratio=1000 \\
@@ -238,15 +242,17 @@ def get_body_clf(
 
 def get_jobname(
     model_name: str,
-    pretraining_task: str,
+    pretraining_task: Optional[str],
     downstream_task: str,
+    min_freq: Optional[int],
     tr_samples_per_class: Optional[int],
     seed: int,
 ) -> str:
     args = [
         model_name,
-        pretraining_task,
+        str(pretraining_task),
         downstream_task,
+        str(min_freq),
         str(tr_samples_per_class),
         str(seed),
     ]
@@ -254,11 +260,13 @@ def get_jobname(
 
 
 def compute_mem(
-    num_samples: int,
+    tr_num_samples: int,
+    vl_num_samples: int,
     max_length: int,
     bytes_per_token: int = 4,
 ) -> str:
     """Compute the memory requirements of the raw data, then add a bit of buffer."""
+    num_samples = tr_num_samples + vl_num_samples
     num_tokens = num_samples * max_length
     b = num_tokens * bytes_per_token
     g = b / 1e9
@@ -312,33 +320,51 @@ def compute_time(
     return f"0{days}-{hours}:00:00"
 
 
+# dict[(task, tr_samples_per_class, min_freq), (tr_samples, vl_samples)]
 TR_VL_SIZES = {
-    ("clf-bod", None): (39191, 6970),
-    ("clf-bod", 1): (382, 2509),
-    ("clf-bod", 5): (1215, 1920),
-    ("clf-sor-fam", None): (283445, 50566),
-    ("clf-sor-fam", 1): (2348, 14255),
-    ("clf-sor-fam", 5): (6700, 10692),
-    ('clf-sor-file', None): (13388, 2372),
-    ('clf-sor-file', 1): (34, 256),
-    ('clf-sor-file', 5): (125, 229),
-    ('clf-sor-beh', None): (36866, 23209),
-    ('clf-sor-class_', None): (12635, 8666),
-    ('clf-sor-pack', None): (4866, 2524),
+    ("clf-bod", None, None): (39191, 6970),
+    ("clf-bod", 1, None): (382, 2509),
+    ("clf-bod", 5, None): (1215, 1920),
+    ("clf-sor-fam", None, None): (283445, 50566),
+    ("clf-sor-fam", 1, None): (2348, 14255),
+    ("clf-sor-fam", 5, None): (6700, 10692),
+    ('clf-sor-file', None, None): (13388, 2372),
+    ('clf-sor-file', 1, None): (34, 256),
+    ('clf-sor-file', 5, None): (125, 229),
+    ('clf-sor-beh', None, None): (36866, 23209),
+    ('clf-sor-class_', None, None): (12635, 8666),
+    ('clf-sor-pack', None, None): (4866, 2524),
+
+    ('clf-bod', None, 10): (47707, 8452),
+    ('clf-sor-beh', None, 10): (215788, 29780),
+    ('clf-sor-class_', None, 10): (187847, 43363),
+    ('clf-sor-fam', None, 10): (839871, 148328),
+    ('clf-sor-file', None, 10): (78011, 13777),
+    ('clf-sor-pack', None, 10): (28034, 7808),
+
+    ('clf-bod', None, 100): (44102, 7797),
+    ('clf-sor-beh', None, 100): (676087, 124691),
+    ('clf-sor-class_', None, 100): (501607, 84007),
+    ('clf-sor-fam', None, 100): (1652519, 291536),
+    ('clf-sor-file', None, 100): (241791, 42543),
+    ('clf-sor-pack', None, 100): (78858, 13884),
 }
 
 
 def get_clf_alloc_time_and_mem(
     model_name: str,
     task: str,
+    min_freq: Optional[int],
     tr_samples_per_class: Optional[int],
     max_length: int,
     num_train_epochs: int,
 ) -> tuple[str, str]:
-    tr_num_samples, vl_num_samples = TR_VL_SIZES[(task, tr_samples_per_class)]
+    key = (task, tr_samples_per_class, min_freq)
+    tr_num_samples, vl_num_samples = TR_VL_SIZES[key]
 
     mem = compute_mem(
-        tr_num_samples + vl_num_samples,
+        tr_num_samples,
+        vl_num_samples,
         max_length,
     )
     tim = compute_time(
@@ -365,10 +391,17 @@ def main():
 
         # Pretraining
         for pretraining_task in PRETRAINING_TASKS:
-            if pretraining_task == "None" or model_name != "mamba":
+            if pretraining_task is None or model_name != "mamba":
                 continue
 
-            jobname = get_jobname(model_name, "None", pretraining_task, None, 0)
+            jobname = get_jobname(
+                model_name,
+                None,
+                pretraining_task,
+                None,
+                None,
+                0,
+            )
             body = get_body_lm(
                 jobname=jobname,
                 downstream_task=pretraining_task,
@@ -382,14 +415,14 @@ def main():
 
         # Classification
         for task in TASKS:
-            weighted_loss = "sample_reweighting" if task in ("clf-bod", "clf-sor-fam", "clf-sor-file") else None
+            weighted_loss = "sample_reweighting" if task in TASKS_SCMF else None
 
             for pretraining_task in PRETRAINING_TASKS:
-                if model_name in ("malconv", "malconv2") and pretraining_task != "None":
+                if model_name in ("malconv", "malconv2") and pretraining_task is not None:
                     continue
 
                 for tr_samples_per_class in TR_SAMPLES_PER_CLASS:
-                    if tr_samples_per_class is not None and task not in ("clf-bod", "clf-sor-fam", "clf-sor-file"):
+                    if tr_samples_per_class is not None and task not in TASKS_SCMF:
                         continue
                     
                     if tr_samples_per_class is None:
@@ -401,31 +434,48 @@ def main():
                     else:
                         raise ValueError(tr_samples_per_class)
 
-                    alloc_time, alloc_memory = get_clf_alloc_time_and_mem(
-                        model_name, task, tr_samples_per_class, MAX_LENGTH, num_train_epochs,
-                    )
+                    for min_freq in MIN_FREQ:
+                        if min_freq is not None and tr_samples_per_class is not None:
+                            continue
 
-                    for seed in SEEDS:
-                        jobname = get_jobname(model_name, pretraining_task, task, tr_samples_per_class, seed)
-                        body = get_body_clf(
-                            jobname=jobname,
-                            alloc_time=alloc_time,
-                            alloc_memory=alloc_memory,
-                            downstream_task=task,
-                            pretraining_task=pretraining_task,
-                            model_name_or_path=model_name,
-                            arch_config=arch_config,
-                            seed=seed,
-                            gradient_checkpointing=gradient_checkpointing,
-                            num_train_epochs=num_train_epochs,
-                            top_k=None,
+                        alloc_time, alloc_memory = get_clf_alloc_time_and_mem(
+                            model_name=model_name,
+                            task=task,
+                            min_freq=min_freq,
                             tr_samples_per_class=tr_samples_per_class,
-                            weighted_loss=weighted_loss,
+                            max_length=MAX_LENGTH,
+                            num_train_epochs=num_train_epochs,
                         )
-                        outfile = (OUTPUT / jobname).with_suffix(".sh")
-                        with open(outfile, "w") as fp:
-                            fp.write(body)
-                        outfiles.append(outfile)
+
+                        for seed in SEEDS:
+                            jobname = get_jobname(
+                                model_name,
+                                pretraining_task,
+                                task,
+                                min_freq,
+                                tr_samples_per_class,
+                                seed,
+                            )
+                            body = get_body_clf(
+                                jobname=jobname,
+                                alloc_time=alloc_time,
+                                alloc_memory=alloc_memory,
+                                downstream_task=task,
+                                pretraining_task=pretraining_task,
+                                model_name_or_path=model_name,
+                                arch_config=arch_config,
+                                seed=seed,
+                                gradient_checkpointing=gradient_checkpointing,
+                                num_train_epochs=num_train_epochs,
+                                top_k=None,
+                                min_freq=min_freq,
+                                tr_samples_per_class=tr_samples_per_class,
+                                weighted_loss=weighted_loss,
+                            )
+                            outfile = (OUTPUT / jobname).with_suffix(".sh")
+                            with open(outfile, "w") as fp:
+                                fp.write(body)
+                            outfiles.append(outfile)
 
 
     def key(s: str) -> tuple:
@@ -439,7 +489,7 @@ def main():
 
     with open(OUTPUT / "run.sh", "w") as fp:
         for f in sorted(outfiles, key=lambda p: key(str(p.name))):
-
+            f = f.relative_to("/home/lk3591/Documents/code/RawByteClf")
             if SYSTEM == System.RC:
                 if args.dependencies:
                     if f.stem[-1] == "0":
@@ -458,8 +508,11 @@ def main():
                     gpus = [str(i) for i in range(args.clf_ngpus)]
                 pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
                 pos = f"&> ./logs/{f.stem}.out"   
+            if f.stem[-1] == "0":
+                fp.write(f"# {f.stem[0:-3]}\n")
             fp.write(f"{pre} {str(f)} {pos}\n")
 
+    sys.exit()
 
     test_files = [
         "mamba--None--clm-sor--None--0.sh",
