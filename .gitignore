@@ -171,3 +171,4 @@ figures
 *.sh
 ./config/.system
 config/.system
+cache/*
