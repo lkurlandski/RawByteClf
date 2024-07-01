@@ -10,14 +10,6 @@ from pprint import pprint
 import sys
 from typing import Optional
 
-OUTPUT = Path(os.path.realpath(__file__)).parent
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
-from src.cfg import System, SYSTEM
-
-
-DOUBLE_BACKSLASH = """\\"""
-
 
 parser = ArgumentParser()
 parser.add_argument("--clm_ngpus", type=int, default=1)
@@ -29,6 +21,16 @@ parser.add_argument("--clf_ndataloaderworkers", type=int, default=3)
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--dependencies", action="store_true")
 args = parser.parse_args()
+
+
+class System(Enum):
+    ARMITAGE = "ARMITAGE"
+    RC = "RC"
+
+
+SYSTEM = System(Path("./config/.system").read_text().strip())
+OUTPUT = Path(os.path.realpath(__file__)).parent
+DOUBLE_BACKSLASH = """\\"""
 
 
 # Universal configuration for experments
@@ -58,6 +60,12 @@ TASKS = TASKS_SCMF + TASKS_MCMF
 MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
 SEEDS = [0, 1, 2, 3, 4]
+
+
+# FIXME: remove!
+TASKS = [
+  "clf-sor-beh",
+]
 
 
 def get_body_lm(
@@ -142,6 +150,7 @@ def get_body_clf(
     jobname: str,
     alloc_time: str,
     alloc_memory: str,
+    streaming: bool,
     downstream_task: str,
     pretraining_task: Optional[str],
     model_name_or_path: str,
@@ -178,7 +187,7 @@ def get_body_clf(
     python -u \\
     src/learn/train.py \\
     --root='{ROOT}' \\
-    --streaming='false' \\
+    --streaming='{'true' if streaming else 'false'}' \\
     --skip_eval_check='false' \\
     --dataset_backend="HF" \\
 
@@ -286,6 +295,7 @@ def compute_time(
 
     NOTE: the stats were computed in streaming mode with num_data_loaders=0.
     """
+
     if model_name == "mamba":
         if max_length == 2 ** 14:
             tr_time_per_sample = 0.0548155737704918000
@@ -301,14 +311,13 @@ def compute_time(
             tr_time_per_sample = None
             vl_time_per_sample = None
 
-
     tr_time = tr_time_per_sample * tr_num_samples * num_train_epochs
     vl_time = vl_time_per_sample * vl_num_samples * num_train_epochs
 
     total_time = tr_time + vl_time
     total_time = (30 * 60) + (.05 * total_time) + total_time
 
-    total_hours = total_time // 3600
+    total_hours = total_time / 3600
     if total_hours < 1:
         days, hours = 0, 1
     elif total_hours >= 24:
@@ -374,6 +383,16 @@ def get_clf_alloc_time_and_mem(
         num_train_epochs,
         model_name,
     )
+
+    # Special cases:
+    if model_name == "mamba":
+        if key == ("clf-sor-class_", None, None):
+            tim = "00-02:00:00"
+        if key == ("clf-sor-beh", None, None):
+            tim = "00-05:00:00"
+    if model_name == "malconv2" and key == ("clf-sor-beh", None, 100):
+        tim = "00-01:30:00"
+
     return tim, mem
 
 
@@ -424,19 +443,22 @@ def main():
                 for tr_samples_per_class in TR_SAMPLES_PER_CLASS:
                     if tr_samples_per_class is not None and task not in TASKS_SCMF:
                         continue
-                    
-                    if tr_samples_per_class is None:
-                        num_train_epochs = 5
-                    elif tr_samples_per_class == 5:
-                        num_train_epochs = 10
-                    elif tr_samples_per_class == 1:
-                        num_train_epochs = 50
-                    else:
-                        raise ValueError(tr_samples_per_class)
 
                     for min_freq in MIN_FREQ:
                         if min_freq is not None and tr_samples_per_class is not None:
                             continue
+
+                        if tr_samples_per_class is None:
+                            if min_freq is None:
+                                num_train_epochs = 5
+                            elif min_freq == 10:
+                                num_train_epochs = 2
+                            elif min_freq == 100:
+                                num_train_epochs = 1
+                        elif tr_samples_per_class == 5:
+                            num_train_epochs = 10
+                        elif tr_samples_per_class == 1:
+                            num_train_epochs = 50
 
                         alloc_time, alloc_memory = get_clf_alloc_time_and_mem(
                             model_name=model_name,
@@ -446,6 +468,23 @@ def main():
                             max_length=MAX_LENGTH,
                             num_train_epochs=num_train_epochs,
                         )
+
+                        if int(alloc_memory[:-1]) > 64:
+                            print(
+                                f"LargeMemoryWarning: {alloc_memory=} {task=} {min_freq=} "
+                                f"{tr_samples_per_class=}. Reducing alloc_memory to 64G."
+                            )
+                            streaming = True
+                            alloc_memory = "64G"
+                        else:
+                            streaming = False
+
+                        if int(alloc_time[0:2]) >= 5:
+                            print(
+                                f"LargeRuntimeWarning: {alloc_time=} {task=} {min_freq=} "
+                                f"{tr_samples_per_class=}. Reducing alloc_time to 05-00:00:00."
+                            )
+                            alloc_time = "05-00:00:00"
 
                         for seed in SEEDS:
                             jobname = get_jobname(
@@ -460,6 +499,7 @@ def main():
                                 jobname=jobname,
                                 alloc_time=alloc_time,
                                 alloc_memory=alloc_memory,
+                                streaming=streaming,
                                 downstream_task=task,
                                 pretraining_task=pretraining_task,
                                 model_name_or_path=model_name,
@@ -510,35 +550,6 @@ def main():
                 pos = f"&> ./logs/{f.stem}.out"   
             if f.stem[-1] == "0":
                 fp.write(f"# {f.stem[0:-3]}\n")
-            fp.write(f"{pre} {str(f)} {pos}\n")
-
-    sys.exit()
-
-    test_files = [
-        "mamba--None--clm-sor--None--0.sh",
-        "mamba--None--clf-bod--None--0.sh",
-        "mamba--None--clf-sor-pack--None--0.sh",
-        "mamba--clm-sor--clf-bod--5--0.sh",
-        "mamba--clm-sor--clf-sor-pack--None--0.sh",
-        "malconv2--None--clf-bod--None--1.sh",
-        "malconv2--None--clf-sor-pack--None--0.sh",
-    ]
-    with open(OUTPUT / "debug.sh", "w") as fp:
-        for f in test_files:
-            f = OUTPUT / f
-            if not f.exists():
-                # raise FileNotFoundError(f)
-                print(f"FileNorFoundError: {str(f)}")
-            if SYSTEM == System.RC:
-                pre = "sbatch"
-                pos = ""
-            else:
-                if "clm" in f.name:
-                    gpus = [str(i) for i in range(args.clm_ngpus)]
-                else:
-                    gpus = [str(i) for i in range(args.clf_ngpus)]
-                pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
-                pos = f"&> ./logs/{f.stem}.out"   
             fp.write(f"{pre} {str(f)} {pos}\n")
 
 
