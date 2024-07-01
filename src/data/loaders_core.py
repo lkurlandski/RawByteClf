@@ -2,7 +2,7 @@
 Core file operations to construct labeled datasets for classification tasks.
 """
 
-from collections import Counter
+from collections import defaultdict, Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import chain
@@ -126,12 +126,20 @@ class Materials:
         raise RuntimeError(f"Invalid problem type: {self.problem_type=}")
 
     def __repr__(self):
+        if self.dist is not None:
+            dists = {s: self.get_split_dist(s) for s in ["tr", "vl", "ts"] if len(self.labels[s]) > 0}
+            dist = defaultdict(dict)
+            for s, d in dists.items():  # s: split, d: class distribution
+                for k, v in d.items():  # k: class label, v: class count
+                    dist[k][s] = v
+        else:
+            dist = None
         return (
             f"len(tr)={len(self.files['tr'])}\n"
             f"len(vl)={len(self.files['vl'])}\n"
             f"len(ts)={len(self.files['ts'])}\n"
             f"num_classes={len(self.id2label) if self.id2label is not None else None}\n"
-            f"dist={pformat(self.dist) if self.dist is not None else None}"
+            f"dist={pformat(dist) if dist is not None else None}"
         )
 
 
