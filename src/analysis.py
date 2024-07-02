@@ -3,12 +3,13 @@ Various codes for data analysis.
 """
 
 from collections import defaultdict, Counter, OrderedDict
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
 from pprint import pprint
 import sys
-from typing import Literal
+from typing import Literal, Optional
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -62,6 +63,42 @@ def process_validation_reports(
             loc = np.argmax(values)
         best = values[loc]
         results[metric] = (best, loc)
+
+    return results
+
+
+def process_validation_reports_2(
+    reports: list[dict],
+    higher_is_better_keys: Optional[tuple[str]] = tuple(),
+    lower_is_better_keys: Optional[tuple[str]] = tuple(),
+    ignore_keys: Optional[tuple[str]] = tuple(),
+    strict: bool = True,
+) -> dict[tuple[float, int]]:
+    """
+    Returns a dict for each metric containing a tuple indicating the best value
+    along with the first index at which the value was found.
+    """
+    reports = deepcopy(reports)
+    reports = [{k: v for k, v in r.items() if k not in ignore_keys} for r in reports]
+
+    keys_expct = set(higher_is_better_keys + lower_is_better_keys)
+    keys_found = set(reports[0].keys())
+    if strict and keys_expct != keys_found:
+        raise ValueError(f"Unexpected: {keys_found.difference(keys_expct)}. Missing: {keys_expct.difference(keys_found)}")
+
+    results = {}
+    for k in keys_found:
+        values = np.array([r[k] for r in reports])
+        if k in lower_is_better_keys:
+            loc = np.argmin(values)
+        elif k in higher_is_better_keys:
+            loc = np.argmax(values)
+        elif strict is False:
+            continue
+        else:
+            raise ValueError(f"Invalid key: {k}")
+        val = values[loc]
+        results[k] = (val, loc)
 
     return results
 
