@@ -40,16 +40,17 @@ DATA_READ_BYTES = 2 ** 14
 
 # Parameters to vary for the experiments.
 MODEL_NAME_AND_ARCH_CONFIGS = {
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8}',  # 0.50 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 128}',  # 0.53 M
-    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8}',  # 2.70 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 128}',  # 2.76 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 8}',  # 3.57 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256}',  # 3.64 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 8}',  # 11.7 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 384}',  # 11.8 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 8}',  # 27.3 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 512}',  # 27.4 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8, "mlp_hidden_size": -1}',  # 0.50 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 128, "mlp_hidden_size": -1}',  # 0.53 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 2.70 M
+    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": 256}',  # ?.?? M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 128, "mlp_hidden_size": -1}',  # 2.76 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 3.57 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 3.64 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 8, "mlp_hidden_size": -1}',  # 11.7 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 384, "mlp_hidden_size": -1}',  # 11.8 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 8, "mlp_hidden_size": -1}',  # 27.3 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 512, "mlp_hidden_size": -1}',  # 27.4 M
     "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
     # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 256}',  # 67.7 M
 }
@@ -64,7 +65,9 @@ SEEDS = [0, 1, 2, 3, 4]
 
 # FIXME: remove!
 TASKS = [
+  "clf-bod",
   "clf-sor-beh",
+  "clf-sor-class_"
 ]
 
 
