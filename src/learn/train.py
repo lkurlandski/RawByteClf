@@ -27,6 +27,7 @@ FIXME: when streaming in classification mode with num_train epochs, the output h
 """
 
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import partial, reduce
@@ -717,7 +718,13 @@ def get_config(
 
     if Path(model_name_or_path).exists():
         print("Getting config from disk.")
-        return get_config_from_path(model_name_or_path, **kwds)
+        config = get_config_from_path(model_name_or_path, **kwds)
+        if arch_config is not None:
+            for k, v in arch_config.items():
+                if hasattr(config, k) and getattr(config, k) != v:
+                    print(f"Modifying the config found on disk. Field={k} Value={getattr(config, k)} New Value={v}")
+                    setattr(config, k, v)
+        return config
 
     print("Creating new config.")
 
@@ -860,29 +867,34 @@ def get_model(
         model_name = object_to_model_name(model_name_or_path)
         if task[0:3] == "clf":
             if model_name == "hrrformer":
-                model = HRRForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = HRRConfig.from_pretrained(model_name_or_path)
                 _head_names = ["classifier"]
+                raise NotImplementedError("Need to check the head weights.")
             elif model_name == "rwkv":
-                model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = RwkvConfig.from_pretrained(model_name_or_path)
                 _head_names = ["classifier"]
+                raise NotImplementedError("Need to check the head weights.")
             elif model_name == "mamba":
-                model = MambaForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
-                _config = MambaConfig.from_pretrained(model_name_or_path)  # FIXME: what the fuck.
-                _head_names = ["clf_head"]
+                model = MambaForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                _config = MambaConfig.from_pretrained(model_name_or_path)
+                _head_names = ["clf_neck", "clf_head"]
             elif model_name == "malconv":
-                model = MalConvForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                model = MalConvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MalConvConfig.from_pretrained(model_name_or_path)
                 _head_names = ["clf_head"]
+                raise NotImplementedError("Need to check the head weights.")
             elif model_name == "malconv2":
-                model = MalConv2ForSequenceClassification.from_pretrained(model_name_or_path)
+                model = MalConv2ForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MalConv2Config.from_pretrained(model_name_or_path)
                 _head_names = []
+                raise NotImplementedError("Need to check the head weights.")
             elif get_model_type(model_name_or_path) == "HF":
-                model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+                model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = AutoConfig.from_pretrained(model_name_or_path)
                 _head_names = []
+                raise NotImplementedError("Need to check the head weights.")
             else:
                 raise ValueError(f"Invalid model name: {model_name}")
 
@@ -901,7 +913,9 @@ def get_model(
             if is_not_for_classification:
                 print(f"Checking the following classification heads for anamalous weights: {_head_names}")
                 for h in _head_names:
-                    l: torch.nn.Linear = getattr(model, h)
+                    l: Optional[torch.nn.Linear] = getattr(model, h, None)
+                    if l is None:
+                        continue
                     if not isinstance(l, torch.nn.Linear):
                         raise TypeError(f"Expected torch.nn.Linear, got {type(l)}")
                     w: Tensor = l.weight.to(torch.float64)
@@ -911,10 +925,11 @@ def get_model(
                     anomalous_std = any([math.isnan(s), math.isinf(s), s <= 0, s >= 2 * _config.initializer_range])
                     if anomalous_mean or anomalous_std:
                         warnings.warn(
-                            f"Detected anamalous weights in {model_name}'s {h}. "
-                            f"Since we're creating a new classification head, we expect the "
-                            f"weights to be Guassian with N(0, {_config.initializer_range}) but "
-                            f"the weights have a mean of {m} and a std of {s}."
+                            f"Detected anamalous weights in {h}. "
+                            #f"Since we're creating a new classification head, we expect the "
+                            #f"weights to be Guassian with N(0, {_config.initializer_range}) but "
+                            f"The weights have a mean of {m} and a std of {s}. "
+                            f"Reinitializing the weights accordingly."
                         )
                         l.weight.data.normal_(mean=0.0, std=_config.initializer_range)
             else:
@@ -1142,12 +1157,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
+        pretrain_kwds = deepcopy(kwds)
+        if "mlp_hidden_size" in pretrain_kwds["arch_config"]:
+            print("Removing MLP hidden size from pretraining task.")
+            pretrain_kwds["arch_config"]["mlp_hidden_size"] = -1
+        print(f"{args.pretraining_task=}")  # FIXME
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
-            args.pretraining_task, **kwds,
+            args.pretraining_task, **pretrain_kwds,
         )
         kwds["model_name_or_path"] = args.model_name_or_path
     oh = OutputHelper(**kwds)
     print(f"Output Helper:\n{str(oh)}")
+    print(f"Output Path: {oh.path}")
     print(BR)
 
     prediction_loss_only = args.task[0:3] in ("mlm", "clm")
@@ -1253,7 +1274,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_dataset_pt(dataset)
         print(BR)
     del num_shards
-
 
     config = get_config(
         args.model_name_or_path,
