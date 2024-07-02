@@ -33,6 +33,7 @@ from src.data.loaders_core import (
     tr_vl_ts_split,
     tr_vl_ts_split_idx_guarentee,
     get_bodmas_file_label_map,
+    _get_sorel_file_label_map,
     get_sorel_file_label_map,
     _get_materials_clf,
     _get_materials_clf_multilabel,
@@ -464,6 +465,59 @@ class TestGetMaterialsClfMultilabelFewShotLearning(unittest.TestCase):
                 top_k=None,
             )
             self._test_materials(materials, tr_samples_per_class, 20 * tr_samples_per_class, vl_min_samples_per_class, sys.maxsize)
+
+
+class Test_GetSorelFileLabelMap(unittest.TestCase):
+
+    def setUp(self):
+        self.files_and_labels = _get_sorel_file_label_map()
+
+    def get_sorel_file_label_map(self, name: str):
+        files_and_labels = {f: getattr(l, name) for f, l in self.files_and_labels.items()}
+        files_and_labels = {f: l for f, l in files_and_labels.items() if l is not None}
+        return files_and_labels
+
+    def test_file_label_map(self, files_and_labels: dict, single_label: bool):
+        for file, label in files_and_labels.items():
+            self.assertIsInstance(file, (os.PathLike, Path, str))
+            self.assertIsInstance(label, tuple)
+            if single_label:
+                self.assertEqual(len(label), 1)
+            for l in label:
+                l: str
+                self.assertIsInstance(l, str), f"{l=}"
+                assert not l.isspace(), f"{l=}"
+                assert not l.lower() in ("none", "na", "nan"), f"{l=}"
+
+    def test_fam(self):
+        files_and_labels = self.get_sorel_file_label_map("fam")
+        self.test_file_label_map(files_and_labels, single_label=True)
+
+    def test_file(self):
+        files_and_labels = self.get_sorel_file_label_map("file")
+        self.test_file_label_map(files_and_labels, single_label=True)
+
+    def test_class_(self):
+        files_and_labels = self.get_sorel_file_label_map("class_")
+        self.test_file_label_map(files_and_labels, single_label=False)
+
+    def test_beh(self):
+        files_and_labels = self.get_sorel_file_label_map("beh")
+        self.test_file_label_map(files_and_labels, single_label=False)
+
+    def test_pack(self):
+        files_and_labels = self.get_sorel_file_label_map("pack")
+        self.test_file_label_map(files_and_labels, single_label=False)
+
+    @unittest.skip("Skipping test_unk because it is not implemented.")
+    def test_unk(self):
+        files_and_labels = self.get_sorel_file_label_map("unk")
+        self.test_file_label_map(files_and_labels, single_label=False)
+
+    @unittest.skip("Skipping test_vuln because it is not implemented.")
+    def test_vuln(self):
+        files_and_labels = self.get_sorel_file_label_map("vuln")
+        self.test_file_label_map(files_and_labels, single_label=False)
 
 
 if __name__ == "__main__":
