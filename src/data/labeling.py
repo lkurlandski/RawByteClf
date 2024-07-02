@@ -1,4 +1,5 @@
 """
+Labeling with AVClass and ClarAVy.
 
 TODO
 ----
@@ -74,6 +75,11 @@ class FilterArgs:
     unk: tuple[int, int] = (1, 2)
     pack: tuple[int, int] = (1, 1)
     vuln: tuple[int, int] = (1, 1)
+
+    def byte_identifier(self) -> bytes:
+        # pickle.dumps(self) seems to be nondeterministic, so we'll use something cruder.
+        s = f"{self.class_}{self.file}{self.fam}{self.beh}{self.unk}{self.pack}{self.vuln}"
+        return s.encode()
 
 
 @dataclass
@@ -264,6 +270,17 @@ class ToolRunner:
 
 
 class Labeler:
+    """
+    Parses the output of AVClass and ClarAVy (.txt) cache files.
+    Extracts labeling based upon the `filter_args`.
+    Creates a unique cache file based on the contents of the claravy, avclass,
+    and avclass-family cache files as well as the `filter_args` and reuses cache
+    to avoid reparsing the data.
+
+    I'm having some difficulty dealing with import errors when using pickle to
+    serialize a custom object, so we're going to serialize things as dict, not
+    Label, then convert back to Label when loading the cache.
+    """
 
     def __init__(
         self,
@@ -271,6 +288,7 @@ class Labeler:
         avclass_cache: Path,
         avclass_family_cache: Path,
         filter_args: Optional[FilterArgs] = FilterArgs(),
+        use_cache: bool = True,
     ) -> None:
         self.avclass_cache = Path(avclass_cache)
         self.avclass_family_cache = Path(avclass_family_cache)
@@ -278,15 +296,19 @@ class Labeler:
         self.filter_args = filter_args
         self.data: dict[str, Label] = {}
         self._cache_file = None
+        self.use_cache = use_cache
 
     def __call__(self) -> Labeler:
-        if self.cache_file.exists():
+        if self.cache_file.exists() and self.use_cache:
             print(f"Loading data from {self.cache_file=}...", end="", flush=True)
             t_0 = time.time()
             with open(self.cache_file, "rb") as fp:
-                self.data = pickle.load(fp)
+                data: dict[str, Optional[tuple[str]]] = pickle.load(fp)
+                self.data = {k: Label(**v) for k, v in data.items()}
             print(f"Done. Took {time.time() - t_0:.2f} seconds")
             return self
+
+        print(f"Cache file {self.cache_file=} does not exist. Running the labeler.")
 
         print("Parsing CLARAVY...", end="", flush=True)
         t_0 = time.time()
@@ -307,7 +329,8 @@ class Labeler:
         t_0 = time.time()
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.cache_file, "wb") as fp:
-            pickle.dump(self.data, fp)
+            data: dict[str, Optional[tuple[str]]] = {k: v.__dict__ for k, v in self.data.items()}
+            pickle.dump(data, fp)
         print(f"Done. Took {time.time() - t_0:.2f} seconds")
 
         return self
@@ -316,12 +339,16 @@ class Labeler:
     def cache_file(self) -> Path:
         if self._cache_file is not None:
             return self._cache_file
-        b = self.claravy_cache.read_bytes() \
-            + self.avclass_cache.read_bytes() \
-            + self.avclass_family_cache.read_bytes() \
-            + pickle.dumps(self.filter_args)
+
+        b_1 = self.claravy_cache.read_bytes()
+        b_2 = self.avclass_cache.read_bytes()
+        b_3 = self.avclass_family_cache.read_bytes()
+        b_4 = self.filter_args.byte_identifier()
+        b = b_1 + b_2 + b_3 + b_4
+
         h = hashlib.sha256(b).hexdigest()
-        return Path("./cache") / "labeling" / f"{h}.pkl"
+        self._cache_file = Path("./cache") / "labeling" / f"{h}.pkl"
+        return self._cache_file
 
     def parse_claravy(self) -> None:
 
@@ -360,7 +387,8 @@ class Labeler:
 
                 if sha not in self.data:
                     self.data[sha] = Label()
-                self.data[sha].fam = (fam,)
+                if fam is not None:
+                    self.data[sha].fam = (fam,)
 
     def view(self, name: str) -> dict[str, tuple[str]]:
         return {sha: getattr(self.data[sha], name) for sha in self.data.keys()}
@@ -369,14 +397,17 @@ class Labeler:
 def main():
 
     parser = ArgumentParser()
-    parser.add_argument("--reports_dir", type=str, required=True)
-    parser.add_argument("--claravy_cache", type=str, required=True)
-    parser.add_argument("--avclass_cache", type=str, required=True)
-    parser.add_argument("--avclass_family_cache", type=str, required=True)
+    parser.add_argument("--reports_dir", type=str, required=False, help="Directory containing the (.jsonl) reports.")
+    parser.add_argument("--claravy_cache", type=str, required=True, help="File (.txt) to store the output of Claravy.")
+    parser.add_argument("--avclass_cache", type=str, required=True, help="File (.txt) to store the output of AVClass.")
+    parser.add_argument("--avclass_family_cache", type=str, required=True, help="File (.txt) to store the output of AVClass-family.")
     parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--use_cache", action="store_true")
+    parser.add_argument("--run_tool_runner", action="store_true")
+    parser.add_argument("--run_labeler", action="store_true")
     args = parser.parse_args()
 
-    reports_dir = Path(args.reports_dir)
+    reports_dir = Path(args.reports_dir) if args.reports_dir is not None else None
     claravy_cache = Path(args.claravy_cache)
     avclass_cache = Path(args.avclass_cache)
     avclass_family_cache = Path(args.avclass_family_cache)
@@ -388,59 +419,34 @@ def main():
         print(f"\trm {avclass_family_cache.as_posix()}")
         sys.exit(0)
 
-    runner = ToolRunner(
-        reports_dir,
-        claravy_cache,
-        avclass_cache,
-        avclass_family_cache,
-    )
-    runner = runner()
+    if args.run_tool_runner:
+        runner = ToolRunner(
+            reports_dir,
+            claravy_cache,
+            avclass_cache,
+            avclass_family_cache,
+        )
+        runner = runner()
 
-
-def test():
-
-    # Why do the two run below have different values for views other than the class_ field?
-
-    filter_args_a = FilterArgs(
-        class_=(None, 2),
-        file=(1, 2),
-        fam=(1, 2),
-        beh=(None, 2),
-        unk=(None, 2),
-        pack=(None, 1),
-        vuln=(None, 1),
-    )
-    labeler_a = Labeler(
-        SOREL_CLARAVY_CACHE,
-        SOREL_AVCLASS_CACHE,
-        SOREL_AVCLASS_FAMILY_CACHE,
-        filter_args_a
-    )
-    labeler_a = labeler_a()
-
-    filter_args_b = FilterArgs(
-        class_=(1, 2),
-        file=(1, 2),
-        fam=(1, 2),
-        beh=(None, 2),
-        unk=(None, 2),
-        pack=(None, 1),
-        vuln=(None, 1),
-    )
-    labeler_b = Labeler(
-        SOREL_CLARAVY_CACHE,
-        SOREL_AVCLASS_CACHE,
-        SOREL_AVCLASS_FAMILY_CACHE,
-        filter_args_b
-    )
-    labeler_b = labeler_b()
-
-    for k in KEYS:
-        print(f"{k=} {labeler_a.view(k) == labeler_b.view(k)=}")
-
-    print("Done")
+    if args.run_labeler:
+        filter_args = FilterArgs(
+            class_=(None, 2),
+            file=(1, 2),
+            fam=(1, 2),
+            beh=(None, 2),
+            unk=(None, 2),
+            pack=(None, 1),
+            vuln=(None, 1),
+        )
+        labeler = Labeler(
+            claravy_cache,
+            avclass_cache,
+            avclass_family_cache,
+            filter_args,
+            args.use_cache,
+        )
+        labeler = labeler()
 
 
 if __name__ == "__main__":
-    test()
-    # main()
+    main()
