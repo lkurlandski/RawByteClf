@@ -477,7 +477,7 @@ class Test_GetSorelFileLabelMap(unittest.TestCase):
         files_and_labels = {f: l for f, l in files_and_labels.items() if l is not None}
         return files_and_labels
 
-    def test_file_label_map(self, files_and_labels: dict, single_label: bool):
+    def check_file_label_map(self, files_and_labels: dict, single_label: bool):
         for file, label in files_and_labels.items():
             self.assertIsInstance(file, (os.PathLike, Path, str))
             self.assertIsInstance(label, tuple)
@@ -491,33 +491,33 @@ class Test_GetSorelFileLabelMap(unittest.TestCase):
 
     def test_fam(self):
         files_and_labels = self.get_sorel_file_label_map("fam")
-        self.test_file_label_map(files_and_labels, single_label=True)
+        self.check_file_label_map(files_and_labels, single_label=True)
 
     def test_file(self):
         files_and_labels = self.get_sorel_file_label_map("file")
-        self.test_file_label_map(files_and_labels, single_label=True)
+        self.check_file_label_map(files_and_labels, single_label=True)
 
     def test_class_(self):
         files_and_labels = self.get_sorel_file_label_map("class_")
-        self.test_file_label_map(files_and_labels, single_label=False)
+        self.check_file_label_map(files_and_labels, single_label=False)
 
     def test_beh(self):
         files_and_labels = self.get_sorel_file_label_map("beh")
-        self.test_file_label_map(files_and_labels, single_label=False)
+        self.check_file_label_map(files_and_labels, single_label=False)
 
     def test_pack(self):
         files_and_labels = self.get_sorel_file_label_map("pack")
-        self.test_file_label_map(files_and_labels, single_label=False)
+        self.check_file_label_map(files_and_labels, single_label=False)
 
     @unittest.skip("Skipping test_unk because it is not implemented.")
     def test_unk(self):
         files_and_labels = self.get_sorel_file_label_map("unk")
-        self.test_file_label_map(files_and_labels, single_label=False)
+        self.check_file_label_map(files_and_labels, single_label=False)
 
     @unittest.skip("Skipping test_vuln because it is not implemented.")
     def test_vuln(self):
         files_and_labels = self.get_sorel_file_label_map("vuln")
-        self.test_file_label_map(files_and_labels, single_label=False)
+        self.check_file_label_map(files_and_labels, single_label=False)
 
 
 if __name__ == "__main__":
