@@ -1266,15 +1266,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         label2id=materials.label2id,
         problem_type=materials.problem_type,
     )
-    try:
-        # FIXME: a TypeError gets thrown here for clf-sor-fam.
-        # The cause is seemingly due to a class's name being None.
-        # When being sorted in a json dumps function, this causes and error.
-        print_config(config)
-    except TypeError as err:
-        print(err)
-        pprint(config.__dict__)
-        raise err
+    print_config(config)
     print(BR, flush=True)
 
     pad_to_multiple_of = PAD_TO
