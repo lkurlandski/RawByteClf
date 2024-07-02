@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple, Union, Literal
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, functional as F
 
 from transformers.activations import ACT2FN
 from transformers.modeling_utils import PreTrainedModel
@@ -45,6 +45,7 @@ class MambaConfig(PretrainedConfig):
         vocab_size: int = 50280,
         embedding_size: int = 768,
         hidden_size: int = 768,
+        mlp_hidden_size: int = -1,
         state_size: int = 16,
         num_hidden_layers: int = 32,
         layer_norm_epsilon: float = 1e-5,
@@ -72,6 +73,7 @@ class MambaConfig(PretrainedConfig):
 
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
+        self.mlp_hidden_size = mlp_hidden_size
         self.embedding_size = embedding_size
         self.state_size = state_size
         self.num_hidden_layers = num_hidden_layers
@@ -966,11 +968,19 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
+        self.config: MambaConfig
         if self.config.mode == "uni":
             self.backbone = MambaModel(config)
         elif self.config.mode == "bi":
             self.backbone = BiMambaModel(config)
-        self.clf_head = nn.Linear(config.hidden_size, config.num_labels)
+
+        if self.config.mlp_hidden_size > 0:
+            self.clf_neck = nn.Linear(config.hidden_size, config.mlp_hidden_size)
+            self.clf_head = nn.Linear(config.mlp_hidden_size, config.num_labels)
+        else:
+            self.clf_neck = None
+            self.clf_head = nn.Linear(config.hidden_size, config.num_labels)
+
         self.post_init()
 
     def get_input_embeddings(self):
@@ -1007,7 +1017,13 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             use_cache=use_cache,
         )
         hidden_states = mamba_outputs[0]
-        logits = self.clf_head(hidden_states.to(self.clf_head.weight.dtype)).float()
+
+        if self.config.mlp_hidden_size > 0:
+            logits = self.clf_neck(hidden_states.to(self.clf_neck.weight.dtype)).float()
+            logits = F.leaky_relu(logits)
+            logits = self.clf_head(logits)
+        else:
+            logits = self.clf_head(hidden_states.to(self.clf_head.weight.dtype)).float()
 
         batch_size = input_ids.shape[0]
         sequence_lengths = torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
