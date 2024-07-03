@@ -42,8 +42,8 @@ DATA_READ_BYTES = 2 ** 14
 MODEL_NAME_AND_ARCH_CONFIGS = {
     # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8, "mlp_hidden_size": -1}',  # 0.50 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 128, "mlp_hidden_size": -1}',  # 0.53 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 2.70 M
-    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": 256}',  # ?.?? M
+    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 2.70 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": 256}',  # 2.80 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 128, "mlp_hidden_size": -1}',  # 2.76 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 3.57 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 3.64 M
@@ -66,8 +66,8 @@ SEEDS = [0, 1, 2, 3, 4]
 # FIXME: remove!
 TASKS = [
   "clf-bod",
-  "clf-sor-beh",
-  "clf-sor-class_"
+  #"clf-sor-beh",
+  #"clf-sor-class_"
 ]
 
 
@@ -233,7 +233,7 @@ def get_body_clf(
     --evals_per_epoch={10 if args.debug else 1} \\
     --dataloader_num_workers={0 if args.debug else args.clf_ndataloaderworkers} \\
     --optim="adamw_torch" \\
-    --learning_rate="1e-3" \\
+    --learning_rate="1e-4" \\
     --lr_scheduler_type="linear" \\
     --weight_decay=0.01 \\
     --adam_beta1=0.900 \\
