@@ -210,6 +210,7 @@ def get_body_clf(
 
     --task='{downstream_task}' \\
     --pretraining_task='{pretraining_task}' \\
+    --pretraining_checkpoint=-1 \\
     --tr_size=0.85 \\
     --vl_size=0.15 \\
     --ts_size=0.0 \\
@@ -233,7 +234,7 @@ def get_body_clf(
     --evals_per_epoch={10 if args.debug else 1} \\
     --dataloader_num_workers={0 if args.debug else args.clf_ndataloaderworkers} \\
     --optim="adamw_torch" \\
-    --learning_rate="1e-4" \\
+    --learning_rate="1e-5" \\
     --lr_scheduler_type="linear" \\
     --weight_decay=0.01 \\
     --adam_beta1=0.900 \\

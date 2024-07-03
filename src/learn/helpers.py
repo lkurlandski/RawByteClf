@@ -154,6 +154,7 @@ class Args:
 
     # Finetuning
     pretraining_task: Optional[str] = field(default=None)
+    pretraining_checkpoint: str = field(default="-1")
     ft_freeze_positional_embeddings: bool = field(default=False)
     ft_duplicate_positional_embeddings: bool = field(default=False)
     ft_initialize_positional_embeddings: bool = field(default=False)
@@ -175,6 +176,8 @@ class Args:
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
 
         self.pretraining_task = str_to_str(self.pretraining_task)
+        if self.pretraining_checkpoint.strip().lstrip("-").isdigit():
+            self.pretraining_checkpoint = int(self.pretraining_checkpoint)
         self.weighted_loss = str_to_str(self.weighted_loss)
 
         # Parse the architecture configuration from JSON or from a file.
@@ -332,7 +335,9 @@ class OutputHelper:
         return s
 
     @staticmethod
-    def get_finetuning_model_name_or_path(pretraining_task: str, **kwds) -> str:
+    def get_finetuning_model_name_or_path(
+        pretraining_task: str, pretraining_checkpoint: str | int = -1, **kwds,
+    ) -> str:
         oh = OutputHelper(**kwds)
 
         p = oh.model_path / f"task--{pretraining_task}"
@@ -344,11 +349,19 @@ class OutputHelper:
         if len(completed) > 1:
             raise FileNotFoundError(f"Multiple completed experiments found for {oh.task_path=}")
 
-        model_name_or_path = get_highest_path(completed[0] / "checkpoints", lstrip="checkpoint-")
+        path = completed[0] / "checkpoints"
+        if isinstance(pretraining_checkpoint, int):
+            model_name_or_path = get_highest_path(path, lstrip="checkpoint-", idx=pretraining_checkpoint)
+        else:
+            model_name_or_path = path / pretraining_checkpoint
+
+        if not model_name_or_path.exists():
+            raise FileNotFoundError(model_name_or_path.as_posix())
+
         return model_name_or_path.as_posix()
 
     @classmethod
-    def from_path(cls, path: Path) -> OutputHelper:
+    def from_path(cls, path: Path) -> OutputHelper:  # FIXME: this is broken.
         if not path.exists():
             raise FileNotFoundError(f"Path {path} does not exist.")
         if not path.name == OutputHelper.FINAL_PATH:

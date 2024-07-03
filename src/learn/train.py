@@ -291,7 +291,7 @@ class TrainingArguments(HfTrainingArguments):
         # by the transformers.TrainingArguments. This let's us pass in "true" from the command line,
         # and have the flag be set to True, i.e., resume training from the last checkpoint.
         if isinstance(self.resume_from_checkpoint, str) and self.resume_from_checkpoint.lower() == "true":
-            self.resume_from_checkpoint = True
+            self.resume_from_checkpoint = True  # FIXME: Instance of 'bool' has no 'lower' member (no-member)
 
         # If no metric is supplied, eval_loss is a good one :)
         if self.metric_for_best_model is None:
@@ -1163,7 +1163,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             pretrain_kwds["arch_config"]["mlp_hidden_size"] = -1
         print(f"{args.pretraining_task=}")  # FIXME
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
-            args.pretraining_task, **pretrain_kwds,
+            args.pretraining_task, args.pretraining_checkpoint, **pretrain_kwds,
         )
         kwds["model_name_or_path"] = args.model_name_or_path
     oh = OutputHelper(**kwds)

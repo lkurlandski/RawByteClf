@@ -190,7 +190,7 @@ def get_highest_path(
     path: Collection[Path] | Path,
     lstrip: Optional[str] = None,
     rstrip: Optional[str] = None,
-    lowest: bool = False,
+    idx: int = -1,
 ) -> Path:
     """
     Get the highest/lowest numerically indexed path from a directory or a collection of paths.
@@ -208,7 +208,6 @@ def get_highest_path(
         return int(s)
 
     files = list(Path(path).iterdir()) if isinstance(path, (Path, str)) else path
-    idx = 0 if lowest else -1
     return list(sorted(files, key=key))[idx]
 
 
