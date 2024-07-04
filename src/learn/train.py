@@ -798,6 +798,10 @@ def get_config(
             vocab_size=vocab_size,
             max_position_embeddings=max_posititional_embeddings,
             pad_token_id=tokenizer.pad_token_id,
+            bos_token_id=tokenizer.bos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            cls_token_id=tokenizer.bos_token_id,
+            sep_token_id=tokenizer.eos_token_id,
             tensor_log_path=tensor_log_path,
         )
         return HRRConfig(**kwds)
@@ -865,12 +869,21 @@ def get_model(
     if model_name_or_path is not None and Path(model_name_or_path).exists():
         print("Getting model from disk.")
         model_name = object_to_model_name(model_name_or_path)
+        # This is an extensive procedure to ensure the weights of the classification head are
+        # initialized correctly. Previously, loading the model from disk was performed like this:
+        # >>> ModelNameForSequenceClassification.from_pretrained(model_name_or_path, **kwds)
+        # Namely, the classification config was not used and the config found in the checkpoint path
+        # (e.g., the config for language modeling) was used instead. This resulted in the weights
+        # not being initialized correctly (they were set with massive floating point values). It
+        # appears that loading the checkpoint like this:
+        # >>> ModelNameForSequenceClassification.from_pretrained(model_name_or_path, config=config),
+        # where `config` is a config for classification, prevents this from happening.
         if task[0:3] == "clf":
             if model_name == "hrrformer":
                 model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = HRRConfig.from_pretrained(model_name_or_path)
                 _head_names = ["classifier"]
-                raise NotImplementedError("Need to check the head weights.")
+                # raise NotImplementedError("Need to check the head weights.")
             elif model_name == "rwkv":
                 model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = RwkvConfig.from_pretrained(model_name_or_path)
@@ -1354,7 +1367,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         else:
             raise RuntimeError()
     print(f"weight=\n{pformat(weight)}\n{BR}")
-    ModelTrainer = Trainer
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
     if not args.streaming:  # dataset has been processed, so we disable thread-based parallelism
