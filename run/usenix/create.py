@@ -51,7 +51,7 @@ MODEL_NAME_AND_ARCH_CONFIGS = {
     # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 384, "mlp_hidden_size": -1}',  # 11.8 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 8, "mlp_hidden_size": -1}',  # 27.3 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 512, "mlp_hidden_size": -1}',  # 27.4 M
-    "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
+    # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
     # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 256}',  # 67.7 M
 }
 PRETRAINING_TASKS = [None, "clm-sor"]
@@ -60,7 +60,7 @@ TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
 MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
-SEEDS = [0, 1, 2, 3, 4]
+SEEDS = [0, 1, 2]
 
 
 # FIXME: remove!
@@ -210,7 +210,7 @@ def get_body_clf(
 
     --task='{downstream_task}' \\
     --pretraining_task='{pretraining_task}' \\
-    --pretraining_checkpoint=-1 \\
+    --pretraining_checkpoint=0 \\
     --tr_size=0.85 \\
     --vl_size=0.15 \\
     --ts_size=0.0 \\
@@ -234,7 +234,7 @@ def get_body_clf(
     --evals_per_epoch={10 if args.debug else 1} \\
     --dataloader_num_workers={0 if args.debug else args.clf_ndataloaderworkers} \\
     --optim="adamw_torch" \\
-    --learning_rate="1e-5" \\
+    --learning_rate="1e-3" \\
     --lr_scheduler_type="linear" \\
     --weight_decay=0.01 \\
     --adam_beta1=0.900 \\
@@ -269,7 +269,7 @@ def get_jobname(
         str(tr_samples_per_class),
         str(seed),
     ]
-    return "--".join(args)
+    return "chck0--" + "--".join(args)
 
 
 def compute_mem(
@@ -439,6 +439,9 @@ def main():
         # Classification
         for task in TASKS:
             weighted_loss = "sample_reweighting" if task in TASKS_SCMF else None
+
+            # FIXME: due to a (stupid) bug, nothing has actually been run with the weighted loss.
+            weighted_loss = None
 
             for pretraining_task in PRETRAINING_TASKS:
                 if model_name in ("malconv", "malconv2") and pretraining_task is not None:
