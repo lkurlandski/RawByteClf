@@ -13,41 +13,29 @@ from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 import torch.nn.functional as F
 from transformers import PreTrainedModel, PretrainedConfig
+from transformers.activations import ACT2FN
 from transformers.models.bert.modeling_bert import (
-    BertEmbeddings,
+    BertEmbeddings as _BertEmbeddings,
+    BertPredictionHeadTransform as _BertPredictionHeadTransform,
+    BertLMPredictionHead as _BertLMPredictionHead,
+    BertOnlyMLMHead as _BertOnlyMLMHead,
     BertSelfOutput,
     BertIntermediate,
     BertOutput,
     BertPooler,
-    BertOnlyMLMHead,
-    BertOnlyNSPHead,
-    BertPreTrainingHeads,
-    BertForPreTrainingOutput,
 )
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     BaseModelOutputWithPoolingAndCrossAttentions,
-    CausalLMOutputWithCrossAttentions,
     MaskedLMOutput,
-    MultipleChoiceModelOutput,
-    NextSentencePredictorOutput,
-    QuestionAnsweringModelOutput,
     SequenceClassifierOutput,
-    TokenClassifierOutput,
 )
 from transformers.pytorch_utils import (
     apply_chunking_to_forward,
     find_pruneable_heads_and_indices,
     prune_linear_layer,
 )
-from transformers.utils import (
-    add_code_sample_docstrings,
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-)
-
+from transformers.utils import logging
 from src.utils import log_tensor
 from src.architectures.utils import binding, unbinding, cosine_similarity
 
@@ -77,6 +65,7 @@ class HRRConfig(PretrainedConfig):
         self,
         vocab_size: int = 30522,
         hidden_size: int = 768,
+        embedding_size: int = 768,
         num_hidden_layers: int = 12,
         num_attention_heads: int = 12,
         intermediate_size: int = 3072,
@@ -113,6 +102,7 @@ class HRRConfig(PretrainedConfig):
 
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
+        self.embedding_size = embedding_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.hidden_act = hidden_act
@@ -153,12 +143,59 @@ class HRRConfig(PretrainedConfig):
             raise ValueError(f"Invalid value {attention_score_scale_factor=}")
 
 
+class BertEmbeddings(_BertEmbeddings):
+    """Construct the embeddings from word, position and token_type embeddings."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id)
+        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.embedding_size)
+        self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.embedding_size)
+
+        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
+        # any TensorFlow checkpoint file
+        self.LayerNorm = nn.LayerNorm(config.embedding_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        # position_ids (1, len position emb) is contiguous in memory and exported when serialized
+        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+        self.register_buffer(
+            "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        )
+        self.register_buffer(
+            "token_type_ids", torch.zeros(self.position_ids.size(), dtype=torch.long), persistent=False
+        )
+
+
+class BertPredictionHeadTransform(_BertPredictionHeadTransform):
+    def __init__(self, config):
+        super().__init__(config)
+        self.dense = nn.Linear(config.hidden_size, config.embedding_size)
+        if isinstance(config.hidden_act, str):
+            self.transform_act_fn = ACT2FN[config.hidden_act]
+        else:
+            self.transform_act_fn = config.hidden_act
+        self.LayerNorm = nn.LayerNorm(config.embedding_size, eps=config.layer_norm_eps)
+
+
+class BertLMPredictionHead(_BertLMPredictionHead):
+    def __init__(self, config):
+        super().__init__(config)
+        self.transform = BertPredictionHeadTransform(config)
+        self.decoder = nn.Linear(config.embedding_size, config.vocab_size, bias=False)
+        self.bias = nn.Parameter(torch.zeros(config.vocab_size))
+        self.decoder.bias = self.bias
+
+
+class BertOnlyMLMHead(_BertOnlyMLMHead):
+    def __init__(self, config):
+        super().__init__(config)
+        self.predictions = BertLMPredictionHead(config)
+
+
 class HRRSelfAttention(nn.Module):
     def __init__(self, config: HRRConfig, position_embedding_type=None):
         super().__init__()
-        if config.hidden_size % config.num_attention_heads != 0 and not hasattr(
-            config, "embedding_size"
-        ):
+        if config.hidden_size % config.num_attention_heads != 0:
             raise ValueError(
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
                 f"heads ({config.num_attention_heads})"
@@ -649,6 +686,10 @@ class HRRModel(HRRPreTrainedModel):
         self.config = config
 
         self.embeddings = BertEmbeddings(config)
+        if self.config.hidden_size != self.config.embedding_size:
+            self.embedding_projection = nn.Linear(config.embedding_size, config.hidden_size)
+        else:
+            self.embedding_projection = None
         self.encoder = HRREncoder(config)
 
         self.pooler = BertPooler(config) if add_pooling_layer else None
@@ -800,6 +841,13 @@ class HRRModel(HRRPreTrainedModel):
             inputs_embeds=inputs_embeds,
             past_key_values_length=past_key_values_length,
         )
+
+        # Linearly project the embedding output to the hidden size, if needed.
+        if self.embedding_projection is not None:
+            embedding_output = self.embedding_projection(embedding_output)
+        else:
+            embedding_output = embedding_output
+
         encoder_outputs = self.encoder(
             embedding_output,
             attention_mask=extended_attention_mask,
