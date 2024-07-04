@@ -68,6 +68,7 @@ class MambaConfig(PretrainedConfig):
         rescale_prenorm_residual: bool = False,
         use_cache: bool = True,
         mode: Literal["uni", "bi"] = "uni",
+        tie_directions: bool = True,
         **kwargs,
     ):
 
@@ -98,6 +99,7 @@ class MambaConfig(PretrainedConfig):
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
         self.mode = mode
+        self.tie_directions = tie_directions
 
         # We can still tie the word embeddings so long as we have an out projection layer
         # if self.hidden_size != self.embedding_size:  
@@ -605,7 +607,8 @@ class BiMambaModel(MambaPreTrainedModel):
         self.gradient_checkpointing = False
         self.norm_f = MambaRMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
         # Initialize weights and apply final processing
-        self.tie_forward_and_backward_weights()
+        if config.tie_directions:
+            self.tie_forward_and_backward_weights()
         self.post_init()
 
     def tie_forward_and_backward_weights(self):
