@@ -426,11 +426,10 @@ def key_for_sorting_jobnames(s: str) -> tuple:
 def main():
 
     for f in OUTPUT.glob("*.sh"):
-        if f.name[0:3] == "run":
-            continue
         f.unlink()
 
-    outfiles = []
+    outfiles_lm = []
+    outfiles_clf = []
 
     for model_name, arch_config in MODEL_NAME_AND_ARCH_CONFIGS.items():
         arch_config_dict: dict = eval(arch_config)
@@ -460,7 +459,7 @@ def main():
             outfile = OUTPUT / (jobname + ".sh")
             with open(outfile, "w") as fp:
                 fp.write(body)
-            outfiles.append(outfile)
+            outfiles_lm.append(outfile)
 
         # Classification
         for task in TASKS:
@@ -576,19 +575,35 @@ def main():
                                     outfile = OUTPUT / (jobname + ".sh")
                                     with open(outfile, "w") as fp:
                                         fp.write(body)
-                                    outfiles.append(outfile)
+                                    outfiles_clf.append(outfile)
 
-    # WARNING: the dependency and num GPU logic is dependent on the format of the jobname
-    with open(OUTPUT / "run.sh", "w") as fp:
-        for f in sorted(outfiles, key=lambda p: key_for_sorting_jobnames(str(p.name))):
+
+    # did not bother adding seeds or dependencies etc.
+    with open(OUTPUT / "run_lm.sh", "w") as fp:
+        for f in sorted(outfiles_lm, key=lambda p: key_for_sorting_jobnames(str(p.name))):
             f = f.relative_to("/home/lk3591/Documents/code/RawByteClf")
             f_parts = f.stem.split("--")
             if SYSTEM == System.RC:
-                # add a dependency based on the success of a previous job
-                # we assume that jobs that vary only by learning rate and seed will succeed or fail together
+                pre = "sbatch"
+                pos = ""
+            else:
+                gpus = [str(i) for i in range(args.lm_ngpus)]
+                pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
+                pos = f"&> ./logs/{f.stem}.out"
+            fp.write(f"{pre} {str(f)} {pos}\n")
+
+
+    # the dependency logic is dependent on the format of the jobname
+    with open(OUTPUT / "run_clf.sh", "w") as fp:
+        for f in sorted(outfiles_clf, key=lambda p: key_for_sorting_jobnames(str(p.name))):
+            f = f.relative_to("/home/lk3591/Documents/code/RawByteClf")
+            f_parts = f.stem.split("--")
+            learning_rate = float(f_parts[-2])
+            seed = int(f_parts[-1])
+
+            if SYSTEM == System.RC:
+                # jobs that differ only by learning rate and seed will succeed or fail together, so add a dependency
                 if args.dependencies:
-                    learning_rate = float(f_parts[-2])
-                    seed = int(f_parts[-1])
                     if learning_rate == LEARNING_RATES[0] and seed == SEEDS[0]:
                         pre = "jobid=$(sbatch"
                         pos = "| awk '{print $4}')"
@@ -599,14 +614,13 @@ def main():
                     pre = "sbatch"
                     pos = ""
             else:
-                if "clm" in f_parts[1] or "mlm" in f_parts[1]:
-                    gpus = [str(i) for i in range(args.lm_ngpus)]
-                else:
-                    gpus = [str(i) for i in range(args.clf_ngpus)]
+                gpus = [str(i) for i in range(args.clf_ngpus)]
                 pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
                 pos = f"&> ./logs/{f.stem}.out"
-            if f.stem[-1] == "0":
-                fp.write(f"# {f.stem[0:-3]}\n")
+
+            # add a little comment to make reading the run file easier.
+            if learning_rate == LEARNING_RATES[0] and seed == SEEDS[0]:
+                fp.write(f"# {'--'.join(f_parts[0:-2])}\n")
             fp.write(f"{pre} {str(f)} {pos}\n")
 
 
