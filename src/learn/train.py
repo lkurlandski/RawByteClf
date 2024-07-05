@@ -51,6 +51,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
+from accelerate.utils import DistributedDataParallelKwargs
 import datasets
 from datasets import (
     DatasetDict,
@@ -88,6 +89,7 @@ from transformers import (
     EarlyStoppingCallback,
 )
 from transformers import TrainingArguments as HfTrainingArguments
+from transformers.training_args import ParallelMode
 from transformers.trainer_utils import (
     BestRun,
     PredictionOutput,
@@ -101,6 +103,7 @@ from transformers.utils import (
     is_ninja_available,
     is_torch_bf16_gpu_available,
     is_torch_tf32_available,
+    is_torch_neuroncore_available,
 )
 try:
     from ray import tune
@@ -437,6 +440,41 @@ class UtilCallback(TrainerCallback):
     def on_step_end(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
         self._time_step_end = time.time()
         self._time_step_deltas.append(self._time_step_end - self._time_step_start)
+
+
+class StaticGraphTrainer(Trainer):
+    """
+    A small modification to the original Trainer class that adds
+    static_graph=True to the downstream DistributedDataParallel wrapping.
+    """
+
+    def _wrap_model(self, model, training=True, dataloader=None):
+        model = super()._wrap_model(model, training, dataloader)
+
+        if self.args.parallel_mode == ParallelMode.DISTRIBUTED:
+            if is_torch_neuroncore_available():
+                return model
+            kwargs = {}
+            if self.args.ddp_find_unused_parameters is not None:
+                kwargs["find_unused_parameters"] = self.args.ddp_find_unused_parameters
+            elif isinstance(model, PreTrainedModel):
+                # find_unused_parameters breaks checkpointing as per
+                # https://github.com/huggingface/transformers/pull/4659#issuecomment-643356021
+                kwargs["find_unused_parameters"] = not model.is_gradient_checkpointing
+            else:
+                kwargs["find_unused_parameters"] = True
+
+            if self.args.ddp_bucket_cap_mb is not None:
+                kwargs["bucket_cap_mb"] = self.args.ddp_bucket_cap_mb
+
+            if self.args.ddp_broadcast_buffers is not None:
+                kwargs["broadcast_buffers"] = self.args.ddp_broadcast_buffers
+
+            kwargs["static_graph"] = True
+
+            self.accelerator.ddp_handler = DistributedDataParallelKwargs(**kwargs)
+
+        return model
 
 
 class ImbalancedClassificationTrainer(Trainer):
@@ -1347,14 +1385,21 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{callbacks=}")
     print(BR)
 
-    weight = None
-    ModelTrainer = Trainer
+
+    # TODO: this is a fucking train wreck waiting to happen. Refactor and document.
+    # Note that the Trainer needs to be last from the MRO to work properly.
+    model_trainer_base_classes = [Trainer]
+
+    if (isinstance(config, MambaConfig) and config.mode == "bi" and config.tie_directions
+        and training_arguments.parallel_mode == ParallelMode.DISTRIBUTED):
+        model_trainer_base_classes.insert(0, StaticGraphTrainer)
+
     if args.weighted_loss is not None and args.weighted_loss.lower() != "none":
+        model_trainer_base_classes.insert(0, ImbalancedClassificationTrainer)
         if materials.problem_type == "single_label_classification":
             if args.weighted_loss == "sample_reweighting":
                 weight = sample_reweighting(materials.dist_tr, beta=args.beta)
-                weight_tensor = tensor([weight[l] for l in materials.label2id])
-                ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight_tensor)
+                weight = tensor([weight[l] for l in materials.label2id])
             else:
                 raise ValueError(f"Unrecognized weighted loss value: {args.weighted_loss=}")
         elif materials.problem_type == "multi_label_classification":
@@ -1363,8 +1408,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             raise NotImplementedError(f"Weighted loss not implemented for {materials.problem_type=}")
         else:
             raise ValueError(f"Unrecognized problem type: {materials.problem_type=}")
+
+    ModelTrainer = type("ModelTrainer", tuple(model_trainer_base_classes), {})
+    if ImbalancedClassificationTrainer in model_trainer_base_classes:
+        ModelTrainer = partial(ModelTrainer, weight=weight)
+
+    print(f"{model_trainer_base_classes=}")
     print(f"{ModelTrainer=}")
-    print(f"weight=\n{pformat(weight)}")
     print(BR)
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
