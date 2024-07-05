@@ -45,7 +45,8 @@ MODEL_NAME_AND_ARCH_CONFIGS = {
     # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8, "mlp_hidden_size": -1}',  # 0.50 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 128, "mlp_hidden_size": -1}',  # 0.53 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 2.70 M
-    "mamba": '{"mode": "bi", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 2.70 M
+    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 2.70 M
+    "mamba": '{"mode": "bi", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 2.88 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": 256}',  # 2.80 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 128, "mlp_hidden_size": -1}',  # 2.76 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 3.57 M
@@ -54,16 +55,14 @@ MODEL_NAME_AND_ARCH_CONFIGS = {
     # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 384, "mlp_hidden_size": -1}',  # 11.8 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 8, "mlp_hidden_size": -1}',  # 27.3 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 512, "mlp_hidden_size": -1}',  # 27.4 M
-    "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
+    # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
     # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 256}',  # 67.7 M
 }
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
-# PRETRAINING_TASKS = [None, "mlm-sor"]
 PRETRAINING_CHECKPOINTS = [None, -1, 0]
 TASKS_SCMF = ["clf-bod", "clf-sor-fam", "clf-sor-file"]
 TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
-# TASKS = ["clf-bod"]
 MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
 LEARNING_RATES = [1e-3, 1e-4, 1e-5]
