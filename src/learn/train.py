@@ -1348,25 +1348,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR)
 
     weight = None
+    ModelTrainer = Trainer
     if args.weighted_loss is not None and args.weighted_loss.lower() != "none":
-        if materials.problem_type == "multi_label_classification":
-            raise NotImplementedError()
-        elif materials.problem_type == "single_label_classification":
+        if materials.problem_type == "single_label_classification":
             if args.weighted_loss == "sample_reweighting":
                 weight = sample_reweighting(materials.dist_tr, beta=args.beta)
-                ModelTrainer = partial(
-                    ImbalancedClassificationTrainer,
-                    weight=tensor([weight[l] for l in materials.label2id]),
-                )
+                weight_tensor = tensor([weight[l] for l in materials.label2id])
+                ModelTrainer = partial(ImbalancedClassificationTrainer, weight=weight_tensor)
             else:
-                raise NotImplementedError()
+                raise ValueError(f"Unrecognized weighted loss value: {args.weighted_loss=}")
+        elif materials.problem_type == "multi_label_classification":
+            raise NotImplementedError(f"Weighted loss not implemented for {materials.problem_type=}")
         elif materials.problem_type is None:
-            # TODO: use the first ~1000 samples to get an idea of the byte-distribution. Then use
-            # one of the weighted CE strategies.
-            raise NotImplementedError()
+            raise NotImplementedError(f"Weighted loss not implemented for {materials.problem_type=}")
         else:
-            raise RuntimeError()
-    print(f"weight=\n{pformat(weight)}\n{BR}")
+            raise ValueError(f"Unrecognized problem type: {materials.problem_type=}")
+    print(f"{ModelTrainer=}")
+    print(f"weight=\n{pformat(weight)}")
+    print(BR)
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
     if not args.streaming:  # dataset has been processed, so we disable thread-based parallelism
