@@ -2,6 +2,7 @@
 
 import math
 from dataclasses import dataclass
+import time
 from typing import Any, Dict, Optional, Tuple, Union, Literal
 
 import torch
@@ -613,23 +614,29 @@ class BiMambaModel(MambaPreTrainedModel):
 
     def tie_forward_and_backward_weights(self):
         for i in range(self.config.num_hidden_layers):
-            block_forw: MambaBlock = self.layers_forw[i]
-            block_back: MambaBlock = self.layers_back[i]
+            self._tie_or_clone_weights(self.layers_forw[i].mixer.in_proj, self.layers_back[i].mixer.in_proj)
+            self._tie_or_clone_weights(self.layers_forw[i].mixer.out_proj, self.layers_back[i].mixer.out_proj)
+            self._tie_or_clone_weights(self.layers_forw[i].mixer.x_proj, self.layers_back[i].mixer.x_proj)
 
-            mixer_forw: MambaMixer = block_forw.mixer
-            mixer_back: MambaMixer = block_back.mixer
-
-            # TODO: verify that we're tying the correct weights together...
-            mixer_forw.in_proj.weight = mixer_back.in_proj.weight
-            mixer_forw.out_proj.weight = mixer_back.out_proj.weight
-            mixer_forw.x_proj.weight = mixer_back.x_proj.weight
+            # Was using this before, but self._tie_or_clone_weights handles biases and other stuff...
+            # block_forw: MambaBlock = self.layers_forw[i]
+            # block_back: MambaBlock = self.layers_back[i]
+            # mixer_forw: MambaMixer = block_forw.mixer
+            # mixer_back: MambaMixer = block_back.mixer
+            # mixer_forw.in_proj.weight = mixer_back.in_proj.weight
+            # mixer_forw.out_proj.weight = mixer_back.out_proj.weight
+            # mixer_forw.x_proj.weight = mixer_back.x_proj.weight
 
     def prepare_input_for_backward_model(self, input_ids: torch.LongTensor) -> torch.LongTensor:
         """
         Assumes the input is structured as follows:
 
         <bos> <token1> <token2> ... <eos> <pad> <pad>
+
+        Using a batch size of 32, and a sequence length of 16384, this seemed to take about 0.0075s/call.
+        this would result in about a 4 minute slow down to process 1M samples in batches of 32.
         """
+        # t_0 = time.time()
 
         PAD_TOKEN_ID = self.config.pad_token_id
         BOS_TOKEN_ID = self.config.bos_token_id
@@ -659,6 +666,8 @@ class BiMambaModel(MambaPreTrainedModel):
                 tensors.append(torch.full((L - length,), PAD_TOKEN_ID, device=DEVICE, dtype=DTYPE))
 
             reversed_input_ids[i] = torch.cat(tensors)
+
+        # print(f"Reversed {B} inputs in: {time.time() - t_0:.4f}s")
 
         return reversed_input_ids
 
