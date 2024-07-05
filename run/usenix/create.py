@@ -70,6 +70,11 @@ LEARNING_RATES = [1e-3, 1e-4, 1e-5]
 SEEDS = [0, 1, 2]
 
 
+PRETRAINING_TASKS = [None, "mlm-sor"]
+PRETRAINING_CHECKPOINTS = [None, 0, -1]
+TASKS = ["clf-bod"]
+
+
 def get_body_lm(
     jobname: str,
     downstream_task: str,
@@ -477,6 +482,9 @@ def main():
                 for pretraining_checkpoint in PRETRAINING_CHECKPOINTS:
                     # pretraining_checkpoint does not make sense for classification from scratch
                     if pretraining_task is None and pretraining_checkpoint is not None:
+                        continue
+                    # need to specify a pretraining checkpoint if finetuning
+                    if pretraining_task is not None and pretraining_checkpoint is None:
                         continue
 
                     for tr_samples_per_class in TR_SAMPLES_PER_CLASS:
