@@ -4,17 +4,19 @@ Create pretraining, classification, and finetuning bash scripts.
 
 from argparse import ArgumentParser
 from enum import Enum
+import math
 import os
 from pathlib import Path
 from pprint import pprint
 import sys
 from typing import Optional
+import warnings
 
 
 parser = ArgumentParser()
-parser.add_argument("--clm_ngpus", type=int, default=1)
-parser.add_argument("--clm_ntasks", type=int, default=4)
-parser.add_argument("--clm_ndataloaderworkers", type=int, default=3)
+parser.add_argument("--lm_ngpus", type=int, default=1)
+parser.add_argument("--lm_ntasks", type=int, default=4)
+parser.add_argument("--lm_ndataloaderworkers", type=int, default=3)
 parser.add_argument("--clf_ngpus", type=int, default=1)
 parser.add_argument("--clf_ntasks", type=int, default=4)
 parser.add_argument("--clf_ndataloaderworkers", type=int, default=3)
@@ -42,7 +44,8 @@ DATA_READ_BYTES = 2 ** 14
 MODEL_NAME_AND_ARCH_CONFIGS = {
     # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8, "mlp_hidden_size": -1}',  # 0.50 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 128, "mlp_hidden_size": -1}',  # 0.53 M
-    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 2.70 M
+    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 2.70 M
+    "mamba": '{"mode": "bi", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 2.70 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": 256}',  # 2.80 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 128, "mlp_hidden_size": -1}',  # 2.76 M
     # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 3.57 M
@@ -54,21 +57,17 @@ MODEL_NAME_AND_ARCH_CONFIGS = {
     "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
     # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 256}',  # 67.7 M
 }
-PRETRAINING_TASKS = [None, "clm-sor"]
+PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
+# PRETRAINING_TASKS = [None, "mlm-sor"]
+PRETRAINING_CHECKPOINTS = [None, -1, 0]
 TASKS_SCMF = ["clf-bod", "clf-sor-fam", "clf-sor-file"]
 TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
+# TASKS = ["clf-bod"]
 MIN_FREQ = [None, 100]
-TR_SAMPLES_PER_CLASS = [None,]# 1, 5]
+TR_SAMPLES_PER_CLASS = [None, 1, 5]
+LEARNING_RATES = [1e-3, 1e-4, 1e-5]
 SEEDS = [0, 1, 2]
-
-
-# FIXME: remove!
-TASKS = [
-  "clf-bod",
-  #"clf-sor-beh",
-  #"clf-sor-class_"
-]
 
 
 def get_body_lm(
@@ -87,9 +86,9 @@ def get_body_lm(
     #SBATCH --time={'00-01:00:00' if args.debug else '01-00:00:00'}
     #SBATCH --nodes=1
     #SBATCH --cpus-per-task=1
-    #SBATCH --ntasks={1 if args.debug else args.clm_ntasks}
+    #SBATCH --ntasks={1 if args.debug else args.lm_ntasks}
     #SBATCH --mem={'16G' if args.debug else '64G'}
-    #SBATCH --gres=gpu:a100:{args.clm_ngpus}
+    #SBATCH --gres=gpu:a100:{args.lm_ngpus}
 
 
     source ~/anaconda3/etc/profile.d/conda.sh
@@ -97,7 +96,7 @@ def get_body_lm(
     {"module unload blindfold" if SYSTEM == System.RC else ""}
 
 
-    {"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(args.clm_ngpus) + " " + DOUBLE_BACKSLASH if args.clm_ngpus > 1 else ""}
+    {"torchrun --no-python --nnodes=1 --nproc_per_node=" + str(args.lm_ngpus) + " " + DOUBLE_BACKSLASH if args.lm_ngpus > 1 else ""}
     python -u \\
     src/learn/train.py \\
     --root="{ROOT}" \\
@@ -121,14 +120,14 @@ def get_body_lm(
     --evaluation_strategy="steps" \\
     --num_train_epochs=1 \\
     --logging_steps=1 \\
-    --save_steps={1 if args.debug else 256} \\
-    --eval_steps={1 if args.debug else 256} \\
-    --dataloader_num_workers={0 if args.debug else args.clm_ndataloaderworkers} \\
+    --save_steps={1 if args.debug else 128} \\
+    --eval_steps={1 if args.debug else 512} \\
+    --dataloader_num_workers={0 if args.debug else args.lm_ndataloaderworkers} \\
     --optim="adamw_torch" \\
     --learning_rate="1e-3" \\
     --lr_scheduler_type="linear" \\
     --warmup_ratio=0.05 \\
-    --weight_decay=0.01 \\
+    --weight_decay=0.10 \\
     --adam_beta1=0.900 \\
     --adam_beta2=0.990 \\
     --max_grad_norm=1.0 \\
@@ -136,10 +135,9 @@ def get_body_lm(
     --model_name_or_path={model_name_or_path} \\
     --max_length={MAX_LENGTH} \\
     --data_read_bytes={DATA_READ_BYTES} \\
-    --per_device_train_batch_size={1024 // args.clm_ngpus} \\
+    --per_device_train_batch_size={1024 // args.lm_ngpus} \\
     --per_device_eval_batch_size={1024} \\
     --gradient_accumulation_steps={1} \\
-    --load_best_model_at_end \\
     --early_stopping=false \\
     --auto_find_batch_size_and_gradient_accumulation_steps \\
     --tf32=true \\
@@ -156,6 +154,7 @@ def get_body_clf(
     streaming: bool,
     downstream_task: str,
     pretraining_task: Optional[str],
+    pretraining_checkpoint: Optional[int],
     model_name_or_path: str,
     arch_config: str,
     seed: int,
@@ -165,6 +164,7 @@ def get_body_clf(
     min_freq: Optional[int],
     tr_samples_per_class: Optional[int],
     weighted_loss: Optional[str],
+    learning_rate: float,
 ) -> str:
 
     return f"""#!/bin/bash -l
@@ -210,7 +210,7 @@ def get_body_clf(
 
     --task='{downstream_task}' \\
     --pretraining_task='{pretraining_task}' \\
-    --pretraining_checkpoint=-1 \\
+    --pretraining_checkpoint={pretraining_checkpoint} \\
     --tr_size=0.85 \\
     --vl_size=0.15 \\
     --ts_size=0.0 \\
@@ -234,7 +234,7 @@ def get_body_clf(
     --evals_per_epoch={10 if args.debug else 1} \\
     --dataloader_num_workers={0 if args.debug else args.clf_ndataloaderworkers} \\
     --optim="adamw_torch" \\
-    --learning_rate="1e-3" \\
+    --learning_rate="{learning_rate}" \\
     --lr_scheduler_type="linear" \\
     --weight_decay=0.01 \\
     --adam_beta1=0.900 \\
@@ -256,17 +256,25 @@ def get_body_clf(
 def get_jobname(
     model_name: str,
     pretraining_task: Optional[str],
+    pretraining_checkpoint: Optional[int],
     downstream_task: str,
     min_freq: Optional[int],
     tr_samples_per_class: Optional[int],
+    learning_rate: float,
     seed: int,
 ) -> str:
+    learning_rate = math.log10(learning_rate)
+    if not learning_rate.is_integer():
+        raise ValueError()
+    learning_rate = f"1e{int(learning_rate)}"
     args = [
         model_name,
         str(pretraining_task),
+        str(pretraining_checkpoint),
         downstream_task,
         str(min_freq),
         str(tr_samples_per_class),
+        learning_rate,
         str(seed),
     ]
     return "--".join(args)
@@ -294,6 +302,7 @@ def compute_time(
     max_length: int,
     num_train_epochs: int,
     model_name: str,
+    bidirectional: bool = False,
 ) -> str:
     """Compute an estimation of time, then add a bit of buffer. 
 
@@ -314,6 +323,10 @@ def compute_time(
         if max_length == 2 ** 16:
             tr_time_per_sample = None
             vl_time_per_sample = None
+
+    if bidirectional:
+        tr_time_per_sample *= 2
+        vl_time_per_sample *= 2
 
     tr_time = tr_time_per_sample * tr_num_samples * num_train_epochs
     vl_time = vl_time_per_sample * vl_num_samples * num_train_epochs
@@ -371,6 +384,7 @@ def get_clf_alloc_time_and_mem(
     tr_samples_per_class: Optional[int],
     max_length: int,
     num_train_epochs: int,
+    bidrectional: bool,
 ) -> tuple[str, str]:
     key = (task, tr_samples_per_class, min_freq)
     tr_num_samples, vl_num_samples = TR_VL_SIZES[key]
@@ -386,6 +400,7 @@ def get_clf_alloc_time_and_mem(
         max_length,
         num_train_epochs,
         model_name,
+        bidrectional,
     )
 
     # Special cases:
@@ -400,6 +415,15 @@ def get_clf_alloc_time_and_mem(
     return tim, mem
 
 
+def key_for_sorting_jobnames(s: str) -> tuple:
+    out = s.split("-")
+    for i in range(len(out)):
+        o = out[i]
+        if o.isdigit():
+            out[i] == float(o)
+    return out
+
+
 def main():
 
     for f in OUTPUT.glob("*.sh"):
@@ -410,6 +434,7 @@ def main():
     outfiles = []
 
     for model_name, arch_config in MODEL_NAME_AND_ARCH_CONFIGS.items():
+        arch_config_dict: dict = eval(arch_config)
         gradient_checkpointing = True if model_name == "mamba" else False
 
         # Pretraining
@@ -418,12 +443,14 @@ def main():
                 continue
 
             jobname = get_jobname(
-                model_name,
-                None,
-                pretraining_task,
-                None,
-                None,
-                0,
+                model_name=model_name,
+                pretraining_task=None,
+                pretraining_checkpoint=None,
+                downstream_task=pretraining_task,
+                min_freq=None,
+                tr_samples_per_class=None,
+                learning_rate=1e-3,
+                seed=0,
             )
             body = get_body_lm(
                 jobname=jobname,
@@ -431,7 +458,7 @@ def main():
                 model_name_or_path=model_name,
                 arch_config=arch_config,
             )
-            outfile = (OUTPUT / jobname).with_suffix(".sh")
+            outfile = OUTPUT / (jobname + ".sh")
             with open(outfile, "w") as fp:
                 fp.write(body)
             outfiles.append(outfile)
@@ -440,104 +467,130 @@ def main():
         for task in TASKS:
 
             for pretraining_task in PRETRAINING_TASKS:
+                # pretraining is not implemented in these configurations
                 if model_name in ("malconv", "malconv2") and pretraining_task is not None:
                     continue
+                if pretraining_task == "mlm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "uni":
+                    continue
+                if pretraining_task == "clm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "bi":
+                    continue
 
-                for tr_samples_per_class in TR_SAMPLES_PER_CLASS:
-                    if tr_samples_per_class is not None and task not in TASKS_SCMF:
+                for pretraining_checkpoint in PRETRAINING_CHECKPOINTS:
+                    # pretraining_checkpoint does not make sense for classification from scratch
+                    if pretraining_task is None and pretraining_checkpoint is not None:
                         continue
 
-                    weighted_loss = "sample_reweighting" if (task in TASKS_SCMF and tr_samples_per_class is None) else None
-
-                    for min_freq in MIN_FREQ:
-                        if min_freq is not None and tr_samples_per_class is not None:
+                    for tr_samples_per_class in TR_SAMPLES_PER_CLASS:
+                        # tr_samples_per_class is not implemented for multilabel tasks
+                        if tr_samples_per_class is not None and task not in TASKS_SCMF:
                             continue
-
-                        if tr_samples_per_class is None:
-                            if min_freq is None:
-                                num_train_epochs = 5
-                            elif min_freq == 10:
-                                num_train_epochs = 2
-                            elif min_freq == 100:
-                                num_train_epochs = 1
-                        elif tr_samples_per_class == 5:
-                            num_train_epochs = 10
-                        elif tr_samples_per_class == 1:
-                            num_train_epochs = 50
-
-                        alloc_time, alloc_memory = get_clf_alloc_time_and_mem(
-                            model_name=model_name,
-                            task=task,
-                            min_freq=min_freq,
-                            tr_samples_per_class=tr_samples_per_class,
-                            max_length=MAX_LENGTH,
-                            num_train_epochs=num_train_epochs,
-                        )
-
-                        if int(alloc_memory[:-1]) > 64:
-                            print(
-                                f"LargeMemoryWarning: {alloc_memory=} {task=} {min_freq=} "
-                                f"{tr_samples_per_class=}. Reducing alloc_memory to 64G."
-                            )
-                            streaming = True
-                            alloc_memory = "64G"
+                        
+                        # weighted loss is only implemented for single class tasks; only needed for imbalanced tasks
+                        if task in TASKS_SCMF and tr_samples_per_class is None:
+                            weighted_loss = "sample_reweighting"
                         else:
-                            streaming = False
+                            weighted_loss = None
 
-                        if int(alloc_time[0:2]) >= 5:
-                            print(
-                                f"LargeRuntimeWarning: {alloc_time=} {task=} {min_freq=} "
-                                f"{tr_samples_per_class=}. Reducing alloc_time to 05-00:00:00."
-                            )
-                            alloc_time = "05-00:00:00"
+                        for min_freq in MIN_FREQ:
+                            # using tr_samples_per_class overrides min_freq, so running when both are active is redundant
+                            if min_freq is not None and tr_samples_per_class is not None:
+                                continue
 
-                        for seed in SEEDS:
-                            jobname = get_jobname(
-                                model_name,
-                                pretraining_task,
-                                task,
-                                min_freq,
-                                tr_samples_per_class,
-                                seed,
-                            )
-                            body = get_body_clf(
-                                jobname=jobname,
-                                alloc_time=alloc_time,
-                                alloc_memory=alloc_memory,
-                                streaming=streaming,
-                                downstream_task=task,
-                                pretraining_task=pretraining_task,
-                                model_name_or_path=model_name,
-                                arch_config=arch_config,
-                                seed=seed,
-                                gradient_checkpointing=gradient_checkpointing,
-                                num_train_epochs=num_train_epochs,
-                                top_k=None,
+                            # set the number of training epochs for the various scenarios
+                            num_train_epochs = None
+                            if tr_samples_per_class is None:
+                                if min_freq is None:
+                                    num_train_epochs = 5
+                                elif min_freq == 10:
+                                    num_train_epochs = 2
+                                elif min_freq == 100:
+                                    num_train_epochs = 1
+                            elif tr_samples_per_class == 5:
+                                num_train_epochs = 10
+                            elif tr_samples_per_class == 1:
+                                num_train_epochs = 50
+                            if num_train_epochs is None:
+                                raise AttributeError("num_train_epochs not set")
+
+                            # get the time and memory requirements for the classification task
+                            alloc_time, alloc_memory = get_clf_alloc_time_and_mem(
+                                model_name=model_name,
+                                task=task,
                                 min_freq=min_freq,
                                 tr_samples_per_class=tr_samples_per_class,
-                                weighted_loss=weighted_loss,
+                                max_length=MAX_LENGTH,
+                                num_train_epochs=num_train_epochs,
+                                bidrectional="mode" in arch_config_dict and arch_config_dict["mode"] == "bi",
                             )
-                            outfile = (OUTPUT / jobname).with_suffix(".sh")
-                            with open(outfile, "w") as fp:
-                                fp.write(body)
-                            outfiles.append(outfile)
 
+                            # if memory requirements are over 64G, reduce to 64G and set streaming to True
+                            if int(alloc_memory[:-1]) > 64:
+                                warnings.warn(
+                                    f"LargeMemoryWarning: {alloc_memory=} {task=} {min_freq=} "
+                                    f"{tr_samples_per_class=}. Reducing alloc_memory to 64G."
+                                )
+                                streaming = True
+                                alloc_memory = "64G"
+                            else:
+                                streaming = False
 
-    def key(s: str) -> tuple:
-        out = s.split("-")
-        for i in range(len(out)):
-            o = out[i]
-            if o.isdigit():
-                out[i] == float(o)
-        return out
+                            # if time requirements are over 5 days, reduce to 5 days
+                            if int(alloc_time[0:2]) >= 5:
+                                warnings.warn(
+                                    f"LargeRuntimeWarning: {alloc_time=} {task=} {min_freq=} "
+                                    f"{tr_samples_per_class=}. Reducing alloc_time to 05-00:00:00."
+                                )
+                                alloc_time = "05-00:00:00"
 
+                            for learning_rate in LEARNING_RATES:
 
+                                for seed in SEEDS:
+                                    jobname = get_jobname(
+                                        model_name=model_name,
+                                        pretraining_task=pretraining_task,
+                                        pretraining_checkpoint=pretraining_checkpoint,
+                                        downstream_task=task,
+                                        min_freq=min_freq,
+                                        tr_samples_per_class=tr_samples_per_class,
+                                        learning_rate=learning_rate,
+                                        seed=seed,
+                                    )
+                                    body = get_body_clf(
+                                        jobname=jobname,
+                                        alloc_time=alloc_time,
+                                        alloc_memory=alloc_memory,
+                                        streaming=streaming,
+                                        downstream_task=task,
+                                        pretraining_task=pretraining_task,
+                                        pretraining_checkpoint=pretraining_checkpoint,
+                                        model_name_or_path=model_name,
+                                        arch_config=arch_config,
+                                        seed=seed,
+                                        gradient_checkpointing=gradient_checkpointing,
+                                        num_train_epochs=num_train_epochs,
+                                        top_k=None,
+                                        min_freq=min_freq,
+                                        tr_samples_per_class=tr_samples_per_class,
+                                        weighted_loss=weighted_loss,
+                                        learning_rate=learning_rate,
+                                    )
+                                    outfile = OUTPUT / (jobname + ".sh")
+                                    with open(outfile, "w") as fp:
+                                        fp.write(body)
+                                    outfiles.append(outfile)
+
+    # WARNING: the dependency and num GPU logic is dependent on the format of the jobname
     with open(OUTPUT / "run.sh", "w") as fp:
-        for f in sorted(outfiles, key=lambda p: key(str(p.name))):
+        for f in sorted(outfiles, key=lambda p: key_for_sorting_jobnames(str(p.name))):
             f = f.relative_to("/home/lk3591/Documents/code/RawByteClf")
+            f_parts = f.stem.split("--")
             if SYSTEM == System.RC:
+                # add a dependency based on the success of a previous job
+                # we assume that jobs that vary only by learning rate and seed will succeed or fail together
                 if args.dependencies:
-                    if f.stem[-1] == "0":
+                    learning_rate = float(f_parts[-2])
+                    seed = int(f_parts[-1])
+                    if learning_rate == LEARNING_RATES[0] and seed == SEEDS[0]:
                         pre = "jobid=$(sbatch"
                         pos = "| awk '{print $4}')"
                     else:
@@ -547,12 +600,12 @@ def main():
                     pre = "sbatch"
                     pos = ""
             else:
-                if "clm" in f.name:
-                    gpus = [str(i) for i in range(args.clm_ngpus)]
+                if "clm" in f_parts[1] or "mlm" in f_parts[1]:
+                    gpus = [str(i) for i in range(args.lm_ngpus)]
                 else:
                     gpus = [str(i) for i in range(args.clf_ngpus)]
                 pre = f"CUDA_VISIBLE_DEVICES={','.join(gpus)} bash"
-                pos = f"&> ./logs/{f.stem}.out"   
+                pos = f"&> ./logs/{f.stem}.out"
             if f.stem[-1] == "0":
                 fp.write(f"# {f.stem[0:-3]}\n")
             fp.write(f"{pre} {str(f)} {pos}\n")
