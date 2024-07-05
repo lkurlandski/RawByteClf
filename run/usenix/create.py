@@ -441,7 +441,7 @@ def main():
                 continue
 
             jobname = get_jobname(
-                model_name=model_name,
+                model_name=model_name + "-" + arch_config_dict.get("mode", ""),
                 pretraining_task=None,
                 pretraining_checkpoint=None,
                 downstream_task=pretraining_task,
@@ -544,7 +544,7 @@ def main():
 
                                 for seed in SEEDS:
                                     jobname = get_jobname(
-                                        model_name=model_name,
+                                        model_name=model_name + "-" + arch_config_dict.get("mode", ""),
                                         pretraining_task=pretraining_task,
                                         pretraining_checkpoint=pretraining_checkpoint,
                                         downstream_task=task,
