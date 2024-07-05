@@ -65,6 +65,7 @@ TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
 MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
+CLF_FROM_SCRATCH_LEARNING_RATE = 1e-3
 LEARNING_RATES = [1e-3, 1e-4, 1e-5]
 SEEDS = [0, 1, 2]
 
@@ -541,6 +542,9 @@ def main():
                                 alloc_time = "05-00:00:00"
 
                             for learning_rate in LEARNING_RATES:
+                                # we don't need to try many learning rates if training from scratch
+                                if pretraining_task is None and learning_rate != CLF_FROM_SCRATCH_LEARNING_RATE:
+                                    continue
 
                                 for seed in SEEDS:
                                     jobname = get_jobname(
