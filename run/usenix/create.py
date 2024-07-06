@@ -13,6 +13,8 @@ from typing import Optional
 import warnings
 
 
+# Recommend setting ntasks and ndataloaderworkers such that 
+#  ntasks = ngpus * (1 + ndataloaderworkers)
 parser = ArgumentParser()
 parser.add_argument("--lm_ngpus", type=int, default=1)
 parser.add_argument("--lm_ntasks", type=int, default=4)
@@ -88,7 +90,7 @@ def get_body_lm(
     #SBATCH --account=admalware
     #SBATCH --partition={'debug' if args.debug else 'tier3'}
     #SBATCH --output=./logs/%x_%j.out
-    #SBATCH --time={'00-01:00:00' if args.debug else '01-00:00:00'}
+    #SBATCH --time={'00-01:00:00' if args.debug else '02-00:00:00'}
     #SBATCH --nodes=1
     #SBATCH --cpus-per-task=1
     #SBATCH --ntasks={1 if args.debug else args.lm_ntasks}
@@ -126,7 +128,7 @@ def get_body_lm(
     --num_train_epochs=1 \\
     --logging_steps=1 \\
     --save_steps={1 if args.debug else 128} \\
-    --eval_steps={1 if args.debug else 512} \\
+    --eval_steps={1 if args.debug else 128} \\
     --dataloader_num_workers={0 if args.debug else args.lm_ndataloaderworkers} \\
     --optim="adamw_torch" \\
     --learning_rate="1e-3" \\
