@@ -67,8 +67,9 @@ TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
 MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
-CLF_FROM_SCRATCH_LEARNING_RATE = 1e-3
-LEARNING_RATES = [1e-3, 1e-4, 1e-5]
+CLF_LEARNING_RATES = [1e-3]
+FT_LEARNING_RATES = [1e-4, 1e-5]
+LEARNING_RATES = sorted(set(CLF_LEARNING_RATES + FT_LEARNING_RATES))
 SEEDS = [0, 1, 2]
 
 
@@ -553,7 +554,9 @@ def main():
 
                             for learning_rate in LEARNING_RATES:
                                 # we don't need to try many learning rates if training from scratch
-                                if pretraining_task is None and learning_rate != CLF_FROM_SCRATCH_LEARNING_RATE:
+                                if pretraining_task is None and learning_rate not in CLF_LEARNING_RATES:
+                                    continue
+                                if pretraining_task is not None and learning_rate not in FT_LEARNING_RATES:
                                     continue
 
                                 for seed in SEEDS:
@@ -607,6 +610,8 @@ def main():
             fp.write(f"{pre} {str(f)} {pos}\n")
 
 
+
+    f_previous_parts = []
     # the dependency logic is dependent on the format of the jobname
     with open(OUTPUT / "run_clf.sh", "w") as fp:
         for f in sorted(outfiles_clf, key=lambda p: key_for_sorting_jobnames(str(p.name))):
@@ -615,10 +620,15 @@ def main():
             learning_rate = float(f_parts[-2])
             seed = int(f_parts[-1])
 
+            if f_previous_parts[0:-2] != f_parts[0:-2]:
+                new_dependency_chain = True
+            else:
+                new_dependency_chain = False
+
             if SYSTEM == System.RC:
                 # jobs that differ only by learning rate and seed will succeed or fail together, so add a dependency
                 if args.dependencies:
-                    if learning_rate == LEARNING_RATES[0] and seed == SEEDS[0]:
+                    if new_dependency_chain:
                         pre = "jobid=$(sbatch"
                         pos = "| awk '{print $4}')"
                     else:
@@ -633,9 +643,13 @@ def main():
                 pos = f"&> ./logs/{f.stem}.out"
 
             # add a little comment to make reading the run file easier.
-            if learning_rate == LEARNING_RATES[0] and seed == SEEDS[0]:
+            if new_dependency_chain:
                 fp.write(f"# {'--'.join(f_parts[0:-2])}\n")
             fp.write(f"{pre} {str(f)} {pos}\n")
+
+            f_previous_parts = f_parts
+
+
 
 
 if __name__ == "__main__":
