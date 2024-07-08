@@ -67,6 +67,7 @@ TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
 MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
+WEIGHTED_LOSSES = [None, "sample_reweighting"]
 CLF_LEARNING_RATES = [1e-3]
 FT_LEARNING_RATES = [1e-3, 1e-4, 1e-5]
 LEARNING_RATES = sorted(set(CLF_LEARNING_RATES + FT_LEARNING_RATES))
@@ -268,6 +269,7 @@ def get_jobname(
     downstream_task: str,
     min_freq: Optional[int],
     tr_samples_per_class: Optional[int],
+    weighted_loss: Optional[str],
     learning_rate: float,
     seed: int,
 ) -> str:
@@ -275,6 +277,8 @@ def get_jobname(
     if not learning_rate.is_integer():
         raise ValueError()
     learning_rate = f"1e{int(learning_rate)}"
+    if weighted_loss is not None:
+        weighted_loss = weighted_loss[0:3]
     args = [
         model_name,
         str(pretraining_task),
@@ -282,6 +286,7 @@ def get_jobname(
         downstream_task,
         str(min_freq),
         str(tr_samples_per_class),
+        str(weighted_loss),
         learning_rate,
         str(seed),
     ]
@@ -456,6 +461,7 @@ def main():
                 downstream_task=pretraining_task,
                 min_freq=None,
                 tr_samples_per_class=None,
+                weighted_loss=None,
                 learning_rate=1e-3,
                 seed=0,
             )
@@ -495,12 +501,6 @@ def main():
                         if tr_samples_per_class is not None and task not in TASKS_SCMF:
                             continue
                         
-                        # weighted loss is only implemented for single class tasks; only needed for imbalanced tasks
-                        if task in TASKS_SCMF and tr_samples_per_class is None:
-                            weighted_loss = "sample_reweighting"
-                        else:
-                            weighted_loss = None
-
                         for min_freq in MIN_FREQ:
                             # using tr_samples_per_class overrides min_freq, so running when both are active is redundant
                             if min_freq is not None and tr_samples_per_class is not None:
@@ -552,47 +552,55 @@ def main():
                                 )
                                 alloc_time = "05-00:00:00"
 
-                            for learning_rate in LEARNING_RATES:
-                                # we don't need to try many learning rates if training from scratch
-                                if pretraining_task is None and learning_rate not in CLF_LEARNING_RATES:
-                                    continue
-                                if pretraining_task is not None and learning_rate not in FT_LEARNING_RATES:
-                                    continue
+                            for weighted_loss in WEIGHTED_LOSSES:
+                                # weighted loss is only implemented for single class tasks;
+                                # only needed for imbalanced tasks
+                                if weighted_loss is not None:
+                                    if task not in TASKS_SCMF or tr_samples_per_class is not None:
+                                        continue
 
-                                for seed in SEEDS:
-                                    jobname = get_jobname(
-                                        model_name=model_name + "-" + arch_config_dict.get("mode", ""),
-                                        pretraining_task=pretraining_task,
-                                        pretraining_checkpoint=pretraining_checkpoint,
-                                        downstream_task=task,
-                                        min_freq=min_freq,
-                                        tr_samples_per_class=tr_samples_per_class,
-                                        learning_rate=learning_rate,
-                                        seed=seed,
-                                    )
-                                    body = get_body_clf(
-                                        jobname=jobname,
-                                        alloc_time=alloc_time,
-                                        alloc_memory=alloc_memory,
-                                        streaming=streaming,
-                                        downstream_task=task,
-                                        pretraining_task=pretraining_task,
-                                        pretraining_checkpoint=pretraining_checkpoint,
-                                        model_name_or_path=model_name,
-                                        arch_config=arch_config,
-                                        seed=seed,
-                                        gradient_checkpointing=gradient_checkpointing,
-                                        num_train_epochs=num_train_epochs,
-                                        top_k=None,
-                                        min_freq=min_freq,
-                                        tr_samples_per_class=tr_samples_per_class,
-                                        weighted_loss=weighted_loss,
-                                        learning_rate=learning_rate,
-                                    )
-                                    outfile = OUTPUT / (jobname + ".sh")
-                                    with open(outfile, "w") as fp:
-                                        fp.write(body)
-                                    outfiles_clf.append(outfile)
+                                for learning_rate in LEARNING_RATES:
+                                    # we don't need to try many learning rates if training from scratch
+                                    if pretraining_task is None and learning_rate not in CLF_LEARNING_RATES:
+                                        continue
+                                    if pretraining_task is not None and learning_rate not in FT_LEARNING_RATES:
+                                        continue
+
+                                    for seed in SEEDS:
+                                        jobname = get_jobname(
+                                            model_name=model_name + "-" + arch_config_dict.get("mode", ""),
+                                            pretraining_task=pretraining_task,
+                                            pretraining_checkpoint=pretraining_checkpoint,
+                                            downstream_task=task,
+                                            min_freq=min_freq,
+                                            tr_samples_per_class=tr_samples_per_class,
+                                            weighted_loss=weighted_loss,
+                                            learning_rate=learning_rate,
+                                            seed=seed,
+                                        )
+                                        body = get_body_clf(
+                                            jobname=jobname,
+                                            alloc_time=alloc_time,
+                                            alloc_memory=alloc_memory,
+                                            streaming=streaming,
+                                            downstream_task=task,
+                                            pretraining_task=pretraining_task,
+                                            pretraining_checkpoint=pretraining_checkpoint,
+                                            model_name_or_path=model_name,
+                                            arch_config=arch_config,
+                                            seed=seed,
+                                            gradient_checkpointing=gradient_checkpointing,
+                                            num_train_epochs=num_train_epochs,
+                                            top_k=None,
+                                            min_freq=min_freq,
+                                            tr_samples_per_class=tr_samples_per_class,
+                                            weighted_loss=weighted_loss,
+                                            learning_rate=learning_rate,
+                                        )
+                                        outfile = OUTPUT / (jobname + ".sh")
+                                        with open(outfile, "w") as fp:
+                                            fp.write(body)
+                                        outfiles_clf.append(outfile)
 
 
     # did not bother adding seeds or dependencies etc.
