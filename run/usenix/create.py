@@ -65,18 +65,18 @@ PRETRAINING_CHECKPOINTS = [None, -1, 0]
 TASKS_SCMF = ["clf-bod", "clf-sor-fam", "clf-sor-file"]
 TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
-MIN_FREQ = [None, 100]
+MIN_FREQ = [100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
 WEIGHTED_LOSSES = [None, "sample_reweighting"]
 CLF_LEARNING_RATES = [1e-3]
-FT_LEARNING_RATES = [1e-3, 1e-4, 1e-5]
+FT_LEARNING_RATES = [1e-3]
 LEARNING_RATES = sorted(set(CLF_LEARNING_RATES + FT_LEARNING_RATES))
 SEEDS = [0, 1, 2]
 
 
 PRETRAINING_TASKS = [None, "mlm-sor"]
-PRETRAINING_CHECKPOINTS = [None, 0, -1]
-TASKS = ["clf-bod"]
+PRETRAINING_CHECKPOINTS = [None, -1]
+TASKS = ["clf-sor-class_", "clf-sor-beh"]
 
 
 def get_body_lm(
@@ -419,9 +419,15 @@ def get_clf_alloc_time_and_mem(
     # Special cases:
     if model_name == "mamba":
         if key == ("clf-sor-class_", None, None):
-            tim = "00-02:00:00"
+            if bidrectional:
+                tim = "00-04:00:00"
+            else:
+                tim = "00-02:00:00"
         if key == ("clf-sor-beh", None, None):
-            tim = "00-05:00:00"
+            if bidrectional:
+                tim = "00-10:00:00"
+            else:
+                tim = "00-05:00:00"
     if model_name == "malconv2" and key == ("clf-sor-beh", None, 100):
         tim = "00-01:30:00"
 
