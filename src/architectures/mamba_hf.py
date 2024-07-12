@@ -627,6 +627,20 @@ class BiMambaModel(MambaPreTrainedModel):
             # mixer_forw.out_proj.weight = mixer_back.out_proj.weight
             # mixer_forw.x_proj.weight = mixer_back.x_proj.weight
 
+    def check_shared_weights(self):
+        if not self.config.tie_directions:
+            return
+
+        print("Testing internal weight sharing is correct.")
+
+        for i in range(self.config.num_hidden_layers):
+            if not self.layers_forw[i].mixer.in_proj.weight.data_ptr() == self.layers_back[i].mixer.in_proj.weight.data_ptr():
+                raise ValueError(f"Layer {i} in_proj weights are not shared")
+            if not self.layers_forw[i].mixer.out_proj.weight.data_ptr() == self.layers_back[i].mixer.out_proj.weight.data_ptr():
+                raise ValueError(f"Layer {i} out_proj weights are not shared")
+            if not self.layers_forw[i].mixer.x_proj.weight.data_ptr() == self.layers_back[i].mixer.x_proj.weight.data_ptr():
+                raise ValueError(f"Layer {i} x_proj weights are not shared")
+
     def prepare_input_for_backward_model(self, input_ids: torch.LongTensor) -> torch.LongTensor:
         """
         Assumes the input is structured as follows:
@@ -687,6 +701,7 @@ class BiMambaModel(MambaPreTrainedModel):
         return_dict: Optional[bool] = None,
         **kwargs,  # `attention_mask` is passed by the tokenizer and we don't want it
     ) -> Union[Tuple, MambaOutput]:
+        # self.check_shared_weights()
         # TODO: explore methods of mixing information from the hidden states.
         # Should we be flipping the hidden states from the backward model?
         # Should we be adding them together or concatenating them?
