@@ -95,6 +95,7 @@ from transformers.trainer_utils import (
     PredictionOutput,
     TrainOutput,
     PREFIX_CHECKPOINT_DIR,
+    IntervalStrategy,
 )
 from transformers.trainer_pt_utils import AcceleratorConfig  # pylint: disable=no-name-in-module
 from transformers.models.reformer.modeling_reformer import _get_least_common_mult_chunk_len
@@ -440,6 +441,32 @@ class UtilCallback(TrainerCallback):
     def on_step_end(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
         self._time_step_end = time.time()
         self._time_step_deltas.append(self._time_step_end - self._time_step_start)
+
+
+class RobustEpochCallback(TrainerCallback):
+
+    def on_epoch_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+
+        condition = True  # detect if training has occurred since last log and training will stop after this epoch.
+        condition &= control.should_training_stop  # training will stop after this epoch
+        condition &= args.save_strategy == IntervalStrategy.STEPS  # save strategy is steps
+        condition &= args.evaluation_strategy == IntervalStrategy.STEPS  # eval strategy is steps
+        # condition &= state.global_step > state._globalstep_last_logged  # _globalstep_last_logged not available
+        condition &= state.global_step % args.save_steps != 0  # indicates that training has occurred since last save
+
+        # Log
+        if condition or args.logging_strategy == IntervalStrategy.EPOCH:
+            control.should_log = True
+
+        # Evaluate
+        if condition or args.evaluation_strategy == IntervalStrategy.EPOCH and args.eval_delay <= state.epoch:
+            control.should_evaluate = True
+
+        # Save
+        if condition or args.save_strategy == IntervalStrategy.EPOCH:
+            control.should_save = True
+
+        return control
 
 
 class StaticGraphTrainer(Trainer):
@@ -1379,7 +1406,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{compute_metrics=}")
     print(BR)
 
-    callbacks = [UtilCallback(False)]
+    callbacks = []
+    if args.task[0:3] in ("mlm", "clm"):
+        callbacks.append(RobustEpochCallback())
     if args.early_stopping:
         callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
     print(f"{callbacks=}")
@@ -1591,6 +1620,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 id2label=materials.id2label,
                 label2id=materials.label2id,
             )
+
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
