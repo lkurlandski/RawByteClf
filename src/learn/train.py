@@ -444,6 +444,10 @@ class UtilCallback(TrainerCallback):
 
 
 class RobustEpochCallback(TrainerCallback):
+    """
+    Ensures that the final model is logged, saved, and evaluated when using "steps" as the
+    save or evaluation strategy.
+    """
 
     def on_epoch_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
 
@@ -1407,7 +1411,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR)
 
     callbacks = []
-    if args.task[0:3] in ("mlm", "clm"):
+    if training_arguments.save_strategy == IntervalStrategy.STEPS or training_arguments.evaluation_strategy == IntervalStrategy.STEPS:
         callbacks.append(RobustEpochCallback())
     if args.early_stopping:
         callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
