@@ -4,6 +4,7 @@ Create pretraining, classification, and finetuning bash scripts.
 
 from argparse import ArgumentParser
 from enum import Enum
+import json
 import math
 import os
 from pathlib import Path
@@ -43,29 +44,26 @@ MAX_LENGTH = 2 ** 14
 DATA_READ_BYTES = 2 ** 14
 
 # Parameters to vary for the experiments.
-MODEL_NAME_AND_ARCH_CONFIGS = {
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 8, "mlp_hidden_size": -1}',  # 0.50 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 4, "hidden_size": 128, "embedding_size": 128, "mlp_hidden_size": -1}',  # 0.53 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 2.70 M
-    "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 2.70 M
-    "mamba": '{"mode": "bi", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 2.88 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": 256}',  # 2.80 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 128, "mlp_hidden_size": -1}',  # 2.76 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 8, "mlp_hidden_size": -1}',  # 3.57 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 8, "hidden_size": 256, "embedding_size": 256, "mlp_hidden_size": -1}',  # 3.64 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 8, "mlp_hidden_size": -1}',  # 11.7 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 384, "embedding_size": 384, "mlp_hidden_size": -1}',  # 11.8 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 8, "mlp_hidden_size": -1}',  # 27.3 M
-    # "mamba": '{"mode": "uni", "num_hidden_layers": 16, "hidden_size": 512, "embedding_size": 512, "mlp_hidden_size": -1}',  # 27.4 M
-    # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}',  # 2.56 M
-    # "malconv2": '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 256}',  # 67.7 M
-}
+
+# At the moment, gradient checkpointing with distributed data parallel does not work
+# with the bidrectional mamba weight-tying, so we need to disable this.
+MODELS = [
+    ("mamba-tn-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
+    ("mamba-tn-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
+    ("mamba-sm-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "tie_directions": false}'),  #
+    ("mamba-sm-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "tie_directions": false}'),  #
+    ("mamba-md-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 9, "hidden_size": 384, "embedding_size": 384, "tie_directions": false}'),  #
+    ("mamba-md-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 9, "hidden_size": 384, "embedding_size": 384, "tie_directions": false}'),  #
+    ("mamba-lg-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 512, "embedding_size": 512, "tie_directions": false}'),  #
+    ("mamba-lg-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 12, "hidden_size": 512, "embedding_size": 512, "tie_directions": false}'),  #
+    ("malconv",      "malconv2", '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}'),  # 2.56 M
+]
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 PRETRAINING_CHECKPOINTS = [None, -1, 0]
 TASKS_SCMF = ["clf-bod", "clf-sor-fam", "clf-sor-file"]
 TASKS_MCMF = ["clf-sor-class_", "clf-sor-beh", "clf-sor-pack"]
 TASKS = TASKS_SCMF + TASKS_MCMF
-MIN_FREQ = [100]
+MIN_FREQ = [None, 100]
 TR_SAMPLES_PER_CLASS = [None, 1, 5]
 WEIGHTED_LOSSES = [None, "sample_reweighting"]
 CLF_LEARNING_RATES = [1e-3]
@@ -73,10 +71,12 @@ FT_LEARNING_RATES = [1e-3]
 LEARNING_RATES = sorted(set(CLF_LEARNING_RATES + FT_LEARNING_RATES))
 SEEDS = [0, 1, 2]
 
-
-PRETRAINING_TASKS = [None, "mlm-sor"]
-PRETRAINING_CHECKPOINTS = [None, -1]
-TASKS = ["clf-sor-class_", "clf-sor-beh"]
+# Adjust these frequently to configure which experiments to actually run.
+# This is simpler than adding a complex CLI.
+MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
+TASKS = ["clf-bod"]
+WEIGHTED_LOSSES = [None]
+PRETRAINING_CHECKPOINTS = [None, -1, 0]
 
 
 def get_body_lm(
@@ -84,19 +84,37 @@ def get_body_lm(
     downstream_task: str,
     model_name_or_path: str,
     arch_config: str,
+    model_nickname: str,
 ) -> str:
 
-   return f"""#!/bin/bash -l
+    _, size, mode = model_nickname.split("-")
+
+    if args.lm_ngpus == 2 and size == "sm" and mode == "uni":
+        tim = "01-00:00:00"
+        mem = "64G"
+    elif args.lm_ngpus == 2 and size == "sm" and mode == "bi":
+        tim = "02-00:00:00"
+        mem = "64G"
+    elif args.lm_ngpus == 4 and size == "lg" and mode == "uni":
+        tim = "01-00:00:00"
+        mem = "128G"
+    elif args.lm_ngpus == 4 and size == "lg" and mode == "bi":
+        tim = "02-00:00:00"
+        mem = "128G"
+    else:
+        raise ValueError("Don't know how much memory and time is needed!")
+
+    return f"""#!/bin/bash -l
 
     #SBATCH --job-name={'debug-' if args.debug else ''}{jobname}
     #SBATCH --account=admalware
     #SBATCH --partition={'debug' if args.debug else 'tier3'}
     #SBATCH --output=./logs/%x_%j.out
-    #SBATCH --time={'00-01:00:00' if args.debug else '02-00:00:00'}
+    #SBATCH --time={'00-01:00:00' if args.debug else tim}
     #SBATCH --nodes=1
     #SBATCH --cpus-per-task=1
     #SBATCH --ntasks={1 if args.debug else args.lm_ntasks}
-    #SBATCH --mem={'16G' if args.debug else '64G'}
+    #SBATCH --mem={'16G' if args.debug else mem}
     #SBATCH --gres=gpu:a100:{args.lm_ngpus}
 
 
@@ -256,7 +274,7 @@ def get_body_clf(
     --eval_accumulation_steps=64 \\
     --load_best_model_at_end \\
     --tf32=true \\
-    --bf16=false \\
+    --bf16=true \\
     --fp16=false \\
     --gradient_checkpointing={'true' if gradient_checkpointing else 'false'}
     """.replace("    ", "").replace("\n\n", "\n")
@@ -314,22 +332,36 @@ def compute_time(
     vl_num_samples: int,
     max_length: int,
     num_train_epochs: int,
-    model_name: str,
-    bidirectional: bool = False,
+    model_nickname: str,
 ) -> str:
     """Compute an estimation of time, then add a bit of buffer. 
-
-    NOTE: the stats were computed in streaming mode with num_data_loaders=0.
     """
+    if "mamba" in model_nickname:
+        name, size, mode = model_nickname.split("-")
+    else:
+        name, size, mode = model_nickname, None, None
 
-    if model_name == "mamba":
-        if max_length == 2 ** 14:
-            tr_time_per_sample = 0.0548155737704918000
-            vl_time_per_sample = 0.0146341463414634150
-        if max_length == 2 ** 16:
-            tr_time_per_sample = None
-            vl_time_per_sample = None
-    if model_name == "malconv2":
+    if name == "mamba": # this are just the unidrectional times; for bidirection, multiply by two
+        if size == "sm":
+            if max_length == 2 ** 14:
+                tr_time_per_sample = 0.0548155737704918000
+                vl_time_per_sample = 0.0146341463414634150
+            if max_length == 2 ** 16:
+                tr_time_per_sample = None
+                vl_time_per_sample = None
+        if size == "lg":
+            if max_length == 2 ** 14:
+                tr_time_per_sample = 0.2441406250000
+                vl_time_per_sample = 0.0457763671875
+            if max_length == 2 ** 16:
+                tr_time_per_sample = None
+                vl_time_per_sample = None
+
+        if mode == "bi":
+            tr_time_per_sample *= 2
+            vl_time_per_sample *= 2
+
+    if name == "malconv2":
         if max_length == 2 ** 14:
             tr_time_per_sample = 0.0048668032786885250
             vl_time_per_sample = 0.0040172166427546625
@@ -337,9 +369,6 @@ def compute_time(
             tr_time_per_sample = None
             vl_time_per_sample = None
 
-    if bidirectional:
-        tr_time_per_sample *= 2
-        vl_time_per_sample *= 2
 
     tr_time = tr_time_per_sample * tr_num_samples * num_train_epochs
     vl_time = vl_time_per_sample * vl_num_samples * num_train_epochs
@@ -391,16 +420,20 @@ TR_VL_SIZES = {
 
 
 def get_clf_alloc_time_and_mem(
-    model_name: str,
+    model_nickname: str,
     task: str,
     min_freq: Optional[int],
     tr_samples_per_class: Optional[int],
     max_length: int,
     num_train_epochs: int,
-    bidrectional: bool,
 ) -> tuple[str, str]:
     key = (task, tr_samples_per_class, min_freq)
     tr_num_samples, vl_num_samples = TR_VL_SIZES[key]
+
+    if "mamba" in model_nickname:
+        name, size, mode = model_nickname.split("-")
+    else:
+        name, size, mode = model_nickname, None, None
 
     mem = compute_mem(
         tr_num_samples,
@@ -412,23 +445,22 @@ def get_clf_alloc_time_and_mem(
         vl_num_samples,
         max_length,
         num_train_epochs,
-        model_name,
-        bidrectional,
+        model_nickname,
     )
 
     # Special cases:
-    if model_name == "mamba":
+    if name == "mamba" and size == "sm":
         if key == ("clf-sor-class_", None, None):
-            if bidrectional:
+            if mode == "bi":
                 tim = "00-04:00:00"
             else:
                 tim = "00-02:00:00"
         if key == ("clf-sor-beh", None, None):
-            if bidrectional:
+            if mode == "bi":
                 tim = "00-10:00:00"
             else:
                 tim = "00-05:00:00"
-    if model_name == "malconv2" and key == ("clf-sor-beh", None, 100):
+    if name == "malconv2" and key == ("clf-sor-beh", None, 100):
         tim = "00-01:30:00"
 
     return tim, mem
@@ -451,8 +483,8 @@ def main():
     outfiles_lm = []
     outfiles_clf = []
 
-    for model_name, arch_config in MODEL_NAME_AND_ARCH_CONFIGS.items():
-        arch_config_dict: dict = eval(arch_config)
+    for model_nickname, model_name, arch_config in MODELS:
+        arch_config_dict: dict = json.loads(arch_config)
         gradient_checkpointing = True if model_name == "mamba" else False
 
         # Pretraining
@@ -461,7 +493,7 @@ def main():
                 continue
 
             jobname = get_jobname(
-                model_name=model_name + "-" + arch_config_dict.get("mode", ""),
+                model_name=model_nickname,
                 pretraining_task=None,
                 pretraining_checkpoint=None,
                 downstream_task=pretraining_task,
@@ -476,6 +508,7 @@ def main():
                 downstream_task=pretraining_task,
                 model_name_or_path=model_name,
                 arch_config=arch_config,
+                model_nickname=model_nickname,
             )
             outfile = OUTPUT / (jobname + ".sh")
             with open(outfile, "w") as fp:
@@ -530,13 +563,12 @@ def main():
 
                             # get the time and memory requirements for the classification task
                             alloc_time, alloc_memory = get_clf_alloc_time_and_mem(
-                                model_name=model_name,
+                                model_nickname=model_nickname,
                                 task=task,
                                 min_freq=min_freq,
                                 tr_samples_per_class=tr_samples_per_class,
                                 max_length=MAX_LENGTH,
                                 num_train_epochs=num_train_epochs,
-                                bidrectional="mode" in arch_config_dict and arch_config_dict["mode"] == "bi",
                             )
 
                             # if memory requirements are over 64G, reduce to 64G and set streaming to True
@@ -574,7 +606,7 @@ def main():
 
                                     for seed in SEEDS:
                                         jobname = get_jobname(
-                                            model_name=model_name + "-" + arch_config_dict.get("mode", ""),
+                                            model_name=model_nickname,
                                             pretraining_task=pretraining_task,
                                             pretraining_checkpoint=pretraining_checkpoint,
                                             downstream_task=task,
