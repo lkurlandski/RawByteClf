@@ -951,7 +951,7 @@ def get_model(
             if model_name == "hrrformer":
                 model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = HRRConfig.from_pretrained(model_name_or_path)
-                _head_names = ["classifier"]
+                _head_names = ["head"]
                 # raise NotImplementedError("Need to check the head weights.")
             elif model_name == "rwkv":
                 model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
