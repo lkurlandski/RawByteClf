@@ -2,6 +2,7 @@
 Useful printing of various models.
 """
 
+from argparse import ArgumentParser
 import json
 from pprint import pformat, pprint
 import os
@@ -191,5 +192,12 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
-    display()
+    parser = ArgumentParser()
+    parser.add_argument("--run", action="store_true")
+    parser.add_argument("--display", action="store_true")
+    args = parser.parse_args()
+
+    if args.run:
+        run()
+    if args.display:
+        display()
