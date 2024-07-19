@@ -179,7 +179,7 @@ class HRRSelfAttention(nn.Module):
         pad_to = 1 << (D - 1).bit_length()
 
         # Binding and unbinding
-        superpositions = binding(key_layer, value_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]          # (B, H, T, D)
+        superpositions = binding(key_layer, value_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
         if self.is_decoder and attention_mask is not None:
             # Causal masking needs to take place within the superposition.
             # We create T superpositions using interactions from the preceeding tokens.
@@ -187,7 +187,7 @@ class HRRSelfAttention(nn.Module):
             superposition = torch.cumsum(superpositions, dim=-2)                                               # (B, H, T, D)
         else:
             superposition = torch.sum(superpositions, dim=-2, keepdims=True)                                   # (B, H, 1, D)
-        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
+        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]  # (B, H, T, D)
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)                  # (B, H, T, 1)
 
         # Attention mask, scores, and probabilities
@@ -590,7 +590,7 @@ class HRRForCausalLM(HRRPreTrainedModel):
 
     def __init__(self, config: HRRConfig) -> None:
         if not config.is_decoder:
-            raise ValueError(f"{config.is_decoder}")
+            raise ValueError(f"{config.is_decoder=} (expected True)")
         super().__init__(config)
         self.backbone = HRRModel(config)
         self.head = nn.Linear(config.hidden_size, config.vocab_size)
@@ -661,7 +661,7 @@ class HRRForMaskedLM(HRRPreTrainedModel):
 
     def __init__(self, config: HRRConfig):
         if config.is_decoder:
-            raise ValueError(f"{config.is_decoder}")
+            raise ValueError(f"{config.is_decoder=} (expected False)")
         super().__init__(config)
         self.backbone = HRRModel(config)
         self.head = nn.Linear(config.hidden_size, config.vocab_size)
