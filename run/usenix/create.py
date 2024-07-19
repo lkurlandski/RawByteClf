@@ -48,15 +48,23 @@ DATA_READ_BYTES = 2 ** 14
 # At the moment, gradient checkpointing with distributed data parallel does not work
 # with the bidrectional mamba weight-tying, so we need to disable this.
 MODELS = [
-    ("mamba-tn-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
-    ("mamba-tn-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
-    ("mamba-sm-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "tie_directions": false}'),  #
-    ("mamba-sm-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "tie_directions": false}'),  #
-    ("mamba-md-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 9, "hidden_size": 384, "embedding_size": 384, "tie_directions": false}'),  #
-    ("mamba-md-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 9, "hidden_size": 384, "embedding_size": 384, "tie_directions": false}'),  #
-    ("mamba-lg-uni", "mamba",    '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 512, "embedding_size": 512, "tie_directions": false}'),  #
-    ("mamba-lg-bi",  "mamba",    '{"mode": "bi", "num_hidden_layers": 12, "hidden_size": 512, "embedding_size": 512, "tie_directions": false}'),  #
-    ("malconv",      "malconv2", '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}'),  # 2.56 M
+    # ("hrr-tn-uni",   "hrrformer", '{"num_hidden_layers": 1, "hidden_size": 128, "embedding_size": 128, "num_attention_heads": 1, "intermediate_size": 256, "is_decoder": true}'),
+    ("hrr-tn-bi",    "hrrformer", '{"num_hidden_layers": 1, "hidden_size": 128, "embedding_size": 128, "num_attention_heads": 1, "intermediate_size": 256, "is_decoder": false}'),
+    # ("hrr-sm-uni",   "hrrformer", '{"num_hidden_layers": 2, "hidden_size": 256, "embedding_size": 256, "num_attention_heads": 2, "intermediate_size": 512, "is_decoder": true}'),
+    ("hrr-sm-bi",    "hrrformer", '{"num_hidden_layers": 2, "hidden_size": 256, "embedding_size": 256, "num_attention_heads": 2, "intermediate_size": 512, "is_decoder": false}'),
+    # ("hrr-md-uni",   "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 1024, "is_decoder": true}'),
+    ("hrr-md-bi",    "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 1024, "is_decoder": false}'),
+    # ("hrr-lg-uni",   "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 2048, "is_decoder": true}'),
+    ("hrr-lg-bi",    "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 2048, "is_decoder": false}'),
+    ("mamba-tn-uni", "mamba",     '{"mode": "uni", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
+    ("mamba-tn-bi",  "mamba",     '{"mode": "bi", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
+    ("mamba-sm-uni", "mamba",     '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "tie_directions": false}'),  #
+    ("mamba-sm-bi",  "mamba",     '{"mode": "bi", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "tie_directions": false}'),  #
+    ("mamba-md-uni", "mamba",     '{"mode": "uni", "num_hidden_layers": 9, "hidden_size": 384, "embedding_size": 384, "tie_directions": false}'),  #
+    ("mamba-md-bi",  "mamba",     '{"mode": "bi", "num_hidden_layers": 9, "hidden_size": 384, "embedding_size": 384, "tie_directions": false}'),  #
+    ("mamba-lg-uni", "mamba",     '{"mode": "uni", "num_hidden_layers": 12, "hidden_size": 512, "embedding_size": 512, "tie_directions": false}'),  #
+    ("mamba-lg-bi",  "mamba",     '{"mode": "bi", "num_hidden_layers": 12, "hidden_size": 512, "embedding_size": 512, "tie_directions": false}'),  #
+    ("malconv",      "malconv2",  '{"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}'),  # 2.56 M
 ]
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 PRETRAINING_CHECKPOINTS = [None, -1, 0]
@@ -73,10 +81,12 @@ SEEDS = [0, 1, 2]
 
 # Adjust these frequently to configure which experiments to actually run.
 # This is simpler than adding a complex CLI.
-MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
+# MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
+MODELS = list(filter(lambda x: x[0] == "hrr-sm-bi", MODELS))
+PRETRAINING_TASKS = [None, "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
-PRETRAINING_CHECKPOINTS = [None, -1, 0]
+PRETRAINING_CHECKPOINTS = [None]
 
 
 def get_body_lm(
@@ -87,22 +97,37 @@ def get_body_lm(
     model_nickname: str,
 ) -> str:
 
-    _, size, mode = model_nickname.split("-")
+    parts = model_nickname.split("-")
+    if len(parts) == 2:
+        name, size, mode = parts[0], parts[1], parts[2]
+    if len(parts) == 3:
+        name, size, mode = parts[0], parts[1], parts[2]
 
-    if args.lm_ngpus == 2 and size == "sm" and mode == "uni":
-        tim = "01-00:00:00"
-        mem = "64G"
-    elif args.lm_ngpus == 2 and size == "sm" and mode == "bi":
-        tim = "02-00:00:00"
-        mem = "64G"
-    elif args.lm_ngpus == 4 and size == "lg" and mode == "uni":
-        tim = "01-00:00:00"
-        mem = "128G"
-    elif args.lm_ngpus == 4 and size == "lg" and mode == "bi":
-        tim = "02-00:00:00"
-        mem = "128G"
-    else:
-        raise ValueError("Don't know how much memory and time is needed!")
+    bf16 = "false" if name == "hrr" else "true"
+
+    if name == "mamba":
+        if size == "sm":
+            hours = 48
+        if size == "lg":
+            hours = 96
+        if mode == "bi":
+            hours *= 2
+    if name == "hrr":
+        if size == "sm":
+            hours = 12
+        if size == "lg":
+            hours = None
+
+    if hours is None:
+        warnings.warn(f"Don't know how much time to allocate to {model_nickname=} for {downstream_task=}.")
+        tim = 8
+
+    hours /= args.lm_ngpus
+    tim = get_slurm_time(hours)
+
+    mem = 32
+    mem *= args.lm_ngpus
+    mem = f"{mem}G"
 
     return f"""#!/bin/bash -l
 
@@ -168,7 +193,7 @@ def get_body_lm(
     --early_stopping=false \\
     --auto_find_batch_size_and_gradient_accumulation_steps \\
     --tf32=true \\
-    --bf16=true \\
+    --bf16={bf16} \\
     --fp16=false \\
     --gradient_checkpointing=true
     """.replace("    ", "").replace("\n\n", "\n")
@@ -193,6 +218,8 @@ def get_body_clf(
     weighted_loss: Optional[str],
     learning_rate: float,
 ) -> str:
+
+    bf16 = "false" if "hrr" in model_name_or_path else "true"
 
     return f"""#!/bin/bash -l
 
@@ -274,7 +301,7 @@ def get_body_clf(
     --eval_accumulation_steps=64 \\
     --load_best_model_at_end \\
     --tf32=true \\
-    --bf16=true \\
+    --bf16={bf16} \\
     --fp16=false \\
     --gradient_checkpointing={'true' if gradient_checkpointing else 'false'}
     """.replace("    ", "").replace("\n\n", "\n")
@@ -327,6 +354,18 @@ def compute_mem(
     return f"{t}G"
 
 
+def get_slurm_time(total_hours: int | float) -> str:
+    if total_hours < 1:
+        days, hours = 0, 1
+    elif total_hours >= 24:
+        days, hours = divmod(total_hours, 24)
+    else:
+        days, hours = 0, round(total_hours)
+
+    days, hours = int(days), int(hours)
+    return f"0{days}-{hours}:00:00"
+
+
 def compute_time(
     tr_num_samples: int,
     vl_num_samples: int,
@@ -336,10 +375,11 @@ def compute_time(
 ) -> str:
     """Compute an estimation of time, then add a bit of buffer. 
     """
-    if "mamba" in model_nickname:
-        name, size, mode = model_nickname.split("-")
-    else:
-        name, size, mode = model_nickname, None, None
+    parts = model_nickname.split("-")
+    if len(parts) == 2:
+        name, size, mode = parts[0], parts[1], parts[2]
+    if len(parts) == 3:
+        name, size, mode = parts[0], parts[1], parts[2]
 
     if name == "mamba": # this are just the unidrectional times; for bidirection, multiply by two
         if size == "sm":
@@ -369,6 +409,21 @@ def compute_time(
             tr_time_per_sample = None
             vl_time_per_sample = None
 
+    if name == "hrr":
+        if size == "sm":
+            if max_length == 2 ** 14:
+                tr_time_per_sample = 0.01074219
+                vl_time_per_sample = 0.00430416
+            if max_length == 2 ** 16:
+                tr_time_per_sample = None
+                vl_time_per_sample = None
+        if size == "lg":
+            if max_length == 2 ** 14:
+                tr_time_per_sample = None
+                vl_time_per_sample = None
+            if max_length == 2 ** 16:
+                tr_time_per_sample = None
+                vl_time_per_sample = None
 
     tr_time = tr_time_per_sample * tr_num_samples * num_train_epochs
     vl_time = vl_time_per_sample * vl_num_samples * num_train_epochs
@@ -377,15 +432,7 @@ def compute_time(
     total_time = (30 * 60) + (.05 * total_time) + total_time
 
     total_hours = total_time / 3600
-    if total_hours < 1:
-        days, hours = 0, 1
-    elif total_hours >= 24:
-        days, hours = divmod(total_hours, 24)
-    else:
-        days, hours = 0, round(total_hours)
-
-    days, hours = int(days), int(hours)
-    return f"0{days}-{hours}:00:00"
+    return get_slurm_time(total_hours)
 
 
 # dict[(task, tr_samples_per_class, min_freq), (tr_samples, vl_samples)]
@@ -489,7 +536,14 @@ def main():
 
         # Pretraining
         for pretraining_task in PRETRAINING_TASKS:
-            if pretraining_task is None or model_name != "mamba":
+            # pretraining is not implemented in these configurations
+            if pretraining_task is None:
+                continue
+            if model_name not in ("mamba", "hrrformer"):
+                continue
+            if pretraining_task == "mlm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "uni":
+                continue
+            if pretraining_task == "clm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "bi":
                 continue
 
             jobname = get_jobname(
@@ -520,7 +574,7 @@ def main():
 
             for pretraining_task in PRETRAINING_TASKS:
                 # pretraining is not implemented in these configurations
-                if model_name in ("malconv", "malconv2") and pretraining_task is not None:
+                if pretraining_task is not None and model_name not in ("mamba", "hrrformer"):
                     continue
                 if pretraining_task == "mlm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "uni":
                     continue
@@ -642,7 +696,8 @@ def main():
 
 
     # did not bother adding seeds or dependencies etc.
-    with open(OUTPUT / "run_lm.sh", "w") as fp:
+    with open(OUTPUT / "run.sh", "w") as fp:
+        fp.write("# lm\n")
         for f in sorted(outfiles_lm, key=lambda p: key_for_sorting_jobnames(str(p.name))):
             f = f.relative_to("/home/lk3591/Documents/code/RawByteClf")
             f_parts = f.stem.split("--")
@@ -659,7 +714,7 @@ def main():
 
     f_previous_parts = []
     # the dependency logic is dependent on the format of the jobname
-    with open(OUTPUT / "run_clf.sh", "w") as fp:
+    with open(OUTPUT / "run.sh", "a") as fp:
         for f in sorted(outfiles_clf, key=lambda p: key_for_sorting_jobnames(str(p.name))):
             f = f.relative_to("/home/lk3591/Documents/code/RawByteClf")
             f_parts = f.stem.split("--")
@@ -694,8 +749,6 @@ def main():
             fp.write(f"{pre} {str(f)} {pos}\n")
 
             f_previous_parts = f_parts
-
-
 
 
 if __name__ == "__main__":
