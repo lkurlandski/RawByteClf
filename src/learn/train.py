@@ -1524,7 +1524,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         max_per_device_eval_batch_size: int = None
         if not args.skip_eval_check:
             print("Initial Evaluation...", flush=True)
-            initial_output, max_per_device_eval_batch_size = _eval()  # pylint: disable=no-value-for-parameter
+            if args.auto_find_batch_size_and_gradient_accumulation_steps:
+                initial_output, max_per_device_eval_batch_size = _eval()  # pylint: disable=no-value-for-parameter
+            else:
+                trainer = ModelTrainer(
+                    model=model,
+                    args=training_arguments,
+                    train_dataset=dataset["tr"],
+                    eval_dataset=dataset["vl"],
+                    data_collator=data_collator,
+                    tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
+                    callbacks=callbacks,
+                    compute_metrics=compute_metrics,
+                )
+                initial_output, max_per_device_eval_batch_size = trainer.predict(dataset["vl"]), batch_size
             model = model.to(torch.float32).to("cpu")
             torch.cuda.empty_cache()
             gc.collect()
