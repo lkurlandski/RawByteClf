@@ -48,13 +48,13 @@ DATA_READ_BYTES = 2 ** 14
 # At the moment, gradient checkpointing with distributed data parallel does not work
 # with the bidrectional mamba weight-tying, so we need to disable this.
 MODELS = [
-    # ("hrr-tn-uni",   "hrrformer", '{"num_hidden_layers": 1, "hidden_size": 128, "embedding_size": 128, "num_attention_heads": 1, "intermediate_size": 256, "is_decoder": true}'),
+    ("hrr-tn-uni",   "hrrformer", '{"num_hidden_layers": 1, "hidden_size": 128, "embedding_size": 128, "num_attention_heads": 1, "intermediate_size": 256, "is_decoder": true}'),
     ("hrr-tn-bi",    "hrrformer", '{"num_hidden_layers": 1, "hidden_size": 128, "embedding_size": 128, "num_attention_heads": 1, "intermediate_size": 256, "is_decoder": false}'),
-    # ("hrr-sm-uni",   "hrrformer", '{"num_hidden_layers": 2, "hidden_size": 256, "embedding_size": 256, "num_attention_heads": 2, "intermediate_size": 512, "is_decoder": true}'),
+    ("hrr-sm-uni",   "hrrformer", '{"num_hidden_layers": 2, "hidden_size": 256, "embedding_size": 256, "num_attention_heads": 2, "intermediate_size": 512, "is_decoder": true}'),
     ("hrr-sm-bi",    "hrrformer", '{"num_hidden_layers": 2, "hidden_size": 256, "embedding_size": 256, "num_attention_heads": 2, "intermediate_size": 512, "is_decoder": false}'),
-    # ("hrr-md-uni",   "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 1024, "is_decoder": true}'),
+    ("hrr-md-uni",   "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 1024, "is_decoder": true}'),
     ("hrr-md-bi",    "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 1024, "is_decoder": false}'),
-    # ("hrr-lg-uni",   "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 2048, "is_decoder": true}'),
+    ("hrr-lg-uni",   "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 2048, "is_decoder": true}'),
     ("hrr-lg-bi",    "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 2048, "is_decoder": false}'),
     ("mamba-tn-uni", "mamba",     '{"mode": "uni", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
     ("mamba-tn-bi",  "mamba",     '{"mode": "bi", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
@@ -82,8 +82,8 @@ SEEDS = [0, 1, 2]
 # Adjust these frequently to configure which experiments to actually run.
 # This is simpler than adding a complex CLI.
 # MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
-MODELS = list(filter(lambda x: x[0] == "hrr-sm-bi", MODELS))
-PRETRAINING_TASKS = [None, "mlm-sor"]
+MODELS = list(filter(lambda x: x[0] in ("hrr-sm-bi", "hrr-sm-uni"), MODELS))
+PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
 PRETRAINING_CHECKPOINTS = [None]
@@ -541,9 +541,13 @@ def main():
                 continue
             if model_name not in ("mamba", "hrrformer"):
                 continue
-            if pretraining_task == "mlm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "uni":
+            if pretraining_task == "mlm-sor" and  model_name == "mamba" and arch_config_dict["mode"] == "uni":
+                continue
+            if pretraining_task == "mlm-sor" and model_name == "hrrformer" and arch_config_dict["is_decoder"]:
                 continue
             if pretraining_task == "clm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "bi":
+                continue
+            if pretraining_task == "clm-sor" and model_name == "hrrformer" and not arch_config_dict["is_decoder"]:
                 continue
 
             jobname = get_jobname(
@@ -578,7 +582,11 @@ def main():
                     continue
                 if pretraining_task == "mlm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "uni":
                     continue
+                if pretraining_task == "mlm-sor" and model_name == "hrrformer" and arch_config_dict["is_decoder"]:
+                    continue
                 if pretraining_task == "clm-sor" and model_name == "mamba" and arch_config_dict["mode"] == "bi":
+                    continue
+                if pretraining_task == "clm-sor" and model_name == "hrrformer" and not arch_config_dict["is_decoder"]:
                     continue
 
                 for pretraining_checkpoint in PRETRAINING_CHECKPOINTS:
