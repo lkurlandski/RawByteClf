@@ -5,6 +5,7 @@ Implementation of HRRFormer.
 import math
 from pathlib import Path
 import warnings
+import sys
 from typing import Literal, Optional
 
 import torch
@@ -95,6 +96,18 @@ class HRRFormerEmbeddings(BertEmbeddings):
         self.register_buffer("token_type_ids", torch.zeros(self.position_ids.size(), dtype=torch.long), persistent=False)
 
 
+# def log(x: Tensor, label: str):
+#     d = {
+#         "label": label,
+#         "shape": str(tuple(x.shape)),
+#         "dtype": str(x.dtype).replace("torch.", ""),
+#         # "device": str(x.device),
+#         "bytes": x.element_size() * x.nelement(),
+#         "gbytes": round(x.element_size() * x.nelement() / 1e9, 2),
+#     }
+#     print(d)
+
+
 class HRRSelfAttention(nn.Module):
 
     def __init__(self, config: HRRConfig, position_embedding_type: Optional[str] = None) -> None:
@@ -137,6 +150,21 @@ class HRRSelfAttention(nn.Module):
         past_key_value: Optional[tuple[tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
     ) -> tuple[Tensor]:
+        if attention_mask is not None:
+            if attention_mask.shape[1] != 1 or attention_mask.shape[2] != 1:
+                raise ValueError(
+                    f"Recieved an attention_mask with shape: {attention_mask.shape}."
+                    "This is a causal attention mask, which is not needed for HRRFormer and can cause OOM."
+                    "Pass in an attention_mask with shape (B, 1, 1, T) instead to mask out specific tokens, e.g., padding."
+                )
+        if encoder_attention_mask is not None:
+            if encoder_attention_mask.shape[1] != 1 or encoder_attention_mask.shape[2] != 1:
+                raise ValueError(
+                    f"Recieved an encoder_attention_mask with shape: {encoder_attention_mask.shape}."
+                    "This is a causal attention mask, which is not needed for HRRFormer and can cause OOM."
+                    "Pass in an attention_mask with shape (B, 1, 1, T) instead to mask out specific tokens, e.g., padding."
+                )
+
         # When used as a decoder, a causal mask is expected. This mask is not
         # applied to the attention scores as would usually be done, but rather
         # to the superpositional binding of the key and value tensors.
@@ -178,6 +206,10 @@ class HRRSelfAttention(nn.Module):
 
         pad_to = 1 << (D - 1).bit_length()
 
+        # log(key_layer, "key_layer")
+        # log(value_layer, "value_layer")
+        # log(query_layer, "query_layer")
+
         # Binding and unbinding
         superpositions = binding(key_layer, value_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
         if self.is_decoder and attention_mask is not None:
@@ -190,10 +222,13 @@ class HRRSelfAttention(nn.Module):
         value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]  # (B, H, T, D)
         attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)                  # (B, H, T, 1)
 
+        # log(superpositions, "superpositions")
+        # log(superposition, "superposition")
+        # log(value_approx, "value_approx")
+        # log(attention_scores, "attention_scores")
+
         # Attention mask, scores, and probabilities
-        if not self.is_decoder and attention_mask is not None:
-            # When using as a decoder with causal masking, causality is preserved in the superpositional binding,
-            # so we can just ignore the attention mask.
+        if attention_mask is not None:
             attention_scores = attention_scores + attention_mask.permute(0, 1, 3, 2)      # (B, H, T, 1)
         attention_probs = F.softmax(attention_scores, dim=-2)                             # (B, H, T, 1)
         attention_probs = self.dropout.forward(attention_probs)                           # (B, H, T, 1)
@@ -531,9 +566,12 @@ class HRRModel(HRRPreTrainedModel):
             warnings.warn(f"{token_type_ids.dtype=}, which is unexpected. Casting to torch.long")
             token_type_ids = token_type_ids.to(torch.long)
 
+        # NOTE: The causal implementation of HRRFormer does not use the attention mask.
+        # The causal attention mask is memory hungry, so we just ignore it.
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask: Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
+        # extended_attention_mask: Tensor = self.get_extended_attention_mask(attention_mask, input_shape)
+        extended_attention_mask = attention_mask[:, None, None, :]
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
