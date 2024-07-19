@@ -140,6 +140,7 @@ from src.architectures.hrrformer import (
     HRRConfig,
     HRRForSequenceClassification,
     HRRForMaskedLM,
+    HRRForCausalLM,
 )
 try:
     from src.architectures.mamba import (
@@ -570,7 +571,6 @@ def hp_model_init(
         model_name_or_path,
         tokenizer,
         max_length,
-        tensor_log_path=None,
         arch_config=None,
         **(hparams | kwds),
     )
@@ -758,7 +758,6 @@ def get_config(
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
     max_length: Optional[int] = None,
-    tensor_log_path: Optional[Path] = None,
     arch_config: Optional[dict[str, Any]] = None,
     **kwds,
 ) -> PretrainedConfig:
@@ -766,7 +765,7 @@ def get_config(
     Get the configuration for the model.
 
     Precedence (highest to lowest):
-        - config from the tokenizer, max_length, and tensor_log_path args
+        - config from the tokenizer, max_length
         - kwds
         - arch_config
         - default config from the architecture itself
@@ -871,7 +870,6 @@ def get_config(
             eos_token_id=tokenizer.eos_token_id,
             cls_token_id=tokenizer.bos_token_id,
             sep_token_id=tokenizer.eos_token_id,
-            tensor_log_path=tensor_log_path,
         )
         return HRRConfig(**kwds)
 
@@ -1026,6 +1024,8 @@ def get_model(
                 return MambaForMaskedLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
         if task[0:3] == "clm":
+            if model_name == "hrrformer":
+                return HRRForCausalLM.from_pretrained(model_name_or_path, **kwds)
             if model_name == "mamba":
                 return MambaForCausalLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
@@ -1057,7 +1057,7 @@ def get_model(
                 return AutoModelForMaskedLM.from_config(config)
         if task[0:3] == "clm":
             if isinstance(config, HRRConfig):
-                raise NotImplementedError()
+                return HRRForCausalLM(config)
             if isinstance(config, RwkvConfig):
                 raise NotImplementedError()
             if isinstance(config, MambaConfig):
@@ -1361,7 +1361,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.model_name_or_path,
         tokenizer,
         args.max_length,
-        tensor_log_path=oh.tensor_log_path,
         arch_config=args.arch_config,
         num_labels=materials.num_classes,
         id2label=materials.id2label,

@@ -57,24 +57,9 @@ class HRRConfig(PretrainedConfig):
         position_embedding_type: str = "absolute",
         use_cache: bool = True,
         classifier_dropout: Optional[float] = None,
-        superposition_scale_factor: Optional[float | Literal["max", "mean", "log", "norm"]] = None,
-        attention_score_scale_factor: Optional[float | Literal["ortho"]] = None,
-        tensor_log_path: Optional[str] = None,
-        tensor_logging: bool = False,
-        tensor_log_freq: float = 1.0,
-        norm: Literal["forward", "backward", "ortho"] = "backward",
+        fft_norm: Literal["forward", "backward", "ortho"] = "backward",
         **kwargs,
     ):
-        """
-        Args
-          superposition_scale_factor: A scaling factor to apply to the superpositions before
-            summation. This can be a scalar floating point value, `max`, which will scale by the
-            square root of the maximum possible value for the sequence length for this model,
-            `mean`, which will scale by the length of the input sequence, or `log`, which perform
-            the summation in a more stable log space. If None, defaults to 1.0.
-          attention_score_scale_factor: A scaling factor to apply to the attention scores before.
-            If None, defaults to 1 / sqrt(attention_head_size), as done in the original Transformer.
-        """
         super().__init__(pad_token_id=pad_token_id, **kwargs)
 
         self.vocab_size = vocab_size
@@ -93,31 +78,7 @@ class HRRConfig(PretrainedConfig):
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
         self.classifier_dropout = classifier_dropout
-        self.norm = norm
-        self.tensor_log_freq = tensor_log_freq
-        self.tensor_log_path = None
-        if tensor_logging:
-            self.tensor_log_path = tensor_log_path.as_posix() if isinstance(tensor_log_path, Path) else tensor_log_path
-
-        if isinstance(superposition_scale_factor, (float, int)):
-            self.superposition_scale_factor = float(superposition_scale_factor)
-        elif superposition_scale_factor == "max":
-            self.superposition_scale_factor = 1.0 / math.sqrt(max_position_embeddings)
-        elif superposition_scale_factor in ("mean", "log", "norm"):
-            self.superposition_scale_factor = superposition_scale_factor
-        elif superposition_scale_factor is None:
-            self.superposition_scale_factor = 1.0
-        else:
-            raise ValueError(f"Invalid value {superposition_scale_factor=}")
-
-        if isinstance(attention_score_scale_factor, (float, int)):
-            self.attention_score_scale_factor = float(attention_score_scale_factor)
-        elif attention_score_scale_factor == "ortho":
-            self.attention_score_scale_factor = 1 / math.sqrt(int(self.hidden_size / self.num_attention_heads))
-        elif attention_score_scale_factor is None:
-            self.attention_score_scale_factor = 1.0
-        else:
-            raise ValueError(f"Invalid value {attention_score_scale_factor=}")
+        self.fft_norm = fft_norm
 
 
 class HRRFormerEmbeddings(BertEmbeddings):
@@ -159,7 +120,7 @@ class HRRSelfAttention(nn.Module):
             self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
         self.is_decoder = config.is_decoder
-        self.norm = config.norm
+        self.fft_norm = config.fft_norm
 
     def transpose_for_scores(self, x: Tensor) -> Tensor:
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -176,26 +137,21 @@ class HRRSelfAttention(nn.Module):
         past_key_value: Optional[tuple[tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
     ) -> tuple[Tensor]:
-        # TODO: for causal tasks, a mask needs to be added in the binding phase.
-        # hidden_states: (B, T, D * H)
-        # attention_mask: (B, 1, 1 | T, T)
+        # When used as a decoder, a causal mask is expected. This mask is not
+        # applied to the attention scores as would usually be done, but rather
+        # to the superpositional binding of the key and value tensors.
     
-        # B - batch size
-        # H - number of attention heads
-        # T - sequence length
-        # D - effective hidden size
-        B = hidden_states.size(0)
-        H = self.num_attention_heads
-        T = hidden_states.size(1)
-        D = self.attention_head_size
-
-        mixed_query_layer = self.query(hidden_states)
+        B = hidden_states.size(0)     # - batch size
+        H = self.num_attention_heads  # - number of attention heads
+        T = hidden_states.size(1)     # - sequence length
+        D = self.attention_head_size  # - effective hidden size
 
         # If this is instantiated as a cross-attention module, the keys
         # and values come from an encoder; the attention mask needs to be
         # such that the encoder's padding tokens are not attended to.
         is_cross_attention = encoder_hidden_states is not None
 
+        query_layer = self.transpose_for_scores(self.query(hidden_states))
         if is_cross_attention and past_key_value is not None:
             key_layer = past_key_value[0]
             value_layer = past_key_value[1]
@@ -213,39 +169,39 @@ class HRRSelfAttention(nn.Module):
             key_layer = self.transpose_for_scores(self.key(hidden_states))
             value_layer = self.transpose_for_scores(self.value(hidden_states))
 
-        query_layer = self.transpose_for_scores(mixed_query_layer)
-
-        if self.is_decoder:
-            past_key_value = (key_layer, value_layer)
-
         key_layer    # (B, H, T, D)
         value_layer  # (B, H, T, D)
         query_layer  # (B, H, T, D)
 
+        if self.is_decoder:
+            past_key_value = (key_layer, value_layer)
+
         pad_to = 1 << (D - 1).bit_length()
 
         # Binding and unbinding
-        superpositions = binding(key_layer, value_layer, dim=-1, norm=self.norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
-        superposition = torch.sum(superpositions, dim=-2, keepdims=True)                                   # (B, H, 1, D)
-        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.norm, n=pad_to)[:,:,:,0::D] # (B, H, T, 1)
-        attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)              # (B, H, T, 1)
+        superpositions = binding(key_layer, value_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]          # (B, H, T, D)
+        if self.is_decoder and attention_mask is not None:
+            # Causal masking needs to take place within the superposition.
+            # We create T superpositions using interactions from the preceeding tokens.
+            # This ensures that the `superposition` and `value_approx` preserves causality.
+            superposition = torch.cumsum(superpositions, dim=-2)                                               # (B, H, T, D)
+        else:
+            superposition = torch.sum(superpositions, dim=-2, keepdims=True)                                   # (B, H, 1, D)
+        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
+        attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)                  # (B, H, T, 1)
 
         # Attention mask, scores, and probabilities
-        if attention_mask is not None:
-            if self.is_decoder:
-                raise NotImplementedError()
-            else:
-                attention_scores = attention_scores + attention_mask.permute(0, 1, 3, 2)  # (B, H, T, 1)
-        attention_probs = F.softmax(attention_scores, dim=-2)                             # (B, H, T, 1 | T)
-        attention_probs = self.dropout.forward(attention_probs)                           # (B, H, T, 1 | T)
+        if not self.is_decoder and attention_mask is not None:
+            # When using as a decoder with causal masking, causality is preserved in the superpositional binding,
+            # so we can just ignore the attention mask.
+            attention_scores = attention_scores + attention_mask.permute(0, 1, 3, 2)      # (B, H, T, 1)
+        attention_probs = F.softmax(attention_scores, dim=-2)                             # (B, H, T, 1)
+        attention_probs = self.dropout.forward(attention_probs)                           # (B, H, T, 1)
         if head_mask is not None:
-            attention_probs = attention_probs * head_mask                                 # (B, H, T, 1 | T)
+            attention_probs = attention_probs * head_mask                                 # (B, H, T, 1)
 
         # Attention module context
-        if attention_probs.size(-1) == 1:
-            context_layer = attention_probs * value_layer                                     # (B, H, T, D)
-        else:
-            raise NotImplementedError("I have not figured out how to handle this case, ie, causal language modeling.")
+        context_layer = attention_probs * value_layer                                         # (B, H, T, D)
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()                        # (B, T, H, D)
         context_layer = context_layer.view(context_layer.size()[:-2] + (self.all_head_size,)) # (B, T, H * D)
 

@@ -552,10 +552,6 @@ class OutputHelper:
         return get_highest_path(self.checkpoints_dir, lstrip="checkpoint-")
 
     @property
-    def tensor_log_path(self) -> Path:
-        return self.path / "tensor_log_path"
-
-    @property
     def lock_file(self) -> Path:
         return self.path / "LOCK"
 
