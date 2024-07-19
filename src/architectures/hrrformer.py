@@ -22,6 +22,7 @@ from transformers.models.bert.modeling_bert import (
     BertOutput,
 )
 from transformers.modeling_outputs import (
+    CausalLMOutputWithCrossAttentions,
     BaseModelOutputWithPastAndCrossAttentions,
     MaskedLMOutput,
     SequenceClassifierOutput,
@@ -158,10 +159,6 @@ class HRRSelfAttention(nn.Module):
             self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
         self.is_decoder = config.is_decoder
-        self.superposition_scale_factor = config.superposition_scale_factor
-        self.attention_score_scale_factor = config.attention_score_scale_factor
-        self.tensor_log_path = config.tensor_log_path
-        self.tensor_log_freq = config.tensor_log_freq
         self.norm = config.norm
 
     def transpose_for_scores(self, x: Tensor) -> Tensor:
@@ -179,8 +176,18 @@ class HRRSelfAttention(nn.Module):
         past_key_value: Optional[tuple[tuple[torch.FloatTensor]]] = None,
         output_attentions: Optional[bool] = False,
     ) -> tuple[Tensor]:
-
-        SHOULD_LOG = self.tensor_log_path and torch.rand(1).item() <= self.tensor_log_freq
+        # TODO: for causal tasks, a mask needs to be added in the binding phase.
+        # hidden_states: (B, T, D * H)
+        # attention_mask: (B, 1, 1 | T, T)
+    
+        # B - batch size
+        # H - number of attention heads
+        # T - sequence length
+        # D - effective hidden size
+        B = hidden_states.size(0)
+        H = self.num_attention_heads
+        T = hidden_states.size(1)
+        D = self.attention_head_size
 
         mixed_query_layer = self.query(hidden_states)
 
@@ -190,7 +197,6 @@ class HRRSelfAttention(nn.Module):
         is_cross_attention = encoder_hidden_states is not None
 
         if is_cross_attention and past_key_value is not None:
-            # reuse k,v, cross_attentions
             key_layer = past_key_value[0]
             value_layer = past_key_value[1]
             attention_mask = encoder_attention_mask
@@ -209,131 +215,46 @@ class HRRSelfAttention(nn.Module):
 
         query_layer = self.transpose_for_scores(mixed_query_layer)
 
-        # use_cache = past_key_value is not None
         if self.is_decoder:
-            # if cross_attention save tuple(Tensor, Tensor) of all cross attention key/value_states.
-            # Further calls to cross_attention layer can then reuse all cross-attention
-            # key/value_states (first "if" case)
-            # if uni-directional self-attention (decoder) save tuple(Tensor, Tensor) of
-            # all previous decoder key/value_states. Further calls to uni-directional self-attention
-            # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
-            # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_layer, value_layer)
 
-        # Take the dot product between "query" and "key" to get the raw attention scores.
-        # attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        if SHOULD_LOG:
-            log_tensor(self.tensor_log_path, key_layer, "key_layer")
-            log_tensor(self.tensor_log_path, value_layer, "value_layer")
-            log_tensor(self.tensor_log_path, query_layer, "query_layer")
+        key_layer    # (B, H, T, D)
+        value_layer  # (B, H, T, D)
+        query_layer  # (B, H, T, D)
 
-        # HRR
-        # H' = hidden_size / num_attention_heads  RuntimeError: cuFFT error: CUFFT_INVALID_SIZE
-        # zero padding
-        if key_layer.dtype != torch.float32 or value_layer.dtype != torch.float32:
-            n = 1 << (key_layer.shape[3] - 1).bit_length()  # nearest power of two
-        else:
-            n = None
+        pad_to = 1 << (D - 1).bit_length()
 
-        try:
-            superpositions = binding(
-                key_layer,
-                value_layer,
-                dim=-1,
-                norm=self.norm,
-                n=n,
-            )[:,:,:,0:key_layer.shape[3]]  # (B, h, T, H')
-        except RuntimeError:  # TODO: hyperparameter tuning can sometimes induce this error...why?
-            print(f"{key_layer.shape=}")
-            print(f"{value_layer.shape=}")
-            raise
+        # Binding and unbinding
+        superpositions = binding(key_layer, value_layer, dim=-1, norm=self.norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
+        superposition = torch.sum(superpositions, dim=-2, keepdims=True)                                   # (B, H, 1, D)
+        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.norm, n=pad_to)[:,:,:,0::D] # (B, H, T, 1)
+        attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)              # (B, H, T, 1)
 
-        # Calculating the superposition as the sum of the superpositions can lead to overflow,
-        # especially when using fp16. After some analysis, we find that aggressive gradient
-        # clipping can alleviate this problem to some degree. However, we also found that scaling
-        # the superpositions by a constant factor, e.g., 1 / sqrt(H'), or taking the mean instead
-        # of the sum does not seem to impact learning and can also be used to avoid overflow.
-        # so we use the mean. torch.mean() also causes overflow, so we compute it manually instead.
-        superposition: Tensor  # (B, h, 1, H')
-        if self.superposition_scale_factor == "mean":
-            superposition = torch.sum(torch.div(superpositions, superpositions.size(-2)), dim=-2, keepdim=True)
-        elif self.superposition_scale_factor == "log":
-            max_value, _ = torch.max(superpositions, dim=-2, keepdim=True)
-            superposition = torch.log(torch.sum(torch.exp(superpositions - max_value), dim=-2, keepdim=True)) + max_value
-        elif self.superposition_scale_factor == "norm":
-            superpositions = F.normalize(superpositions, p=2.0, dim=-2, eps=1e-12, out=None)
-            superposition = torch.sum(superpositions, dim=-2, keepdims=True)
-        else:
-            superposition = torch.sum(superpositions * self.superposition_scale_factor, dim=-2, keepdims=True)
-
-        value_approx = unbinding(
-            superposition,
-            query_layer,
-            dim=-1,
-            norm=self.norm,
-            n=n,
-        )[:,:,:,0:key_layer.shape[3]]  # (B, h, T, H')
-        attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)  # (B, h, T, 1)
-
-        if SHOULD_LOG:
-            log_tensor(self.tensor_log_path, superpositions, "superpositions")
-            log_tensor(self.tensor_log_path, superposition, "superposition")
-            log_tensor(self.tensor_log_path, value_approx, "value_approx")
-            log_tensor(self.tensor_log_path, attention_scores, "attention_scores")
-
-        # Add the positional encoding
-        if self.position_embedding_type in ("relative_key", "relative_key_query"):
-            raise NotImplementedError()
-            # query_length, key_length = query_layer.shape[2], key_layer.shape[2]
-            # if use_cache:
-            #     position_ids_l = Tensor(key_length - 1, dtype=torch.long, device=hidden_states.device).view(-1, 1)
-            # else:
-            #     position_ids_l = torch.arange(query_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
-            # position_ids_r = torch.arange(key_length, dtype=torch.long, device=hidden_states.device).view(1, -1)
-            # distance = position_ids_l - position_ids_r
-
-            # positional_embedding = self.distance_embedding(distance + self.max_position_embeddings - 1)
-            # positional_embedding = positional_embedding.to(dtype=query_layer.dtype)  # fp16 compatibility
-
-            # if self.position_embedding_type == "relative_key":
-            #     relative_position_scores = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-            #     attention_scores = attention_scores + relative_position_scores
-            # elif self.position_embedding_type == "relative_key_query":
-            #     relative_position_scores_query = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-            #     relative_position_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
-            #     attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
-
-        attention_scores = attention_scores * self.attention_score_scale_factor
-        if SHOULD_LOG:
-            log_tensor(self.tensor_log_path, attention_scores, "attention_scores")
-        # Apply the attention mask.
-        # TODO: for causal language modeling, the attention mask has shape (B, 1, T, T).
+        # Attention mask, scores, and probabilities
         if attention_mask is not None:
-            attention_scores = attention_scores + attention_mask.permute(0, 1, 3, 2)  # (B, h, T, 1)
-
-        # Normalize the attention scores to probabilities.
-        attention_probs = F.softmax(attention_scores, dim=-2)
-        if SHOULD_LOG:
-            log_tensor(self.tensor_log_path, attention_probs, "attention_probs")
-        attention_probs = self.dropout(attention_probs)
-        if SHOULD_LOG:
-            log_tensor(self.tensor_log_path, attention_probs, "attention_probs_post_dropout")
-
-        # Mask heads if we want to
+            if self.is_decoder:
+                raise NotImplementedError()
+            else:
+                attention_scores = attention_scores + attention_mask.permute(0, 1, 3, 2)  # (B, H, T, 1)
+        attention_probs = F.softmax(attention_scores, dim=-2)                             # (B, H, T, 1 | T)
+        attention_probs = self.dropout.forward(attention_probs)                           # (B, H, T, 1 | T)
         if head_mask is not None:
-            raise NotImplementedError()
-            # attention_probs = attention_probs * head_mask
+            attention_probs = attention_probs * head_mask                                 # (B, H, T, 1 | T)
 
-        context_layer: Tensor = attention_probs * value_layer  # (B, h, T, H')
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()  # (B, T, h, H')
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
-        context_layer = context_layer.view(new_context_layer_shape)  # (B, T, h * H')
+        # Attention module context
+        if attention_probs.size(-1) == 1:
+            context_layer = attention_probs * value_layer                                     # (B, H, T, D)
+        else:
+            raise NotImplementedError("I have not figured out how to handle this case, ie, causal language modeling.")
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()                        # (B, T, H, D)
+        context_layer = context_layer.view(context_layer.size()[:-2] + (self.all_head_size,)) # (B, T, H * D)
 
-        outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
+        # Determine outputs and return
+        outputs = (context_layer,)
+        if output_attentions:
+            outputs = outputs + (attention_probs,)
         if self.is_decoder:
-            raise NotImplementedError()
-            # outputs = outputs + (past_key_value,)
-
+            outputs = outputs + (past_key_value,)
         return outputs
 
 
@@ -707,11 +628,84 @@ class HRRModel(HRRPreTrainedModel):
         )
 
 
+class HRRForCausalLM(HRRPreTrainedModel):
+
+    _tied_weights_keys = ["head.weight"]
+
+    def __init__(self, config: HRRConfig) -> None:
+        if not config.is_decoder:
+            raise ValueError(f"{config.is_decoder}")
+        super().__init__(config)
+        self.backbone = HRRModel(config)
+        self.head = nn.Linear(config.hidden_size, config.vocab_size)
+        self.post_init()
+
+    def get_output_embeddings(self) -> nn.Linear:
+        return self.head
+
+    def set_output_embeddings(self, new_embeddings: nn.Linear) -> None:
+        self.head = new_embeddings
+
+    def forward(
+        self,
+        input_ids: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
+        token_type_ids: Optional[Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        head_mask: Optional[Tensor] = None,
+        inputs_embeds: Optional[Tensor] = None,
+        encoder_hidden_states: Optional[Tensor] = None,
+        encoder_attention_mask: Optional[Tensor] = None,
+        labels: Optional[Tensor] = None,
+        past_key_values: Optional[list[Tensor]] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+    ) -> CausalLMOutputWithCrossAttentions:
+
+        if labels is not None:
+            use_cache = False
+
+        outputs = self.backbone.forward(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+        )
+        prediction_scores = self.head.forward(outputs.last_hidden_state)
+
+        lm_loss = None
+        if labels is not None:
+            shifted_prediction_scores = prediction_scores[:, :-1, :].contiguous()
+            labels = labels[:, 1:].contiguous()
+            loss_fct = CrossEntropyLoss()
+            lm_loss = loss_fct(shifted_prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+
+        return CausalLMOutputWithCrossAttentions(
+            loss=lm_loss,
+            logits=prediction_scores,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            cross_attentions=outputs.cross_attentions,
+        )
+
+
 class HRRForMaskedLM(HRRPreTrainedModel):
 
     _tied_weights_keys = ["head.weight"]
 
     def __init__(self, config: HRRConfig):
+        if config.is_decoder:
+            raise ValueError(f"{config.is_decoder}")
         super().__init__(config)
         self.backbone = HRRModel(config)
         self.head = nn.Linear(config.hidden_size, config.vocab_size)
