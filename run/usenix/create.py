@@ -84,11 +84,11 @@ SEEDS = [0, 1, 2]
 # Adjust these frequently to configure which experiments to actually run.
 # This is simpler than adding a complex CLI.
 # MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
-MODELS = list(filter(lambda x: x[0] in ("hrr-lg-bi", "hrr-lg-uni"), MODELS))
+MODELS = list(filter(lambda x: x[0] in ("hrr-sm-bi", "hrr-sm-uni"), MODELS))
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
-PRETRAINING_CHECKPOINTS = [None]
+PRETRAINING_CHECKPOINTS = [None, -1]
 
 
 def get_body_lm(
