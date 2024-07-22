@@ -52,10 +52,12 @@ MODELS = [
     ("hrr-tn-bi",    "hrrformer", '{"num_hidden_layers": 1, "hidden_size": 128, "embedding_size": 128, "num_attention_heads": 1, "intermediate_size": 256, "is_decoder": false}'),
     ("hrr-sm-uni",   "hrrformer", '{"num_hidden_layers": 2, "hidden_size": 256, "embedding_size": 256, "num_attention_heads": 2, "intermediate_size": 512, "is_decoder": true}'),
     ("hrr-sm-bi",    "hrrformer", '{"num_hidden_layers": 2, "hidden_size": 256, "embedding_size": 256, "num_attention_heads": 2, "intermediate_size": 512, "is_decoder": false}'),
-    ("hrr-md-uni",   "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 1024, "is_decoder": true}'),
-    ("hrr-md-bi",    "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 1024, "is_decoder": false}'),
-    ("hrr-lg-uni",   "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 2048, "is_decoder": true}'),
-    ("hrr-lg-bi",    "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 2048, "is_decoder": false}'),
+    ("hrr-md-uni",   "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 768, "is_decoder": true}'),
+    ("hrr-md-bi",    "hrrformer", '{"num_hidden_layers": 3, "hidden_size": 384, "embedding_size": 384, "num_attention_heads": 4, "intermediate_size": 768, "is_decoder": false}'),
+    ("hrr-lg-uni",   "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 1024, "is_decoder": true}'),
+    ("hrr-lg-bi",    "hrrformer", '{"num_hidden_layers": 4, "hidden_size": 512, "embedding_size": 512, "num_attention_heads": 8, "intermediate_size": 1024, "is_decoder": false}'),
+    ("hrr-hg-uni",   "hrrformer", '{"num_hidden_layers": 6, "hidden_size": 768, "embedding_size": 768, "num_attention_heads": 12, "intermediate_size": 2048, "is_decoder": true}'),
+    ("hrr-hg-bi",    "hrrformer", '{"num_hidden_layers": 6, "hidden_size": 768, "embedding_size": 768, "num_attention_heads": 12, "intermediate_size": 2048, "is_decoder": false}'),
     ("mamba-tn-uni", "mamba",     '{"mode": "uni", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
     ("mamba-tn-bi",  "mamba",     '{"mode": "bi", "num_hidden_layers": 3, "hidden_size": 128, "embedding_size": 128, "tie_directions": false}'),  #
     ("mamba-sm-uni", "mamba",     '{"mode": "uni", "num_hidden_layers": 6, "hidden_size": 256, "embedding_size": 256, "tie_directions": false}'),  #
@@ -82,7 +84,7 @@ SEEDS = [0, 1, 2]
 # Adjust these frequently to configure which experiments to actually run.
 # This is simpler than adding a complex CLI.
 # MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
-MODELS = list(filter(lambda x: x[0] in ("hrr-sm-bi", "hrr-sm-uni"), MODELS))
+MODELS = list(filter(lambda x: x[0] in ("hrr-lg-bi", "hrr-lg-uni"), MODELS))
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
@@ -116,7 +118,7 @@ def get_body_lm(
         if size == "sm":
             hours = 12
         if size == "lg":
-            hours = None
+            hours = 36
 
     if hours is None:
         warnings.warn(f"Don't know how much time to allocate to {model_nickname=} for {downstream_task=}.")
@@ -419,8 +421,8 @@ def compute_time(
                 vl_time_per_sample = None
         if size == "lg":
             if max_length == 2 ** 14:
-                tr_time_per_sample = None
-                vl_time_per_sample = None
+                tr_time_per_sample = 0.012451171875
+                vl_time_per_sample = 0.049804687500
             if max_length == 2 ** 16:
                 tr_time_per_sample = None
                 vl_time_per_sample = None
