@@ -84,7 +84,7 @@ SEEDS = [0, 1, 2]
 # Adjust these frequently to configure which experiments to actually run.
 # This is simpler than adding a complex CLI.
 # MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
-MODELS = list(filter(lambda x: x[0] in ("hrr-sm-bi", "hrr-sm-uni"), MODELS))
+MODELS = list(filter(lambda x: x[0] in ("hrr-lg-bi", "hrr-lg-uni"), MODELS))
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
@@ -479,10 +479,10 @@ def get_clf_alloc_time_and_mem(
     key = (task, tr_samples_per_class, min_freq)
     tr_num_samples, vl_num_samples = TR_VL_SIZES[key]
 
-    if "mamba" in model_nickname:
-        name, size, mode = model_nickname.split("-")
-    else:
+    if "malconv" in model_nickname:
         name, size, mode = model_nickname, None, None
+    else:
+        name, size, mode = model_nickname.split("-")
 
     mem = compute_mem(
         tr_num_samples,
@@ -509,8 +509,14 @@ def get_clf_alloc_time_and_mem(
                 tim = "00-10:00:00"
             else:
                 tim = "00-05:00:00"
-    if name == "malconv2" and key == ("clf-sor-beh", None, 100):
-        tim = "00-01:30:00"
+
+    if name == "malconv2":
+        if key == ("clf-sor-beh", None, 100):
+            tim = "00-01:30:00"
+
+    if name == "hrr" and size == "lg":
+        if key == ("clf-bod", None, None):
+            tim = "00-04:00:00"
 
     return tim, mem
 
