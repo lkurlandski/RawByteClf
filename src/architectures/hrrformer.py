@@ -758,7 +758,7 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
     def __init__(self, config: HRRConfig):
         super().__init__(config)
         self.backbone = HRRModel(config)
-        self.head = nn.Linear(config.hidden_size, config.num_labels)
+        self.clf_head = nn.Linear(config.hidden_size, config.num_labels)
         self.post_init()
 
     def forward(
@@ -784,7 +784,7 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
         )
-        logits = self.head.forward(outputs.last_hidden_state)
+        logits = self.clf_head.forward(outputs.last_hidden_state)
         logits = logits.mean(dim=1)  # Mean pooling along the sequence length.
 
         loss = None
