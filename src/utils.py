@@ -208,6 +208,8 @@ def get_highest_path(
         return int(s)
 
     files = list(Path(path).iterdir()) if isinstance(path, (Path, str)) else path
+    if len(files) == 0:
+        raise FileNotFoundError(f"{path=}")
     return list(sorted(files, key=key))[idx]
 
 
