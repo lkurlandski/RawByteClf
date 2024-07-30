@@ -29,6 +29,7 @@ from src.data.loaders_core import (
     Materials,
     compute_integer_sizes,
     compute_float_sizes,
+    distribute_elements_to_meet_proportions,
     tr_vl_ts_split_idx,
     tr_vl_ts_split,
     tr_vl_ts_split_idx_guarentee,
@@ -44,6 +45,7 @@ from src.data.utils import Decompressor
 
 
 class TestSplitFunctions(unittest.TestCase):
+
     def test_compute_integer_sizes(self):
         total = 100
         self.assertEqual(compute_integer_sizes(total, 0.8, 0.1, 0.1), (80, 10, 10))
@@ -68,15 +70,160 @@ class TestSplitFunctions(unittest.TestCase):
         self.assertEqual(len(split["vl"]), 10)
         self.assertEqual(len(split["ts"]), 10)
 
-    def test_tr_vl_ts_split_idx_guarentee(self):
-        labels = [0] * 50 + [1] * 50
-        split_idx = tr_vl_ts_split_idx_guarentee(labels, 0.8, 0.1, 0.1, samples_per_class=5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split_idx["tr"])[0], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split_idx["tr"])[1], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split_idx["vl"])[0], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split_idx["vl"])[1], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split_idx["ts"])[0], 5)
-        self.assertGreaterEqual(Counter(labels[i] for i in split_idx["ts"])[1], 5)
+
+class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
+
+    samples_per_class = 1
+
+    def setUp(self):
+        self.binary_labels = [0] * 50 + [1] * 50
+        self.multi_labels = [0] * 50 + [1] * 50 + [2] * 50
+
+    def _test(self, idx: dict, labels, tr_size, vl_size, ts_size, samples_per_class):
+        tr_dist = Counter(labels[i] for i in idx["tr"])
+        vl_dist = Counter(labels[i] for i in idx["vl"])
+        ts_dist = Counter(labels[i] for i in idx["ts"])
+
+        assert len(idx["tr"]) + len(idx["vl"]) + len(idx["ts"]) == len(labels), f"{len(idx['tr'])=} {len(idx['vl'])=} {len(idx['ts'])=} {len(labels)=}"
+
+        assert tr_size == 0.0 or tr_dist.most_common()[-1][1] >= samples_per_class
+        assert vl_size == 0.0 or vl_dist.most_common()[-1][1] >= samples_per_class
+        assert ts_size == 0.0 or ts_dist.most_common()[-1][1] >= samples_per_class
+
+    def test_random_1(self):
+        labels = self.binary_labels
+        tr_size = 0.70
+        vl_size = 0.20
+        ts_size = 0.10
+        timestamps = None
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+    def test_random_2(self):
+        labels = self.multi_labels
+        tr_size = 0.70
+        vl_size = 0.20
+        ts_size = 0.10
+        timestamps = None
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+    def test_random_3(self):
+        labels = self.binary_labels
+        tr_size = 0.80
+        vl_size = 0.20
+        ts_size = 0.00
+        timestamps = None
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+    def test_random_4(self):
+        labels = self.multi_labels
+        tr_size = 0.80
+        vl_size = 0.20
+        ts_size = 0.00
+        timestamps = None
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+    def test_temporal_1(self):
+        labels = self.binary_labels
+        tr_size = 0.70
+        vl_size = 0.20
+        ts_size = 0.10
+        timestamps = list(range(len(labels)))
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+    def test_temporal_2(self):
+        labels = self.multi_labels
+        tr_size = 0.70
+        vl_size = 0.20
+        ts_size = 0.10
+        timestamps = list(range(len(labels)))
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+    def test_temporal_3(self):
+        labels = self.binary_labels
+        tr_size = 0.80
+        vl_size = 0.20
+        ts_size = 0.00
+        timestamps = list(range(len(labels)))
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+    def test_temporal_4(self):
+        labels = self.multi_labels
+        tr_size = 0.80
+        vl_size = 0.20
+        ts_size = 0.00
+        timestamps = list(range(len(labels)))
+        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+
+
+class TestDistributeElements(unittest.TestCase):
+
+    def test_equal_distribution(self):
+        A = [1, 2, 3]
+        B = [4, 5, 6]
+        C = [7, 8, 9]
+        c = 6
+        p1, p2, p3 = 1 / 3, 1 / 3, 1 / 3
+        count_A, count_B, count_C = distribute_elements_to_meet_proportions(A, B, C, c, p1, p2, p3)
+
+        self.assertEqual(count_A, 5)
+        self.assertEqual(count_B, 5)
+        self.assertEqual(count_C, 5)
+
+    def test_unequal_distribution(self):
+        A = [1, 2]
+        B = [3, 4]
+        C = [5, 6, 7]
+        c = 9
+        p1, p2, p3 = .6, .2, .2
+        count_A, count_B, count_C = distribute_elements_to_meet_proportions(A, B, C, c, p1, p2, p3)
+
+        self.assertEqual(count_A, 10)
+        self.assertEqual(count_B, 3)
+        self.assertEqual(count_C, 3)
+
+    def test_zero_additional_elements(self):
+        A = [1]
+        B = [2]
+        C = [3]
+        c = 0
+        p1, p2, p3 = 1, 1, 1
+        count_A, count_B, count_C = distribute_elements_to_meet_proportions(A, B, C, c, p1, p2, p3)
+
+        self.assertEqual(count_A, 1)
+        self.assertEqual(count_B, 1)
+        self.assertEqual(count_C, 1)
+
+    def test_large_distribution(self):
+        A = [1, 2, 3]
+        B = [4, 5, 6]
+        C = [7, 8, 9]
+        c = 30
+        p1, p2, p3 = .6, .2, .2
+        count_A, count_B, count_C = distribute_elements_to_meet_proportions(A, B, C, c, p1, p2, p3)
+
+        self.assertEqual(count_A, 23)
+        self.assertEqual(count_B, 8)
+        self.assertEqual(count_C, 8)
+
+    def test_zero_ditribution(self):
+        A = [1, 2, 3]
+        B = []
+        C = [7, 8, 9]
+        c = 6
+        p1, p2, p3 = 1, 0, 1
+        count_A, count_B, count_C = distribute_elements_to_meet_proportions(A, B, C, c, p1, p2, p3)
+
+        self.assertEqual(count_A, 6)
+        self.assertEqual(count_B, 0)
+        self.assertEqual(count_C, 6)
 
 
 class TestDecompressor(unittest.TestCase):

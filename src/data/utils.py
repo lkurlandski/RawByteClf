@@ -4,6 +4,7 @@ Utility functions.
 
 from argparse import ArgumentParser, Namespace
 import asyncio
+from collections.abc import Iterable
 from copy import deepcopy
 import csv
 import bz2
@@ -12,6 +13,7 @@ import gc
 import gzip
 from io import BytesIO
 from itertools import islice
+import json
 import lzma
 import math
 import multiprocessing as mp
@@ -43,7 +45,7 @@ from tqdm.asyncio import tqdm as atqdm
 import py7zr
 
 from src.utils import batched
-from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES, SOREL_PATH
+from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES, SOREL_PATH, TIMESTAMPS_FILES
 
 
 DEFAULT_ASYNCH_CHUNK_SIZE = 500000
@@ -568,6 +570,30 @@ async def decompress_sorel_collection(
 
     print(f"Compressed File Statistics: {pformat(stats(compressed_sizes, 1e9))}")
     print(f"Decompressed File Statistics: {pformat(stats(decompressed_sizes, 1e9))}")
+
+
+def earliest_malware_sighting(
+    report: dict,
+    keys: tuple[Literal["creation_date", "last_modification_date", "last_submission_date"]] = ("creation_date",),
+) -> Optional[int]:
+    d = report["data"]["attributes"]
+    for k in keys:
+        if k in d:
+            return d[k]
+    return None
+
+
+def get_sha_timestamp_map(files: Optional[tuple[str]] = None) -> dict[str, Optional[int]]:
+    if files is None:
+        files = tuple(TIMESTAMPS_FILES.values())
+    elif isinstance(files, (str, Path)):
+        files = (files,)
+
+    d = {}
+    for f in files:
+        with open(f, "r") as file:
+            d.update(json.load(file))
+    return d
 
 
 def main():

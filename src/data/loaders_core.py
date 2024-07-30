@@ -3,7 +3,8 @@ Core file operations to construct labeled datasets for classification tasks.
 """
 
 from collections import defaultdict, Counter
-from collections.abc import Sequence
+from collections.abc import Sequence, Iterable
+from copy import deepcopy
 from dataclasses import dataclass
 from itertools import chain
 import math
@@ -39,6 +40,7 @@ from src.data.cfg import (
     SOREL_CLARAVY_CACHE,
     SOREL_AVCLASS_CACHE,
     SOREL_AVCLASS_FAMILY_CACHE,
+    TIMESTAMPS_FILES,
 )
 from src.data.detect_packing_sorel import PackingMap, universal_packing_map
 from src.data.label_datasets import (
@@ -48,6 +50,7 @@ from src.data.label_datasets import (
     ThreatLabelRefiner,
 )
 from src.data.labeling import FilterArgs, Labeler, Label
+from src.data.utils import get_sha_timestamp_map
 
 
 MIN_SAMPLES_PER_CLASS_PER_SPLIT = 1
@@ -246,6 +249,58 @@ def select_k_for_each_class_multilabel(
     return list(idx)
 
 
+def distribute_elements_to_meet_proportions(
+    A: Iterable | int,
+    B: Iterable | int,
+    C: Iterable | int,
+    c: int,
+    p1: float,
+    p2: float,
+    p3: float,
+) -> tuple[int, int, int]:
+
+    def get_counts():
+        count_A = len(A) if isinstance(A, Iterable) else A
+        count_B = len(B) if isinstance(B, Iterable) else B
+        count_C = len(C) if isinstance(C, Iterable) else C
+        return count_A, count_B, count_C
+
+    count_A, count_B, count_C = get_counts()
+
+    total_elements = count_A + count_B + count_C + c
+    total_ratio = p1 + p2 + p3
+
+    # Calculate the target number of elements in each set
+    target_A = (p1 / total_ratio) * total_elements
+    target_B = (p2 / total_ratio) * total_elements
+    target_C = (p3 / total_ratio) * total_elements
+
+    # Current counts of elements in each set
+    count_A, count_B, count_C = get_counts()
+
+    for _ in range(c):
+        # Calculate current ratios
+        current_total = count_A + count_B + count_C
+        current_ratio_A = count_A / current_total if current_total != 0 else 0
+        current_ratio_B = count_B / current_total if current_total != 0 else 0
+        current_ratio_C = count_C / current_total if current_total != 0 else 0
+
+        # Calculate the difference from the target ratios
+        diff_A = target_A - (current_ratio_A * total_elements)
+        diff_B = target_B - (current_ratio_B * total_elements)
+        diff_C = target_C - (current_ratio_C * total_elements)
+
+        # Add the element to the set which is furthest from its target ratio
+        if diff_A >= diff_B and diff_A >= diff_C:
+            count_A += 1
+        elif diff_B >= diff_A and diff_B >= diff_C:
+            count_B += 1
+        else:
+            count_C += 1
+
+    return count_A, count_B, count_C
+
+
 ################################################################################
 # Splitting Datasets
 ################################################################################
@@ -359,6 +414,7 @@ def tr_vl_ts_split_idx_guarentee(
     vl_size: int | float,
     ts_size: int | float,
     samples_per_class: int = 1,
+    timestamps: Optional[Sequence[int]] = None,
 ) -> dict[SplitNames, np.ndarray]:
     """
     Returns train/validation/test indices for a collection, with guarentees that at least
@@ -380,6 +436,7 @@ def tr_vl_ts_split_idx_guarentee(
         tr_size, vl_size, ts_size = compute_integer_sizes(len(labels), tr_size, vl_size, ts_size)
     total = tr_size + vl_size + ts_size
     tr_prop, vl_prop, ts_prop = compute_float_sizes(total, tr_size, vl_size, ts_size)
+    assert total == len(labels), f"{total=} should equal {len(labels)=}"
 
     # Verify that the splits are large enough to contain `samples_per_class` samples for each class.
     for split, size in zip(["tr", "vl", "ts"], [tr_size, vl_size, ts_size]):
@@ -389,8 +446,15 @@ def tr_vl_ts_split_idx_guarentee(
                 f" per class for {len(values)} classes."
             )
 
+    if timestamps is not None:
+        timestamps = np.array(timestamps)
+        if not np.all(np.diff(timestamps) >= 0):
+            raise ValueError("Timestamps are not sorted.")
+
     # For each element in the collection, assign it to a particular split if that split has not
-    # reached its quota for that class.
+    # reached its quota for that class. Note that if the timestamps are provided and the labels
+    # correspond to the sorted timestamps, the tr set will contain earlier samples than the vl set,
+    # and the vl set will contain earlier samples than the ts set.
     tr_dist, tr_idx = {v: 0 for v in values}, []
     vl_dist, vl_idx = {v: 0 for v in values}, []
     ts_dist, ts_idx = {v: 0 for v in values}, []
@@ -407,20 +471,72 @@ def tr_vl_ts_split_idx_guarentee(
 
     # Add the remaining samples to the splits if they have not already been added.
     added = set(tr_idx) | set(vl_idx) | set(ts_idx)
-    for i, l in enumerate(labels):
-        if i in added:
-            continue
 
-        r = random.uniform(0, sum((tr_prop, vl_prop, ts_prop)))
-        if (0 <= r < ts_prop) and (len(ts_idx) < ts_size):
-            ts_dist[l] += 1
-            ts_idx.append(i)
-        elif (ts_prop <= r < vl_prop + ts_prop) and (len(vl_idx) < vl_size):
-            vl_dist[l] += 1
-            vl_idx.append(i)
-        elif (ts_prop + vl_prop <= r < tr_prop + vl_prop + ts_prop) and (len(tr_idx) < tr_size):
-            tr_dist[l] += 1
-            tr_idx.append(i)
+    if timestamps is None:
+        # If not using a temporal split, simply add the samples randomly.
+        for i, l in enumerate(labels):
+            if i in added:
+                continue
+            r = random.uniform(0, sum((tr_prop, vl_prop, ts_prop)))
+            if (0 <= r < ts_prop) and (len(ts_idx) < ts_size):
+                ts_dist[l] += 1
+                ts_idx.append(i)
+            elif (ts_prop <= r < vl_prop + ts_prop) and (len(vl_idx) < vl_size):
+                vl_dist[l] += 1
+                vl_idx.append(i)
+            elif (ts_prop + vl_prop <= r < tr_prop + vl_prop + ts_prop) and (len(tr_idx) < tr_size):
+                tr_dist[l] += 1
+                tr_idx.append(i)
+            else:
+                warnings.warn("Trouble adding sample to a split. Adding to tr by default.")
+                tr_dist[l] += 1
+                tr_idx.append(i)
+
+    else:
+        # If using the temporal split, add the samples based on their timestamp.
+        # The number of samples in the tr, vl, and ts sets should approximately match the
+        # tr_prop, vl_prop, and ts_prop values (although in reality this will likely be innaccurate).
+        classes_and_counts_org = {cls: cnt for cls, cnt in zip(values, counts)}
+        classes_and_counts_cur = {cls: tr_dist[cls] + vl_dist[cls] + ts_dist[cls] for cls in values}
+        tr_dist_fin, vl_dist_fin, ts_dist_fin = {}, {}, {}
+        for cls in values:
+            tr_cnt, vl_cnt, ts_cnt = distribute_elements_to_meet_proportions(
+                tr_dist[cls],
+                vl_dist[cls],
+                tr_dist[cls],
+                classes_and_counts_org[cls] - classes_and_counts_cur[cls],
+                tr_prop,
+                vl_prop,
+                ts_prop,
+            )
+            tr_dist_fin[cls] = tr_cnt
+            vl_dist_fin[cls] = vl_cnt
+            ts_dist_fin[cls] = ts_cnt
+
+            assert tr_dist_fin[cls] >= tr_dist[cls], f"{tr_dist_fin[cls]=} should be greater or equal to {tr_dist[cls]} for {cls=}."
+            assert vl_dist_fin[cls] >= vl_dist[cls], f"{vl_dist_fin[cls]=} should be greater or equal to {vl_dist[cls]} for {cls=}."
+            assert ts_dist_fin[cls] >= ts_dist[cls], f"{ts_dist_fin[cls]=} should be greater or equal to {ts_dist[cls]} for {cls=}."
+
+        for i, l in enumerate(labels):
+            if i in added:
+                continue
+            if tr_dist[l] < tr_dist_fin[l]:
+                tr_dist[l] += 1
+                tr_idx.append(i)
+            elif vl_dist[l] < vl_dist_fin[l]:
+                vl_dist[l] += 1
+                vl_idx.append(i)
+            elif ts_dist[l] < ts_dist_fin[l]:
+                ts_dist[l] += 1
+                ts_idx.append(i)
+            else:
+                warnings.warn("Trouble adding sample to a split. Will not add to preserve temporal consistency.")
+                tr_dist[l] += 1
+                tr_idx.append(i)
+
+        assert len(tr_dist) == len(tr_dist_fin), f"{len(tr_dist)=} should equal {len(tr_dist_fin)=}"
+        assert len(vl_dist) == len(vl_dist_fin), f"{len(vl_dist)=} should equal {len(vl_dist_fin)=}"
+        assert len(ts_dist) == len(ts_dist_fin), f"{len(ts_dist)=} should equal {len(ts_dist_fin)=}"
 
     assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
 
@@ -533,6 +649,8 @@ def filter_file_label_map(
     min_size: int = 0,
     max_size: int = sys.maxsize,
     must_exist: bool = True,
+    temporal: bool = False,
+    files_and_timestamps: Optional[dict[os.PathLike, int]] = None,
 ) -> dict[os.PathLike, str]:
     """
     Remove samples from the file label map whose labels are not in the top_k most frequent labels
@@ -549,6 +667,11 @@ def filter_file_label_map(
         files_and_labels = {
             f: l for f, l in files_and_labels.items() if
             (not os.path.exists(f) or (min_size <= os.path.getsize(f) <= max_size))
+        }
+
+    if temporal:
+        files_and_labels = {
+            f: l for f, l in files_and_labels.items() if files_and_timestamps.get(f) is not None
         }
 
     # Remove files not in the top_k most prolific classes or files without min_freq examples.
@@ -787,6 +910,8 @@ def _get_materials_clf(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
+    temporal: bool = False,
+    timestamps_file: Optional[Path] = None,
 ) -> Materials:
 
     if min_freq is None:
@@ -798,6 +923,12 @@ def _get_materials_clf(
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
     files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
+    if temporal:
+        shas_and_timestamps = get_sha_timestamp_map(timestamps_file)
+        files_and_timestamps = {f: shas_and_timestamps.get(os.path.basename(f).split(".")[0]) for f in files_and_labels}
+    else:
+        files_and_timestamps = None
+
     # Filter out the files that are not in the top_k most frequent labels
     files_and_labels = filter_file_label_map(
         files_and_labels,
@@ -806,7 +937,14 @@ def _get_materials_clf(
         max_imbalance_ratio=max_imbalance_ratio,
         min_size=min_size,
         must_exist=must_exist,
+        temporal=temporal,
+        files_and_timestamps=files_and_timestamps,
     )
+    # Remove the timestamps for files that have been filtered out.
+    if temporal:
+        files_and_timestamps = {
+            f: files_and_timestamps[f] for f in files_and_labels if f in files_and_timestamps
+        }
 
     # Final collection of data items
     dist: Counter[str, int] = Counter(files_and_labels.values())
@@ -816,10 +954,18 @@ def _get_materials_clf(
     files = list(files_and_labels.keys())
     labels = np.array([label2id[files_and_labels[f]] for f in files])
 
-    files, labels = shuffle(files, labels)
+    if temporal:
+        timestamps = np.array([files_and_timestamps[f] for f in files])
+        sort_idx = np.argsort(timestamps)
+        files = [files[i] for i in sort_idx]
+        labels = labels[sort_idx]
+        timestamps = timestamps[sort_idx]
+    else:
+        timestamps = None
+        files, labels = shuffle(files, labels)
 
     idx = tr_vl_ts_split_idx_guarentee(
-        labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT
+        labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT, timestamps,
     )
 
     files, labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
@@ -1053,8 +1199,14 @@ def get_materials_clf_bodmas(
     tr_samples_per_class: Optional[int],
     **kwds,
 ) -> Materials:
-    files_and_labels = get_bodmas_file_label_map()
+    if tr_samples_per_class is not None and kwds.get("temporal", False):
+        raise NotImplementedError()
+
     kwds["packing_root"] = PACKING_ROOTS["bodmas_pe"]
+    kwds["timestamps_file"] = TIMESTAMPS_FILES["bodmas_pe"]
+
+    files_and_labels = get_bodmas_file_label_map()
+
     if tr_samples_per_class is not None:
         return _get_materials_clf_few_shot_learning(files_and_labels, tr_samples_per_class, **kwds)
     return _get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
@@ -1068,10 +1220,15 @@ def get_materials_clf_sorel(
     name: str,
     **kwds,
 ) -> Materials:
-    files_and_labels = get_sorel_file_label_map(name)
-    kwds["packing_root"] = PACKING_ROOTS["sorel_pe"]
+    if tr_samples_per_class is not None and kwds.get("temporal", False):
+        raise NotImplementedError()
 
-    if name in ("fam", "file"):  # We consider these single-label classification tasks.
+    kwds["packing_root"] = PACKING_ROOTS["sorel_pe"]
+    kwds["timestamps_file"] = TIMESTAMPS_FILES["sorel_pe"]
+
+    files_and_labels = get_sorel_file_label_map(name)
+
+    if name in ("fam", "file"):
         files_and_labels = {f: l[0] for f, l in files_and_labels.items()}
         if tr_samples_per_class is not None:
             return _get_materials_clf_few_shot_learning(files_and_labels, tr_samples_per_class, **kwds)
@@ -1180,11 +1337,19 @@ if __name__ == "__main__":
     #     top_k=None,
     # )
 
-    materials = _get_materials_clf_multilabel(
-        get_sorel_file_label_map("beh"),
-        tr_size=0.8,
-        vl_size=0.1,
-        ts_size=0.1,
-        must_exist=False,
-        max_imbalance_ratio=100,
+    # materials = _get_materials_clf_multilabel(
+    #     get_sorel_file_label_map("beh"),
+    #     tr_size=0.8,
+    #     vl_size=0.1,
+    #     ts_size=0.1,
+    #     must_exist=False,
+    #     max_imbalance_ratio=100,
+    # )
+
+    # materials = get_materials_clf_bodmas(
+    #     0.85, 0.15, 0.0, None, top_k=None, min_freq=None, temporal=True
+    # )
+
+    materials = get_materials_clf_sorel(
+        0.85, 0.15, 0.0, None, name="fam", top_k=None, min_freq=None, temporal=True
     )

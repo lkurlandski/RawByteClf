@@ -58,6 +58,11 @@ SOREL_AVCLASS_FAMILY_CACHE = SOREL_PATH / "avclass_family_cache.txt"
 ELF_CLASSIFICATION_DATASETS = ("malware_bazaar_elf", "virus_share_elf", "virus_total_elf")
 ELF_LABEL_CACHE_DIR = Path("./cache") / "labels" / "elf"
 
+TIMESTAMPS_FILES = {
+    "bodmas_pe": BODMAS_PATH / "timestamps.json",
+    "sorel_pe": SOREL_PATH / "timestamps.json",
+}
+
 DATASET_NAMES = [
     "bodmas_pe",
     "local_pe",
