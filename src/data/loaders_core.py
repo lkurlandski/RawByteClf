@@ -226,7 +226,7 @@ def select_k_for_each_class_multilabel(
             break
 
     if any(count[l] < k for l in unique):
-         for i, label in tqdm(enumerate(labels), total=len(labels), leave=False):
+        for i, label in tqdm(enumerate(labels), total=len(labels), leave=False):
             if i in idx:
                 continue
 
@@ -1328,7 +1328,8 @@ def get_materials_clf_elf(
 #     return Materials(files, labels, id2label, label2id, dist)
 
 
-if __name__ == "__main__":
+def main():
+
     # materials = _get_materials_clf_multilabel_few_shot_learning(
     #     get_sorel_file_label_map("beh"),
     #     1,
@@ -1353,3 +1354,7 @@ if __name__ == "__main__":
     materials = get_materials_clf_sorel(
         0.85, 0.15, 0.0, None, name="fam", top_k=None, min_freq=None, temporal=True
     )
+
+
+if __name__ == "__main__":
+    main()
