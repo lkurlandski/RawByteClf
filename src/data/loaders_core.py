@@ -1199,7 +1199,7 @@ def get_materials_clf_bodmas(
     tr_samples_per_class: Optional[int],
     **kwds,
 ) -> Materials:
-    if tr_samples_per_class is not None and kwds.get("temporal", False):
+    if kwds.get("temporal", False) and tr_samples_per_class is not None:
         raise NotImplementedError()
 
     kwds["packing_root"] = PACKING_ROOTS["bodmas_pe"]
@@ -1220,7 +1220,7 @@ def get_materials_clf_sorel(
     name: str,
     **kwds,
 ) -> Materials:
-    if tr_samples_per_class is not None and kwds.get("temporal", False):
+    if kwds.get("temporal", False) and (tr_samples_per_class is not None or name not in ("fam", "file")):
         raise NotImplementedError()
 
     kwds["packing_root"] = PACKING_ROOTS["sorel_pe"]
