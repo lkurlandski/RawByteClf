@@ -1284,50 +1284,6 @@ def get_materials_clf_elf(
     return _get_materials_clf_multilabel(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
-# def get_materials_clf_bodmas_balanced_slice(
-#     tr_size: int,
-#     vl_size: int,
-#     min_freq: Optional[int] = None,
-#     top_k: Optional[int] = None,
-#     balance_tr_set: bool = True,
-# ) -> Materials:
-#     """Returns small slices for the BODMAS training dataset. The validation set is consistent
-#     accross all slices.
-#     """
-
-#     num_splits = 2
-#     min_freq = MIN_SAMPLES_PER_CLASS_PER_SPLIT * num_splits if min_freq is None else min_freq
-
-#     files_and_labels = get_bodmas_file_label_map()
-#     files_and_labels = filter_file_label_map(files_and_labels, top_k=top_k, min_freq=min_freq)
-
-#     files = files_and_labels.keys()
-#     labels = files_and_labels.values()
-
-#     dist: Counter[str, int] = Counter(labels)
-#     label2id: dict[str, int] = {l: i for i, l in enumerate(dist.keys())}
-#     id2label: dict[int, str] = {i: l for l, i in label2id.items()}
-
-#     # Forces the validation set to be consistent across slices of various sizes.
-#     idx = tr_vl_ts_split_idx(len(files_and_labels), len(files_and_labels) - vl_size, vl_size, 0)
-
-#     # Balance the training set so that each class has the same number of samples.
-#     if balance_tr_set:
-#         samples_per_cls = tr_size / len(dist)
-#         if not samples_per_cls.is_integer():
-#             raise ValueError("Cannot balance tr_set because train size is not divisible by number of classes")
-#         tr_sub_idx = select_k_for_each_class([labels[i] for i in idx["tr"]], k=samples_per_cls)
-#     # The tr_set itself is already random, so we can just take the first ones.
-#     else:
-#         tr_sub_idx = list(range(tr_size))
-
-#     assert len(tr_sub_idx) == tr_size
-#     idx["tr"] = idx["tr"][tr_sub_idx]
-
-#     files, labels = get_tr_vl_ts_files_and_labels(files, labels, None, idx["tr"], idx["vl"], [])
-#     return Materials(files, labels, id2label, label2id, dist)
-
-
 def main():
 
     # materials = _get_materials_clf_multilabel_few_shot_learning(
