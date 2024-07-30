@@ -1229,6 +1229,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "model_name_or_path": args.model_name_or_path,
         "task": args.task,
         "arch_config": args.arch_config,
+        "split_mode": args.split_mode,
         "tr_size": args.tr_size,
         "depth": args.depth,
         "min_freq": args.min_freq,
@@ -1243,7 +1244,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if "mlp_hidden_size" in pretrain_kwds["arch_config"]:
             print("Removing MLP hidden size from pretraining task.")
             pretrain_kwds["arch_config"]["mlp_hidden_size"] = -1
-        print(f"{args.pretraining_task=}")  # FIXME
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
             args.pretraining_task, args.pretraining_checkpoint, **pretrain_kwds,
         )
@@ -1283,6 +1283,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             packing_protocol=args.packing_protocol,
             remove_clf_files=SYSTEM != System.ARMITAGE,
+            temporal=args.split_mode == "temporal",
         )
         oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
     elif args.task in ("mlm-elf", "clm-elf"):
@@ -1291,6 +1292,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.vl_size,
             args.ts_size,
             packing_protocol=args.packing_protocol,
+            remove_clf_files=SYSTEM != System.ARMITAGE,
+            temporal=args.split_mode == "temporal",
         )
         oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
     elif args.task == "clf-bod":
@@ -1303,6 +1306,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             min_freq=args.min_freq,
             max_imbalance_ratio=args.max_imbalance_ratio,
             packing_protocol=args.packing_protocol,
+            temporal=args.split_mode == "temporal",
         )
     elif args.task[0:7] == "clf-sor":
         materials = get_materials_clf_sorel(
@@ -1315,6 +1319,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             min_freq=args.min_freq,
             max_imbalance_ratio=args.max_imbalance_ratio,
             packing_protocol=args.packing_protocol,
+            temporal=args.split_mode == "temporal",
         )
     elif args.task[0:7] == "clf-elf":
         materials = get_materials_clf_elf(
@@ -1327,6 +1332,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             min_freq=args.min_freq,
             max_imbalance_ratio=args.max_imbalance_ratio,
             packing_protocol=args.packing_protocol,
+            temporal=args.split_mode == "temporal",
         )
 
     print(f"Dataset Materials:\n{materials}")

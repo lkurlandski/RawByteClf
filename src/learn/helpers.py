@@ -22,7 +22,7 @@ from pathlib import Path
 from pprint import pprint
 import shutil
 import sys
-from typing import Any, Callable, Optional
+from typing import Any, Literal, Optional
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -144,6 +144,7 @@ class Args:
     # Task-specific
     task: str = field(default="clf-bod")
     depth: int = field(default=1)
+    split_mode: Optional[str] = field(default="random")
     tr_size: Optional[float] = field(default=None)
     vl_size: Optional[float] = field(default=None)
     ts_size: Optional[float] = field(default=None)
@@ -211,6 +212,9 @@ class Args:
         if self.packing_protocol not in ("yes", "no", "unk", "any"):
             raise ValueError(f"packing_protocol must be one of 'yes', 'no', 'unk' or 'any'. Got {self.packing_protocol=}")
 
+        if self.split_mode not in ("random", "temporal"):
+            raise ValueError(f"split_mode must be one of 'random' or 'temporal'. Got {self.split_mode=}")
+
 
 class OutputHelper:
 
@@ -260,6 +264,7 @@ class OutputHelper:
         model_name_or_path: str,
         arch_config: Optional[dict],
         task: str,
+        split_mode: Literal["random", "temporal"],
         tr_size: int | float,
         weighted_loss: Optional[str],
         depth: int,
@@ -294,7 +299,7 @@ class OutputHelper:
         self._model_args.extend([f"{k}--{v}" for k, v in arch_config.items()])
 
         # Experiment hyperparameters
-        self._task_args = [f"task--{task}", f"weighted_loss--{weighted_loss}"]
+        self._task_args = [f"task--{task}", f"weighted_loss--{weighted_loss}", f"split_mode--{split_mode}"]
         if task[0:3] == "clf":
             self._task_args.extend([
                 f"tr_size--{tr_size}",  # should be None if not doing base classification
@@ -361,7 +366,9 @@ class OutputHelper:
         return model_name_or_path.as_posix()
 
     @classmethod
-    def from_path(cls, path: Path) -> OutputHelper:  # FIXME: this is broken.
+    def from_path(cls, path: Path) -> OutputHelper:
+        raise NotImplementedError("This method has not been updated...")
+
         if not path.exists():
             raise FileNotFoundError(f"Path {path} does not exist.")
         if not path.name == OutputHelper.FINAL_PATH:
