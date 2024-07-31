@@ -1283,7 +1283,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             packing_protocol=args.packing_protocol,
             remove_clf_files=SYSTEM != System.ARMITAGE,
-            temporal=args.split_mode == "temporal",
+            # temporal=args.split_mode == "temporal", TODO: add temporal
         )
         oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
     elif args.task in ("mlm-elf", "clm-elf"):
@@ -1293,7 +1293,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.ts_size,
             packing_protocol=args.packing_protocol,
             remove_clf_files=SYSTEM != System.ARMITAGE,
-            temporal=args.split_mode == "temporal",
+            # temporal=args.split_mode == "temporal",  TODO: add temporal
         )
         oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
     elif args.task == "clf-bod":
