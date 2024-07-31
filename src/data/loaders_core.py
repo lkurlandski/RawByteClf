@@ -982,6 +982,8 @@ def _get_materials_clf_few_shot_learning(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
+    temporal: bool = False,
+    timestamps_file: Optional[Path] = None,
     **kwds,
 ) -> Materials:
     if invalid := set(kwds) - {"min_freq", "max_imbalance_ratio"}:
@@ -990,13 +992,27 @@ def _get_materials_clf_few_shot_learning(
     # First, remove the files that we do not want to use.
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
     files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
+
+    if temporal:
+        shas_and_timestamps = get_sha_timestamp_map(timestamps_file)
+        files_and_timestamps = {f: shas_and_timestamps.get(os.path.basename(f).split(".")[0]) for f in files_and_labels}
+    else:
+        files_and_timestamps = None
+
     files_and_labels = filter_file_label_map(
         files_and_labels,
         top_k=top_k,
         min_freq=tr_samples_per_class + vl_min_samples_per_class,
         min_size=min_size,
         must_exist=must_exist,
+        temporal=temporal,
+        files_and_timestamps=files_and_timestamps,
     )
+    # Remove the timestamps for files that have been filtered out.
+    if temporal:
+        files_and_timestamps = {
+            f: files_and_timestamps[f] for f in files_and_labels if f in files_and_timestamps
+        }
 
     # Get a distribution of the labels and their mappings to/from label IDs.
     dist: Counter[str, int] = Counter(files_and_labels.values())
@@ -1006,14 +1022,26 @@ def _get_materials_clf_few_shot_learning(
     # Get all of the files and their labels, and shuffle them.
     files = list(files_and_labels.keys())
     labels = np.array([label2id[files_and_labels[f]] for f in files])
-    files, labels = shuffle(files, labels)
+
+    # Order the files, labels, and timestamps according to the timestamps.
+    if temporal:
+        timestamps = np.array([files_and_timestamps[f] for f in files])
+        sort_idx = np.argsort(timestamps)
+        files = [files[i] for i in sort_idx]
+        labels = labels[sort_idx]
+        timestamps = timestamps[sort_idx]
+    else:
+        timestamps = None
+        files, labels = shuffle(files, labels)
 
     # Get indices for the train, validation, and test (empty) sets.
     tr_idx = select_k_for_each_class(labels, k=tr_samples_per_class)
     vl_idx_and_label = [(i, labels[i]) for i in range(len(files)) if i not in tr_idx]
+    # Reverse the iteration so that the last samples are used for the validation set,
+    # which is only meaningful if the collections were sorted for temporal consistency.
     vl_counts = Counter()
     vl_idx = []
-    for i, l in vl_idx_and_label:
+    for i, l in reversed(vl_idx_and_label):
         if vl_counts[l] < vl_max_samples_per_class:
             vl_idx.append(i)
             vl_counts[l] += 1
@@ -1199,8 +1227,6 @@ def get_materials_clf_bodmas(
     tr_samples_per_class: Optional[int],
     **kwds,
 ) -> Materials:
-    if kwds.get("temporal", False) and tr_samples_per_class is not None:
-        raise NotImplementedError()
 
     kwds["packing_root"] = PACKING_ROOTS["bodmas_pe"]
     kwds["timestamps_file"] = TIMESTAMPS_FILES["bodmas_pe"]
@@ -1220,7 +1246,7 @@ def get_materials_clf_sorel(
     name: str,
     **kwds,
 ) -> Materials:
-    if kwds.get("temporal", False) and (tr_samples_per_class is not None or name not in ("fam", "file")):
+    if kwds.get("temporal", False) and name not in ("fam", "file"):
         raise NotImplementedError()
 
     kwds["packing_root"] = PACKING_ROOTS["sorel_pe"]
@@ -1307,9 +1333,19 @@ def main():
     #     0.85, 0.15, 0.0, None, top_k=None, min_freq=None, temporal=True
     # )
 
+    # materials = get_materials_clf_sorel(
+    #     0.85, 0.15, 0.0, None, name="fam", top_k=None, min_freq=None, temporal=True
+    # )
+
+    # materials = get_materials_clf_bodmas(
+    #     0.85, 0.15, 0.0, 2, top_k=None, min_freq=None, temporal=True
+    # )
+
     materials = get_materials_clf_sorel(
-        0.85, 0.15, 0.0, None, name="fam", top_k=None, min_freq=None, temporal=True
+        0.85, 0.15, 0.0, 2, name="fam", top_k=None, min_freq=None, temporal=True
     )
+
+    print(materials)
 
 
 if __name__ == "__main__":
