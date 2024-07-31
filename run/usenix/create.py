@@ -84,11 +84,19 @@ SEEDS = [0, 1, 2]
 # Adjust these frequently to configure which experiments to actually run.
 # This is simpler than adding a complex CLI.
 # MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
-MODELS = list(filter(lambda x: x[0] in ("hrr-lg-bi", "hrr-lg-uni"), MODELS))
+_MODELS = [
+    "mamba-sm-uni",
+    "mamba-sm-bi",
+    "mamba-lg-uni",
+    "mamba-lg-bi",
+    "malconv"
+]
+MODELS = list(filter(lambda x: x[0] in _MODELS, MODELS))
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
 PRETRAINING_CHECKPOINTS = [None, -1]
+TR_SAMPLES_PER_CLASS = [None]
 
 
 def get_body_lm(
@@ -221,7 +229,7 @@ def get_body_clf(
     learning_rate: float,
 ) -> str:
 
-    bf16 = "false" if "hrr" in model_name_or_path else "true"
+    bf16 = "false" if ("hrr" in model_name_or_path or "malconv" in model_name_or_path) else "true"
 
     return f"""#!/bin/bash -l
 
@@ -267,6 +275,7 @@ def get_body_clf(
     --task='{downstream_task}' \\
     --pretraining_task='{pretraining_task}' \\
     --pretraining_checkpoint={pretraining_checkpoint} \\
+    --split_mode=temporal \\
     --tr_size=0.85 \\
     --vl_size=0.15 \\
     --ts_size=0.0 \\
@@ -378,8 +387,10 @@ def compute_time(
     """Compute an estimation of time, then add a bit of buffer. 
     """
     parts = model_nickname.split("-")
+    if len(parts) == 1:
+        name, size, mode = parts[0], None, None
     if len(parts) == 2:
-        name, size, mode = parts[0], parts[1], parts[2]
+        name, size, mode = parts[0], parts[1], None
     if len(parts) == 3:
         name, size, mode = parts[0], parts[1], parts[2]
 
@@ -403,7 +414,7 @@ def compute_time(
             tr_time_per_sample *= 2
             vl_time_per_sample *= 2
 
-    if name == "malconv2":
+    if name == "malconv":
         if max_length == 2 ** 14:
             tr_time_per_sample = 0.0048668032786885250
             vl_time_per_sample = 0.0040172166427546625
