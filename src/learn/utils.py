@@ -22,6 +22,7 @@ from accelerate.utils import is_xpu_available, is_npu_available
 import numpy as np
 import psutil
 import torch
+from torch import Tensor
 from transformers import PreTrainedTokenizerFast
 
 
@@ -473,6 +474,15 @@ def interpret_bytes_as_integers(b: bytes, bits_in_byte: int = 8) -> np.ndarray:
     out = out.flatten()
     # assert out.max() < 2 ** bits_in_byte, out.max()
     return out
+
+
+def chunk_mask(length: int, size: int) -> Tensor:
+    if length < size:
+        return torch.full((length,), 0, dtype=torch.int64)
+    q, r = divmod(length, size)
+    mask = torch.cat([torch.full((size,), i) for i in range(q)])
+    mask = torch.cat([mask, torch.full((r,), q)])
+    return mask.to(torch.int64)
 
 
 def test_interpret_bytes_as_integers():
