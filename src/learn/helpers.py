@@ -19,7 +19,7 @@ import errno
 import json
 import os
 from pathlib import Path
-from pprint import pprint
+from pprint import pformat, pprint
 import shutil
 import sys
 from typing import Any, Literal, Optional
@@ -116,6 +116,7 @@ class Args:
     streaming: bool = field(default=False)
     exit_after_map: bool = field(default=False)
     do_tune: bool = field(default=False)
+    do_attribute: bool = field(default=False)
     skip_eval_check: bool = field(default=False)
     auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
     dataset_backend: str = field(default="PT")
@@ -173,6 +174,7 @@ class Args:
         self.streaming = str_to_bool(self.streaming)
         self.exit_after_map = str_to_bool(self.exit_after_map)
         self.do_tune = str_to_bool(self.do_tune)
+        self.do_attribute = str_to_bool(self.do_attribute)
         self.skip_eval_check = str_to_bool(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
 
@@ -504,11 +506,10 @@ class OutputHelper:
     @property
     def best_model_dir(self) -> Path:
         with open(self.last_checkpoint / "trainer_state.json") as fp:
-            state = json.load(fp)
-        best_model_checkpoint = state.get("best_model_checkpoint", None)
-        if best_model_checkpoint is None:
+            state: dict = json.load(fp)
+        if (best_model_checkpoint := state.get("best_model_checkpoint")) is None:
             return self.last_checkpoint
-        return Path(best_model_checkpoint)
+        return self.checkpoints_dir / Path(best_model_checkpoint).name
 
     @property
     def checkpoints_dir(self) -> Path:
@@ -549,6 +550,10 @@ class OutputHelper:
     @property
     def test_confusion_matrix_file(self) -> Path:
         return self.test_results_dir / "confusion_matrix.png"
+
+    @property
+    def attribution_results_file(self) -> Path:
+        return self.path / "attribution_results.pt"
 
     @property
     def tuning_results_dir(self) -> Path:
@@ -619,3 +624,79 @@ class OutputHelper:
                             raise RuntimeError(f"{k=} was already found!")
             if not found:
                 raise RuntimeError(f"Could not find {k=}")
+
+    def infer_path_and_mutate(self, batch_size: bool = True, dtypes: bool = False) -> OutputHelper:
+        """
+        Looks for a probable path and mutates the OutputHelper to reflect the new path.
+        Only able to mutate the batch size and gradient accumulation steps.
+        """
+        if self.path.exists():
+            return self
+
+        if not self.meta_path.exists():
+            raise FileNotFoundError(f"Could not find {self.meta_path=}")
+        if not self.model_path.exists():
+            raise FileNotFoundError(f"Could not find {self.model_path=}")
+        if not self.task_path.exists():
+            raise FileNotFoundError(f"Could not find {self.task_path=}")
+
+        if self.trainer_path.exists():
+            raise FileExistsError(f"{self.trainer_path=} already exists.")
+
+        candidates = list(self.task_path.rglob(f"seed--{self.trainer_config['seed']}"))
+        if len(candidates) == 0:
+            raise FileNotFoundError(f"No completed experiments found for {self.task_path=}")
+
+        permitted = []
+        if batch_size:
+            permitted.extend(["per_device_train_batch_size", "gradient_accumulation_steps"])
+        if dtypes:
+            permitted.extend(["fp16", "tf32", "bf16"])
+
+        # Examine each candidate path. If all values in the trainer_path portion are consistent,
+        # then this is the correct path.
+        valid = []
+        for candidate in candidates:
+            trainer_path_a = candidate.relative_to(self.task_path)
+            trainer_path_b = self.trainer_path.relative_to(self.task_path)
+            for p_a, p_b in zip(trainer_path_a.parts, trainer_path_b.parts):
+                # If the keys do not match, something has gone wrong.
+                k_a, v_a = p_a.split("--")
+                k_b, v_b = p_b.split("--")
+                if k_a != k_b:
+                    raise RuntimeError(f"{k_a=} != {k_b=}")
+                # If the values don't match, then the candidate is invalid.
+                if v_a != v_b and k_a not in permitted:
+                    break
+            # If the loop didn't exit early, then the candidate is valid.
+            else:
+                valid.append(candidate)
+        if len(valid) == 0:
+            raise FileNotFoundError(f"No valid candidates found.")
+        elif len(valid) > 1:
+            raise RuntimeError(f"Multiple valid candidates found:\n{pformat(valid)}\n")
+        else:
+            candidate = valid[0]
+
+        trainer_path = candidate.relative_to(self.task_path)
+        print(f"Found {trainer_path=}")
+        for p in trainer_path.parts:
+            update = False
+            k, v = p.split("--")
+            old = self.trainer_config[k]
+            if batch_size and k in ("per_device_train_batch_size", "gradient_accumulation_steps"):
+                new = int(v)
+                self.trainer_config = self.trainer_config | {k: new}
+                update = new != old
+            elif dtypes and k in ("fp16", "tf32", "bf16"):
+                new = str_to_bool(v)
+                self.trainer_config = self.trainer_config | {k: new}
+                update = new != old
+
+            if update:
+                print(f"{k}: {old} --> {new}")
+
+        if not self.path.exists():
+            raise FileNotFoundError(f"Could not find {self.path=}")
+
+        return self

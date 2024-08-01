@@ -52,6 +52,7 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from accelerate.utils import DistributedDataParallelKwargs
+from captum.attr import KernelShap
 import datasets
 from datasets import (
     DatasetDict,
@@ -63,6 +64,8 @@ import numpy as np
 import torch
 from torch import tensor, Tensor  # pylint: disable=no-name-in-module
 from torch.nn import CrossEntropyLoss, Embedding
+import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Subset
 import transformers
 from transformers import (
@@ -79,9 +82,13 @@ from transformers import (
     PreTrainedTokenizerFast,
     Trainer,
     LongformerConfig,
+    LongformerPreTrainedModel,
     ReformerConfig,
+    ReformerPreTrainedModel,
     NystromformerConfig,
+    NystromformerPreTrainedModel,
     FNetConfig,
+    FNetPreTrainedModel,
     RwkvPreTrainedModel,
     TrainerCallback,
     TrainerState,
@@ -106,6 +113,7 @@ from transformers.utils import (
     is_torch_tf32_available,
     is_torch_neuroncore_available,
 )
+from tqdm import tqdm
 try:
     from ray import tune
     from ray.tune.search.hyperopt import HyperOptSearch
@@ -115,6 +123,7 @@ except (ModuleNotFoundError, ImportError) as err:
 
 from src.cfg import BR, System, SYSTEM
 from src.utils import (
+    getattr_recursively,
     count_parameters,
     get_highest_path,
     object_from_superset_of_constructor_kwds,
@@ -141,6 +150,7 @@ from src.architectures.hrrformer import (
     HRRForSequenceClassification,
     HRRForMaskedLM,
     HRRForCausalLM,
+    HRRPreTrainedModel,
 )
 try:
     from src.architectures.mamba import (
@@ -209,6 +219,7 @@ from src.learn.utils import (
     find_executable_batch_size,
     find_executable_batch_size_and_gradient_accumulation_steps,
     interpret_bytes_as_integers,
+    chunk_mask,
 )
 from src.learn.tokenization import get_tokenizer
 
@@ -584,33 +595,28 @@ def hp_compute_objective(metrics: dict[str, float]) -> float:
     return metrics["eval_loss"]
 
 
-# TODO: add support for passing in a PreTrainedModel object.
-def object_to_model_name(obj: PretrainedConfig | str | Path) -> str:
+def object_to_model_name(obj: PretrainedConfig | PreTrainedModel | str | Path) -> str:
     if obj in MODEL_NAMES:
         return obj
-    if isinstance(obj, (FNetConfig,)):
+
+    if isinstance(obj, (FNetConfig, FNetPreTrainedModel)):
         return "fnet"
-    if isinstance(obj, (NystromformerConfig,)):
+    if isinstance(obj, (NystromformerConfig, NystromformerPreTrainedModel)):
         return "nystromformer"
-    if isinstance(obj, (ReformerConfig,)):
+    if isinstance(obj, (ReformerConfig, ReformerPreTrainedModel)):
         return "reformer"
-    if isinstance(obj, (LongformerConfig,)):
+    if isinstance(obj, (LongformerConfig, LongformerPreTrainedModel)):
         return "longformer"
-    if isinstance(obj, (HRRConfig,)):
+    if isinstance(obj, (HRRConfig, HRRPreTrainedModel)):
         return "hrrformer"
-    if isinstance(obj, (RwkvConfig,)):
+    if isinstance(obj, (RwkvConfig, RwkvPreTrainedModel)):
         return "rwkv"
-    if isinstance(obj, (MambaConfig,)):
+    if isinstance(obj, (MambaConfig, MambaPreTrainedModel)):
         return "mamba"
-    if isinstance(obj, (MalConvConfig,)):
+    if isinstance(obj, (MalConvConfig, MalConvPreTrainedModel)):
         return "malconv"
-    if isinstance(obj, (MalConv2Config,)):
+    if isinstance(obj, (MalConv2Config, MalConv2PreTrainedModel)):
         return "malconv2"
-    if isinstance(obj, (str, Path)) and Path(obj).exists():
-        try:
-            return object_to_model_name(AutoConfig.from_pretrained(str(obj)))
-        except ValueError:
-            pass
 
     possible_model_names = []
     for model_name in MODEL_NAMES:
@@ -619,6 +625,8 @@ def object_to_model_name(obj: PretrainedConfig | str | Path) -> str:
     if len(possible_model_names) == 1:
         return possible_model_names[0]
     if len(possible_model_names) > 1:
+        if set(possible_model_names) == {"malconv", "malconv2"}:
+            return "malconv2"
         raise RuntimeError(f"Multiple possible model names: {possible_model_names} for {obj=}")
 
     raise RuntimeError(f"Could not determine a model name for {obj=}")
@@ -949,8 +957,7 @@ def get_model(
             if model_name == "hrrformer":
                 model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = HRRConfig.from_pretrained(model_name_or_path)
-                _head_names = ["head"]
-                # raise NotImplementedError("Need to check the head weights.")
+                _head_names = ["clf_head"]
             elif model_name == "rwkv":
                 model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = RwkvConfig.from_pretrained(model_name_or_path)
@@ -968,8 +975,7 @@ def get_model(
             elif model_name == "malconv2":
                 model = MalConv2ForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MalConv2Config.from_pretrained(model_name_or_path)
-                _head_names = []
-                raise NotImplementedError("Need to check the head weights.")
+                _head_names = ["malconv.malconv.fc_2"]
             elif get_model_type(model_name_or_path) == "HF":
                 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = AutoConfig.from_pretrained(model_name_or_path)
@@ -993,7 +999,7 @@ def get_model(
             if is_not_for_classification:
                 print(f"Checking the following classification heads for anamalous weights: {_head_names}")
                 for h in _head_names:
-                    l: Optional[torch.nn.Linear] = getattr(model, h, None)
+                    l: Optional[torch.nn.Linear] = getattr_recursively(model, h, None)
                     if l is None:
                         continue
                     if not isinstance(l, torch.nn.Linear):
@@ -1669,6 +1675,66 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         results = output.metrics
         with open(oh.test_results_file, "w") as fp:
             json.dump(results, fp, indent=4)
+
+
+    if args.do_attribute:
+        # Updates the output helper in case the batch size was decremented.
+        oh = oh.infer_path_and_mutate(batch_size=True, dtypes=True)
+        if not oh.best_model_dir.exists():  # DELTE
+            print(oh.path)
+            print(oh.best_model_dir)
+            raise FileNotFoundError()
+
+        attribution_chunk_size = 256
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        model = get_model(
+            args.task,
+            oh.best_model_dir,
+            config,
+            num_labels=materials.num_classes,
+            id2label=materials.id2label,
+            label2id=materials.label2id,
+        ).to("cpu").to(torch.float32).to(device)
+
+        alg = KernelShap(lambda x: F.softmax(model.forward(x).logits, dim=1))
+
+        @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
+        def _attribute(batch_size: int) -> list[Tensor]:
+            nonlocal training_arguments  # access variables outside of this function.
+            training_arguments = replace(training_arguments, per_device_eval_batch_size=batch_size)
+            print(f"Attributing with {batch_size=}...", flush=True)
+            trainer = ModelTrainer(
+                model=model,
+                args=training_arguments,
+                train_dataset=dataset["tr"],
+                eval_dataset=dataset["vl"],
+                data_collator=data_collator,
+                tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+            )
+
+            dataloader = trainer.get_eval_dataloader(dataset["vl"])
+            attributions = []
+            for i, inputs in enumerate(tqdm(dataloader)):
+                if i == 1024:
+                    break
+                inputs: transformers.tokenization_utils_base.BatchEncoding
+                input_ids: Tensor = inputs["input_ids"].to(model.device)
+                labels: Tensor = inputs["labels"].to(model.device)
+                feature_mask = chunk_mask(input_ids.size(1), attribution_chunk_size).to(device)
+                attr = alg.attribute(input_ids, baselines=tokenizer.pad_token_id, target=labels, feature_mask=feature_mask)
+                idx = torch.arange(0, input_ids.size(1), attribution_chunk_size)
+                attr = attr[:, idx].to("cpu")
+                attributions.append(attr)
+
+            return attributions
+
+        attributions: list[Tensor] = _attribute()
+        with open(oh.attribution_results_file, "wb") as fp:
+            torch.save(attributions, fp)
+
 
     if args.do_tune:
         training_arguments = replace(
