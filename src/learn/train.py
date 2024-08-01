@@ -1552,7 +1552,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     callbacks=callbacks,
                     compute_metrics=compute_metrics,
                 )
-                initial_output, max_per_device_eval_batch_size = trainer.predict(dataset["vl"]), batch_size
+                initial_output, max_per_device_eval_batch_size = trainer.predict(dataset["vl"]), training_arguments.per_device_eval_batch_size
             model = model.to(torch.float32).to("cpu")
             torch.cuda.empty_cache()
             gc.collect()
