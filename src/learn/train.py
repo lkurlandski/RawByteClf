@@ -52,7 +52,10 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from accelerate.utils import DistributedDataParallelKwargs
-from captum.attr import KernelShap
+try:
+    from captum.attr import KernelShap
+except (ModuleNotFoundError, ImportError) as err:
+    pass
 import datasets
 from datasets import (
     DatasetDict,
@@ -1699,7 +1702,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         alg = KernelShap(lambda x: F.softmax(model.forward(x).logits, dim=1))
 
-        @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
+        @find_executable_batch_size(starting_batch_size=1)  # Kernel SHAP recommends a batch size of 1.
         def _attribute(batch_size: int) -> list[Tensor]:
             nonlocal training_arguments  # access variables outside of this function.
             training_arguments = replace(training_arguments, per_device_eval_batch_size=batch_size)
