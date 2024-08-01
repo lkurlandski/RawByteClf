@@ -31,6 +31,12 @@ import torch
 from torch import nn, ByteTensor, LongTensor, Tensor
 
 
+def getattr_recursively(obj: Any, attr: str) -> Any:
+    for a in attr.split("."):
+        obj = getattr(obj, a)
+    return obj
+
+
 def get_array_datatype(x: Tensor | np.ndarray | list| int | float) -> Literal["int", "float"]:
 
     def datatype_of_list(x: list) -> Literal["int", "float"]:
