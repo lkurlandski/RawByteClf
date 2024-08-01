@@ -261,23 +261,45 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
     args = [a.replace('"', "").replace("'", "").replace("\\", "").rstrip() for a in args]
     args = [f'"{a}"' for a in args]
 
-    # Take string like:
-     # '"--arch_config={mode: uni, num_hidden_layers: 8, hidden_size: 256, embedding_size: 256}"'
-    # and convert it to:
-     # '"--arch_config={\"mode\": \"uni\", \"hidden_size\": 256, \"num_hidden_layers\": 8, \"embedding_size\": 256}"'
-    # S = '\\\"'
+    # Special processing for the arch_config
 
-    # for i, a in enumerate(args):
-    #     if "--arch_config" in a:
-    #         # d = json.loads(a.split("=")[1].replace("\"", ""))
-    #         break
+    def encapsulate_string(s: str) -> str:
+        r = ""
+        r += '\\'         # add backlash
+        r += '"'          # add quote
+        r += s            # add key
+        r += '\\'         # add backlash
+        r += '"'          # add quote
+        return r
 
-    # s = "{"
-    # for k, v in d.items():
-    #     s += f"{S}{k}{S}: {S if v.isdigit() else ''}{v}{S if v.isdigit() else ''}, "
-    # s = s[:-2] + "}"
+    idx = None
+    for i, a in enumerate(args):
+        if "--arch_config" in a:
+            if idx is not None:
+                raise RuntimeError()
+            idx = i
 
-    # args[i] = s
+    if idx is not None:
+        s = args[idx]
+        s = s[len('"--arch_config={'):-len('}"')]
+        iterator = [x.split(":") for x in s.split(",")]
+        s = ""
+        for k, v in iterator:
+            k = k.strip()
+            v = v.strip()
+            s += encapsulate_string(k)
+            s += ": "
+
+            if v in ("true", "false", "null") or v.isdigit():
+                s += v
+            else:
+                s += encapsulate_string(v)
+
+            s += ", "
+
+        s = s[:-len(", ")]
+        s = '"--arch_config={' + s + '}"'
+        args[idx] = s
 
     return ", ".join(args)
 
