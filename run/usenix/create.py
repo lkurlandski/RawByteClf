@@ -87,17 +87,16 @@ SEEDS = [0, 1, 2]
 _MODELS = [
     "mamba-sm-uni",
     "mamba-sm-bi",
-    "mamba-lg-uni",
-    "mamba-lg-bi",
-    "malconv"
+    #"mamba-lg-uni",
+    #"mamba-lg-bi",
+    #"malconv"
 ]
 MODELS = list(filter(lambda x: x[0] in _MODELS, MODELS))
 PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
-PRETRAINING_CHECKPOINTS = [None, -1]
-TR_SAMPLES_PER_CLASS = [None]
-
+PRETRAINING_CHECKPOINTS = [-1]
+TR_SAMPLES_PER_CLASS = [None, 1, 5]
 
 def get_body_lm(
     jobname: str,
