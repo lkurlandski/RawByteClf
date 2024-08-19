@@ -366,6 +366,10 @@ def compute_time(
 ) -> str:
     """Compute an estimation of time, then add a bit of buffer. 
     """
+
+    add_factor = 30 * 60
+    mul_factor = 0.05
+
     parts = model_nickname.split("-")
     if len(parts) == 1:
         name, size, mode = parts[0], None, None
@@ -389,6 +393,7 @@ def compute_time(
             if max_length == 2 ** 16:
                 tr_time_per_sample = 0.4267578125
                 vl_time_per_sample = 0.0891027400
+                add_factor = 90 * 60
 
         if mode == "bi" and tr_time_per_sample is not None and vl_time_per_sample is not None:
             tr_time_per_sample *= 2
@@ -427,7 +432,9 @@ def compute_time(
 
     total_time = tr_time + vl_time
     total_time = total_time / ngpus
-    total_time = (30 * 60) + (.05 * total_time) + total_time
+
+    total_time += mul_factor * total_time
+    total_time += add_factor
 
     total_hours = total_time / 3600
     return get_slurm_time(total_hours)
