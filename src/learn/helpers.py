@@ -347,14 +347,14 @@ class OutputHelper:
     ) -> str:
         oh = OutputHelper(**kwds)
 
-        p = oh.model_path / f"task--{pretraining_task}"
-        completed = list(p.rglob(OutputHelper.FINAL_PATH))
+        path = oh.model_path / f"task--{pretraining_task}"
+        completed = list(path.rglob(OutputHelper.FINAL_PATH))
         completed = [p for p in completed if all("checkpoint-" not in part for part in p.parts)]
 
         if len(completed) == 0:
-            raise FileNotFoundError(f"No completed experiments found for {oh.task_path=}")
+            raise FileNotFoundError(f"No completed experiments found in {path=}")
         if len(completed) > 1:
-            raise FileNotFoundError(f"Multiple completed experiments found for {oh.task_path=}")
+            raise FileExistsError(f"Multiple completed experiments found in {path=}")
 
         path = completed[0] / "checkpoints"
         if isinstance(pretraining_checkpoint, int):
@@ -366,106 +366,6 @@ class OutputHelper:
             raise FileNotFoundError(model_name_or_path.as_posix())
 
         return model_name_or_path.as_posix()
-
-    @classmethod
-    def from_path(cls, path: Path) -> OutputHelper:
-        raise NotImplementedError("This method has not been updated...")
-
-        if not path.exists():
-            raise FileNotFoundError(f"Path {path} does not exist.")
-        if not path.name == OutputHelper.FINAL_PATH:
-            raise ValueError(f"Expected {path.name=} to be {OutputHelper.FINAL_PATH=}")
-
-        kwds = {
-            "packing_protocol": None,
-            "representation": None,
-            "algorithm": None,
-            "vocab_size": None,
-            "max_length": None,
-            "task": None,
-            "tr_size": None,
-            "depth": None,
-            "min_freq": None,
-            "top_k": None,
-            "tr_samples_per_class": None,
-            "tr_length_cutoff": None,
-        }
-
-        trainer_config = {
-            k : None for k in OutputHelper.TRAINER_KEYS
-        } | {"world_size": 1}
-
-        arch_config = {}
-
-        root = None
-
-        finetuning = path.parts.count(OutputHelper.FINAL_PATH) == 2
-        if finetuning:
-            delay, model_name_or_path = True, []
-        else:
-            delay, model_name_or_path = None, None
-
-        for i, p in enumerate(path.parts):
-            # Establish the root, and exhaust the path until after root is established
-            if len(p.split("--")) == 2:
-                if root is None:
-                    root = Path(*path.parts[:i])
-            else:
-                if root is None:
-                    continue
-
-            # If we are finetuning, skip until the pretrained model path is exhausted
-            if finetuning:
-                if delay:
-                    model_name_or_path.append(p)
-                if delay and p.startswith("checkpoint-"):
-                    delay = False
-                    model_name_or_path = root / Path(*model_name_or_path)
-                    continue
-                if delay:
-                    continue
-
-            parsed = False
-            # Parse as meta or task hyperparameter
-            for k in kwds:
-                if p.startswith(f"{k}--"):
-                    kwds[k] = p.split("--")[1]
-                    parsed = True
-            if parsed:
-                continue
-            # Parse as a training hyperparameter
-            for k in trainer_config:
-                if p.startswith(f"{k}--"):
-                    trainer_config[k] = p.split("--")[1]
-                    parsed = True
-            if parsed:
-                continue
-            # Special case for model_name_or_path
-            if p.startswith("model_name--"):
-                if not finetuning:
-                    model_name_or_path = p.split("--")[1]
-                parsed = True
-            if parsed:
-                continue
-            # Parse as a model hyperparameter
-            if len(p.split("--")) == 2:
-                k, v = p.split("--")
-                arch_config[k] = str_to_probable_type(v)  # FIXME parsed and continue
-                parsed = True
-            if parsed:
-                continue
-
-        if finetuning and not model_name_or_path.exists():
-            raise RuntimeError(f"You done fucked up: {model_name_or_path=}")
-
-        oh = cls(
-            root=root,
-            model_name_or_path=model_name_or_path,
-            arch_config=arch_config,
-            trainer_config=trainer_config,
-            **kwds,
-        )
-        return oh
 
     @property
     def trainer_config(self) -> dict:
@@ -615,7 +515,7 @@ class OutputHelper:
         for k, v in kwds.items():
             found = False
             for collection in collections:
-                for i in range(len(collection)):
+                for i in range(len(collection)):  # pylint: disable=consider-using-enumerate
                     if f"{k}--" in collection[i]:
                         if found is False:
                             collection[i] = f"{k}--{v}"
@@ -672,11 +572,10 @@ class OutputHelper:
             else:
                 valid.append(candidate)
         if len(valid) == 0:
-            raise FileNotFoundError(f"No valid candidates found.")
-        elif len(valid) > 1:
+            raise FileNotFoundError("No valid candidates found.")
+        if len(valid) > 1:
             raise RuntimeError(f"Multiple valid candidates found:\n{pformat(valid)}\n")
-        else:
-            candidate = valid[0]
+        candidate = valid[0]
 
         trainer_path = candidate.relative_to(self.task_path)
         print(f"Found {trainer_path=}")

@@ -40,8 +40,8 @@ DOUBLE_BACKSLASH = """\\"""
 
 # Universal configuration for experments
 ROOT = "./output/test" if args.debug else "./output/usenix"
-MAX_LENGTH = 2 ** 14
-DATA_READ_BYTES = 2 ** 14
+MAX_LENGTH = 2 ** 16
+DATA_READ_BYTES = 2 ** 16
 
 # Parameters to vary for the experiments.
 
@@ -85,19 +85,15 @@ SEEDS = [0, 1, 2]
 # This is simpler than adding a complex CLI.
 # MODELS = list(filter(lambda x: "lg" in x[0], MODELS))
 _MODELS = [
-    "mamba-sm-uni",
-    "mamba-sm-bi",
     "mamba-lg-uni",
     "mamba-lg-bi",
     "malconv"
 ]
 MODELS = list(filter(lambda x: x[0] in _MODELS, MODELS))
-PRETRAINING_TASKS = [None, "clm-sor", "mlm-sor"]
 TASKS = ["clf-bod"]
 WEIGHTED_LOSSES = [None]
 PRETRAINING_CHECKPOINTS = [None, -1]
-TR_SAMPLES_PER_CLASS = [None]
-
+TR_SAMPLES_PER_CLASS = [None, 1, 5]
 
 def get_body_lm(
     jobname: str,
@@ -107,37 +103,12 @@ def get_body_lm(
     model_nickname: str,
 ) -> str:
 
-    parts = model_nickname.split("-")
-    if len(parts) == 2:
-        name, size, mode = parts[0], parts[1], parts[2]
-    if len(parts) == 3:
-        name, size, mode = parts[0], parts[1], parts[2]
-
-    bf16 = "false" if name == "hrr" else "true"
-
-    if name == "mamba":
-        if size == "sm":
-            hours = 48
-        if size == "lg":
-            hours = 96
-        if mode == "bi":
-            hours *= 2
-    if name == "hrr":
-        if size == "sm":
-            hours = 12
-        if size == "lg":
-            hours = 36
-
-    if hours is None:
-        warnings.warn(f"Don't know how much time to allocate to {model_nickname=} for {downstream_task=}.")
-        tim = 8
-
-    hours /= args.lm_ngpus
-    tim = get_slurm_time(hours)
-
-    mem = 32
-    mem *= args.lm_ngpus
-    mem = f"{mem}G"
+    bf16 = "false" if "hrr" in model_nickname else "true"
+    tim = compute_time(2 ** 21, 2 ** 14, MAX_LENGTH, 1, model_nickname, ngpus=args.lm_ngpus)
+    if time_too_large(tim):
+        warnings.warn(f"LargeRuntimeWarning: {tim=}. Reducing time to 05-00:00:00.")
+        tim = "05-00:00:00"
+    mem = f"{32 * args.lm_ngpus}G"
 
     return f"""#!/bin/bash -l
 
@@ -337,6 +308,7 @@ def get_jobname(
         weighted_loss = weighted_loss[0:3]
     args = [
         model_name,
+        str(MAX_LENGTH),
         str(pretraining_task),
         str(pretraining_checkpoint),
         downstream_task,
@@ -373,8 +345,15 @@ def get_slurm_time(total_hours: int | float) -> str:
     else:
         days, hours = 0, round(total_hours)
 
+    def f(d: int):
+        if d < 0 or d >= 100:
+            raise ValueError(d)
+        if d < 10:
+            return f"0{d}"
+        return f"{d}"
+
     days, hours = int(days), int(hours)
-    return f"0{days}-{hours}:00:00"
+    return f"{f(days)}-{f(hours)}:00:00"
 
 
 def compute_time(
@@ -383,9 +362,14 @@ def compute_time(
     max_length: int,
     num_train_epochs: int,
     model_nickname: str,
+    ngpus: int = 1,
 ) -> str:
     """Compute an estimation of time, then add a bit of buffer. 
     """
+
+    add_factor = 30 * 60
+    mul_factor = 0.05
+
     parts = model_nickname.split("-")
     if len(parts) == 1:
         name, size, mode = parts[0], None, None
@@ -407,10 +391,11 @@ def compute_time(
                 tr_time_per_sample = 0.2441406250000
                 vl_time_per_sample = 0.0457763671875
             if max_length == 2 ** 16:
-                tr_time_per_sample = None
-                vl_time_per_sample = None
+                tr_time_per_sample = 0.4267578125
+                vl_time_per_sample = 0.0891027400
+                add_factor = 90 * 60
 
-        if mode == "bi":
+        if mode == "bi" and tr_time_per_sample is not None and vl_time_per_sample is not None:
             tr_time_per_sample *= 2
             vl_time_per_sample *= 2
 
@@ -419,8 +404,8 @@ def compute_time(
             tr_time_per_sample = 0.0048668032786885250
             vl_time_per_sample = 0.0040172166427546625
         if max_length == 2 ** 16:
-            tr_time_per_sample = None
-            vl_time_per_sample = None
+            tr_time_per_sample = 0.0120923913
+            vl_time_per_sample = 0.0108080066
 
     if name == "hrr":
         if size == "sm":
@@ -438,11 +423,18 @@ def compute_time(
                 tr_time_per_sample = None
                 vl_time_per_sample = None
 
+    if tr_time_per_sample is None or vl_time_per_sample is None:
+        warnings.warn(f"Cannot calculate time for {max_length=} {name=} {mode=} {size=}")
+        return get_slurm_time(24 * 5)
+
     tr_time = tr_time_per_sample * tr_num_samples * num_train_epochs
     vl_time = vl_time_per_sample * vl_num_samples * num_train_epochs
 
     total_time = tr_time + vl_time
-    total_time = (30 * 60) + (.05 * total_time) + total_time
+    total_time = total_time / ngpus
+
+    total_time += mul_factor * total_time
+    total_time += add_factor
 
     total_hours = total_time / 3600
     return get_slurm_time(total_hours)
@@ -530,6 +522,14 @@ def get_clf_alloc_time_and_mem(
             tim = "00-04:00:00"
 
     return tim, mem
+
+
+def time_too_large(s: str) -> bool:
+    if int(s[0:2]) > 5:
+        return True
+    if int(s[0:2]) == 5 and any(int(i) > 0 for i in s[3:].split(":")):
+        return True
+    return False
 
 
 def key_for_sorting_jobnames(s: str) -> tuple:
@@ -664,7 +664,7 @@ def main():
                                 streaming = False
 
                             # if time requirements are over 5 days, reduce to 5 days
-                            if int(alloc_time[0:2]) >= 5:
+                            if time_too_large(alloc_time):
                                 warnings.warn(
                                     f"LargeRuntimeWarning: {alloc_time=} {task=} {min_freq=} "
                                     f"{tr_samples_per_class=}. Reducing alloc_time to 05-00:00:00."
