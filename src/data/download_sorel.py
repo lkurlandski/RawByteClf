@@ -106,7 +106,7 @@ def main():
         with open(args.include_shas, "r") as fp:
             files = [f.strip() for f in fp]
     else:
-        files = [s.sha256 for s in tqdm(stream_sorel_meta(), total=10000000, desc="Gathering Sorel SHAs...") if s.is_malware]
+        files = [s.sha256 for s in tqdm(stream_sorel_meta(), total=20000000, desc="Gathering Sorel SHAs...") if s.is_malware]
         files = filter_packed_files(files, args.packing_protocol)
     print(f"Eligible shas: {len(files)=}")
 
