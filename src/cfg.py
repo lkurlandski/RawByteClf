@@ -27,6 +27,7 @@ TMP_DIR = Path("/scratch.local") if Path("/scratch.local").exists() else Path(".
 class System(Enum):
     ARMITAGE = "ARMITAGE"
     RC = "RC"
+    LAB = "LAB"
 
 
 SYSTEM = System(Path("./config/.system").read_text().strip())

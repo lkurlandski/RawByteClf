@@ -1,17 +1,31 @@
 """
+Disassemble binaries.
 """
 
 from argparse import ArgumentParser
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import zlib
 
 from tqdm import tqdm
 
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
 
-SCRIPT_PATH = "/home/lk3591/lib/ghidra_10.3_PUBLIC/Ghidra/Features/Base/ghidra_scripts"
+from src.cfg import SYSTEM, System
+
+
+if SYSTEM == System.ARMITAGE:
+    SCRIPT_PATH = "/home/lk3591/lib/ghidra_10.3_PUBLIC/Ghidra/Features/Base/ghidra_scripts"
+elif SYSTEM == System.LAB:
+    SCRIPT_PATH = "/home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts"
+
 POST_SCRIPT = "DisassembleScript.java"
 
 
