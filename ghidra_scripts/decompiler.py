@@ -1,6 +1,7 @@
 #!/usr/bin/env python2
 # -*- coding:utf-8 -*-
 
+import os
 from ghidra.app.decompiler import DecompInterface
 
 # `currentProgram` or `getScriptArgs` function is contained in `__main__`
@@ -70,20 +71,11 @@ def run():
 
     # getScriptArgs gets argument for this python script using `analyzeHeadless`
     args = ghidra_app.getScriptArgs()
-    if len(args) > 1:
-        print('[!] Wrong parameters!\n\
-Usage: ./analyzeHeadless <PATH_TO_GHIDRA_PROJECT> <PROJECT_NAME> \
--process|-import <TARGET_FILE> [-scriptPath <PATH_TO_SCRIPT_DIR>] \
--postScript|-preScript decompile.py <PATH_TO_OUTPUT_FILE>')
-        return
-    
-    # If no output path given, 
-    # <CURRENT_PROGRAM>_decompiled.c will be saved in current dir
-    if len(args) == 0:
-        cur_program_name = ghidra_app.currentProgram.getName()
-        output = '{}.c'.format(''.join(cur_program_name.split('.')[:-1]))
-    else:
-        output = args[0]
+
+    cur_program_name = ghidra_app.currentProgram.getName()
+    outfile = '{}.asm'.format(''.join(cur_program_name.split('.')[:-1]))
+    outdir = args[0] if len(args) == 1 else ""
+    output = os.path.join(outdir, outfile)
 
     # Do decompilation process
     decompiler = Decompiler()

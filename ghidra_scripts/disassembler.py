@@ -2,6 +2,7 @@
 # -*- coding:utf-8 -*-
 
 from __future__ import print_function
+import os
 
 # `currentProgram` or `getScriptArgs` function is contained in `__main__`
 # actually you don't need to import by yourself, but it makes much "explicit"
@@ -103,20 +104,11 @@ def disassemble(program):
 
 def run():
     args = ghidra_app.getScriptArgs()
-    if len(args) > 1:
-        print('[!] need output path, see following\n\
-Usage: ./analyzeHeadless <PATH_TO_GHIDRA_PROJECT> <PROJECT_NAME> \
--process|-import <TARGET_FILE> [-scriptPath <PATH_TO_SCRIPT_DIR>] \
--postScript|-preScript disassemble.py <PATH_TO_OUTPUT_FILE>')
-        return
 
-    # If no output path given, 
-    # <CURRENT_PROGRAM>.asm will be saved in current dir
-    if len(args) == 0:
-        cur_program_name = ghidra_app.currentProgram.getName()
-        output = '{}.asm'.format(''.join(cur_program_name.split('.')[:-1]))
-    else:
-        output = args[0]
+    cur_program_name = ghidra_app.currentProgram.getName()
+    outfile = '{}.asm'.format(''.join(cur_program_name.split('.')[:-1]))
+    outdir = args[0] if len(args) == 1 else ""
+    output = os.path.join(outdir, outfile)
 
     # Get disassembled code
     disassembled = disassemble(ghidra_app.currentProgram)
