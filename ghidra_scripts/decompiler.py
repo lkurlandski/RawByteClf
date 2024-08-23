@@ -73,7 +73,7 @@ def run():
     args = ghidra_app.getScriptArgs()
 
     cur_program_name = ghidra_app.currentProgram.getName()
-    outfile = '{}.asm'.format(''.join(cur_program_name.split('.')[:-1]))
+    outfile = '{}.c'.format(''.join(cur_program_name.split('.')[:-1]))
     outdir = args[0] if len(args) == 1 else ""
     output = os.path.join(outdir, outfile)
 
