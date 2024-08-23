@@ -17,7 +17,7 @@ if __name__ == "__main__":
 from src.cfg import System, SYSTEM
 
 
-if SYSTEM == System.ARMITAGE:
+if SYSTEM == System.ARMITAGE or SYSTEM == System.LAB:
     DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
 elif SYSTEM == System.RC:
     DATASETS_PATH = Path("/shared/rc/admalware")
