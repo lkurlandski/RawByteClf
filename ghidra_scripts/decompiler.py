@@ -1,12 +1,44 @@
 #!/usr/bin/env python2
 # -*- coding:utf-8 -*-
 
+
+# FIXME: clean up the timeout mechanism...use signals again and os.kill(os.getpid)
+
 import os
+import sys
 from ghidra.app.decompiler import DecompInterface
+
+# Trying to use a timeout object gives `TypeError: No visible constructors for class'
+# which I can't figure out how to fix, so we'll use signals instead.
+# from ghidra.app.util.headless import HeadlessTimedTaskMonitor
+# from ghidra.util.task import TimeoutTaskMonitor
+
+import signal
+import threading
+import time
 
 # `currentProgram` or `getScriptArgs` function is contained in `__main__`
 # actually you don't need to import by yourself, but it makes much "explicit"
 import __main__ as ghidra_app
+
+
+def handler(signum, frame):
+    raise RuntimeError("TimeoutError")
+
+
+def run_with_timeout(func, timeout, *args, **kwargs):
+    def wrapper(result_container):
+        result_container[0] = func(*args, **kwargs)
+    
+    result_container = [None]
+    thread = threading.Thread(target=wrapper, args=(result_container,))
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        return False
+        # raise RuntimeError("TimeoutError")
+    # return result_container[0]
+    return True
 
 
 class Decompiler:
@@ -54,17 +86,12 @@ class Decompiler:
             string: decompiled all function as pseudo C
         '''
 
-        # All decompiled result will be joined
-        pseudo_c = ''
-
         # Enumerate all functions and decompile each function
         funcs = ghidra_app.currentProgram.getListing().getFunctions(True)
         for func in funcs:
             dec_func = self.decompile_func(func)
             if dec_func:
-                pseudo_c += dec_func
-
-        return pseudo_c
+                yield dec_func
 
 
 def run():
@@ -74,17 +101,36 @@ def run():
 
     cur_program_name = ghidra_app.currentProgram.getName()
     outfile = '{}.c'.format(''.join(cur_program_name.split('.')[:-1]))
-    outdir = args[0] if len(args) == 1 else ""
+    outdir = args[0] if len(args) >= 1 else ""
     output = os.path.join(outdir, outfile)
+    output_timeout = output.replace(".c", ".c.timeout")
 
-    # Do decompilation process
+    timeout = int(args[1].strip()) if len(args) == 2 else None
+
+    # print("outfile:" + outfile)
+    # print("outdir:" + outdir)
+    # print("output:" + output)
+    # print("output_timout:" + output_timeout)
+
     decompiler = Decompiler()
-    pseudo_c = decompiler.decompile()
 
-    # Save to output file
-    with open(output, 'w') as fw:
-        fw.write(pseudo_c)
+    def _run():
+        with open(output, "w") as fw:
+            for dec_func in decompiler.decompile():
+                fw.write(dec_func)
+
+    # try:
+    #     run_with_timeout(_run, timeout)
+    # except RuntimeError:
+    #     os.rename(output, output_timeout)
+    #     print('[*] success (timeout). save to -> {}'.format(output_timeout))
+
+    if run_with_timeout(_run, timeout):
         print('[*] success. save to -> {}'.format(output))
+    else:
+        print('[*] success (timeout). save to -> {}'.format(output_timeout))
+        decompiler._decompiler.stopProcess()  # :) Fuck that was painful.
+        os.rename(output, output_timeout)
 
 
 # Starts execution here
