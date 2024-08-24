@@ -1,35 +1,65 @@
 """
 Lift binaries into disassembly and decompiled representations.
 
-Performance:
-    lift.py (--jobs=1): 32 samples / 340 seconds = Z samples/second or W seconds/sample
-    lift.py (--jobs=4): 90 samples / 340 seconds = Z samples/second or W seconds/sample
-    lift.sh (--jobs=1): X samples / Y seconds = Z samples/second or W seconds/sample
-    lift.sh (--jobs=4): 864 samples / 340 seconds = Z samples/second or W seconds/sample
+Run with gnu-parallel, e.g.,
+
+    parallel --bar -j $JOBS
+     'python src/data/lift.py --root /home/lk3591/Documents/datasets/Sorel/ --filter_idx {1} > ./logs/lift_{1}.txt 2>&1' \
+     ::: $(printf "%02x\n" {4095..0})
+
 """
 
 from argparse import ArgumentParser
 import gc
-import multiprocessing as mp
 import os
 from pathlib import Path
 from pprint import pprint
-import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
+from typing import Optional
 import zlib
 
+import pefile
 from tqdm import tqdm
 
 
-timeout = 300
-p_ghi = None
-p_bin = None
-p_dis = None
-p_dec = None
+PROCESSOR = "x86:LE:32:default"
+TIMEOUT_ANALYSIS = 180
+TIMEOUT_DECOMPILE = 180
+PE_X86_32 = pefile.MACHINE_TYPE["IMAGE_FILE_MACHINE_I386"]
+
+
+# def is_pe_x86_32_bit(f: Path) -> tuple[bool, Optional[Exception]]:
+#     try:
+#         pe = pefile.PE(str(f))
+#     except pefile.PEFormatError as err:
+#         return False, err
+#     print(pe.FILE_HEADER.Machine)  # FIXME: remove
+#     machine = pe.FILE_HEADER.Machine
+#     if machine == PE_X86_32:
+#         return True, None
+#     elif machine == 0:
+# 
+#     return pe.FILE_HEADER.Machine == PE_X86_32, None
+
+
+def get_file_type(path: Path) -> dict[str, str]:
+    args = ["find", str(path), "-type", "l", "-exec", "file", "-L", "{}", "+"]
+    result = subprocess.run(args, check=True, capture_output=True)
+    lines = result.stdout.decode()
+    out = {}
+    for line in lines.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            file, result = line.split(": ")
+            out[file] = result
+        except Exception:
+            print(f"{line=}")
+    return out
 
 
 def hexes(n: int) -> tuple[str]:
@@ -42,156 +72,97 @@ def hexes(n: int) -> tuple[str]:
 
 
 def run_ghidra(
-    p_location: str | Path,
-    p_input: str | Path,
-    p_disassembled: str | Path,
-    p_decompiled: str | Path,
-    recursive: bool = False,
+    p_location: str,
+    p_input: str,
+    p_disassembled: str,
+    p_decompiled: str,
+    p_log: str,
 ):
     """
     Raises:
         subprocess.CalledProcessError
         subprocess.TimeoutExpired
     """
+
     args = [
         "analyzeHeadless",
-        str(p_location), "lift",
-        "-analysisTimeoutPerFile", str(timeout),
-        "-import", str(p_input),
+        p_location,
+        "lift",
+        "-recursive",
+        "-log", p_log, 
+        "-processor", PROCESSOR,
+        "-analysisTimeoutPerFile", str(TIMEOUT_ANALYSIS),
+        "-import", p_input,
         "-scriptPath", "./ghidra_scripts",
-        "-postScript", "disassembler.py", str(p_disassembled),
-        "-postScript", "decompiler.py", str(p_decompiled),
+        "-postScript", "disassembler.py", p_disassembled,
+        "-postScript", "decompiler.py", p_decompiled, str(TIMEOUT_DECOMPILE),
     ]
-    if recursive:
-        args.insert(3, "-recursive")
 
     subprocess.run(args, check=True, capture_output=True, timeout=3600)
 
 
-def run_ghidra_safe(*args, **kwds) -> int:
-    try:
-        run_ghidra(*args, **kwds)
-    except subprocess.CalledProcessError as err:
-        return 3
-    except subprocess.TimeoutExpired as err:
-        return 2
-    except Exception as err:
-        return 1
-
-    return 0
-
-
-
-def run_ghidra_parallel(f: str | Path) -> int:
-    s = os.path.basename(f)[0:2]
-    return run_ghidra_safe(
-        p_location=p_ghi / s,
-        p_input=p_bin / s / f,
-        p_disassembled=p_dis / s,
-        p_decompiled=p_dec / s,
-        recursive=False,
-    )
-
-
-def run_ghidra_parallel_batched(files: list[str | Path]) -> list[int]:
-    print(f"BEG: worker {os.getpid()} processing {len(files)} items.")
-
-    verbose = len(files) > 0 and files[0] == "00"
-
-    status = []
-    for i, f in enumerate(files):
-        s = run_ghidra_parallel(f)
-        status.append(s)
-        if verbose and i % 10 == 0: 
-            print(f"PRG: Worker {os.getpid()} processing {i} / {len(files)} items.")
-    print(f"END: worker {os.getpid()} processing {len(files)} items.")
-    return status
-
-
 def main():
-
-    global p_ghi, p_bin, p_dis, p_dec, timeout
 
     parser = ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--timeout", type=int, default=timeout)
-    parser.add_argument("--jobs", type=int, default=None)
-    parser.add_argument("--ignore_complete", action="store_true")
+    parser.add_argument("--filter_idx", type=str, required=True)
     args = parser.parse_args()
 
-    print(args)
+    p_log = Path("./logs") / f"lift_ghidra_{args.filter_idx}"
 
-    timeout = args.timeout
-
+    # Define the directories
     root = args.root
+    p_ghi = root / "ghidra" / args.filter_idx
+    p_sym = root / "symBinaries" / args.filter_idx
+    p_bin = root / "binaries" / args.filter_idx[0:2]
+    p_dis = root / "disassembled" / args.filter_idx[0:2]
+    p_dec = root / "decompiled" / args.filter_idx[0:2]
 
-    p_ghi = root / "ghidra"
-    p_bin = root / "binaries"
-    p_dis = root / "disassembled"
-    p_dec = root / "decompiled"
+    # Set up the directories
+    if not p_bin.exists():
+        raise FileNotFoundError()
+    shutil.rmtree(p_ghi, ignore_errors=True)
+    shutil.rmtree(p_sym, ignore_errors=True)
+    p_ghi.mkdir(exist_ok=True, parents=True)
+    p_sym.mkdir(exist_ok=True, parents=True)
+    p_dis.mkdir(exist_ok=True, parents=True)
+    p_dec.mkdir(exist_ok=True, parents=True)
 
-    if False:
-        shutil.rmtree(p_ghi)
-        shutil.rmtree(p_dis)
-        shutil.rmtree(p_dec)
+    # Create symbolic links
+    files = [
+        f for f in p_bin.iterdir()
+        if f.stem[0:len(args.filter_idx)] == args.filter_idx
+    ]
+    for f in tqdm(files, desc="Creating symlinks..."):
+        symlink = p_sym / f.name
+        symlink.symlink_to(f)
 
-    for p in (p_ghi, p_bin, p_dis, p_dec):
-        for h in tuple(hex(i)[2:] for i in range(256)):
-            h = "0" + h if len(h) == 1 else h
-            (p / h).mkdir(exist_ok=True, parents=True)
+    types = get_file_type(p_sym)
+    types = {Path(f).stem: s for f, s in types.items()}
+    for f in p_sym.iterdir():
+        s = types[f.stem]
+        if "PE32" in s and "PE32+" not in s:
+            continue
+        # print(f"Unlinking f={f.stem} because it is {s}")
+        f.unlink()
 
-    files = list(p_bin.rglob("*.exe"))
-    print(f"Found {len(files)} binaries to lift.")
+    print("Starting Ghidra!")
+    t_0 = time.time()
+    try:
+        run_ghidra(
+            p_ghi.as_posix(),
+            p_sym.as_posix(),
+            p_dis.as_posix(),
+            p_dec.as_posix(),
+            p_log.as_posix(),
+        )
+    except subprocess.CalledProcessError:
+        print(f"{subprocess.CalledProcessError}.")
+    except subprocess.TimeoutExpired:
+        print(f"{subprocess.TimeoutExpired}")
 
-    if args.ignore_complete:
-        complete = set(f.stem for f in p_dis.rglob("*.asm"))
-        complete &= set(f.stem for f in p_dec.rglob("*.c"))
-        print(f"Found {len(complete)} ASM/C files already complete.")
-    else:
-        complete = set()
+    print(f"Finished in {time.time() - t_0} seconds.")
 
-    files = sorted([str(f) for f in files if f.stem not in complete])
-    print(f"Will proceed with lifting {len(files)} files.")
-
-
-    # Run single worker.
-    if args.jobs is None or args.jobs < 2:
-        t_i = time.time()
-
-        for f in tqdm(files):
-            s = run_ghidra_parallel(f)
-            if s != 0:
-                print(os.path.basename(f), s)
-
-        t_f = time.time() 
-        print(f"Elapsed time: {t_f - t_i:.2f} seconds.")
-
-        sys.exit(0)
-
-
-    # Run multiple workers. Each Ghidra process needs its own directory.
-    chunks = {h: [] for h in hexes(2)}
-    for f in files:
-        h = os.path.basename(f)[0:2]
-        chunks[h].append(f)
-    chunks = tuple(tuple(fs) for fs in chunks.values())
-    del files
-
-    gc.collect()
-
-
-    t_i = time.time()
-    with mp.Pool(args.jobs) as pool:
-        statuses = pool.map(run_ghidra_parallel_batched, chunks)
-    t_f = time.time()
-
-    print(f"Errors:\n{'-' * 88}")
-    for files, status in zip(chunks, statuses):
-        for f, s in zip(files, status):
-            if s != 0:
-                print(os.path.basename(f), s)
-
-    print(f"Elapsed time: {t_f - t_i:.2f} seconds.")
 
 if __name__ == "__main__":
     main()
