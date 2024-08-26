@@ -21,28 +21,13 @@ import time
 from typing import Optional
 import zlib
 
-import pefile
 from tqdm import tqdm
 
 
 PROCESSOR = "x86:LE:32:default"
 TIMEOUT_ANALYSIS = 180
+TIMEOUT_DISASSEMBLE = 180
 TIMEOUT_DECOMPILE = 180
-PE_X86_32 = pefile.MACHINE_TYPE["IMAGE_FILE_MACHINE_I386"]
-
-
-# def is_pe_x86_32_bit(f: Path) -> tuple[bool, Optional[Exception]]:
-#     try:
-#         pe = pefile.PE(str(f))
-#     except pefile.PEFormatError as err:
-#         return False, err
-#     print(pe.FILE_HEADER.Machine)  # FIXME: remove
-#     machine = pe.FILE_HEADER.Machine
-#     if machine == PE_X86_32:
-#         return True, None
-#     elif machine == 0:
-# 
-#     return pe.FILE_HEADER.Machine == PE_X86_32, None
 
 
 def get_file_type(path: Path) -> dict[str, str]:
@@ -84,6 +69,15 @@ def run_ghidra(
         subprocess.TimeoutExpired
     """
 
+    # FIXME: decompiler disabled
+    # TODO: figure out a way to kill the decompiler's subprocesses.
+
+    n = sum(1 for _ in Path(p_input).iterdir())
+    # timeout = n * (TIMEOUT_ANALYSIS + TIMEOUT_DISASSEMBLE + TIMEOUT_DECOMPILE)
+    timeout = n * (TIMEOUT_ANALYSIS + TIMEOUT_DISASSEMBLE)
+    timeout += 900  # 15 minutes additional buffer
+    timeout = None  # TODO: temporary to prevent unhandled subprocesses.
+
     args = [
         "analyzeHeadless",
         p_location,
@@ -95,10 +89,10 @@ def run_ghidra(
         "-import", p_input,
         "-scriptPath", "./ghidra_scripts",
         "-postScript", "disassembler.py", p_disassembled,
-        "-postScript", "decompiler.py", p_decompiled, str(TIMEOUT_DECOMPILE),
+        # "-postScript", "decompiler.py", p_decompiled, str(TIMEOUT_DECOMPILE),
     ]
 
-    subprocess.run(args, check=True, capture_output=True, timeout=3600)
+    subprocess.run(args, check=True, capture_output=True, timeout=timeout)
 
 
 def main():
@@ -146,6 +140,13 @@ def main():
         # print(f"Unlinking f={f.stem} because it is {s}")
         f.unlink()
 
+    del f
+    del s
+    del symlink
+    del files
+    del types
+    gc.collect()
+
     print("Starting Ghidra!")
     t_0 = time.time()
     try:
@@ -161,7 +162,11 @@ def main():
     except subprocess.TimeoutExpired:
         print(f"{subprocess.TimeoutExpired}")
 
-    print(f"Finished in {time.time() - t_0} seconds.")
+    n = sum(1 for _ in p_sym.iterdir())
+    t = int(round(time.time() - t_0))
+    for f in p_sym.iterdir():
+        f.unlink()
+    print(f"Finished {n} files in {t} seconds.")
 
 
 if __name__ == "__main__":
