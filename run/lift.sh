@@ -195,10 +195,10 @@ siz=$(du -shc "$p_int_dec"/* | grep total | awk '{print $1}')
 echo "Decompiled $cnt files totaling $siz (some may already have been present)."
 
 # Move everything from intermediate storage to final storage.
-if [[ $p_int_dis -ne $p_fin_dis ]]; then
+if [[ $p_int_dis != $p_fin_dis ]]; then
   rsync --archive --remove-source-files "$p_int_dis/" "$p_fin_dis/"
 fi
-if [[ $p_int_dec -ne $p_fin_dec ]]; then
+if [[ $p_int_dec != $p_fin_dec ]]; then
   rsync --archive --remove-source-files "$p_int_dec/" "$p_fin_dec/"
 fi
 
