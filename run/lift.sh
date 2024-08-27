@@ -12,13 +12,13 @@
 
 
 #
-# sshpass -p "RITPassword1!" scp \
-  # "lk3591@armitage.csec.rit.edu:/home/lk3591/transfer/zip/$1.zip" \
-  # "$p_arc/$1.zip"
+#
 #
 
-echo "lift.rc.sh: ($1)"
 
+echo "lift.sh: ($1)"
+
+hh="${1:0:2}"
 t_i=$(date +%s.%N)
 
 # Configuration for Ghidra's headless analyzer.
@@ -40,7 +40,11 @@ echo "P_LOG: $P_LOG"
 
 echo "---------------------------------------------------------------------------"
 
-# Determine which computer we're running on and set paths accordingly.
+# Determine which computer we're running on and set base paths accordingly.
+#   P_FIN: long-term storage with possibly slow I/O
+#   P_INT: medium-term storage with fast I/O
+#   P_TMP: short-term storage with fast I/O
+
 SYSTEM=$(<./config/.system)
 
 if [[ "$SYSTEM" != "RC" && "$SYSTEM" != "LAB" && "$SYSTEM" != "ARMITAGE" ]]; then
@@ -50,80 +54,106 @@ fi
 echo "SYSTEM: $SYSTEM"
 
 if [[ "$SYSTEM" == "RC" ]]; then
-  P_STABLE="/shared/rc/admalware/Sorel"
+  P_FIN="/shared/rc/admalware/Sorel"
+  P_INT="/scratch/lk3591"
   P_TMP="/tmp"
 elif [[ "$SYSTEM" == "ARMITAGE" ]]; then
-  P_STABLE="/home/lk3591/Documents/datasets/Sorel"
-  P_TMP="$P_STABLE/tmp"
+  P_FIN="/home/lk3591/Documents/datasets/Sorel"
+  P_INT="$P_FIN"
+  P_TMP="$P_INT/tmp"
 elif [[ "$SYSTEM" == "LAB" ]]; then
-  P_STABLE="/media/lk3591/easystore/datasets/Sorel"
-  P_TMP="$P_STABLE/tmp"
+  P_FIN="/media/lk3591/easystore/datasets/Sorel"
+  P_INT="/home/lk3591/Documents/datasets/Sorel"
+  P_TMP="$P_INT/tmp"
 fi
 
-if [[ ! -d "$P_STABLE" ]]; then
-  echo "Error: Directory $P_STABLE does not exist. Exiting."
+if [[ ! -d "$P_FIN" ]]; then
+  echo "Error: Directory P_FIN $P_FIN does not exist. Exiting."
   exit 1
 fi
-echo "_P_STABLE: $P_STABLE"
+echo "P_FIN: $P_FIN"
+
+if [[ ! -d "$P_INT" ]]; then
+  echo "Error: Directory P_INT $P_INT does not exist. Exiting."
+  exit 1
+fi
+echo "P_INT: $P_INT"
 
 if [[ ! -d "$P_TMP" ]]; then
-  echo "Error: Directory $P_TMP does not exist. Exiting."
+  echo "Error: Directory P_TMP $P_TMP does not exist. Exiting."
   exit 1
 fi
-echo "_P_TMP: $P_TMP"
+echo "P_TMP: $P_TMP"
 
 echo "---------------------------------------------------------------------------"
 
-# Define and create stable directories for storage.
-P_ARC="$P_STABLE/archived"
-P_DIS="$P_STABLE/disassembled"
-P_DEC="$P_STABLE/decompiled"
+# Define and create FIN directories.
+p_fin_arc="$P_FIN/archived/$hh"
+p_fin_dis="$P_FIN/disassembled/$hh"
+p_fin_dec="$P_FIN/decompiled/$hh"
+mkdir -p "$p_fin_arc"
+mkdir -p "$p_fin_dis"
+mkdir -p "$p_fin_dec"
+echo "p_fin_arc: $p_fin_arc"
+echo "p_fin_dis: $p_fin_dis"
+echo "p_fin_dec: $p_fin_dec"
 
-mkdir -p "$P_ARC"
-mkdir -p "$P_DIS"
-mkdir -p "$P_DEC"
+# Define and create INT directories.
+p_int_dis="$P_INT/disassembled/$hh"
+p_int_dec="$P_INT/decompiled/$hh"
+mkdir -p "$p_int_dis"
+mkdir -p "$p_int_dec"
+echo "p_int_dis: $p_int_dis"
+echo "p_int_dec: $p_int_dec"
 
-echo "P_ARC: $P_ARC"
-echo "P_DIS: $P_DIS"
-echo "P_DEC: $P_DEC"
+# Define and create TMP directories.
+p_tmp_arc="$P_TMP/archived/$hh"
+p_tmp_bin="$P_TMP/binaries/$hh"
+p_tmp_ghi="$P_TMP/ghidra/$hh"
+rm -rf "$p_tmp_arc"
+rm -rf "$p_tmp_bin"
+rm -rf "$p_tmp_ghi"
+mkdir -p "$p_tmp_arc"
+mkdir -p "$p_tmp_bin"
+mkdir -p "$p_tmp_ghi"
+echo "p_tmp_arc: $p_tmp_arc"
+echo "p_tmp_bin: $p_tmp_bin"
+echo "p_tmp_ghi: $p_tmp_ghi"
 
 echo "---------------------------------------------------------------------------"
 
-# Define and create temporary directories for fast read/writes.
-p_root="$P_TMP/lk3591/$1"
-p_arc="$p_root/archives"
-p_bin="$p_root/binaries"
-p_ghi="$p_root/ghidra"
-p_dis="$p_root/disassembled"
-p_dec="$p_root/decompiled"
+# Copy and extract binaries into the temporary directory.
+cp "$p_fin_arc/$1.zip" "$p_tmp_arc/$1.zip"
+unzip -q -j "$p_tmp_arc/$1.zip" -d "$p_tmp_bin/"
+rm "$p_tmp_arc/$1.zip"
 
-mkdir -p "$p_root"
-mkdir "$p_arc"
-mkdir "$p_bin"
-mkdir "$p_ghi"
-mkdir "$p_dis"
-mkdir "$p_dec"
+# Create lists of file stems that have completed.
+fs_fin_dis=$(find "$p_fin_dis" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
+fs_int_dis=$(find "$p_int_dis" -type f -exec basename {} {} \; | sed 's/\.[^.]*$//')
+fs_fin_dec=$(find "$p_fin_dec" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
+fs_int_dec=$(find "$p_int_dec" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
 
-echo "Temporary Directories (Empty)"
-tree "$p_root"
+# Iterate over files in p_tmp_bin and remove if its already been processed.
+for f in "$p_tmp_bin"/*; do
+  s=$(basename "$f" | sed 's/\.[^.]*$//')
+  in_fs_fin_dis=$(echo "$fs_fin_dis" | grep -w "$s")
+  in_fs_int_dis=$(echo "$fs_int_dis" | grep -w "$s")
+  in_fs_fin_dec=$(echo "$fs_fin_dec" | grep -w "$s")
+  in_fs_int_dec=$(echo "$fs_int_dec" | grep -w "$s")
+  if { [ -n "$in_fs_fin_dis" ] || [ -n "$in_fs_int_dis" ]; } && \
+     { [ -n "$in_fs_fin_dec" ] || [ -n "$in_fs_int_dec" ]; }; then
+    echo "Skipping: $s"
+      rm "$f"
+  fi
+done
 
-echo "---------------------------------------------------------------------------"
-
-# Extract the raw binaries.
-cp "$P_ARC/$1.zip" "$p_arc"
-unzip -q -j "$p_arc/$1.zip" -d "$p_bin/"
-
-# TEST: removes all files that do not match the regex.
+# TEST: removes files that do not match the regex.
 # -------------------------------------------------------------------------------- #
-# find "$p_bin" -type f ! -name "00000*" -delete
-# echo "Populated Directories:"
-# tree "$p_root"
-# echo "---------------------------------------------------------------------------"
+# find "$p_tmp_bin" -type f ! -name "00000*" -delete
 # -------------------------------------------------------------------------------- #
 
-echo "Temporary Directories (Summary)"
-cnt=$(find "$p_bin" -type f | wc -l)
-siz=$(du -shc "$p_bin"/* | grep total | awk '{print $1}')
+cnt=$(find "$p_tmp_bin" -type f | wc -l)
+siz=$(du -shc "$p_tmp_bin"/* | grep total | awk '{print $1}')
 echo "Lifting $cnt files totaling $siz."
 
 t_f=$(date +%s.%N)
@@ -139,16 +169,16 @@ echo "Logging headlessAnalysis $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
 analyzeHeadless \
-  "$p_ghi" \
+  "$p_tmp_ghi" \
   "lift" \
   -recursive \
   -log $p_log \
   -processor $PROCESSOR \
   -analysisTimeoutPerFile $TIMEOUT_ANALY \
-  -import "$p_bin" \
+  -import "$p_tmp_bin" \
   -scriptPath "$SCRIPT_PATH" \
-  -postScript "disassembler.py" "$p_dis" \
-  -postScript "decompiler.py" "$p_dec" $TIMEOUT_DECOM \
+  -postScript "disassembler.py" "$p_int_dis" \
+  -postScript "decompiler.py" "$p_int_dec" $TIMEOUT_DECOM \
   &> "$p_log"
 
 t_f=$(date +%s.%N)
@@ -156,22 +186,21 @@ t_d=$(echo "$t_f - $t_i" | bc)
 printf "Ghidra time: %.6f seconds\n" $t_d
 t_i=$(date +%s.%N)
 
-echo "Data Generated (Summary):"
-cnt=$(find "$p_dis" -type f | wc -l)
-siz=$(du -shc "$p_dis"/* | grep total | awk '{print $1}')
-echo "Disassembled $cnt files totaling $siz."
+cnt=$(find "$p_int_dis" -type f | wc -l)
+siz=$(du -shc "$p_int_dis"/* | grep total | awk '{print $1}')
+echo "Disassembled $cnt files totaling $siz (some may already have been present)."
 
-cnt=$(find "$p_dec" -type f | wc -l)
-siz=$(du -shc "$p_dec"/* | grep total | awk '{print $1}')
-echo "Decompiled $cnt files totaling $siz."
-echo "---------------------------------------------------------------------------"
+cnt=$(find "$p_int_dec" -type f | wc -l)
+siz=$(du -shc "$p_int_dec"/* | grep total | awk '{print $1}')
+echo "Decompiled $cnt files totaling $siz (some may already have been present)."
 
-
-# Compress the output of Ghidra.
-zip -q -9 "$p_root/dis_$1.zip" "$p_dis/"*
-zip -q -9 "$p_root/dec_$1.zip" "$p_dec/"*
-mv "$p_root/dis_$1.zip" "$P_DIS/$1.zip"
-mv "$p_root/dec_$1.zip" "$P_DEC/$1.zip"
+# Move everything from intermediate storage to final storage.
+if [[ $p_int_dis -ne $p_fin_dis ]]; then
+  rsync --archive --remove-source-files "$p_int_dis/" "$p_fin_dis/"
+fi
+if [[ $p_int_dec -ne $p_fin_dec ]]; then
+  rsync --archive --remove-source-files "$p_int_dec/" "$p_fin_dec/"
+fi
 
 t_f=$(date +%s.%N)
 t_d=$(echo "$t_f - $t_i" | bc)
