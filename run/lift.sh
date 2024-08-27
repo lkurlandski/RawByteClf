@@ -90,18 +90,19 @@ echo "P_DEC: $P_DEC"
 echo "---------------------------------------------------------------------------"
 
 # Define and create temporary directories for fast read/writes.
-p_root=$(mktemp -d "$P_TMP/tmpdir.XXXXXX")
+p_root="$P_TMP/lk3591/$1"
 p_arc="$p_root/archives"
 p_bin="$p_root/binaries"
 p_ghi="$p_root/ghidra"
 p_dis="$p_root/disassembled"
 p_dec="$p_root/decompiled"
 
-mkdir $p_arc
-mkdir $p_bin
-mkdir $p_ghi
-mkdir $p_dis
-mkdir $p_dec
+mkdir -p "$p_root"
+mkdir "$p_arc"
+mkdir "$p_bin"
+mkdir "$p_ghi"
+mkdir "$p_dis"
+mkdir "$p_dec"
 
 echo "Temporary Directories (Empty)"
 tree "$p_root"
