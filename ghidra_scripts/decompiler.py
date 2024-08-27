@@ -117,7 +117,11 @@ def run():
     def _run():
         with open(output, "w") as fw:
             for dec_func in decompiler.decompile():
-                fw.write(dec_func)
+                try:
+                    fw.write(dec_func)
+                except UnicodeEncodeError:
+                    print("PYERROR: UnicodeEncodeError")
+                    fw.write(dec_func.encode('utf-8', errors='ignore'))
 
     # try:
     #     run_with_timeout(_run, timeout)

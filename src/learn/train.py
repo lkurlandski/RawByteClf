@@ -1002,7 +1002,7 @@ def get_model(
             if is_not_for_classification:
                 print(f"Checking the following classification heads for anamalous weights: {_head_names}")
                 for h in _head_names:
-                    l: Optional[torch.nn.Linear] = getattr_recursively(model, h, None)
+                    l: Optional[torch.nn.Linear] = getattr_recursively(model, h)
                     if l is None:
                         continue
                     if not isinstance(l, torch.nn.Linear):
