@@ -2,17 +2,30 @@
 
 #SBATCH --job-name=lift
 #SBATCH --account=admalware
-#SBATCH --partition=tier3
+#SBATCH --partition=debug
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=01-00:00:00
+#SBATCH --time=00-01:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=4
-#SBATCH --mem=16G
+#SBATCH --mem=8G
 
 
 #
-#
+# CLEANUP
+# -------
+#   ALL:
+#     rm /home/lk3591/Documents/code/RawByteClf/logs/lift_*.out
+#     rm /home/lk3591/Documents/code/RawByteClf/logsiGhidra/*.log
+#   RC:
+#     rm -rf /shared/rc/admalware/Sorel/disassembled/*
+#     rm -rf /shared/rc/admalware/Sorel/decompiled/*
+#     rm -rf /scratch/lk3591/disassembled/*
+#     rm -rf /scratch/lk3591/decompiled/*
+#   ARMITAGE:
+#     ...
+#   LAB:
+#     ...
 #
 
 
@@ -22,14 +35,16 @@ hh="${1:0:2}"
 t_i=$(date +%s.%N)
 
 # Configuration for Ghidra's headless analyzer.
-TIMEOUT_ANALY="60"
-TIMEOUT_DECOM="60"
+TIMEOUT_ANALY="120"
+TIMEOUT_DECOM="120"
 PROCESSOR="x86:LE:32:default"
+LOADER="PeLoader"
 SCRIPT_PATH="/home/lk3591/Documents/code/RawByteClf/ghidra_scripts"
 
 echo "TIMEOUT_ANALY: $TIMEOUT_ANALY"
 echo "TIMEOUT_DECOM: $TIMEOUT_DECOM"
 echo "PROCESSOR: $PROCESSOR"
+echo "LOADER: $LOADER"
 
 P_LOG="./logsGhidra"
 if [[ ! -d "$P_LOG" ]]; then
@@ -129,7 +144,7 @@ rm "$p_tmp_arc/$1.zip"
 
 # Create lists of file stems that have completed.
 fs_fin_dis=$(find "$p_fin_dis" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
-fs_int_dis=$(find "$p_int_dis" -type f -exec basename {} {} \; | sed 's/\.[^.]*$//')
+fs_int_dis=$(find "$p_int_dis" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
 fs_fin_dec=$(find "$p_fin_dec" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
 fs_int_dec=$(find "$p_int_dec" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
 
@@ -174,6 +189,7 @@ analyzeHeadless \
   -recursive \
   -log $p_log \
   -processor $PROCESSOR \
+  -loader $LOADER \
   -analysisTimeoutPerFile $TIMEOUT_ANALY \
   -import "$p_tmp_bin" \
   -scriptPath "$SCRIPT_PATH" \
