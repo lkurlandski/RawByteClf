@@ -2,13 +2,13 @@
 
 #SBATCH --job-name=lift
 #SBATCH --account=admalware
-#SBATCH --partition=debug
+#SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-01:00:00
+#SBATCH --time=00-12:00:00
 #SBATCH --mem=16G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=2
 
 
 #
@@ -70,9 +70,6 @@
 #
 #   Based on the experiments above, it seems that Ghidra seems to perform SLIGHTLY
 #   better when --cpus-per-task > 1.
-
-CODE="Q"
-echo "CODE: $CODE"
 
 
 echo "lift.sh: ($1)"
@@ -146,8 +143,8 @@ echo "P_TMP: $P_TMP"
 
 # Define and create FIN directories.
 p_fin_arc="$P_FIN/archived/$hh"
-p_fin_dis="$P_FIN/disassembled/$hh/$CODE"
-p_fin_dec="$P_FIN/decompiled/$hh/$CODE"
+p_fin_dis="$P_FIN/disassembled/$hh"
+p_fin_dec="$P_FIN/decompiled/$hh"
 mkdir -p "$p_fin_arc"
 mkdir -p "$p_fin_dis"
 mkdir -p "$p_fin_dec"
@@ -156,17 +153,17 @@ echo "p_fin_dis: $p_fin_dis"
 echo "p_fin_dec: $p_fin_dec"
 
 # Define and create INT directories.
-p_int_dis="$P_INT/disassembled/$hh/$CODE"
-p_int_dec="$P_INT/decompiled/$hh/$CODE"
+p_int_dis="$P_INT/disassembled/$hh"
+p_int_dec="$P_INT/decompiled/$hh"
 mkdir -p "$p_int_dis"
 mkdir -p "$p_int_dec"
 echo "p_int_dis: $p_int_dis"
 echo "p_int_dec: $p_int_dec"
 
 # Define and create TMP directories.
-p_tmp_arc="$P_TMP/archived/$hh/$CODE"
-p_tmp_bin="$P_TMP/binaries/$hh/$CODE"
-p_tmp_ghi="$P_TMP/ghidra/$hh/$CODE"
+p_tmp_arc="$P_TMP/archived/$hh"
+p_tmp_bin="$P_TMP/binaries/$hh"
+p_tmp_ghi="$P_TMP/ghidra/$hh"
 rm -rf "$p_tmp_arc"
 rm -rf "$p_tmp_bin"
 rm -rf "$p_tmp_ghi"
@@ -222,7 +219,7 @@ siz=$(du -shc "$p_tmp_bin"/* | grep total | awk '{print $1}')
 echo "Lifting $cnt files totaling $siz."
 
 # Redirect stdout and stderr to keep the main log file clean.
-p_log="$P_LOG/$1.$counter.$CODE.log"
+p_log="$P_LOG/$1.$counter.log"
 echo "Logging headlessAnalysis $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
