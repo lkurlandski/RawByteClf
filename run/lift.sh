@@ -189,14 +189,9 @@ for f in "$p_tmp_bin"/*; do
   if { [ -n "$in_fs_fin_dis" ] || [ -n "$in_fs_int_dis" ]; } && \
      { [ -n "$in_fs_fin_dec" ] || [ -n "$in_fs_int_dec" ]; }; then
     echo "Skipping: $s"
-      rm "$f"
+    rm "$f"
   fi
 done
-
-# TEST: removes files that do not match the regex.
-# -------------------------------------------------------------------------------- #
-# find "$p_tmp_bin" -type f ! -name "00000*" -delete
-# -------------------------------------------------------------------------------- #
 
 cnt=$(find "$p_tmp_bin" -type f | wc -l)
 siz=$(du -shc "$p_tmp_bin"/* | grep total | awk '{print $1}')
