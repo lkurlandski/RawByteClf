@@ -2,13 +2,13 @@
 
 #SBATCH --job-name=lift
 #SBATCH --account=admalware
-#SBATCH --partition=debug
+#SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-01:00:00
+#SBATCH --time=00-06:00:00
+#SBATCH --mem=16G
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=1
 #SBATCH --ntasks=4
-#SBATCH --mem=8G
+#SBATCH --cpus-per-task=3
 
 
 #
@@ -16,7 +16,7 @@
 # -------
 #   ALL:
 #     rm /home/lk3591/Documents/code/RawByteClf/logs/lift_*.out
-#     rm /home/lk3591/Documents/code/RawByteClf/logsiGhidra/*.log
+#     rm /home/lk3591/Documents/code/RawByteClf/logsGhidra/*.log
 #   RC:
 #     rm -rf /shared/rc/admalware/Sorel/disassembled/*
 #     rm -rf /shared/rc/admalware/Sorel/decompiled/*
@@ -27,6 +27,19 @@
 #   LAB:
 #     ...
 #
+
+
+# PERFORMANCE EVALUATION:
+#   ALL: --time=00-06:00:00, --mem=16G, --nodes=1
+#   A: --ntasks=1, --cpus-per-task=1
+#   B: --ntasks=2, --cpus-per-task=2
+#   C: --ntasks=1, --cpus-per-task=4
+#   D: --ntasks=4, --cpus-per-task=1
+#   E: --ntasks=2, --cpus-per-task=4
+#   F: --ntasks=4, --cpus-per-task=2
+#   G: --ntasks=3, --cpus-per-task=4
+#   H: --ntasks=4, --cpus-per-task=3
+CODE="H"
 
 
 echo "lift.sh: ($1)"
@@ -104,8 +117,8 @@ echo "--------------------------------------------------------------------------
 
 # Define and create FIN directories.
 p_fin_arc="$P_FIN/archived/$hh"
-p_fin_dis="$P_FIN/disassembled/$hh"
-p_fin_dec="$P_FIN/decompiled/$hh"
+p_fin_dis="$P_FIN/disassembled/$hh/$CODE"
+p_fin_dec="$P_FIN/decompiled/$hh/$CODE"
 mkdir -p "$p_fin_arc"
 mkdir -p "$p_fin_dis"
 mkdir -p "$p_fin_dec"
@@ -114,17 +127,17 @@ echo "p_fin_dis: $p_fin_dis"
 echo "p_fin_dec: $p_fin_dec"
 
 # Define and create INT directories.
-p_int_dis="$P_INT/disassembled/$hh"
-p_int_dec="$P_INT/decompiled/$hh"
+p_int_dis="$P_INT/disassembled/$hh/$CODE"
+p_int_dec="$P_INT/decompiled/$hh/$CODE"
 mkdir -p "$p_int_dis"
 mkdir -p "$p_int_dec"
 echo "p_int_dis: $p_int_dis"
 echo "p_int_dec: $p_int_dec"
 
 # Define and create TMP directories.
-p_tmp_arc="$P_TMP/archived/$hh"
-p_tmp_bin="$P_TMP/binaries/$hh"
-p_tmp_ghi="$P_TMP/ghidra/$hh"
+p_tmp_arc="$P_TMP/archived/$hh/$CODE"
+p_tmp_bin="$P_TMP/binaries/$hh/$CODE"
+p_tmp_ghi="$P_TMP/ghidra/$hh/$CODE"
 rm -rf "$p_tmp_arc"
 rm -rf "$p_tmp_bin"
 rm -rf "$p_tmp_ghi"
@@ -179,7 +192,7 @@ t_i=$(date +%s.%N)
 echo "---------------------------------------------------------------------------"
 
 # Redirect stdout and stderr to keep the main log file clean.
-p_log="$P_LOG/$1.log"
+p_log="$P_LOG/$1.$CODE.log"
 echo "Logging headlessAnalysis $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
