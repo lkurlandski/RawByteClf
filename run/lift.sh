@@ -23,7 +23,10 @@
 #     FIN: rm -rf /shared/rc/admalware/Sorel/disassembled/*
 #     FIN: rm -rf /shared/rc/admalware/Sorel/decompiled/*
 #   ARMITAGE:
-#     ...
+#     INT:
+#     INT:
+#     FIN: rm -rf /home/lk3591/Documents/datasets/Sorel/disassembled/*
+#     FIN: rm -rf /home/lk3591/Documents/datasets/Sorel/decompiled/*
 #   LAB:
 #     INT: rm -rf /home/lk3591/Documents/datasets/Sorel/disassembled/*
 #     INT: rm -rf /home/lk3591/Documents/datasets/Sorel/decompiled/*
