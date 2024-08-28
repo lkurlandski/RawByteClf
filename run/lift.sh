@@ -2,13 +2,13 @@
 
 #SBATCH --job-name=lift
 #SBATCH --account=admalware
-#SBATCH --partition=tier3
+#SBATCH --partition=debug
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-06:00:00
+#SBATCH --time=00-01:00:00
 #SBATCH --mem=16G
 #SBATCH --nodes=1
-#SBATCH --ntasks=4
-#SBATCH --cpus-per-task=3
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
 
 
 #
@@ -32,6 +32,18 @@
 # - Don't forget to read the ~/lib/ghidra_11.1.2_PUBLIC/support/analyzeHeadless
 #   file. There are several critical configurations defined there, e.g., MAXMEM.
 #
+# RETURN CODES
+# ------------
+# - 0: command completes without error
+#     Things that don't error: analysisTimeoutPerFile, out of memory (from within
+#       a script ONLY)
+# - 1: various errors
+#     Tested by reducing MAXMEM to small values. At very small values (20M), it looks
+#       like the JVM cannot even start up properly and analyzeHeadless returns 1. At
+#       modestly small values (100M) the analysis begins, but crashes partially through
+#       with an error "OutOfMemoryError: Java heap space" and analyzeHeadless returns 1.
+# - 130: keyboard interrupt
+#
 # PERFORMANCE
 # -----------
 #   ALL: --time=00-06:00:00, --mem=16G, --nodes=1
@@ -53,10 +65,11 @@
 #   N: --ntasks=4, --cpus-per-task=2, MAXMEM=4G
 #   O: --ntasks=3, --cpus-per-task=4, MAXMEM=4G
 #   P: --ntasks=4, --cpus-per-task=3, MAXMEM=4G
-#
+#   -------------------------------------------
+#   Q: --ntasks=1, --cpus-per-task=1, MAXMEM=100M
 
 
-CODE="P"
+CODE="Q"
 echo "CODE: $CODE"
 
 
@@ -83,8 +96,6 @@ if [[ ! -d "$P_LOG" ]]; then
   exit 1
 fi
 echo "P_LOG: $P_LOG"
-
-echo "---------------------------------------------------------------------------"
 
 # Determine which computer we're running on and set base paths accordingly.
 #   P_FIN: long-term storage with possibly slow I/O
@@ -131,8 +142,6 @@ if [[ ! -d "$P_TMP" ]]; then
 fi
 echo "P_TMP: $P_TMP"
 
-echo "---------------------------------------------------------------------------"
-
 # Define and create FIN directories.
 p_fin_arc="$P_FIN/archived/$hh"
 p_fin_dis="$P_FIN/disassembled/$hh/$CODE"
@@ -166,12 +175,25 @@ echo "p_tmp_arc: $p_tmp_arc"
 echo "p_tmp_bin: $p_tmp_bin"
 echo "p_tmp_ghi: $p_tmp_ghi"
 
-echo "---------------------------------------------------------------------------"
+t_f=$(date +%s.%N)
+t_d=$(echo "$t_f - $t_i" | bc)
+printf "Set up time: %.6f seconds\n" $t_d
+t_i=$(date +%s.%N)
 
 # Copy and extract binaries into the temporary directory.
 cp "$p_fin_arc/$1.zip" "$p_tmp_arc/$1.zip"
 unzip -q -j "$p_tmp_arc/$1.zip" -d "$p_tmp_bin/"
 rm "$p_tmp_arc/$1.zip"
+
+t_f=$(date +%s.%N)
+t_d=$(echo "$t_f - $t_i" | bc)
+printf "Extraction time: %.6f seconds\n" $t_d
+t_i=$(date +%s.%N)
+
+
+counter=0
+while true; do
+
 
 # Create lists of file stems that have completed.
 fs_fin_dis=$(find "$p_fin_dis" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
@@ -197,15 +219,8 @@ cnt=$(find "$p_tmp_bin" -type f | wc -l)
 siz=$(du -shc "$p_tmp_bin"/* | grep total | awk '{print $1}')
 echo "Lifting $cnt files totaling $siz."
 
-t_f=$(date +%s.%N)
-t_d=$(echo "$t_f - $t_i" | bc)
-printf "Set up time: %.6f seconds\n" $t_d
-t_i=$(date +%s.%N)
-
-echo "---------------------------------------------------------------------------"
-
 # Redirect stdout and stderr to keep the main log file clean.
-p_log="$P_LOG/$1.$CODE.log"
+p_log="$P_LOG/$1.$counter.$CODE.log"
 echo "Logging headlessAnalysis $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
@@ -222,6 +237,26 @@ analyzeHeadless \
   -postScript "disassembler.py" "$p_int_dis" \
   -postScript "decompiler.py" "$p_int_dec" $TIMEOUT_DECOM \
   &> "$p_log"
+
+code=$?
+echo "analyzeHeadless returned $code"
+counter=$((counter+1))
+
+if [ $code -eq 0 ]; then
+  break
+fi
+
+# Otherwise, we locate the file that caused an error in the Ghidra log
+# and ensure it is skipped on the next loop iteration.
+fail_line=$(grep "IMPORTING: file" "$p_log" | tail -n 1)
+fail_stem=$(echo "$fail_line" | sed -n 's|.*IMPORTING: file://.*/\(.*\)\.exe.*|\1|p')
+fail_file="$p_tmp_bin/$fail_stem.exe"
+echo "fail_file: $fail_file"
+rm "$fail_file"
+
+
+done
+
 
 t_f=$(date +%s.%N)
 t_d=$(echo "$t_f - $t_i" | bc)
