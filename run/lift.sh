@@ -18,14 +18,17 @@
 #     rm /home/lk3591/Documents/code/RawByteClf/logs/lift_*.out
 #     rm /home/lk3591/Documents/code/RawByteClf/logsGhidra/*.log
 #   RC:
-#     rm -rf /shared/rc/admalware/Sorel/disassembled/*
-#     rm -rf /shared/rc/admalware/Sorel/decompiled/*
-#     rm -rf /scratch/lk3591/disassembled/*
-#     rm -rf /scratch/lk3591/decompiled/*
+#     INT: rm -rf /scratch/lk3591/disassembled/*
+#     INT: rm -rf /scratch/lk3591/decompiled/*
+#     FIN: rm -rf /shared/rc/admalware/Sorel/disassembled/*
+#     FIN: rm -rf /shared/rc/admalware/Sorel/decompiled/*
 #   ARMITAGE:
 #     ...
 #   LAB:
-#     ...
+#     INT: rm -rf /home/lk3591/Documents/datasets/Sorel/disassembled/*
+#     INT: rm -rf /home/lk3591/Documents/datasets/Sorel/decompiled/*
+#     FIN: rm -rf /media/lk3591/easystore/datasets/Sorel/disassembled/*
+#     FIN: rm -rf /media/lk3591/easystore/datasets/Sorel/decompiled/*
 #
 # NOTES
 # -----
