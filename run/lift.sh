@@ -27,19 +27,37 @@
 #   LAB:
 #     ...
 #
-
-
-# PERFORMANCE EVALUATION:
+# NOTES
+# -----
+# - Don't forget to read the ~/lib/ghidra_11.1.2_PUBLIC/support/analyzeHeadless
+#   file. There are several critical configurations defined there, e.g., MAXMEM.
+#
+# PERFORMANCE
+# -----------
 #   ALL: --time=00-06:00:00, --mem=16G, --nodes=1
-#   A: --ntasks=1, --cpus-per-task=1
-#   B: --ntasks=2, --cpus-per-task=2
-#   C: --ntasks=1, --cpus-per-task=4
-#   D: --ntasks=4, --cpus-per-task=1
-#   E: --ntasks=2, --cpus-per-task=4
-#   F: --ntasks=4, --cpus-per-task=2
-#   G: --ntasks=3, --cpus-per-task=4
-#   H: --ntasks=4, --cpus-per-task=3
-CODE="H"
+#   ---------------------------------------------
+#   A: --ntasks=1, --cpus-per-task=1, MAXMEM=2G
+#   B: --ntasks=2, --cpus-per-task=2, MAXMEM=2G
+#   C: --ntasks=1, --cpus-per-task=4, MAXMEM=2G
+#   D: --ntasks=4, --cpus-per-task=1, MAXMEM=2G
+#   E: --ntasks=2, --cpus-per-task=4, MAXMEM=2G
+#   F: --ntasks=4, --cpus-per-task=2, MAXMEM=2G
+#   G: --ntasks=3, --cpus-per-task=4, MAXMEM=2G
+#   H: --ntasks=4, --cpus-per-task=3, MAXMEM=2G
+#   -------------------------------------------
+#   I: --ntasks=1, --cpus-per-task=1, MAXMEM=4G
+#   J: --ntasks=2, --cpus-per-task=2, MAXMEM=4G
+#   K: --ntasks=1, --cpus-per-task=4, MAXMEM=4G
+#   L: --ntasks=4, --cpus-per-task=1, MAXMEM=4G
+#   M: --ntasks=2, --cpus-per-task=4, MAXMEM=4G
+#   N: --ntasks=4, --cpus-per-task=2, MAXMEM=4G
+#   O: --ntasks=3, --cpus-per-task=4, MAXMEM=4G
+#   P: --ntasks=4, --cpus-per-task=3, MAXMEM=4G
+#
+
+
+CODE="P"
+echo "CODE: $CODE"
 
 
 echo "lift.sh: ($1)"
