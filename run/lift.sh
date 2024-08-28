@@ -67,7 +67,9 @@
 #   P: --ntasks=4, --cpus-per-task=3, MAXMEM=4G
 #   -------------------------------------------
 #   Q: --ntasks=1, --cpus-per-task=1, MAXMEM=100M
-
+#
+#   Based on the experiments above, it seems that Ghidra seems to perform SLIGHTLY
+#   better when --cpus-per-task > 1.
 
 CODE="Q"
 echo "CODE: $CODE"
