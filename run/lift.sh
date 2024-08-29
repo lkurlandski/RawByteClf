@@ -36,6 +36,11 @@
 #     FIN: rm -rf /media/lk3591/easystore/datasets/Sorel/disassembled/*
 #     FIN: rm -rf /media/lk3591/easystore/datasets/Sorel/decompiled/*
 #
+# OPTIMIZATIONS
+#  - write Ghidra log file in /scratch instead of /home
+#  - archive output files in /scratch before transferring to /shared
+#    - adjust checkpointing system to read contents of archives
+#
 # NOTES
 # -----
 # - Don't forget to read the ~/lib/ghidra_11.1.2_PUBLIC/support/analyzeHeadless
