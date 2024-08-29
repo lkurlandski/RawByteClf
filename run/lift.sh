@@ -162,17 +162,17 @@ echo "p_fin_dis: $p_fin_dis"
 echo "p_fin_dec: $p_fin_dec"
 
 # Define and create INT directories.
-p_int_dis="$P_INT/disassembled/$hh"
-p_int_dec="$P_INT/decompiled/$hh"
+p_int_dis="$P_INT/disassembled/$1"
+p_int_dec="$P_INT/decompiled/$1"
 mkdir -p "$p_int_dis"
 mkdir -p "$p_int_dec"
 echo "p_int_dis: $p_int_dis"
 echo "p_int_dec: $p_int_dec"
 
 # Define and create TMP directories.
-p_tmp_arc="$P_TMP/archived/$hh"
-p_tmp_bin="$P_TMP/binaries/$hh"
-p_tmp_ghi="$P_TMP/ghidra/$hh"
+p_tmp_arc="$P_TMP/archived/$1"
+p_tmp_bin="$P_TMP/binaries/$1"
+p_tmp_ghi="$P_TMP/ghidra/$1"
 rm -rf "$p_tmp_arc"
 rm -rf "$p_tmp_bin"
 rm -rf "$p_tmp_ghi"
