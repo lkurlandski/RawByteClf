@@ -11,6 +11,9 @@
 #SBATCH --cpus-per-task=2
 
 
+# USAGE
+# -----
+#   for i in {0..15}; do sbatch run/lift.sh "$(printf "%03x" $i)"; done
 #
 # CLEANUP
 # -------
@@ -240,7 +243,7 @@ analyzeHeadless \
   -import "$p_tmp_bin" \
   -scriptPath "$SCRIPT_PATH" \
   -postScript "disassembler.py" "$p_int_dis" \
-  -postScript "decompiler.py" "$p_int_dec" $TIMEOUT_DECOM \
+  -postScript "Decompiler.java" "$p_int_dec" $TIMEOUT_DECOM \
   &> "$p_log"
 
 code=$?
