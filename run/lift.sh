@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift
+#SBATCH --job-name=debug-lift
 #SBATCH --account=admalware
-#SBATCH --partition=tier3
+#SBATCH --partition=debug
 #SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-12:00:00
+#SBATCH --time=00-01:00:00
 #SBATCH --mem=16G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -85,11 +85,27 @@
 #   Based on the experiments above, it seems that Ghidra seems to perform SLIGHTLY
 #   better when --cpus-per-task > 1.
 
-
-echo "lift.sh: ($1)"
-
+# Parse command line arguments.
+if [ "${#1}" -ne 3 ]; then
+    echo "Error: The input must be exactly three characters long."
+    exit 1
+fi
 hh="${1:0:2}"
-t_i=$(date +%s.%N)
+echo "1: $1"
+echo "hh: $hh"
+
+# Establish some timing variables.
+t_start=$(date +%s.%N)
+HOUR=1
+TIME=$(( HOUR * 60 * 60 ))
+TIME_FOR_CLEANUP=3300
+if [ "$HOUR" -le 0 ] || [ "$TIME" -le 0 ]; then
+  echo "Error: HOURS and TIME must both be greater than 0."
+  exit 1
+fi
+echo "HOUR: $HOUR"
+echo "TIME: $TIME"
+echo "TIME_FOR_CLEANUP: $TIME_FOR_CLEANUP"
 
 # Configuration for Ghidra's headless analyzer.
 TIMEOUT_ANALY="120"
@@ -97,22 +113,14 @@ TIMEOUT_DECOM="120"
 PROCESSOR="x86:LE:32:default"
 LOADER="PeLoader"
 SCRIPT_PATH="/home/lk3591/Documents/code/RawByteClf/ghidra_scripts"
-
 echo "TIMEOUT_ANALY: $TIMEOUT_ANALY"
 echo "TIMEOUT_DECOM: $TIMEOUT_DECOM"
 echo "PROCESSOR: $PROCESSOR"
 echo "LOADER: $LOADER"
-
-P_LOG="./logsGhidra"
-if [[ ! -d "$P_LOG" ]]; then
-  echo "Error: Directory $P_LOG does not exist. Exiting."
-  exit 1
-fi
-echo "P_LOG: $P_LOG"
+echo "SCRIPT_PATH: $SCRIPT_PATH"
 
 # Determine which computer we're running on and set base paths accordingly.
 #   P_FIN: long-term storage with possibly slow I/O
-#   P_INT: medium-term storage with fast I/O
 #   P_TMP: short-term storage with fast I/O
 
 SYSTEM=$(<./config/.system)
@@ -125,16 +133,13 @@ echo "SYSTEM: $SYSTEM"
 
 if [[ "$SYSTEM" == "RC" ]]; then
   P_FIN="/shared/rc/admalware/Sorel"
-  P_INT="/scratch/lk3591"
   P_TMP="/tmp"
 elif [[ "$SYSTEM" == "ARMITAGE" ]]; then
   P_FIN="/home/lk3591/Documents/datasets/Sorel"
-  P_INT="$P_FIN"
-  P_TMP="$P_INT/tmp"
+  P_TMP="$P_FIN/tmp"
 elif [[ "$SYSTEM" == "LAB" ]]; then
   P_FIN="/media/lk3591/easystore/datasets/Sorel"
-  P_INT="/home/lk3591/Documents/datasets/Sorel"
-  P_TMP="$P_INT/tmp"
+  P_TMP="/home/lk3591/Documents/datasets/Sorel/tmp"
 fi
 
 if [[ ! -d "$P_FIN" ]]; then
@@ -142,12 +147,6 @@ if [[ ! -d "$P_FIN" ]]; then
   exit 1
 fi
 echo "P_FIN: $P_FIN"
-
-if [[ ! -d "$P_INT" ]]; then
-  echo "Error: Directory P_INT $P_INT does not exist. Exiting."
-  exit 1
-fi
-echo "P_INT: $P_INT"
 
 if [[ ! -d "$P_TMP" ]]; then
   echo "Error: Directory P_TMP $P_TMP does not exist. Exiting."
@@ -159,49 +158,54 @@ echo "P_TMP: $P_TMP"
 p_fin_arc="$P_FIN/archived/$hh"
 p_fin_dis="$P_FIN/disassembled/$hh"
 p_fin_dec="$P_FIN/decompiled/$hh"
+p_fin_log="$P_FIN/ghidraLogs/$hh"
 mkdir -p "$p_fin_arc"
 mkdir -p "$p_fin_dis"
 mkdir -p "$p_fin_dec"
+mkdir -p "$p_fin_log"
 echo "p_fin_arc: $p_fin_arc"
 echo "p_fin_dis: $p_fin_dis"
 echo "p_fin_dec: $p_fin_dec"
-
-# Define and create INT directories.
-p_int_dis="$P_INT/disassembled/$1"
-p_int_dec="$P_INT/decompiled/$1"
-mkdir -p "$p_int_dis"
-mkdir -p "$p_int_dec"
-echo "p_int_dis: $p_int_dis"
-echo "p_int_dec: $p_int_dec"
+echo "p_fin_log: $p_fin_log"
 
 # Define and create TMP directories.
 p_tmp_arc="$P_TMP/archived/$1"
+p_tmp_dis="$P_TMP/disassembled/$1"
+p_tmp_dec="$P_TMP/decompiled/$1"
+p_tmp_log="$P_TMP/ghidraLogs/$1"
 p_tmp_bin="$P_TMP/binaries/$1"
 p_tmp_ghi="$P_TMP/ghidra/$1"
 rm -rf "$p_tmp_arc"
+rm -rf "$p_tmp_dis"
+rm -rf "$p_tmp_dec"
+rm -rf "$p_tmp_log"
 rm -rf "$p_tmp_bin"
 rm -rf "$p_tmp_ghi"
 mkdir -p "$p_tmp_arc"
+mkdir -p "$p_tmp_dis"
+mkdir -p "$p_tmp_dec"
+mkdir -p "$p_tmp_log"
 mkdir -p "$p_tmp_bin"
 mkdir -p "$p_tmp_ghi"
 echo "p_tmp_arc: $p_tmp_arc"
+echo "p_tmp_dis: $p_tmp_dis"
+echo "p_tmp_dec: $p_tmp_dec"
+echo "p_tmp_log: $p_tmp_log"
 echo "p_tmp_bin: $p_tmp_bin"
 echo "p_tmp_ghi: $p_tmp_ghi"
 
-t_f=$(date +%s.%N)
-t_d=$(echo "$t_f - $t_i" | bc)
+t_setup=$(date +%s.%N)
+t_d=$(echo "$t_setup - $t_start" | bc)
 printf "Set up time: %.6f seconds\n" $t_d
-t_i=$(date +%s.%N)
 
 # Copy and extract binaries into the temporary directory.
 cp "$p_fin_arc/$1.zip" "$p_tmp_arc/$1.zip"
 unzip -q -j "$p_tmp_arc/$1.zip" -d "$p_tmp_bin/"
 rm "$p_tmp_arc/$1.zip"
 
-t_f=$(date +%s.%N)
-t_d=$(echo "$t_f - $t_i" | bc)
+t_extract=$(date +%s.%N)
+t_d=$(echo "$t_extract - $t_setup" | bc)
 printf "Extraction time: %.6f seconds\n" $t_d
-t_i=$(date +%s.%N)
 
 
 counter=0
@@ -209,20 +213,17 @@ while true; do
 
 
 # Create lists of file stems that have completed.
-fs_fin_dis=$(find "$p_fin_dis" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
-fs_int_dis=$(find "$p_int_dis" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
-fs_fin_dec=$(find "$p_fin_dec" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
-fs_int_dec=$(find "$p_int_dec" -type f -exec basename {} \; | sed 's/\.[^.]*$//')
+fs_fin_dis=$(unzip -Z1 "$p_fin_dis/$1.zip" | sed 's/\.[^.]*$//')
+fs_fin_dec=$(unzip -Z1 "$p_fin_dec/$1.zip" | sed 's/\.[^.]*$//')
+echo "Number of files in fs_fin_dis/$1.zip: $(echo "$fs_fin_dis" | wc -l)"
+echo "Number of files in fs_fin_dec/$1.zip: $(echo "$fs_fin_dec" | wc -l)"
 
 # Iterate over files in p_tmp_bin and remove if its already been processed.
 for f in "$p_tmp_bin"/*; do
   s=$(basename "$f" | sed 's/\.[^.]*$//')
   in_fs_fin_dis=$(echo "$fs_fin_dis" | grep -w "$s")
-  in_fs_int_dis=$(echo "$fs_int_dis" | grep -w "$s")
   in_fs_fin_dec=$(echo "$fs_fin_dec" | grep -w "$s")
-  in_fs_int_dec=$(echo "$fs_int_dec" | grep -w "$s")
-  if { [ -n "$in_fs_fin_dis" ] || [ -n "$in_fs_int_dis" ]; } && \
-     { [ -n "$in_fs_fin_dec" ] || [ -n "$in_fs_int_dec" ]; }; then
+  if [ -n "$in_fs_fin_dis" ] && [ -n "$in_fs_fin_dec" ]; then
     echo "Skipping: $s"
     rm "$f"
   fi
@@ -232,30 +233,37 @@ cnt=$(find "$p_tmp_bin" -type f | wc -l)
 siz=$(du -shc "$p_tmp_bin"/* | grep total | awk '{print $1}')
 echo "Lifting $cnt files totaling $siz."
 
-# Redirect stdout and stderr to keep the main log file clean.
-p_log="$P_LOG/$1.$counter.log"
-echo "Logging headlessAnalysis $p_log"
+p_log="$p_tmp_log/$1.$counter.log"
+t_ghidra=$(date +%s.%N)
+timeout=$(echo "$TIME - ($t_start - $t_ghidra) - $TIME_FOR_CLEANUP" | bc)
+echo "Running analyzeHeadless for $timeout seconds and logging to $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
-analyzeHeadless \
+timeout $timeout analyzeHeadless \
   "$p_tmp_ghi" \
   "lift" \
   -recursive \
-  -log $p_log \
+  -log "$p_log" \
   -processor $PROCESSOR \
   -loader $LOADER \
   -analysisTimeoutPerFile $TIMEOUT_ANALY \
   -import "$p_tmp_bin" \
   -scriptPath "$SCRIPT_PATH" \
-  -postScript "disassembler.py" "$p_int_dis" \
-  -postScript "Decompiler.java" "$p_int_dec" $TIMEOUT_DECOM \
+  -postScript "disassembler.py" "$p_tmp_dis" \
+  -postScript "Decompiler.java" "$p_tmp_dec" $TIMEOUT_DECOM \
   &> "$p_log"
 
 code=$?
 echo "analyzeHeadless returned $code"
 counter=$((counter+1))
 
+# If analyzeHeadless completes or fails, its code will be returned by timeout.
+# If analyzeHeadless times out, timeout returns 124.
+# If analyzeHeadless returns 0 or timeout returns 124, we should exit the loop.
 if [ $code -eq 0 ]; then
+  break
+fi
+if [ $code -eq 124 ]; then
   break
 fi
 
@@ -270,29 +278,27 @@ rm "$fail_file"
 
 done
 
-
-t_f=$(date +%s.%N)
-t_d=$(echo "$t_f - $t_i" | bc)
+# Print time take during lifting process.
+t_cleanup=$(date +%s.%N)
+t_d=$(echo "$t_cleanup - $t_extract" | bc)
 printf "Ghidra time: %.6f seconds\n" $t_d
-t_i=$(date +%s.%N)
 
-cnt=$(find "$p_int_dis" -type f | wc -l)
-siz=$(du -shc "$p_int_dis"/* | grep total | awk '{print $1}')
-echo "Disassembled $cnt files totaling $siz (some may already have been present)."
+# Print number of files disassembled and decompiled.
+cnt=$(find "$p_tmp_dis" -type f | wc -l)
+siz=$(du -shc "$p_tmp_dis"/* | grep total | awk '{print $1}')
+echo "Disassembled $cnt files totaling $siz."
+cnt=$(find "$p_tmp_dec" -type f | wc -l)
+siz=$(du -shc "$p_tmp_dec"/* | grep total | awk '{print $1}')
+echo "Decompiled $cnt files totaling $siz."
 
-cnt=$(find "$p_int_dec" -type f | wc -l)
-siz=$(du -shc "$p_int_dec"/* | grep total | awk '{print $1}')
-echo "Decompiled $cnt files totaling $siz (some may already have been present)."
+# Copy the log files to perminant storage.
+mv "$p_tmp_log/"* "$p_fin_log"
 
-# Move everything from intermediate storage to final storage.
-if [[ $p_int_dis != $p_fin_dis ]]; then
-  rsync --archive --remove-source-files "$p_int_dis/" "$p_fin_dis/"
-fi
-if [[ $p_int_dec != $p_fin_dec ]]; then
-  rsync --archive --remove-source-files "$p_int_dec/" "$p_fin_dec/"
-fi
+# Compress the lifted files and move to final storage.
+# If the archive is already present, zip will simply add new files to the archive.
+zip -9 -r -j -q -u "$p_fin_dis/$1.zip" "$p_tmp_dis"
+zip -9 -r -j -q -u "$p_fin_dec/$1.zip" "$p_tmp_dec"
 
-t_f=$(date +%s.%N)
-t_d=$(echo "$t_f - $t_i" | bc)
-printf "Clean up: %.6f seconds\n" $t_d
-t_i=$(date +%s.%N)
+t_transfer=$(date +%s.%N)
+t_d=$(echo "$t_transfer - $t_cleanup" | bc)
+printf "Transfer time: %.6f seconds\n" $t_d
