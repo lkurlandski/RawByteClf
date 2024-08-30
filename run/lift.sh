@@ -9,6 +9,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
+#SBATCH --array=0-4095%512
 
 
 # USAGE
@@ -85,14 +86,10 @@
 #   Based on the experiments above, it seems that Ghidra seems to perform SLIGHTLY
 #   better when --cpus-per-task > 1.
 
-# Parse command line arguments.
-if [ "${#1}" -ne 3 ]; then
-    echo "Error: The input must be exactly three characters long."
-    exit 1
-fi
-hh="${1:0:2}"
-echo "1: $1"
-echo "hh: $hh"
+HHH=$(printf "%03x" "$SLURM_ARRAY_TASK_ID")
+HH="${HHH:0:2}"
+echo "HHH: $HHH"
+echo "HH: $HH"
 
 # Establish some timing variables.
 t_start=$(date +%s.%N)
@@ -155,10 +152,10 @@ fi
 echo "P_TMP: $P_TMP"
 
 # Define and create FIN directories.
-p_fin_arc="$P_FIN/archived/$hh"
-p_fin_dis="$P_FIN/disassembled/$hh"
-p_fin_dec="$P_FIN/decompiled/$hh"
-p_fin_log="$P_FIN/ghidraLogs/$hh"
+p_fin_arc="$P_FIN/archived/$HH"
+p_fin_dis="$P_FIN/disassembled/$HH"
+p_fin_dec="$P_FIN/decompiled/$HH"
+p_fin_log="$P_FIN/ghidraLogs/$HH"
 mkdir -p "$p_fin_arc"
 mkdir -p "$p_fin_dis"
 mkdir -p "$p_fin_dec"
@@ -169,12 +166,12 @@ echo "p_fin_dec: $p_fin_dec"
 echo "p_fin_log: $p_fin_log"
 
 # Define and create TMP directories.
-p_tmp_arc="$P_TMP/archived/$1"
-p_tmp_dis="$P_TMP/disassembled/$1"
-p_tmp_dec="$P_TMP/decompiled/$1"
-p_tmp_log="$P_TMP/ghidraLogs/$1"
-p_tmp_bin="$P_TMP/binaries/$1"
-p_tmp_ghi="$P_TMP/ghidra/$1"
+p_tmp_arc="$P_TMP/archived/$HHH"
+p_tmp_dis="$P_TMP/disassembled/$HHH"
+p_tmp_dec="$P_TMP/decompiled/$HHH"
+p_tmp_log="$P_TMP/ghidraLogs/$HHH"
+p_tmp_bin="$P_TMP/binaries/$HHH"
+p_tmp_ghi="$P_TMP/ghidra/$HHH"
 rm -rf "$p_tmp_arc"
 rm -rf "$p_tmp_dis"
 rm -rf "$p_tmp_dec"
@@ -199,9 +196,9 @@ t_d=$(echo "$t_setup - $t_start" | bc)
 printf "Set up time: %.6f seconds\n" $t_d
 
 # Copy and extract binaries into the temporary directory.
-cp "$p_fin_arc/$1.zip" "$p_tmp_arc/$1.zip"
-unzip -q -j "$p_tmp_arc/$1.zip" -d "$p_tmp_bin/"
-rm "$p_tmp_arc/$1.zip"
+cp "$p_fin_arc/$HHH.zip" "$p_tmp_arc/$HHH.zip"
+unzip -q -j "$p_tmp_arc/$HHH.zip" -d "$p_tmp_bin/"
+rm "$p_tmp_arc/$HHH.zip"
 
 t_extract=$(date +%s.%N)
 t_d=$(echo "$t_extract - $t_setup" | bc)
@@ -213,10 +210,10 @@ while true; do
 
 
 # Create lists of file stems that have completed.
-fs_fin_dis=$(unzip -Z1 "$p_fin_dis/$1.zip" | sed 's/\.[^.]*$//')
-fs_fin_dec=$(unzip -Z1 "$p_fin_dec/$1.zip" | sed 's/\.[^.]*$//')
-echo "Number of files in fs_fin_dis/$1.zip: $(echo "$fs_fin_dis" | wc -l)"
-echo "Number of files in fs_fin_dec/$1.zip: $(echo "$fs_fin_dec" | wc -l)"
+fs_fin_dis=$(unzip -Z1 "$p_fin_dis/$HHH.zip" | sed 's/\.[^.]*$//')
+fs_fin_dec=$(unzip -Z1 "$p_fin_dec/$HHH.zip" | sed 's/\.[^.]*$//')
+echo "Number of files in fs_fin_dis/$HHH.zip: $(echo "$fs_fin_dis" | wc -l)"
+echo "Number of files in fs_fin_dec/$HHH.zip: $(echo "$fs_fin_dec" | wc -l)"
 
 # Iterate over files in p_tmp_bin and remove if its already been processed.
 for f in "$p_tmp_bin"/*; do
@@ -233,7 +230,7 @@ cnt=$(find "$p_tmp_bin" -type f | wc -l)
 siz=$(du -shc "$p_tmp_bin"/* | grep total | awk '{print $1}')
 echo "Lifting $cnt files totaling $siz."
 
-p_log="$p_tmp_log/$1.$counter.log"
+p_log="$p_tmp_log/$HHH.$counter.log"
 t_ghidra=$(date +%s.%N)
 timeout=$(echo "$TIME - ($t_start - $t_ghidra) - $TIME_FOR_CLEANUP" | bc)
 echo "Running analyzeHeadless for $timeout seconds and logging to $p_log"
@@ -296,8 +293,8 @@ mv "$p_tmp_log/"* "$p_fin_log"
 
 # Compress the lifted files and move to final storage.
 # If the archive is already present, zip will simply add new files to the archive.
-zip -9 -r -j -q -u "$p_fin_dis/$1.zip" "$p_tmp_dis"
-zip -9 -r -j -q -u "$p_fin_dec/$1.zip" "$p_tmp_dec"
+zip -9 -r -j -q -u "$p_fin_dis/$HHH.zip" "$p_tmp_dis"
+zip -9 -r -j -q -u "$p_fin_dec/$HHH.zip" "$p_tmp_dec"
 
 t_transfer=$(date +%s.%N)
 t_d=$(echo "$t_transfer - $t_cleanup" | bc)
