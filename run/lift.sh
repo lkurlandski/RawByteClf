@@ -1,20 +1,20 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=debug-lift
+#SBATCH --job-name=lift
 #SBATCH --account=admalware
-#SBATCH --partition=debug
-#SBATCH --output=./logs/%x_%j.out
-#SBATCH --time=00-01:00:00
+#SBATCH --partition=tier3
+#SBATCH --output=./logs/%x_%A_%a.out
+#SBATCH --time=00-12:00:00
 #SBATCH --mem=16G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
-#SBATCH --array=0-4095%512
-
 
 # USAGE
 # -----
-#   for i in {0..15}; do sbatch run/lift.sh "$(printf "%03x" $i)"; done
+#   > sbatch --array=0-4095%512 run/lift.sh  # Everything
+#   > sbatch --array=0-511 run/lift.sh       # Debug 000-0ff
+#   > sbatch --array=0,4095 run/lift.sh      # Debug 000,00f
 #
 # CLEANUP
 # -------
@@ -93,9 +93,9 @@ echo "HH: $HH"
 
 # Establish some timing variables.
 t_start=$(date +%s.%N)
-HOUR=1
+HOUR=12
 TIME=$(( HOUR * 60 * 60 ))
-TIME_FOR_CLEANUP=3300
+TIME_FOR_CLEANUP=3600
 if [ "$HOUR" -le 0 ] || [ "$TIME" -le 0 ]; then
   echo "Error: HOURS and TIME must both be greater than 0."
   exit 1
@@ -209,11 +209,37 @@ counter=0
 while true; do
 
 
-# Create lists of file stems that have completed.
-fs_fin_dis=$(unzip -Z1 "$p_fin_dis/$HHH.zip" | sed 's/\.[^.]*$//')
-fs_fin_dec=$(unzip -Z1 "$p_fin_dec/$HHH.zip" | sed 's/\.[^.]*$//')
-echo "Number of files in fs_fin_dis/$HHH.zip: $(echo "$fs_fin_dis" | wc -l)"
-echo "Number of files in fs_fin_dec/$HHH.zip: $(echo "$fs_fin_dec" | wc -l)"
+# Store files that have already successfully been disassembled.
+# Search the final archive.
+if [[ -f "$p_fin_dis/$HHH.zip" ]]; then
+  fs_fin_dis=$(unzip -Z1 "$p_fin_dis/$HHH.zip" | sed 's/\.[^.]*$//')
+else
+  fs_fin_dis=""
+fi
+# Search the tmp directory.
+for file in "$p_tmp_dis"/*; do
+  if [[ -f "$file" ]]; then
+    stem=$(basename "$file" | sed 's/\.[^.]*$//')
+    fs_fin_dis=$(printf "%s\n%s" "$fs_fin_dis" "$stem")
+  fi
+done
+echo "Num disassembled files: $(echo "$fs_fin_dis" | grep -c -v '^$')"
+
+# Store files that have already successfully been decompiled.
+# Search the final archive.
+if [[ -f "$p_fin_dec/$HHH.zip" ]]; then
+  fs_fin_dec=$(unzip -Z1 "$p_fin_dec/$HHH.zip" | sed 's/\.[^.]*$//')
+else
+  fs_fin_dec=""
+fi
+# Search the tmp directory.
+for file in "$p_tmp_dec"/*; do
+  if [[ -f "$file" ]]; then
+    stem=$(basename "$file" | sed 's/\.[^.]*$//')
+    fs_fin_dec=$(printf "%s\n%s" "$fs_fin_dec" "$stem")
+  fi
+done
+echo "Num decompiled files: $(echo "$fs_fin_dec" | grep -c -v '^$')"
 
 # Iterate over files in p_tmp_bin and remove if its already been processed.
 for f in "$p_tmp_bin"/*; do
