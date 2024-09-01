@@ -5,7 +5,7 @@
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
 #SBATCH --time=00-12:00:00
-#SBATCH --mem=16G
+#SBATCH --mem=24G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
@@ -15,6 +15,7 @@
 #   > sbatch --array=0-4095%512 run/lift.sh  # Everything
 #   > sbatch --array=0-511 run/lift.sh       # Debug 000-0ff
 #   > sbatch --array=0,4095 run/lift.sh      # Debug 000,00f
+#   > sbatch --array=450,512-4095%512 run/lift.sh
 #
 # CLEANUP
 # -------
