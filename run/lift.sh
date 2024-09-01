@@ -258,7 +258,7 @@ echo "Lifting $cnt files totaling $siz."
 
 p_log="$p_tmp_log/$HHH.$counter.log"
 t_ghidra=$(date +%s.%N)
-timeout=$(echo "$TIME - ($t_start - $t_ghidra) - $TIME_FOR_CLEANUP" | bc)
+timeout=$(echo "$TIME - ($t_ghidra - $t_start) - $TIME_FOR_CLEANUP" | bc)
 echo "Running analyzeHeadless for $timeout seconds and logging to $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
