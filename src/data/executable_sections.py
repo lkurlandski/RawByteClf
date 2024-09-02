@@ -12,8 +12,12 @@ import sys
 import time
 from typing import Literal, Optional
 
-import lief
-import pefile
+try:
+    import lief
+    import pefile
+except (ModuleNotFoundError, ImportError):
+    print("lief and pefile are not available. Binary analysis is disabled but you can still use caches and their readers.")
+
 from tqdm import tqdm
 
 
