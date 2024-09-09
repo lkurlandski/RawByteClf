@@ -11,9 +11,7 @@ import java.util.Iterator;
 
 public class Disassembler extends GhidraScript {
 
-    private static final int DISTANCE_FROM_ADDRESS_TO_BYTE = 15;
-    private static final int DISTANCE_FROM_BYTE_TO_INST = 15;
-    private static final boolean SKIP_PARAMETERS_WITH_UNKNOWN_TYPE = true;
+    private static final boolean SKIP_PARAMETERS_WITH_UNKNOWN_TYPE = false;
 
     @Override
     public void run() throws Exception {
