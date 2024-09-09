@@ -1,5 +1,6 @@
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.address.Address;
@@ -12,11 +13,12 @@ import java.util.Iterator;
 public class Disassembler extends GhidraScript {
 
     private static final boolean SKIP_PARAMETERS_WITH_UNKNOWN_TYPE = false;
+    private static final boolean SKIP_EXTERNAL_FUNCTIONS = false;
 
     @Override
     public void run() throws Exception {
 
-	// Get the command line arguments
+	// Get the command line arguments.
         String[] scriptArgs = getScriptArgs();
         if (scriptArgs == null || scriptArgs.length < 1) {
             println("Error: input directory required.");
@@ -34,7 +36,7 @@ public class Disassembler extends GhidraScript {
             programName = programName.substring(0, programName.lastIndexOf('.'));
         }
 
-        // Determine the file to write to.
+        // Get the output file.
         String outputDir = scriptArgs[0];
         File dir = new File(outputDir);
         if (!dir.exists()) {
@@ -43,15 +45,22 @@ public class Disassembler extends GhidraScript {
         }
         String outputFileName = outputDir + File.separator + programName + ".asm";
 
+	// Get the functions.
+	FunctionIterator functions;
+	if (SKIP_EXTERNAL_FUNCTIONS) {
+            functions = program.getFunctionManager().getFunctions(true);
+	} else {
+	    functions = program.getListing().getFunctions(true);
+	}
+
+	// Disassemble the functions.
         try (FileWriter writer = new FileWriter(outputFileName)) {
-            // Iterate over functions in the current program
-            Iterator<Function> funcs = program.getFunctionManager().getFunctions(true);
-            while (funcs.hasNext()) {
-                Function func = funcs.next();
+            for (Function func : functions) {
                 disassembleFunction(func, writer);
             }
         } catch (IOException e) {
-            println("Error writing to file: " + e.getMessage());
+            println("Error: could not write to file: " + e.getMessage());
+	    return;
         }
     }
 
@@ -76,9 +85,7 @@ public class Disassembler extends GhidraScript {
     private String getFunctionSignature(Function func) {
         String callingConv = func.getCallingConventionName();
         if (callingConv.equals("unknown")) {
-            // Previous iterations of this code kept this as unknown,
-            // so for backwards compat, we will too.
-	    // callingConv = func.DEFAULT_CALLING_CONVENTION_STRING;
+	    callingConv = func.DEFAULT_CALLING_CONVENTION_STRING;
         }
 
         StringBuilder paramBuilder = new StringBuilder();
