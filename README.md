@@ -124,3 +124,9 @@ diec
 spack load --first qt@5.15.12
 QT_QPA_PLATFORM=offscreen ./Detect_It_Easy-3.09-x86_64.AppImage
 
+## Set up Ghidra
+
+ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Disassembler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
+
+ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Decompiler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
+
