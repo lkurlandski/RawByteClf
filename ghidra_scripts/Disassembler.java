@@ -13,6 +13,7 @@ public class Disassembler extends GhidraScript {
 
     private static final int DISTANCE_FROM_ADDRESS_TO_BYTE = 15;
     private static final int DISTANCE_FROM_BYTE_TO_INST = 15;
+    private static final boolean SKIP_PARAMETERS_WITH_UNKNOWN_TYPE = true;
 
     @Override
     public void run() throws Exception {
@@ -84,6 +85,13 @@ public class Disassembler extends GhidraScript {
 
         StringBuilder paramBuilder = new StringBuilder();
         for (var param : func.getParameters()) {
+
+            if (SKIP_PARAMETERS_WITH_UNKNOWN_TYPE) {
+                if (param.getDataType().getName().equals("undefined")) {
+		    continue;
+		}
+	    }
+
             String paramStr = param.toString().replace("[", "").replace("]", "").split("@")[0];
             if (paramBuilder.length() > 0) {
                 paramBuilder.append(", ");
