@@ -18,18 +18,19 @@ import java.util.regex.Pattern;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
-import ghidra.app.script.GhidraScript;
+import ghidra.app.util.headless.HeadlessScript;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.*;
 
 
-public class Decompiler extends GhidraScript {
+public class Decompiler extends HeadlessScript {
 
     private static final boolean SKIP_PARAMETERS_WITH_UNKNOWN_TYPE = false;
     private static final boolean SKIP_EXTERNAL_FUNCTIONS = false;
     private static final boolean FORMAL_SIGNATURE = false;
     private static final boolean INCLUDE_CALLING_CONVENTION = true;
     private static final boolean REPLACE_SIGNATURE = true;
+    private static final boolean REQUIRE_HEADLESS_ANALYSIS_COMPLETE = false;
 
     private int timeoutPerFile = -1;
     private int timeoutPerFunc = -1;
@@ -42,6 +43,12 @@ public class Decompiler extends GhidraScript {
         println("run: FORMAL_SIGNATURE=" + String.valueOf(FORMAL_SIGNATURE));
         println("run: INCLUDE_CALLING_CONVENTION=" + String.valueOf(INCLUDE_CALLING_CONVENTION));
         println("run: REPLACE_SIGNATURE=" + String.valueOf(REPLACE_SIGNATURE));
+	println("run: REQUIRE_HEADLESS_ANALYSIS_COMPLETE=" + String.valueOf(REQUIRE_HEADLESS_ANALYSIS_COMPLETE));
+
+        println("run: analysisTimeoutOccurred()=" + String.valueOf(analysisTimeoutOccurred()));
+	if (REQUIRE_HEADLESS_ANALYSIS_COMPLETE && !analysisTimeoutOccurred()) {
+	    println("run: decompilation skipped.");
+	}
 
         // Get the command line arguments.
         String[] scriptArgs = getScriptArgs();
