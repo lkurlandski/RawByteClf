@@ -48,7 +48,7 @@ public class Decompiler extends HeadlessScript {
 
         println("run: analysisTimeoutOccurred()=" + String.valueOf(analysisTimeoutOccurred()));
         if (REQUIRE_HEADLESS_ANALYSIS_COMPLETE && !analysisTimeoutOccurred()) {
-            println("run: decompilation skipped.");
+            println("run: skipped.");
         }
 
         // Get the command line arguments.
@@ -106,12 +106,12 @@ public class Decompiler extends HeadlessScript {
         Future<Void> future = executor.submit(task);
         try {
             future.get(this.timeoutPerFile, TimeUnit.SECONDS);
-            println("run: decompilation finished.");
+            println("run: finished.");
         } catch (TimeoutException e) {
-            println("run: decompilation timed out.");
+            println("run: timed out.");
             future.cancel(true);
         } catch (InterruptedException | ExecutionException e) {
-            println("run: decompilation crashed.");
+            println("run: crashed.");
             e.printStackTrace();
         } finally {
             decompInterface.dispose();
