@@ -19,8 +19,9 @@ import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.util.headless.HeadlessScript;
-import ghidra.program.model.listing.*;
-import ghidra.program.model.symbol.*;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionIterator;
+import ghidra.program.model.listing.Program;
 
 
 public class Decompiler extends HeadlessScript {
