@@ -15,7 +15,9 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
-import ghidra.app.decompiler.*;
+import ghidra.app.decompiler.DecompiledFunction;
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.*;
@@ -27,6 +29,7 @@ public class Decompiler extends GhidraScript {
     private static final boolean SKIP_EXTERNAL_FUNCTIONS = false;
     private static final boolean FORMAL_SIGNATURE = false;
     private static final boolean INCLUDE_CALLING_CONVENTION = true;
+    private static final boolean REPLACE_SIGNATURE = true;
 
     private int timeoutPerFile = -1;
     private int timeoutPerFunc = -1;
@@ -38,6 +41,7 @@ public class Decompiler extends GhidraScript {
         println("run: SKIP_EXTERNAL_FUNCTIONS=" + String.valueOf(SKIP_EXTERNAL_FUNCTIONS));
         println("run: FORMAL_SIGNATURE=" + String.valueOf(FORMAL_SIGNATURE));
         println("run: INCLUDE_CALLING_CONVENTION=" + String.valueOf(INCLUDE_CALLING_CONVENTION));
+        println("run: REPLACE_SIGNATURE=" + String.valueOf(REPLACE_SIGNATURE));
 
         // Get the command line arguments.
         String[] scriptArgs = getScriptArgs();
@@ -107,19 +111,19 @@ public class Decompiler extends GhidraScript {
         }
     }
 
-    private void decompileFunctions(DecompInterface decompInterface, FunctionIterator functions, String outputFileName) {
+    private void decompileFunctions(DecompInterface decompInterface, FunctionIterator functions, String outputFileName) throws Exception {
         String decompiledCode;
-	try (FileWriter writer = new FileWriter(outputFileName)) {
-            for (Function func : functions) {
+        try (FileWriter writer = new FileWriter(outputFileName)) {
+	    for (Function func : functions) {
                 decompiledCode = decompileFunction(decompInterface, func);
-		writer.write(decompiledCode);
+	        writer.write(decompiledCode);
             }
-        } catch (IOException e) {
-            println("Failed to write output file: " + e.getMessage());
-        }
+	} catch (IOException e) {
+	    throw e;
+	}
     }
 
-    private String decompileFunction(DecompInterface decompInterface, Function func) {
+    private String decompileFunction(DecompInterface decompInterface, Function func) throws Exception {
 
         DecompileResults results = decompInterface.decompileFunction(func, this.timeoutPerFunc, null);
         String signature = func.getPrototypeString(FORMAL_SIGNATURE, INCLUDE_CALLING_CONVENTION);
@@ -127,13 +131,13 @@ public class Decompiler extends GhidraScript {
 	// If decompilation was successful, we get the C code, then replace the signature
 	// with the more detailed signature from Function.getPrototypeString. The default
 	// signature from DecompiledFunction.getC can also be very inconsitent when it
-	// chooses to include and exclude call conventions, is unclear.
+	// chooses to include or exclude call conventions.
 	if (results.decompileCompleted()) {
             DecompiledFunction decompiledFunc = results.getDecompiledFunction();
             String decompiledCode = decompiledFunc.getC();
-	    String[] decompiledCodeLines = decompiledCode.split("\n");
-            decompiledCodeLines[1] = signature;
-	    decompiledCode = String.join("\n", decompiledCodeLines);
+	    if (REPLACE_SIGNATURE) {
+		decompiledCode = replaceSignature(decompiledFunc, decompiledCode, signature);
+	    }
             return decompiledCode;
 	}
 
@@ -156,6 +160,60 @@ public class Decompiler extends GhidraScript {
 
 	return signature + "\n{\n\n/* " + message + " */\n}\n\n";
 
+    }
+
+    private String replaceSignature(DecompiledFunction decompiledFunc, String decompiledCode, String signature) throws Exception {
+ 
+	// TODO: remove print statement once this is well-tested
+
+	String pattern;
+        String signatureCur = decompiledFunc.getSignature();
+        signatureCur = signatureCur.substring(0, signatureCur.indexOf(";"));
+
+	// If the decompiled code's signature is not broken by a newline, replacing it is trivial.
+	if (decompiledCode.contains(signatureCur)) {
+	    pattern = Pattern.quote(signatureCur);
+            return decompiledCode.replaceFirst(pattern, signature);
+	}
+	println("replaceSignature: original=" + decompiledCode.substring(1, decompiledCode.indexOf(")") + 1));
+
+	// Run a check to ensure that the beginning of the decompiled code looks something like this:
+	// {ALLOWABLE_CHARACTERS}({ALLOWABLE_CHARACTERS}){
+	// where ALLOWABLE_CHARACTERS are anything except "(", ")", "{".
+	char currentChar;
+	boolean encounteredOpenParenthesis = false;
+	boolean encounteredCloseParenthesis = false;
+        for (int i = 0; i < decompiledCode.length(); i += 1) {
+	    currentChar = decompiledCode.charAt(i);
+	    if (currentChar == '(') {
+		if (encounteredOpenParenthesis) {
+		    throw new Exception("Anomalous function signature detected.");
+		}
+		encounteredOpenParenthesis = true;
+	    } else if (currentChar == ')') {
+		if (encounteredCloseParenthesis) {
+		    throw new Exception("Anomalous function signature detected.");
+		} 
+		encounteredCloseParenthesis = true;
+	    } else if (currentChar == '{') {
+	        if (!(encounteredOpenParenthesis && encounteredCloseParenthesis)) {	
+		    throw new Exception("Anomalous function signature detected.");
+		}
+		break;
+	    }
+	}
+
+        // Replace the arguments (with newlines) with a string that does not have newlines.
+	String argumentsTall = decompiledCode.substring(decompiledCode.indexOf("("), decompiledCode.indexOf(")"));
+	String argumentsFlat = signature.substring(signature.indexOf("("), signature.indexOf(")"));
+        pattern = Pattern.quote(argumentsTall);
+	decompiledCode = decompiledCode.replaceFirst(pattern, argumentsFlat);
+
+	// Replace the current signature with the new one.
+	pattern = Pattern.quote(signatureCur);
+	decompiledCode = decompiledCode.replaceFirst(pattern, signature);
+	println("replaceSignature: replaced=" + decompiledCode.substring(1, decompiledCode.indexOf(")") + 1));
+	return decompiledCode;
     }
 
 }
