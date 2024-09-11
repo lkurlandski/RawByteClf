@@ -23,7 +23,15 @@ public class Disassembler extends Lifter {
         return ".asm";
     }
 
-    private String disassembleFunction(Function func) throws MemoryAccessException { // FIXME: investigate getListing...
+    private String disassembleFunction(Function func) throws MemoryAccessException {
+
+        /*
+	 * TODO: Investigate the difference between using Listing.getInstructions(boolean)
+	 * and Listing.getInstructions(Address, boolean). Does the former include all instructions
+	 * that the latter returns? It looks like the former creates "gaps" in the address space
+	 * between functions...what is in these "gaps"? Will the latter populate these gaps?
+         * TODO: In addition to recording the virutal addresses, record the physical address.
+        */
 
         Address funcAddr = func.getEntryPoint();
         Iterator<Instruction> instructions = currentProgram.getListing().getInstructions(funcAddr, true);
@@ -31,6 +39,8 @@ public class Disassembler extends Lifter {
         String signature = func.getPrototypeString(FORMAL_SIGNATURE, INCLUDE_CALLING_CONVENTION);
         String disassembledCode = "\n" + signature + "\n";
 
+	// Append formatted instructions until none are left in the function or the instruction
+	// belongs to a different function.
         while (instructions.hasNext()) {
             Instruction inst = instructions.next();
             if (currentProgram.getFunctionManager().getFunctionContaining(inst.getAddress()) != func) {
