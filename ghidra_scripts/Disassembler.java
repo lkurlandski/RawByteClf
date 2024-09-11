@@ -10,6 +10,8 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
+import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.mem.MemoryAccessException;
 
@@ -35,48 +37,83 @@ public class Disassembler extends Lifter {
         String disassembledCode = "\n" + signature + "\n";
 
         while (instructions.hasNext()) {
-            Instruction inst = instructions.next();    
+            Instruction inst = instructions.next();
             if (funcManager.getFunctionContaining(inst.getAddress()) != func) {
                 break;
             }
-            disassembledCode = disassembledCode + formatInstruction(inst);
+	    String sectionName = getSectionName(inst);
+	    String physAddr = getPhysicalAddress(inst);
+	    String virtAddr = getVirtualAddress(inst);
+	    String bytes = getBytes(inst);
+	    String instruction = getInstruction(inst);
+	    String line = formatInstruction(sectionName, physAddr, virtAddr, bytes, instruction);
+            disassembledCode = disassembledCode + line;
 	}
 
 	return disassembledCode;
     }
 
-    private String formatInstruction(Instruction inst) throws MemoryAccessException, IllegalArgumentException {
-	Address virtAddr = inst.getAddress();
-	Address physAddr = virtAddr.getPhysicalAddress();
-
-	String sectStr = inst.getAddressString(true, true).split(":")[0];
-	sectStr = sectStr.substring(0, Math.min(sectStr.length(), 8));
-        String virtAddrStr = virtAddr.toString(true, true).split(":")[1];
-        String physAddrStr = physAddr.toString(true, true).split(":")[1];
-        String byteStr = formatByteStr(inst.getBytes());
-        String instStr = inst.toString();
-
-        if (sectStr.length() > 8) {  // 8 characters for the section name.
-	    throw new IllegalArgumentException("StringTooLong: sectStr=" + sectStr);
-	}
-        if (virtAddrStr.length() > 16) {  // 16 characters for the physical address (maximum for 64-bit address space).
-	    throw new IllegalArgumentException("StringTooLong: virtAddrStr=" + virtAddrStr);
-	}
-        if (physAddrStr.length() > 16) {  // 16 characters for the virtual address (maximum for 64-bit address space).
-	    throw new IllegalArgumentException("StringTooLong: physAddrStr=" + physAddrStr);
-	}
-        if (byteStr.length() > 48) {  // 48 characters for the raw-bytes (maximum 16 byte instructions).
-	    throw new IllegalArgumentException("StringTooLong: byteStr=" + byteStr);
-	}
-
-	return String.format("%-8s\t%-16s\t%-16s\t%-48s\t%s\n", sectStr,  physAddrStr, virtAddrStr, byteStr, instStr);
+    private String getSectionName(Instruction inst) {
+        return inst.getAddressString(true, true).split(":")[0];
     }
 
-    private String formatByteStr(byte[] bytes) {
+    private String getPhysicalAddress(Instruction inst) {
+        Address virtAddr = inst.getAddress();
+	Memory memory = currentProgram.getMemory();
+	MemoryBlock block = memory.getBlock(virtAddr);
+	if (block == null) {
+	    return "????????";
+	}
+	long sectionOffset = virtAddr.getOffset() - block.getStart().getOffset();
+	long physAddr = block.getSourceInfos().get(0).getFileBytesOffset() + sectionOffset;
+	return String.format("%08x", physAddr);
+    }
+
+    private String getVirtualAddress(Instruction inst) {
+        return inst.getAddressString(true, true).split(":")[1];
+    }
+
+    private String getBytes(Instruction inst) throws MemoryAccessException {
+	byte[] bytes = inst.getBytes();
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
             sb.append(String.format("%02x ", b & 0xff));
         }
         return sb.toString().trim();
+    }
+
+    private String getInstruction(Instruction inst) {
+        return inst.toString();
+    }
+
+    private String formatInstruction(String sectionName, String physAddr, String virtAddr, String bytes, String instruction) throws IllegalArgumentException {
+        int size = currentProgram.getLanguage().getDefaultSpace().getSize();
+
+	int mult;
+	if (size == 16) {
+	    mult = 1;
+	} else if (size == 32) {
+	    mult = 2;
+	} else if (size == 64) {
+	    mult = 4;
+	} else {
+	    throw new IllegalArgumentException("Invalid word size: size=" + String.valueOf(size));
+	}
+
+        if (sectionName.length() > 8) {  // 8 characters for the section name.
+	    sectionName = sectionName.substring(0, 8);
+	}
+        if (physAddr.length() > mult * 4) {  // Maximum for `size`-bit address space.
+	    throw new IllegalArgumentException("StringTooLong: physAddr=" + physAddr);
+	}
+        if (virtAddr.length() > mult * 4) {  // Maximum for `size`-bit address space.
+	    throw new IllegalArgumentException("StringTooLong: virtAddr=" + virtAddr);
+	}
+        if (bytes.length() > 48) {  // 48 characters for up to 15 bytes per instruction.
+	    throw new IllegalArgumentException("StringTooLong: bytes=" + bytes);
+	}
+
+        String format = "%-8s\t%-" + String.valueOf(mult * 4) + "s\t%-" + String.valueOf(mult * 4) + "s\t%-48s\t%s\n";
+	return String.format(format, sectionName,  physAddr, virtAddr, bytes, instruction);
     }
 }
