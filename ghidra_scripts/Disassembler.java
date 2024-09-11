@@ -41,16 +41,16 @@ public class Disassembler extends Lifter {
             if (funcManager.getFunctionContaining(inst.getAddress()) != func) {
                 break;
             }
-	    String sectionName = getSectionName(inst);
-	    String physAddr = getPhysicalAddress(inst);
-	    String virtAddr = getVirtualAddress(inst);
-	    String bytes = getBytes(inst);
-	    String instruction = getInstruction(inst);
-	    String line = formatInstruction(sectionName, physAddr, virtAddr, bytes, instruction);
+            String sectionName = getSectionName(inst);
+            String physAddr = getPhysicalAddress(inst);
+            String virtAddr = getVirtualAddress(inst);
+            String bytes = getBytes(inst);
+            String instruction = getInstruction(inst);
+            String line = formatInstruction(sectionName, physAddr, virtAddr, bytes, instruction);
             disassembledCode = disassembledCode + line;
-	}
+        }
 
-	return disassembledCode;
+        return disassembledCode;
     }
 
     private String getSectionName(Instruction inst) {
@@ -59,14 +59,14 @@ public class Disassembler extends Lifter {
 
     private String getPhysicalAddress(Instruction inst) {
         Address virtAddr = inst.getAddress();
-	Memory memory = currentProgram.getMemory();
-	MemoryBlock block = memory.getBlock(virtAddr);
-	if (block == null) {
-	    return "????????";
-	}
-	long sectionOffset = virtAddr.getOffset() - block.getStart().getOffset();
-	long physAddr = block.getSourceInfos().get(0).getFileBytesOffset() + sectionOffset;
-	return String.format("%08x", physAddr);
+        Memory memory = currentProgram.getMemory();
+        MemoryBlock block = memory.getBlock(virtAddr);
+        if (block == null) {
+            return "????????";
+        }
+        long sectionOffset = virtAddr.getOffset() - block.getStart().getOffset();
+        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset() + sectionOffset;
+        return String.format("%08x", physAddr);
     }
 
     private String getVirtualAddress(Instruction inst) {
@@ -74,7 +74,7 @@ public class Disassembler extends Lifter {
     }
 
     private String getBytes(Instruction inst) throws MemoryAccessException {
-	byte[] bytes = inst.getBytes();
+        byte[] bytes = inst.getBytes();
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
             sb.append(String.format("%02x ", b & 0xff));
@@ -89,31 +89,31 @@ public class Disassembler extends Lifter {
     private String formatInstruction(String sectionName, String physAddr, String virtAddr, String bytes, String instruction) throws IllegalArgumentException {
         int size = currentProgram.getLanguage().getDefaultSpace().getSize();
 
-	int mult;
-	if (size == 16) {
-	    mult = 1;
-	} else if (size == 32) {
-	    mult = 2;
-	} else if (size == 64) {
-	    mult = 4;
-	} else {
-	    throw new IllegalArgumentException("Invalid word size: size=" + String.valueOf(size));
-	}
+        int mult;
+        if (size == 16) {
+            mult = 1;
+        } else if (size == 32) {
+            mult = 2;
+        } else if (size == 64) {
+            mult = 4;
+        } else {
+            throw new IllegalArgumentException("Invalid word size: size=" + String.valueOf(size));
+        }
 
         if (sectionName.length() > 8) {  // 8 characters for the section name.
-	    sectionName = sectionName.substring(0, 8);
-	}
+            sectionName = sectionName.substring(0, 8);
+        }
         if (physAddr.length() > mult * 4) {  // Maximum for `size`-bit address space.
-	    throw new IllegalArgumentException("StringTooLong: physAddr=" + physAddr);
-	}
+            throw new IllegalArgumentException("StringTooLong: physAddr=" + physAddr);
+        }
         if (virtAddr.length() > mult * 4) {  // Maximum for `size`-bit address space.
-	    throw new IllegalArgumentException("StringTooLong: virtAddr=" + virtAddr);
-	}
+            throw new IllegalArgumentException("StringTooLong: virtAddr=" + virtAddr);
+        }
         if (bytes.length() > 48) {  // 48 characters for up to 15 bytes per instruction.
-	    throw new IllegalArgumentException("StringTooLong: bytes=" + bytes);
-	}
+            throw new IllegalArgumentException("StringTooLong: bytes=" + bytes);
+        }
 
         String format = "%-8s\t%-" + String.valueOf(mult * 4) + "s\t%-" + String.valueOf(mult * 4) + "s\t%-48s\t%s\n";
-	return String.format(format, sectionName,  physAddr, virtAddr, bytes, instruction);
+        return String.format(format, sectionName,  physAddr, virtAddr, bytes, instruction);
     }
 }
