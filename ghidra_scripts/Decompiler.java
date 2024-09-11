@@ -26,7 +26,6 @@ import ghidra.program.model.listing.Program;
 
 public class Decompiler extends HeadlessScript {
 
-    private static final boolean SKIP_PARAMETERS_WITH_UNKNOWN_TYPE = false;
     private static final boolean SKIP_EXTERNAL_FUNCTIONS = false;
     private static final boolean FORMAL_SIGNATURE = false;
     private static final boolean INCLUDE_CALLING_CONVENTION = true;
@@ -39,7 +38,6 @@ public class Decompiler extends HeadlessScript {
     @Override
     protected void run() throws Exception {
         // Log configuration.
-        println("run: SKIP_PARAMETERS_WITH_UNKNOWN_TYPE=" + String.valueOf(SKIP_PARAMETERS_WITH_UNKNOWN_TYPE));
         println("run: SKIP_EXTERNAL_FUNCTIONS=" + String.valueOf(SKIP_EXTERNAL_FUNCTIONS));
         println("run: FORMAL_SIGNATURE=" + String.valueOf(FORMAL_SIGNATURE));
         println("run: INCLUDE_CALLING_CONVENTION=" + String.valueOf(INCLUDE_CALLING_CONVENTION));
@@ -172,18 +170,30 @@ public class Decompiler extends HeadlessScript {
 
     private String replaceSignature(DecompiledFunction decompiledFunc, String decompiledCode, String signature) throws Exception {
 
-        // TODO: remove print statement once this is well-tested
+        // println("replaceSignature: decompiledCodeOld=" +
+	//     decompiledCode.substring(1, decompiledCode.indexOf(")") + 1).replace("\n", "\\n"));
 
-        String pattern;
+        // Temporary variables.
+	String tmpPattern;
+	int tmpStart;
+	int tmpEnd;
+
+	// The signature returned by DecompiledFunction.getSignature().
+	// This signature may contain a newline when it was inserted into the C-code by DecompiledFunction.getC().
         String signatureCur = decompiledFunc.getSignature();
         signatureCur = signatureCur.substring(0, signatureCur.indexOf(";"));
+        if (signatureCur.contains("\n")) {
+            throw new Exception("Anomalous function signature detected.");
+	}
 
         // If the decompiled code's signature is not broken by a newline, replacing it is trivial.
         if (decompiledCode.contains(signatureCur)) {
-            pattern = Pattern.quote(signatureCur);
-            return decompiledCode.replaceFirst(pattern, signature);
+            tmpPattern = Pattern.quote(signatureCur);
+            decompiledCode = decompiledCode.replaceFirst(tmpPattern, signature);
+            // println("replaceSignature: decompiledCodeNew=" +
+	    //     decompiledCode.substring(1, decompiledCode.indexOf(")") + 1).replace("\n", "\\n"));
+	    return decompiledCode;
         }
-        println("replaceSignature: original=" + decompiledCode.substring(1, decompiledCode.indexOf(")") + 1));
 
         // Run a check to ensure that the beginning of the decompiled code looks something like this:
         // {ALLOWABLE_CHARACTERS}({ALLOWABLE_CHARACTERS}){
@@ -208,20 +218,28 @@ public class Decompiler extends HeadlessScript {
                     throw new Exception("Anomalous function signature detected.");
                 }
                 break;
-            }
+            } else if (i == decompiledCode.length() - 1) {
+                throw new Exception("Anomalous function signature detected.");
+	    }
         }
 
-        // Replace the arguments (with newlines) with a string that does not have newlines.
-        String argumentsTall = decompiledCode.substring(decompiledCode.indexOf("("), decompiledCode.indexOf(")"));
-        String argumentsFlat = signature.substring(signature.indexOf("("), signature.indexOf(")"));
-        pattern = Pattern.quote(argumentsTall);
-        decompiledCode = decompiledCode.replaceFirst(pattern, argumentsFlat);
-
+        // Identify the substring in the decompiledCode that contains the arguments (with newlines).
+        tmpStart = decompiledCode.indexOf("(");
+	tmpEnd = decompiledCode.indexOf(")");
+	String argumentsTall = decompiledCode.substring(tmpStart, tmpEnd + 1);
+	// Identify the substring in the signatureCur that contains the arguments (without newlines).
+        tmpStart = signatureCur.indexOf("(");
+	tmpEnd = signatureCur.indexOf(")");
+        String argumentsFlat = signatureCur.substring(tmpStart, tmpEnd + 1);
+	// Replace the arguments with newlines with their flattened version in the code.
+        tmpPattern = Pattern.quote(argumentsTall);
+        decompiledCode = decompiledCode.replaceFirst(tmpPattern, argumentsFlat);
         // Replace the current signature with the new one.
-        pattern = Pattern.quote(signatureCur);
-        decompiledCode = decompiledCode.replaceFirst(pattern, signature);
-        println("replaceSignature: replaced=" + decompiledCode.substring(1, decompiledCode.indexOf(")") + 1));
-        return decompiledCode;
+        tmpPattern = Pattern.quote(signatureCur);
+        decompiledCode = decompiledCode.replaceFirst(tmpPattern, signature);
+        // println("replaceSignature: decompiledCodeNew=" +
+	//     decompiledCode.substring(1, decompiledCode.indexOf(")") + 1).replace("\n", "\\n"));
+	return decompiledCode;
     }
 
 }
