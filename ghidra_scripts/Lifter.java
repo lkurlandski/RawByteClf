@@ -1,3 +1,7 @@
+/**
+ * Lift binaries to intermediate representation.
+*/
+
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -22,9 +26,13 @@ public abstract class Lifter extends HeadlessScript {
     protected static final boolean REPLACE_SIGNATURE = true;
     protected static final boolean REQUIRE_HEADLESS_ANALYSIS_COMPLETE = false;
 
+    protected String outputDir = "./";
     protected int timeoutPerFile = -1;
     protected int timeoutPerFunc = -1;
 
+    /**
+     * Entry point.
+    */
     @Override
     protected void run() throws Exception {
         println("run: SKIP_EXTERNAL_FUNCTIONS=" + SKIP_EXTERNAL_FUNCTIONS);
@@ -40,7 +48,7 @@ public abstract class Lifter extends HeadlessScript {
         }
         
         String[] scriptArgs = getAndValidateScriptArgs();
-        String outputDir = scriptArgs[0];
+        this.outputDir = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
         this.timeoutPerFunc = Integer.parseInt(scriptArgs[2]);
         
@@ -51,15 +59,24 @@ public abstract class Lifter extends HeadlessScript {
         }
  
         String programName = getProgramName(program);
-        String outputFileName = getOutputFileName(outputDir, programName);        
+        String outputFileName = getOutputFileName(this.outputDir, programName);        
         FunctionIterator functions = getFunctions(program);
         runMainWorker(functions, outputFileName);
     }
 
-    protected abstract void processFunction(Function func, FileWriter writer) throws Exception;
+    /**
+     * Process a single function and write the output to a file.
+    */
+    protected abstract String processFunction(Function func) throws Exception;
     
+    /**
+     * Get the output file's extension, e.g., ".EXTENSION"
+    */
     protected abstract String getFileExtension();
 
+    /**
+     * Get the command line arguments passed to the instance.
+    */
     private String[] getAndValidateScriptArgs() {
         String[] scriptArgs = getScriptArgs();
         if (scriptArgs == null || scriptArgs.length < 3) {
@@ -68,6 +85,9 @@ public abstract class Lifter extends HeadlessScript {
         return scriptArgs;
     }
 
+    /**
+     * Get the name of this file, excluding the extension, i.e., the SHA-256.
+    */
     private String getProgramName(Program program) {
         String programName = program.getName();
         if (programName.contains(".")) {
@@ -77,6 +97,9 @@ public abstract class Lifter extends HeadlessScript {
         return programName;
     }
 
+    /**
+     * Get the name of the output file for this file.
+    */
     private String getOutputFileName(String outputDir, String programName) {
         File dir = new File(outputDir);
         if (!dir.exists()) {
@@ -87,6 +110,9 @@ public abstract class Lifter extends HeadlessScript {
         return outputFileName;
     }
 
+    /**
+     * Get an iterator of functions to process.
+    */
     private FunctionIterator getFunctions(Program program) {
         if (SKIP_EXTERNAL_FUNCTIONS) {
             return program.getFunctionManager().getFunctions(true);
@@ -95,6 +121,9 @@ public abstract class Lifter extends HeadlessScript {
         }
     }
 
+    /**
+     * Wraps processFunctions in a timeout construct.
+    */
     private void runMainWorker(FunctionIterator functions, String outputFileName) throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Callable<Void> task = () -> {
@@ -116,10 +145,15 @@ public abstract class Lifter extends HeadlessScript {
         }
     }
 
+    /**
+     * Process every function and write the output of processing to a file.
+    */
     private void processFunctions(FunctionIterator functions, String outputFileName) throws Exception {
+	String processedFunc;
         try (FileWriter writer = new FileWriter(outputFileName)) {
             for (Function func : functions) {
-                processFunction(func, writer);
+                processedFunc = processFunction(func);
+		writer.write(processedFunc);
             }
         } catch (IOException e) {
             throw e;

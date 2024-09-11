@@ -1,3 +1,7 @@
+/**
+ * Lift binaries to decompiled C-like code.
+*/
+
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.regex.Pattern;
@@ -23,9 +27,8 @@ public class Decompiler extends Lifter {
     }
 
     @Override
-    protected void processFunction(Function func, FileWriter writer) throws Exception {
-        String decompiledCode = decompileFunction(func);
-        writer.write(decompiledCode);
+    protected String processFunction(Function func) throws Exception {
+        return decompileFunction(func);
     }
 
     @Override

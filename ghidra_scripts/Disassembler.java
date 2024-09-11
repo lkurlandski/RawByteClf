@@ -1,3 +1,7 @@
+/**
+ * Lift binaries to disassembly.
+*/
+
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.Iterator;
@@ -10,9 +14,8 @@ import ghidra.program.model.mem.MemoryAccessException;
 public class Disassembler extends Lifter {
 
     @Override
-    protected void processFunction(Function func, FileWriter writer) throws IOException, MemoryAccessException {
-        String disassembledCode = disassembleFunction(func);
-        writer.write(disassembledCode);
+    protected String processFunction(Function func) throws Exception {
+        return disassembleFunction(func);
     }
 
     @Override
