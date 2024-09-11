@@ -7,7 +7,9 @@ import java.io.IOException;
 import java.util.Iterator;
 
 import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.mem.MemoryAccessException;
 
@@ -23,27 +25,18 @@ public class Disassembler extends Lifter {
         return ".asm";
     }
 
-    private String disassembleFunction(Function func) throws MemoryAccessException {
-
-        /*
-	 * TODO: Investigate the difference between using Listing.getInstructions(boolean)
-	 * and Listing.getInstructions(Address, boolean). Does the former include all instructions
-	 * that the latter returns? It looks like the former creates "gaps" in the address space
-	 * between functions...what is in these "gaps"? Will the latter populate these gaps?
-         * TODO: In addition to recording the virutal addresses, record the physical address.
-        */
+    private String disassembleFunction(Function func) throws MemoryAccessException, IllegalArgumentException {
 
         Address funcAddr = func.getEntryPoint();
-        Iterator<Instruction> instructions = currentProgram.getListing().getInstructions(funcAddr, true);
+        InstructionIterator instructions = currentProgram.getListing().getInstructions(funcAddr, true);
+        FunctionManager funcManager = currentProgram.getFunctionManager();
 
         String signature = func.getPrototypeString(FORMAL_SIGNATURE, INCLUDE_CALLING_CONVENTION);
         String disassembledCode = "\n" + signature + "\n";
 
-	// Append formatted instructions until none are left in the function or the instruction
-	// belongs to a different function.
         while (instructions.hasNext()) {
-            Instruction inst = instructions.next();
-            if (currentProgram.getFunctionManager().getFunctionContaining(inst.getAddress()) != func) {
+            Instruction inst = instructions.next();    
+            if (funcManager.getFunctionContaining(inst.getAddress()) != func) {
                 break;
             }
             disassembledCode = disassembledCode + formatInstruction(inst);
@@ -52,15 +45,34 @@ public class Disassembler extends Lifter {
 	return disassembledCode;
     }
 
-    private String formatInstruction(Instruction inst) throws MemoryAccessException {
-        String addr = inst.getAddressString(true, true);
-        byte[] bytes = inst.getBytes();
-        String bytecode = formatBytes(bytes);
+    private String formatInstruction(Instruction inst) throws MemoryAccessException, IllegalArgumentException {
+	Address virtAddr = inst.getAddress();
+	Address physAddr = virtAddr.getPhysicalAddress();
+
+	String sectStr = inst.getAddressString(true, true).split(":")[0];
+	sectStr = sectStr.substring(0, Math.min(sectStr.length(), 8));
+        String virtAddrStr = virtAddr.toString(true, true).split(":")[1];
+        String physAddrStr = physAddr.toString(true, true).split(":")[1];
+        String byteStr = formatByteStr(inst.getBytes());
         String instStr = inst.toString();
-        return String.format(" %-15s %-30s %s\n", addr, bytecode, instStr);
+
+        if (sectStr.length() > 8) {  // 8 characters for the section name.
+	    throw new IllegalArgumentException("StringTooLong: sectStr=" + sectStr);
+	}
+        if (virtAddrStr.length() > 16) {  // 16 characters for the physical address (maximum for 64-bit address space).
+	    throw new IllegalArgumentException("StringTooLong: virtAddrStr=" + virtAddrStr);
+	}
+        if (physAddrStr.length() > 16) {  // 16 characters for the virtual address (maximum for 64-bit address space).
+	    throw new IllegalArgumentException("StringTooLong: physAddrStr=" + physAddrStr);
+	}
+        if (byteStr.length() > 48) {  // 48 characters for the raw-bytes (maximum 16 byte instructions).
+	    throw new IllegalArgumentException("StringTooLong: byteStr=" + byteStr);
+	}
+
+	return String.format("%-8s\t%-16s\t%-16s\t%-48s\t%s\n", sectStr,  physAddrStr, virtAddrStr, byteStr, instStr);
     }
 
-    private String formatBytes(byte[] bytes) {
+    private String formatByteStr(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
             sb.append(String.format("%02x ", b & 0xff));
