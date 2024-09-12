@@ -18,6 +18,28 @@ import ghidra.program.model.mem.MemoryAccessException;
 
 public class Disassembler extends Lifter {
 
+    public int bitSize;
+    public int bitMult;
+    public String unknownAddressStr;
+
+    @Override
+    protected void run() throws Exception {
+
+        this.bitSize = currentProgram.getLanguage().getDefaultSpace().getSize();
+        if (this.bitSize == 16) {
+            this.bitMult = 1;
+        } else if (this.bitSize == 32) {
+            this.bitMult = 2;
+        } else if (this.bitSize == 64) {
+            this.bitMult = 4;
+        } else {
+            throw new IllegalArgumentException("Invalid word size: size=" + String.valueOf(this.bitSize));
+        }
+	this.unknownAddressStr = "?".repeat(this.bitMult * 4);
+
+        super.run();
+    }
+
     @Override
     protected String processFunction(Function func) throws Exception {
         return disassembleFunction(func);
@@ -63,7 +85,7 @@ public class Disassembler extends Lifter {
         Memory memory = currentProgram.getMemory();
         MemoryBlock block = memory.getBlock(virtAddr);
         if (block == null) {
-            return "????????";
+            return this.unknownAddressStr;
         }
 
 	BigInteger sectionOffsetB;
@@ -72,12 +94,12 @@ public class Disassembler extends Lifter {
 	    sectionOffsetB = virtAddr.getOffsetAsBigInteger().subtract(block.getStart().getOffsetAsBigInteger());
 	    sectionOffsetL = sectionOffsetB.longValueExact();
 	} catch (ArithmeticException e) {
-            return "????????";
+            return this.unknownAddressStr;
         }
 
         long physAddr = block.getSourceInfos().get(0).getFileBytesOffset() + sectionOffsetL;
 	if (physAddr < 0 || physAddr > 4294967295L) {
-	    return "????????";
+	    return this.unknownAddressStr;
 	}
         return String.format("%08x", physAddr);
     }
@@ -119,33 +141,25 @@ public class Disassembler extends Lifter {
     }
 
     private String formatInstruction(String sectionName, String physAddr, String virtAddr, String bytes, String instruction) throws IllegalArgumentException {
-        int size = currentProgram.getLanguage().getDefaultSpace().getSize();
-
-        int mult;
-        if (size == 16) {
-            mult = 1;
-        } else if (size == 32) {
-            mult = 2;
-        } else if (size == 64) {
-            mult = 4;
-        } else {
-            throw new IllegalArgumentException("Invalid word size: size=" + String.valueOf(size));
-        }
 
         if (sectionName.length() > 8) {  // 8 characters for the section name.
             sectionName = sectionName.substring(0, 8);
         }
-        if (physAddr.length() > mult * 4) {  // Maximum for `size`-bit address space.
+        if (physAddr.length() > this.bitMult * 4) {  // Maximum for `size`-bit address space.
             throw new IllegalArgumentException("StringTooLong: physAddr=" + physAddr);
         }
-        if (virtAddr.length() > mult * 4) {  // Maximum for `size`-bit address space.
+        if (virtAddr.length() > this.bitMult * 4) {  // Maximum for `size`-bit address space.
             throw new IllegalArgumentException("StringTooLong: virtAddr=" + virtAddr);
         }
         if (bytes.length() > 48) {  // 48 characters for up to 15 bytes per instruction.
             throw new IllegalArgumentException("StringTooLong: bytes=" + bytes);
         }
 
-        String format = "%-8s\t%-" + String.valueOf(mult * 4) + "s\t%-" + String.valueOf(mult * 4) + "s\t%-48s\t%s\n";
+        String format = "%-8s\t%-"
+		      + String.valueOf(this.bitMult * 4)
+		      + "s\t%-"
+		      + String.valueOf(this.bitMult * 4)
+		      + "s\t%-48s\t%s\n";
         return String.format(format, sectionName,  physAddr, virtAddr, bytes, instruction);
     }
 }
