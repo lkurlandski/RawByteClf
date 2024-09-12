@@ -5,6 +5,13 @@
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,13 +28,15 @@ import ghidra.program.model.listing.Program;
 public class ExtractExecutableRegions extends HeadlessScript {
 
     protected static final boolean DETAILED_SECTIONS = false;
-    protected static final boolean EXCLUDE_DATA_AND_PADDING = false;
     protected static final boolean REQUIRE_HEADLESS_ANALYSIS_COMPLETE = false;
 
     protected int timeoutPerFile = -1;
 
     @Override
     public void run() throws Exception {
+        println("run: DETAILED_SECTIONS=" + DETAILED_SECTIONS);
+        println("run: REQUIRE_HEADLESS_ANALYSIS_COMPLETE=" + REQUIRE_HEADLESS_ANALYSIS_COMPLETE);
+        println("run: analysisTimeoutOccurred()=" + analysisTimeoutOccurred());
 
         if (REQUIRE_HEADLESS_ANALYSIS_COMPLETE && !analysisTimeoutOccurred()) {
             println("run: skipped.");
@@ -36,8 +45,13 @@ public class ExtractExecutableRegions extends HeadlessScript {
 
         String[] scriptArgs = getAndValidateScriptArgs();
         String outputFileName = scriptArgs[0];
-        String programName = getProgramName(currentProgram);
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
+
+        runMainWorker(outputFileName);
+    }
+
+    private void MainWorker(String outputFileName) throws Exception {
+        String programName = getProgramName(currentProgram);
 
         Memory memory = currentProgram.getMemory();
         Listing listing = currentProgram.getListing();
@@ -74,6 +88,30 @@ public class ExtractExecutableRegions extends HeadlessScript {
         }
     }
 
+    /**
+    * Wraps the main function in a timeout construct.
+    */
+    private void runMainWorker(String outputFileName) throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Callable<Void> task = () -> {
+            MainWorker(outputFileName);
+            return null;
+        };
+        Future<Void> future = executor.submit(task);
+        try {
+            future.get(this.timeoutPerFile, TimeUnit.SECONDS);
+            println("run: finished.");
+        } catch (TimeoutException e) {
+            println("run: timed out.");
+            future.cancel(true);
+        } catch (InterruptedException | ExecutionException e) {
+            println("run: crashed.");
+            e.printStackTrace();
+        } finally {
+            executor.shutdown();
+        }
+    }
+ 
     /**
      * Get the command line arguments passed to the instance.
     */
