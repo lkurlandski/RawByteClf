@@ -1,14 +1,14 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift
+#SBATCH --job-name=debug-lift
 #SBATCH --account=admalware
-#SBATCH --partition=tier3
+#SBATCH --partition=debug
 #SBATCH --output=./logs/%x_%A_%a.out
 #SBATCH --time=00-12:00:00
-#SBATCH --mem=24G
+#SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=1
 
 # USAGE
 # -----
@@ -96,7 +96,7 @@ echo "HH: $HH"
 t_start=$(date +%s.%N)
 HOUR=12
 TIME=$(( HOUR * 60 * 60 ))
-TIME_FOR_CLEANUP=3600
+TIME_FOR_CLEANUP=43100 # FIXME 3600
 if [ "$HOUR" -le 0 ] || [ "$TIME" -le 0 ]; then
   echo "Error: HOURS and TIME must both be greater than 0."
   exit 1
@@ -105,17 +105,23 @@ echo "HOUR: $HOUR"
 echo "TIME: $TIME"
 echo "TIME_FOR_CLEANUP: $TIME_FOR_CLEANUP"
 
-# Configuration for Ghidra's headless analyzer.
-TIMEOUT_ANALY="120"
-TIMEOUT_DECOM="120"
+# Configuration for Ghidra's headless analyzer and timeout values for the scripts.
+TIMEOUT_PER_FILE_ANALYSIS="300"
+TIMEOUT_PER_FILE_REGIONING="60"
+TIMEOUT_PER_FILE_DISASSEMBLY="60"
+TIMEOUT_PER_FILE_DECOMPILATION="300"
+TIMEOUT_PER_FUNC_DISASSEMBLY="30"
+TIMEOUT_PER_FUNC_DECOMPILATION="60"
 PROCESSOR="x86:LE:32:default"
 LOADER="PeLoader"
-SCRIPT_PATH="/home/lk3591/Documents/code/RawByteClf/ghidra_scripts"
-echo "TIMEOUT_ANALY: $TIMEOUT_ANALY"
-echo "TIMEOUT_DECOM: $TIMEOUT_DECOM"
+echo "TIMEOUT_PER_FILE_ANALYSIS: $TIMEOUT_PER_FILE_ANALYSIS"
+echo "TIMEOUT_PER_FILE_REGIONING: $TIMEOUT_PER_FILE_REGIONING"
+echo "TIMEOUT_PER_FILE_DISASSEMBLY: $TIMEOUT_PER_FILE_DISASSEMBLY"
+echo "TIMEOUT_PER_FILE_DECOMPILATION: $TIMEOUT_PER_FILE_DECOMPILATION"
+echo "TIMEOUT_PER_FUNC_DISASSEMBLY: $TIMEOUT_PER_FUNC_DISASSEMBLY"
+echo "TIMEOUT_PER_FUNC_DECOMPILATION: $TIMEOUT_PER_FUNC_DECOMPILATION"
 echo "PROCESSOR: $PROCESSOR"
 echo "LOADER: $LOADER"
-echo "SCRIPT_PATH: $SCRIPT_PATH"
 
 # Determine which computer we're running on and set base paths accordingly.
 #   P_FIN: long-term storage with possibly slow I/O
@@ -156,38 +162,45 @@ echo "P_TMP: $P_TMP"
 p_fin_arc="$P_FIN/archived/$HH"
 p_fin_dis="$P_FIN/disassembled/$HH"
 p_fin_dec="$P_FIN/decompiled/$HH"
+p_fin_reg="$P_FIN/regions/$HH"
 p_fin_log="$P_FIN/ghidraLogs/$HH"
 mkdir -p "$p_fin_arc"
 mkdir -p "$p_fin_dis"
 mkdir -p "$p_fin_dec"
+mkdir -p "$p_fin_reg"
 mkdir -p "$p_fin_log"
 echo "p_fin_arc: $p_fin_arc"
 echo "p_fin_dis: $p_fin_dis"
 echo "p_fin_dec: $p_fin_dec"
+echo "p_fin_reg: $p_fin_reg"
 echo "p_fin_log: $p_fin_log"
 
 # Define and create TMP directories.
 p_tmp_arc="$P_TMP/archived/$HHH"
 p_tmp_dis="$P_TMP/disassembled/$HHH"
 p_tmp_dec="$P_TMP/decompiled/$HHH"
+p_tmp_reg="$P_TMP/regions/$HHH"
 p_tmp_log="$P_TMP/ghidraLogs/$HHH"
 p_tmp_bin="$P_TMP/binaries/$HHH"
 p_tmp_ghi="$P_TMP/ghidra/$HHH"
 rm -rf "$p_tmp_arc"
 rm -rf "$p_tmp_dis"
 rm -rf "$p_tmp_dec"
+rm -rf "$p_tmp_reg"
 rm -rf "$p_tmp_log"
 rm -rf "$p_tmp_bin"
 rm -rf "$p_tmp_ghi"
 mkdir -p "$p_tmp_arc"
 mkdir -p "$p_tmp_dis"
 mkdir -p "$p_tmp_dec"
+mkdir -p "$p_tmp_reg"
 mkdir -p "$p_tmp_log"
 mkdir -p "$p_tmp_bin"
 mkdir -p "$p_tmp_ghi"
 echo "p_tmp_arc: $p_tmp_arc"
 echo "p_tmp_dis: $p_tmp_dis"
 echo "p_tmp_dec: $p_tmp_dec"
+echo "p_tmp_reg: $p_tmp_reg"
 echo "p_tmp_log: $p_tmp_log"
 echo "p_tmp_bin: $p_tmp_bin"
 echo "p_tmp_ghi: $p_tmp_ghi"
@@ -209,6 +222,9 @@ printf "Extraction time: %.6f seconds\n" $t_d
 counter=0
 while true; do
 
+############################################################
+# Determine which files have been processed and skip them. #
+############################################################
 
 # Store files that have already successfully been disassembled.
 # Search the final archive.
@@ -242,16 +258,36 @@ for file in "$p_tmp_dec"/*; do
 done
 echo "Num decompiled files: $(echo "$fs_fin_dec" | grep -c -v '^$')"
 
+# Store files that have already successfully been regioned.
+# Search the final archive.
+if [[ -f "$p_fin_reg/$HHH.jsonl" ]]; then
+  fs_fin_reg=$(grep -o '"sha": "[^"]*"' "$p_fin_reg/$HHH.jsonl" | awk -F'"' '{print $4}')
+else
+  fs_fin_reg=""
+fi	
+# Search the tmp directory.
+if [[ -f "$p_fin_reg/$HHH.jsonl" ]]; then
+  for stem in $(grep -o '"sha": "[^"]*"' "$p_fin_reg/$HHH.jsonl" | awk -F'"' '{print $4}'); do
+    fs_fin_reg=$(printf "%s\n%s" "$fs_fin_reg" "$stem")
+  done
+fi
+echo "Num regioned files: $(echo "$fs_fin_reg" | grep -c -v '^$')"
+
 # Iterate over files in p_tmp_bin and remove if its already been processed.
 for f in "$p_tmp_bin"/*; do
   s=$(basename "$f" | sed 's/\.[^.]*$//')
   in_fs_fin_dis=$(echo "$fs_fin_dis" | grep -w "$s")
   in_fs_fin_dec=$(echo "$fs_fin_dec" | grep -w "$s")
-  if [ -n "$in_fs_fin_dis" ] && [ -n "$in_fs_fin_dec" ]; then
+  in_fs_fin_reg=$(echo "$fs_fin_reg" | grep -w "$s")
+  if [ -n "$in_fs_fin_dis" ] && [ -n "$in_fs_fin_dec" ] && [ "$in_fs_fin_reg"  ]; then
     echo "Skipping: $s"
     rm "$f"
   fi
 done
+
+############################################################
+######### Run headless analysis and handle errors. #########
+############################################################
 
 cnt=$(find "$p_tmp_bin" -type f | wc -l)
 siz=$(du -shc "$p_tmp_bin"/* | grep total | awk '{print $1}')
@@ -270,11 +306,11 @@ timeout $timeout analyzeHeadless \
   -log "$p_log" \
   -processor $PROCESSOR \
   -loader $LOADER \
-  -analysisTimeoutPerFile $TIMEOUT_ANALY \
+  -analysisTimeoutPerFile $TIMEOUT_PER_FILE_ANALYSIS \
   -import "$p_tmp_bin" \
-  -scriptPath "$SCRIPT_PATH" \
-  -postScript "disassembler.py" "$p_tmp_dis" \
-  -postScript "Decompiler.java" "$p_tmp_dec" $TIMEOUT_DECOM \
+  -postScript "ExtractExecutableRegions.java" "$p_tmp_reg/$HHH.jsonl" $TIMEOUT_PER_FILE_REGIONING \
+  -postScript "Disassembler.java" "$p_tmp_dis" $TIMEOUT_PER_FILE_DISASSEMBLY $TIMEOUT_PER_FUNC_DISASSEMBLY \
+  -postScript "Decompiler.java" "$p_tmp_dec" $TIMEOUT_PER_FILE_DECOMPILATION $TIMEOUT_PER_FUNC_DECOMPILATION \
   &> "$p_log"
 
 code=$?
@@ -314,14 +350,21 @@ echo "Disassembled $cnt files totaling $siz."
 cnt=$(find "$p_tmp_dec" -type f | wc -l)
 siz=$(du -shc "$p_tmp_dec"/* | grep total | awk '{print $1}')
 echo "Decompiled $cnt files totaling $siz."
-
-# Copy the log files to perminant storage.
-mv "$p_tmp_log/"* "$p_fin_log"
+cnt=$(wc -l "$p_tmp_reg/$HHH.jsonl")
+siz=$(du -shc "$p_tmp_reg/$HHH.jsonl" | grep total | awk '{print $1}')
+echo "Regioned $cnt files totaling $siz."
 
 # Compress the lifted files and move to final storage.
 # If the archive is already present, zip will simply add new files to the archive.
 zip -9 -r -j -q -u "$p_fin_dis/$HHH.zip" "$p_tmp_dis"
 zip -9 -r -j -q -u "$p_fin_dec/$HHH.zip" "$p_tmp_dec"
+
+# Append the tmp log to the fin log file.
+# Append the tmp reg to the fin reg file.
+for f in "$p_tmp_log"/*; do
+    cat $f >> "$p_fin_log/$HHH.log"
+done
+cat "$p_tmp_reg/$HHH.jsonl" >> "$p_fin_reg/$HHH.jsonl"
 
 t_transfer=$(date +%s.%N)
 t_d=$(echo "$t_transfer - $t_cleanup" | bc)
