@@ -51,7 +51,10 @@ public abstract class Lifter extends HeadlessScript {
         this.outputDir = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
         this.timeoutPerFunc = Integer.parseInt(scriptArgs[2]);
-        
+        println("run: outputDir=" + this.outputDir);
+        println("run: timeoutPerFile=" + String.valueOf(this.timeoutPerFile));
+        println("run: timeoutPerFunc=" + String.valueOf(this.timeoutPerFunc));
+
         Program program = getCurrentProgram();
         if (program == null) {
             println("run: no program.");

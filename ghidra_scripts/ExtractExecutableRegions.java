@@ -46,6 +46,8 @@ public class ExtractExecutableRegions extends HeadlessScript {
         String[] scriptArgs = getAndValidateScriptArgs();
         String outputFileName = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
+        println("run: outputFileName=" + outputFileName);
+        println("run: timeoutPerFile=" + String.valueOf(this.timeoutPerFile));
 
         runMainWorker(outputFileName);
     }
