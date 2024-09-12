@@ -4,6 +4,7 @@
 
 import java.io.FileWriter;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.Iterator;
 
 import ghidra.program.model.listing.Function;
@@ -64,10 +65,41 @@ public class Disassembler extends Lifter {
         if (block == null) {
             return "????????";
         }
-        long sectionOffset = virtAddr.getOffset() - block.getStart().getOffset();
-        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset() + sectionOffset;
+
+	BigInteger sectionOffsetB;
+	long sectionOffsetL;
+	try {
+	    sectionOffsetB = virtAddr.getOffsetAsBigInteger().subtract(block.getStart().getOffsetAsBigInteger());
+	    sectionOffsetL = sectionOffsetB.longValueExact();
+	} catch (ArithmeticException e) {
+            return "????????";
+        }
+
+        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset() + sectionOffsetL;
+	if (physAddr < 0 || physAddr > 4294967295L) {
+	    return "????????";
+	}
         return String.format("%08x", physAddr);
     }
+
+    /*
+     * This is really stupid, but Ghidra's getOffset provides a virtual address not physical.
+    */
+    /*
+    private String getPhysicalAddress(Instruction inst){
+        BigInteger offsetBig = inst.getAddress().getOffsetAsBigInteger();
+        long offsetLong;
+	try {
+	    offsetLong = offsetBig.longValueExact();
+	} catch (ArithmeticException e) {
+	    return "????????";
+	}
+	if (offsetLong < 0 || offsetLong > 4294967295L) {
+	    return "????????";
+	}
+	return String.format("%08x", offsetLong);
+    }
+    */
 
     private String getVirtualAddress(Instruction inst) {
         return inst.getAddressString(true, true).split(":")[1];

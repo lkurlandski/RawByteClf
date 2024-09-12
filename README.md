@@ -130,4 +130,5 @@ ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Lifter.java /home/lk
 ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Lifter.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
 ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Disassembler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts/
 ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Decompiler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
+ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/ExtractExecutableRegions.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
 
