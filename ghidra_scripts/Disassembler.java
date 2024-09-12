@@ -82,46 +82,36 @@ public class Disassembler extends Lifter {
 
     private String getPhysicalAddress(Instruction inst) {
         Address virtAddr = inst.getAddress();
-        Memory memory = currentProgram.getMemory();
-        MemoryBlock block = memory.getBlock(virtAddr);
-        if (block == null) {
-            return this.unknownAddressStr;
-        }
-
-	BigInteger sectionOffsetB;
-	long sectionOffsetL;
+	long physAddr;
 	try {
-	    sectionOffsetB = virtAddr.getOffsetAsBigInteger().subtract(block.getStart().getOffsetAsBigInteger());
-	    sectionOffsetL = sectionOffsetB.longValueExact();
+	    physAddr = virtualAddressToPhysicalAddress(virtAddr);
 	} catch (ArithmeticException e) {
             return this.unknownAddressStr;
         }
 
-        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset() + sectionOffsetL;
-	if (physAddr < 0 || physAddr > 4294967295L) {
+	if (physAddr > 4294967295L) {
 	    return this.unknownAddressStr;
 	}
         return String.format("%08x", physAddr);
     }
 
-    /*
-     * This is really stupid, but Ghidra's getOffset provides a virtual address not physical.
+
+    /**
+    * Convert a virtual address to a physical one.
     */
-    /*
-    private String getPhysicalAddress(Instruction inst){
-        BigInteger offsetBig = inst.getAddress().getOffsetAsBigInteger();
-        long offsetLong;
-	try {
-	    offsetLong = offsetBig.longValueExact();
-	} catch (ArithmeticException e) {
-	    return "????????";
+    private long virtualAddressToPhysicalAddress(Address addr) throws ArithmeticException {
+        Memory memory = currentProgram.getMemory();
+        MemoryBlock block = memory.getBlock(addr); 
+	long sectionOffset = addr.getOffsetAsBigInteger()
+		           .subtract(block.getStart().getOffsetAsBigInteger())
+			   .longValueExact();
+	long physAddr = block.getSourceInfos().get(0).getFileBytesOffset()
+		      + sectionOffset;
+	if (physAddr < 0) {
+	    throw new ArithmeticException();
 	}
-	if (offsetLong < 0 || offsetLong > 4294967295L) {
-	    return "????????";
-	}
-	return String.format("%08x", offsetLong);
+	return physAddr;
     }
-    */
 
     private String getVirtualAddress(Instruction inst) {
         return inst.getAddressString(true, true).split(":")[1];

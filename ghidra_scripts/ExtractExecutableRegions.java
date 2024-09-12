@@ -107,6 +107,23 @@ public class ExtractExecutableRegions extends HeadlessScript {
     }
 
     /**
+     * Convert a virtual address to a physical one.
+    */
+    private long virtualAddressToPhysicalAddress(Address addr) throws ArithmeticException {
+        Memory memory = currentProgram.getMemory();
+        MemoryBlock block = memory.getBlock(addr);
+        long sectionOffset = addr.getOffsetAsBigInteger()
+                           .subtract(block.getStart().getOffsetAsBigInteger())
+                           .longValueExact();
+        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset()
+                      + sectionOffset;
+        if (physAddr < 0) {
+            throw new ArithmeticException();
+        }
+        return physAddr;
+    }
+
+    /**
     * Refines the executable region by identifying code, data, and padding blocks.
     */
     private Regions getRegions(Listing listing, Address lower, Address upper) {
@@ -126,6 +143,8 @@ public class ExtractExecutableRegions extends HeadlessScript {
         Address current = lower;
         Address regionStart = null;
         String currentType = null;
+        long lowerPhysAddress;
+        long upperPhysAddress;
         
         while (current.compareTo(upper) <= 0) {
             Instruction instruction = listing.getInstructionAt(current);
@@ -145,7 +164,9 @@ public class ExtractExecutableRegions extends HeadlessScript {
             
             if (currentType == null || !currentType.equals(type)) {
                 if (regionStart != null) {
-                    Bounds bounds = new Bounds(regionStart.getOffset(), current.subtract(1).getOffset());
+                    lowerPhysAddress = virtualAddressToPhysicalAddress(regionStart);
+                    upperPhysAddress = virtualAddressToPhysicalAddress(current.subtract(1));
+                    Bounds bounds = new Bounds(lowerPhysAddress, upperPhysAddress);
                     switch (currentType) {
                         case "CODE":
                             codeBounds.add(bounds);
@@ -165,7 +186,9 @@ public class ExtractExecutableRegions extends HeadlessScript {
         
         // Handle the last region
         if (regionStart != null && currentType != null) {
-            Bounds bounds = new Bounds(regionStart.getOffset(), upper.getOffset());
+            lowerPhysAddress = virtualAddressToPhysicalAddress(regionStart);
+            upperPhysAddress = virtualAddressToPhysicalAddress(upper);
+            Bounds bounds = new Bounds(lowerPhysAddress, upperPhysAddress);
             switch (currentType) {
                 case "CODE":
                     codeBounds.add(bounds);
