@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=debug-lift
+#SBATCH --job-name=lift-0
 #SBATCH --account=admalware
-#SBATCH --partition=debug
+#SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
-#SBATCH --time=00-00:20:00
+#SBATCH --time=00-01:00:00
 #SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -16,32 +16,6 @@
 #   > sbatch --array=0-511 run/lift.sh       # Debug 000-0ff
 #   > sbatch --array=0,4095 run/lift.sh      # Debug 000,00f
 #   > sbatch --array=450,512-4095%512 run/lift.sh
-#
-# CLEANUP
-# -------
-#   ALL:
-#     rm /home/lk3591/Documents/code/RawByteClf/logs/lift_*.out
-#     rm /home/lk3591/Documents/code/RawByteClf/logsGhidra/*.log
-#   RC:
-#     INT: rm -rf /scratch/lk3591/disassembled/*
-#     INT: rm -rf /scratch/lk3591/decompiled/*
-#     FIN: rm -rf /shared/rc/admalware/Sorel/disassembled/*
-#     FIN: rm -rf /shared/rc/admalware/Sorel/decompiled/*
-#   ARMITAGE:
-#     INT:
-#     INT:
-#     FIN: rm -rf /home/lk3591/Documents/datasets/Sorel/disassembled/*
-#     FIN: rm -rf /home/lk3591/Documents/datasets/Sorel/decompiled/*
-#   LAB:
-#     INT: rm -rf /home/lk3591/Documents/datasets/Sorel/disassembled/*
-#     INT: rm -rf /home/lk3591/Documents/datasets/Sorel/decompiled/*
-#     FIN: rm -rf /media/lk3591/easystore/datasets/Sorel/disassembled/*
-#     FIN: rm -rf /media/lk3591/easystore/datasets/Sorel/decompiled/*
-#
-# OPTIMIZATIONS
-#  - write Ghidra log file in /scratch instead of /home
-#  - archive output files in /scratch before transferring to /shared
-#    - adjust checkpointing system to read contents of archives
 #
 # NOTES
 # -----
@@ -59,33 +33,6 @@
 #       modestly small values (100M) the analysis begins, but crashes partially through
 #       with an error "OutOfMemoryError: Java heap space" and analyzeHeadless returns 1.
 # - 130: keyboard interrupt
-#
-# PERFORMANCE
-# -----------
-#   ALL: --time=00-06:00:00, --mem=16G, --nodes=1
-#   ---------------------------------------------
-#   A: --ntasks=1, --cpus-per-task=1, MAXMEM=2G
-#   B: --ntasks=2, --cpus-per-task=2, MAXMEM=2G
-#   C: --ntasks=1, --cpus-per-task=4, MAXMEM=2G
-#   D: --ntasks=4, --cpus-per-task=1, MAXMEM=2G
-#   E: --ntasks=2, --cpus-per-task=4, MAXMEM=2G
-#   F: --ntasks=4, --cpus-per-task=2, MAXMEM=2G
-#   G: --ntasks=3, --cpus-per-task=4, MAXMEM=2G
-#   H: --ntasks=4, --cpus-per-task=3, MAXMEM=2G
-#   -------------------------------------------
-#   I: --ntasks=1, --cpus-per-task=1, MAXMEM=4G
-#   J: --ntasks=2, --cpus-per-task=2, MAXMEM=4G
-#   K: --ntasks=1, --cpus-per-task=4, MAXMEM=4G
-#   L: --ntasks=4, --cpus-per-task=1, MAXMEM=4G
-#   M: --ntasks=2, --cpus-per-task=4, MAXMEM=4G
-#   N: --ntasks=4, --cpus-per-task=2, MAXMEM=4G
-#   O: --ntasks=3, --cpus-per-task=4, MAXMEM=4G
-#   P: --ntasks=4, --cpus-per-task=3, MAXMEM=4G
-#   -------------------------------------------
-#   Q: --ntasks=1, --cpus-per-task=1, MAXMEM=100M
-#
-#   Based on the experiments above, it seems that Ghidra seems to perform SLIGHTLY
-#   better when --cpus-per-task > 1.
 
 
 get_time_limit() {
@@ -167,13 +114,13 @@ fi
 echo "SYSTEM: $SYSTEM"
 
 if [[ "$SYSTEM" == "RC" ]]; then
-  P_FIN="/shared/rc/admalware/Sorel"
+  P_FIN="/shared/rc/admalware/Sorel/ghidra"
   P_TMP="/tmp"
 elif [[ "$SYSTEM" == "ARMITAGE" ]]; then
-  P_FIN="/home/lk3591/Documents/datasets/Sorel"
+  P_FIN="/home/lk3591/Documents/datasets/Sorel/ghidra"
   P_TMP="$P_FIN/tmp"
 elif [[ "$SYSTEM" == "LAB" ]]; then
-  P_FIN="/media/lk3591/easystore/datasets/Sorel"
+  P_FIN="/media/lk3591/easystore/datasets/Sorel/ghidra"
   P_TMP="/home/lk3591/Documents/datasets/Sorel/tmp"
 fi
 
@@ -187,6 +134,7 @@ if [[ ! -d "$P_TMP" ]]; then
   echo "Error: Directory P_TMP $P_TMP does not exist. Exiting."
   exit 1
 fi
+P_TMP="$P_TMP/lk3591"
 echo "P_TMP: $P_TMP"
 
 # Define and create FIN directories.
@@ -195,16 +143,19 @@ p_fin_dis="$P_FIN/disassembled/$HH"
 p_fin_dec="$P_FIN/decompiled/$HH"
 p_fin_reg="$P_FIN/regions/$HH"
 p_fin_log="$P_FIN/ghidraLogs/$HH"
+p_fin_ghi="$P_FIN/ghidraLocation/$HHH"
 mkdir -p "$p_fin_arc"
 mkdir -p "$p_fin_dis"
 mkdir -p "$p_fin_dec"
 mkdir -p "$p_fin_reg"
 mkdir -p "$p_fin_log"
+mkdir -p "$p_fin_ghi"
 echo "p_fin_arc: $p_fin_arc"
 echo "p_fin_dis: $p_fin_dis"
 echo "p_fin_dec: $p_fin_dec"
 echo "p_fin_reg: $p_fin_reg"
 echo "p_fin_log: $p_fin_log"
+echo "p_fin_ghi: $p_fin_ghi"
 
 # Define and create TMP directories.
 p_tmp_arc="$P_TMP/archived/$HHH"
@@ -213,7 +164,7 @@ p_tmp_dec="$P_TMP/decompiled/$HHH"
 p_tmp_reg="$P_TMP/regions/$HHH"
 p_tmp_log="$P_TMP/ghidraLogs/$HHH"
 p_tmp_bin="$P_TMP/binaries/$HHH"
-p_tmp_ghi="$P_TMP/ghidra/$HHH"
+p_tmp_ghi="$P_TMP/ghidraLocation/$HHH"
 rm -rf "$p_tmp_arc"
 rm -rf "$p_tmp_dis"
 rm -rf "$p_tmp_dec"
@@ -241,9 +192,18 @@ t_d=$(echo "$t_setup - $t_start" | bc)
 printf "Set up time: %.6f seconds\n" $t_d
 
 # Copy and extract binaries into the temporary directory.
+echo "Copying and extracting binaries."
 cp "$p_fin_arc/$HHH.zip" "$p_tmp_arc/$HHH.zip"
 unzip -q -j "$p_tmp_arc/$HHH.zip" -d "$p_tmp_bin/"
 rm "$p_tmp_arc/$HHH.zip"
+
+# Copy and extract the ghidra project into the temporary directory
+if [ -f "$p_fin_ghi/$HHH.zip" ]; then
+  echo "Copying and extracting an existing ghidra project."
+  cp "$p_fin_ghi/$HHH.zip" "$p_tmp_ghi/$HHH.zip"
+  unzip -q "$p_tmp_ghi/$HHH.zip" -d "$p_tmp_ghi/"
+  rm "$p_tmp_ghi/$HHH.zip"
+fi
 
 t_extract=$(date +%s.%N)
 t_d=$(echo "$t_extract - $t_setup" | bc)
@@ -326,13 +286,14 @@ echo "Lifting $cnt files totaling $siz."
 
 p_log="$p_tmp_log/$HHH.$counter.log"
 t_ghidra=$(date +%s.%N)
-timeout=$(echo "scale=0; ($TIME - ($t_ghidra - $t_start) - $TIME_FOR_CLEANUP) + 0.5 / 1" | bc)
+timeout=$(echo "$TIME - ($t_ghidra - $t_start) - $TIME_FOR_CLEANUP" | bc)
 echo "Running analyzeHeadless for $timeout seconds and logging to $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
 timeout $timeout analyzeHeadless \
   "$p_tmp_ghi" \
-  "lift" \
+  "$HHH" \
+  -overwrite \
   -recursive \
   -log "$p_log" \
   -processor $PROCESSOR \
@@ -375,14 +336,32 @@ t_d=$(echo "$t_cleanup - $t_extract" | bc)
 printf "Ghidra time: %.6f seconds\n" $t_d
 
 # Print number of files disassembled and decompiled.
-cnt=$(find "$p_tmp_dis" -type f | wc -l)
-siz=$(du -shc "$p_tmp_dis"/* | grep total | awk '{print $1}')
+
+if [ "$(find "$p_tmp_dis" -mindepth 1 -print -quit)" ]; then
+  cnt=$(find "$p_tmp_dis" -type f | wc -l)
+  siz=$(du -shc "$p_tmp_dis"/* | grep total | awk '{print $1}')
+else
+  cnt=0
+  siz=0
+fi
 echo "Disassembled $cnt files totaling $siz."
-cnt=$(find "$p_tmp_dec" -type f | wc -l)
-siz=$(du -shc "$p_tmp_dec"/* | grep total | awk '{print $1}')
+
+if [ "$(find "$p_tmp_dec" -mindepth 1 -print -quit)" ]; then
+  cnt=$(find "$p_tmp_dec" -type f | wc -l)
+  siz=$(du -shc "$p_tmp_dec"/* | grep total | awk '{print $1}')
+else
+  cnt=0
+  siz=0
+fi
 echo "Decompiled $cnt files totaling $siz."
-cnt=$(wc -l "$p_tmp_reg/$HHH.jsonl")
-siz=$(du -shc "$p_tmp_reg/$HHH.jsonl" | grep total | awk '{print $1}')
+
+if [ -f "$p_tmp_reg/$HHH.jsonl" ]; then
+  cnt=$(wc -l "$p_tmp_reg/$HHH.jsonl" | awk '{print $1}')
+  siz=$(du -shc "$p_tmp_reg/$HHH.jsonl" | grep total | awk '{print $1}')
+else
+  cnt=0
+  siz=0
+fi
 echo "Regioned $cnt files totaling $siz."
 
 # Compress the lifted files and move to final storage.
@@ -396,6 +375,11 @@ for f in "$p_tmp_log"/*; do
     cat $f >> "$p_fin_log/$HHH.log"
 done
 cat "$p_tmp_reg/$HHH.jsonl" >> "$p_fin_reg/$HHH.jsonl"
+
+# Update the existing ghidra location cache thing.
+pushd "$p_tmp_ghi"
+zip -9 -r -q -u "$p_fin_ghi/$HHH.zip" "."
+popd
 
 t_transfer=$(date +%s.%N)
 t_d=$(echo "$t_transfer - $t_cleanup" | bc)
