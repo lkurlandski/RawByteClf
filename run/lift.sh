@@ -4,7 +4,7 @@
 #SBATCH --account=admalware
 #SBATCH --partition=debug
 #SBATCH --output=./logs/%x_%A_%a.out
-#SBATCH --time=00-12:00:00
+#SBATCH --time=00-00:20:00
 #SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -87,6 +87,36 @@
 #   Based on the experiments above, it seems that Ghidra seems to perform SLIGHTLY
 #   better when --cpus-per-task > 1.
 
+
+get_time_limit() {
+  job_id=$SLURM_JOB_ID
+  time_limit=$(scontrol show job "$job_id" | grep -oP 'TimeLimit=\K[^\s]+')
+
+  if [[ $time_limit == "UNLIMITED" ]]; then
+    echo 0
+    return
+  fi
+
+  # Handle the case where the time limit is in D-HH:MM:SS format
+  if [[ $time_limit == *-* ]]; then
+    days=$(echo $time_limit | cut -d'-' -f1)
+    hms=$(echo $time_limit | cut -d'-' -f2)
+  else
+     days=0
+     hms=$time_limit
+  fi
+
+  # Extract hours, minutes, and seconds
+  hours=$(echo $hms | cut -d':' -f1)
+  minutes=$(echo $hms | cut -d':' -f2)
+  seconds=$(echo $hms | cut -d':' -f3)
+
+  # Convert the time limit to total seconds
+  total_seconds=$((days * 86400 + hours * 3600 + minutes * 60 + seconds))
+  echo $total_seconds
+}
+
+
 HHH=$(printf "%03x" "$SLURM_ARRAY_TASK_ID")
 HH="${HHH:0:2}"
 echo "HHH: $HHH"
@@ -94,16 +124,15 @@ echo "HH: $HH"
 
 # Establish some timing variables.
 t_start=$(date +%s.%N)
-HOUR=12
-TIME=$(( HOUR * 60 * 60 ))
-TIME_FOR_CLEANUP=43100 # FIXME 3600
-if [ "$HOUR" -le 0 ] || [ "$TIME" -le 0 ]; then
-  echo "Error: HOURS and TIME must both be greater than 0."
+TIME=$(get_time_limit)
+TIME_FOR_CLEANUP=900
+if [ "$TIME" -le 0 ] || [ "$TIME_FOR_CLEANUP" -le 0 ] || [ "$TIME" -le "$TIME_FOR_CLEANUP" ]; then
+  echo "Error: TIME and TIME_FOR_CLEANUP must be greater than 0 and TIME greater than TIME_FOR_CLEANUP."
   exit 1
 fi
-echo "HOUR: $HOUR"
 echo "TIME: $TIME"
 echo "TIME_FOR_CLEANUP: $TIME_FOR_CLEANUP"
+
 
 # Configuration for Ghidra's headless analyzer and timeout values for the scripts.
 TIMEOUT_PER_FILE_ANALYSIS="300"
@@ -114,6 +143,7 @@ TIMEOUT_PER_FUNC_DISASSEMBLY="30"
 TIMEOUT_PER_FUNC_DECOMPILATION="60"
 PROCESSOR="x86:LE:32:default"
 LOADER="PeLoader"
+MAXMEM=$(grep "MAXMEM=" ~/lib/ghidra_11.1.2_PUBLIC/support/analyzeHeadless | sed 's/.*MAXMEM=\(.*\)/\1/')
 echo "TIMEOUT_PER_FILE_ANALYSIS: $TIMEOUT_PER_FILE_ANALYSIS"
 echo "TIMEOUT_PER_FILE_REGIONING: $TIMEOUT_PER_FILE_REGIONING"
 echo "TIMEOUT_PER_FILE_DISASSEMBLY: $TIMEOUT_PER_FILE_DISASSEMBLY"
@@ -122,6 +152,7 @@ echo "TIMEOUT_PER_FUNC_DISASSEMBLY: $TIMEOUT_PER_FUNC_DISASSEMBLY"
 echo "TIMEOUT_PER_FUNC_DECOMPILATION: $TIMEOUT_PER_FUNC_DECOMPILATION"
 echo "PROCESSOR: $PROCESSOR"
 echo "LOADER: $LOADER"
+echo "MAXMEM: $MAXMEM"
 
 # Determine which computer we're running on and set base paths accordingly.
 #   P_FIN: long-term storage with possibly slow I/O
@@ -295,7 +326,7 @@ echo "Lifting $cnt files totaling $siz."
 
 p_log="$p_tmp_log/$HHH.$counter.log"
 t_ghidra=$(date +%s.%N)
-timeout=$(echo "$TIME - ($t_ghidra - $t_start) - $TIME_FOR_CLEANUP" | bc)
+timeout=$(echo "scale=0; ($TIME - ($t_ghidra - $t_start) - $TIME_FOR_CLEANUP) + 0.5 / 1" | bc)
 echo "Running analyzeHeadless for $timeout seconds and logging to $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
