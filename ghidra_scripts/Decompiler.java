@@ -72,17 +72,25 @@ public class Decompiler extends Lifter {
         }
 
         if (decompiledCode.contains(signatureCur)) {
-            String tmpPattern = Pattern.quote(signatureCur);
-            return decompiledCode.replaceFirst(tmpPattern, signature);
-        }
+            return decompiledCode.replaceFirst(Pattern.quote(signatureCur), signature);
+	}
 
         validateDecompiledCode(decompiledCode);
 
         String argumentsTall = decompiledCode.substring(decompiledCode.indexOf("("), decompiledCode.indexOf(")") + 1);
         String argumentsFlat = signatureCur.substring(signatureCur.indexOf("("), signatureCur.indexOf(")") + 1);
-        
+
+        if (!decompiledCode.contains(argumentsTall)) {
+            throw new Exception("Anomalous function signature detected.");
+        }
         decompiledCode = decompiledCode.replaceFirst(Pattern.quote(argumentsTall), argumentsFlat);
-        return decompiledCode.replaceFirst(Pattern.quote(signatureCur), signature);
+
+        if (!decompiledCode.contains(signatureCur)) {
+            throw new Exception("Anomalous function signature detected.");
+        }
+        decompiledCode = decompiledCode.replaceFirst(Pattern.quote(signatureCur), signature);
+
+        return decompiledCode;
     }
 
     private void validateDecompiledCode(String decompiledCode) throws Exception {
