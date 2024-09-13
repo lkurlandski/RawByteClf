@@ -58,7 +58,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
         Memory memory = currentProgram.getMemory();
         Listing listing = currentProgram.getListing();
 
-	List<Bounds> execBounds = new ArrayList<>();
+        List<Bounds> execBounds = new ArrayList<>();
         List<Bounds> codeBounds = new ArrayList<>();
         List<Bounds> dataBounds = new ArrayList<>();
         List<Bounds> paddBounds = new ArrayList<>();
@@ -173,12 +173,17 @@ public class ExtractExecutableRegions extends HeadlessScript {
         List<Bounds> paddBounds = new ArrayList<>();
         
         // The entire region is executable
-        execBounds.add(new Bounds(lower.getOffset(), upper.getOffset()));
+        execBounds.add(
+	    new Bounds(
+                virtualAddressToPhysicalAddress(lower),
+                virtualAddressToPhysicalAddress(upper) + 1
+            )
+        );
 
         // If we're not doing the detailed analysis, just exit.
-	if (!DETAILED_SECTIONS) {
-	    return new Regions(execBounds, codeBounds, dataBounds, paddBounds);
-	}
+        if (!DETAILED_SECTIONS) {
+            return new Regions(execBounds, codeBounds, dataBounds, paddBounds);
+        }
 
         Address current = lower;
         Address regionStart = null;
@@ -206,7 +211,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
                 if (regionStart != null) {
                     lowerPhysAddress = virtualAddressToPhysicalAddress(regionStart);
                     upperPhysAddress = virtualAddressToPhysicalAddress(current.subtract(1));
-                    Bounds bounds = new Bounds(lowerPhysAddress, upperPhysAddress);
+                    Bounds bounds = new Bounds(lowerPhysAddress, upperPhysAddress + 1);
                     switch (currentType) {
                         case "CODE":
                             codeBounds.add(bounds);
@@ -228,7 +233,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
         if (regionStart != null && currentType != null) {
             lowerPhysAddress = virtualAddressToPhysicalAddress(regionStart);
             upperPhysAddress = virtualAddressToPhysicalAddress(upper);
-            Bounds bounds = new Bounds(lowerPhysAddress, upperPhysAddress);
+            Bounds bounds = new Bounds(lowerPhysAddress, upperPhysAddress + 1);
             switch (currentType) {
                 case "CODE":
                     codeBounds.add(bounds);
