@@ -4,6 +4,7 @@
 
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import ghidra.app.decompiler.DecompiledFunction;
@@ -44,7 +45,7 @@ public class Decompiler extends Lifter {
             DecompiledFunction decompiledFunc = results.getDecompiledFunction();
             String decompiledCode = decompiledFunc.getC();
             if (REPLACE_SIGNATURE) {
-                decompiledCode = replaceSignature(decompiledFunc, decompiledCode, signature);
+                decompiledCode = replaceSignature(decompiledCode, signature);
             }
             return decompiledCode;
         }
@@ -64,58 +65,21 @@ public class Decompiler extends Lifter {
         return signature + "\n{\n\n/* " + message + " */\n}\n\n";
     }
 
-    private String replaceSignature(DecompiledFunction decompiledFunc, String decompiledCode, String signature) throws Exception {
-        String signatureCur = decompiledFunc.getSignature();
-        signatureCur = signatureCur.substring(0, signatureCur.indexOf(";"));
-        if (signatureCur.contains("\n")) {
-            throw new Exception("Anomalous function signature detected.");
+    public String replaceSignature(String decompiledCode, String newSignature) throws Exception {
+        // Define a regex pattern that captures a function signature. It allows for varying spaces/newlines.
+        String functionSignaturePattern = "(?s)(\\b[\\w\\s*]+\\s+)?(\\w+\\s*\\(.*?\\))";
+
+        // Compile the regex pattern
+        Pattern pattern = Pattern.compile(functionSignaturePattern);
+        Matcher matcher = pattern.matcher(decompiledCode);
+
+        // Find the first match and replace it with the new signature
+        if (matcher.find()) {
+            String originalSignature = matcher.group(1);
+            return matcher.replaceFirst(Matcher.quoteReplacement(newSignature));
         }
-
-        if (decompiledCode.contains(signatureCur)) {
-            return decompiledCode.replaceFirst(Pattern.quote(signatureCur), signature);
-	}
-
-        validateDecompiledCode(decompiledCode);
-
-        String argumentsTall = decompiledCode.substring(decompiledCode.indexOf("("), decompiledCode.indexOf(")") + 1);
-        String argumentsFlat = signatureCur.substring(signatureCur.indexOf("("), signatureCur.indexOf(")") + 1);
-
-        if (!decompiledCode.contains(argumentsTall)) {
-            throw new Exception("Anomalous function signature detected.");
-        }
-        decompiledCode = decompiledCode.replaceFirst(Pattern.quote(argumentsTall), argumentsFlat);
-
-        if (!decompiledCode.contains(signatureCur)) {
-            throw new Exception("Anomalous function signature detected.");
-        }
-        decompiledCode = decompiledCode.replaceFirst(Pattern.quote(signatureCur), signature);
-
-        return decompiledCode;
-    }
-
-    private void validateDecompiledCode(String decompiledCode) throws Exception {
-        boolean encounteredOpenParenthesis = false;
-        boolean encounteredCloseParenthesis = false;
-        for (int i = 0; i < decompiledCode.length(); i++) {
-            char currentChar = decompiledCode.charAt(i);
-            if (currentChar == '(') {
-                if (encounteredOpenParenthesis) {
-                    throw new Exception("Anomalous function signature detected.");
-                }
-                encounteredOpenParenthesis = true;
-            } else if (currentChar == ')') {
-                if (encounteredCloseParenthesis) {
-                    throw new Exception("Anomalous function signature detected.");
-                }
-                encounteredCloseParenthesis = true;
-            } else if (currentChar == '{') {
-                if (!(encounteredOpenParenthesis && encounteredCloseParenthesis)) {    
-                    throw new Exception("Anomalous function signature detected.");
-                }
-                break;
-            } else if (i == decompiledCode.length() - 1) {
-                throw new Exception("Anomalous function signature detected.");
-            }
-        }
+        println("replaceSignature: newSignature=" + newSignature);
+        println("replaceSignature: decompiledCode=" + decompiledCode);
+        throw new Exception("Failed to replace the signature.");
     }
 }
