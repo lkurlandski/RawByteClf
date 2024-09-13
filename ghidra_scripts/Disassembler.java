@@ -26,17 +26,11 @@ public class Disassembler extends Lifter {
     protected void run() throws Exception {
 
         this.bitSize = currentProgram.getLanguage().getDefaultSpace().getSize();
-        if (this.bitSize == 16) {
-            this.bitMult = 1;
-        } else if (this.bitSize == 32) {
-            this.bitMult = 2;
-        } else if (this.bitSize == 64) {
-            this.bitMult = 4;
-        } else {
-            throw new IllegalArgumentException("Invalid word size: size=" + String.valueOf(this.bitSize));
-        }
-	this.unknownAddressStr = "?".repeat(this.bitMult * 4);
-
+        this.bitMult = (int) (this.bitSize / 16);
+        this.unknownAddressStr = "?".repeat(this.bitMult * 4);
+        println("run: bitSize=" + String.valueOf(this.bitSize));
+        println("run: bitMult=" + String.valueOf(this.bitMult));
+        println("run: unknownAddressStr=" + String.valueOf(this.unknownAddressStr));
         super.run();
     }
 
@@ -50,6 +44,9 @@ public class Disassembler extends Lifter {
         return ".asm";
     }
 
+    /**
+     * Disassemble a function.
+    */
     private String disassembleFunction(Function func) throws MemoryAccessException, IllegalArgumentException {
 
         Address funcAddr = func.getEntryPoint();
@@ -76,47 +73,41 @@ public class Disassembler extends Lifter {
         return disassembledCode;
     }
 
+    /**
+     * Get the section name an instruction lies in.
+    */
     private String getSectionName(Instruction inst) {
         return inst.getAddressString(true, true).split(":")[0];
     }
 
+    /**
+     * Get the physical address of an instruction.
+    */
     private String getPhysicalAddress(Instruction inst) {
         Address virtAddr = inst.getAddress();
-	long physAddr;
-	try {
-	    physAddr = virtualAddressToPhysicalAddress(virtAddr);
-	} catch (ArithmeticException e) {
+        long physAddr;
+        try {
+            physAddr = virtualAddressToPhysicalAddress(virtAddr);
+        } catch (ArithmeticException e) {
             return this.unknownAddressStr;
         }
 
-	if (physAddr > 4294967295L) {
-	    return this.unknownAddressStr;
-	}
+        if (physAddr > 4294967295L) {
+            return this.unknownAddressStr;
+        }
         return String.format("%08x", physAddr);
     }
 
-
     /**
-    * Convert a virtual address to a physical one.
+     * Get the virtual address of an instruction.
     */
-    private long virtualAddressToPhysicalAddress(Address addr) throws ArithmeticException {
-        Memory memory = currentProgram.getMemory();
-        MemoryBlock block = memory.getBlock(addr); 
-	long sectionOffset = addr.getOffsetAsBigInteger()
-		           .subtract(block.getStart().getOffsetAsBigInteger())
-			   .longValueExact();
-	long physAddr = block.getSourceInfos().get(0).getFileBytesOffset()
-		      + sectionOffset;
-	if (physAddr < 0) {
-	    throw new ArithmeticException();
-	}
-	return physAddr;
-    }
-
     private String getVirtualAddress(Instruction inst) {
         return inst.getAddressString(true, true).split(":")[1];
     }
 
+    /**
+     * Get the bytes of an instruction.
+    */
     private String getBytes(Instruction inst) throws MemoryAccessException {
         byte[] bytes = inst.getBytes();
         StringBuilder sb = new StringBuilder();
@@ -126,30 +117,61 @@ public class Disassembler extends Lifter {
         return sb.toString().trim();
     }
 
+    /**
+     * Get the instructions of an instruction.
+    */
     private String getInstruction(Instruction inst) {
         return inst.toString();
     }
 
+    /**
+     * Format the components of an instruction into a single string.
+    */
     private String formatInstruction(String sectionName, String physAddr, String virtAddr, String bytes, String instruction) throws IllegalArgumentException {
 
-        if (sectionName.length() > 8) {  // 8 characters for the section name.
+        // 8 characters for the section name.
+        if (sectionName.length() > 8) {
             sectionName = sectionName.substring(0, 8);
         }
-        if (physAddr.length() > this.bitMult * 4) {  // Maximum for `size`-bit address space.
-            throw new IllegalArgumentException("StringTooLong: physAddr=" + physAddr);
+        // Maximum for `size`-bit address space.
+        if (physAddr.length() > this.bitMult * 4) {
+            println("formatInstruction: physAddr=" + physAddr);
+            throw new IllegalArgumentException("StringTooLong");
         }
-        if (virtAddr.length() > this.bitMult * 4) {  // Maximum for `size`-bit address space.
-            throw new IllegalArgumentException("StringTooLong: virtAddr=" + virtAddr);
+        // Maximum for `size`-bit address space.
+        if (virtAddr.length() > this.bitMult * 4) {
+            println("formatInstruction: virtAddr=" + virtAddr);
+            throw new IllegalArgumentException("StringTooLong");
         }
-        if (bytes.length() > 48) {  // 48 characters for up to 15 bytes per instruction.
-            throw new IllegalArgumentException("StringTooLong: bytes=" + bytes);
+        // 48 characters for up to 15 bytes per instruction.
+        if (bytes.length() > 48) {
+            println("formatInstruction: bytes=" + bytes);
+            throw new IllegalArgumentException("StringTooLong");
         }
 
         String format = "%-8s\t%-"
-		      + String.valueOf(this.bitMult * 4)
-		      + "s\t%-"
-		      + String.valueOf(this.bitMult * 4)
-		      + "s\t%-48s\t%s\n";
+                      + String.valueOf(this.bitMult * 4)
+                      + "s\t%-"
+                      + String.valueOf(this.bitMult * 4)
+                      + "s\t%-48s\t%s\n";
+
         return String.format(format, sectionName,  physAddr, virtAddr, bytes, instruction);
+    }
+
+    /**
+    * Convert a virtual address to a physical one.
+    */
+    private long virtualAddressToPhysicalAddress(Address addr) throws ArithmeticException {
+        Memory memory = currentProgram.getMemory();
+        MemoryBlock block = memory.getBlock(addr); 
+        long sectionOffset = addr.getOffsetAsBigInteger()
+                           .subtract(block.getStart().getOffsetAsBigInteger())
+                           .longValueExact();
+        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset()
+                      + sectionOffset;
+        if (physAddr < 0) {
+            throw new ArithmeticException();
+        }
+        return physAddr;
     }
 }

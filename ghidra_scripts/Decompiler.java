@@ -37,6 +37,9 @@ public class Decompiler extends Lifter {
         return ".c";
     }
 
+    /**
+     * Decompile a function.
+    */ 
     private String decompileFunction(Function func) throws Exception {
         DecompileResults results = decompInterface.decompileFunction(func, this.timeoutPerFunc, null);
         String signature = func.getPrototypeString(FORMAL_SIGNATURE, INCLUDE_CALLING_CONVENTION);
@@ -65,6 +68,9 @@ public class Decompiler extends Lifter {
         return signature + "\n{\n\n/* " + message + " */\n}\n\n";
     }
 
+    /**
+     * Replace the signature from DecompiledFunction.getC() with the singature from Function.getPrototypeString().
+    */ 
     public String replaceSignature(String decompiledCode, String newSignature) throws Exception {
         // Define a regex pattern that captures a function signature. It allows for varying spaces/newlines.
         String functionSignaturePattern = "(?s)(\\b[\\w\\s*]+\\s+)?(\\w+\\s*\\(.*?\\))";

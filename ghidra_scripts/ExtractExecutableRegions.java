@@ -23,7 +23,6 @@ import ghidra.program.model.lang.Language;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
-import ghidra.program.model.listing.Program;
 
 public class ExtractExecutableRegions extends HeadlessScript {
 
@@ -46,14 +45,15 @@ public class ExtractExecutableRegions extends HeadlessScript {
         String[] scriptArgs = getAndValidateScriptArgs();
         String outputFileName = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
+        String programName = getProgramName();
         println("run: outputFileName=" + outputFileName);
         println("run: timeoutPerFile=" + String.valueOf(this.timeoutPerFile));
+        println("run: programName=" + programName);
 
-        runMainWorker(outputFileName);
+        runMainWorker(outputFileName, programName);
     }
 
-    private void MainWorker(String outputFileName) throws Exception {
-        String programName = getProgramName(currentProgram);
+    private void MainWorker(String outputFileName, String programName) throws Exception {
 
         Memory memory = currentProgram.getMemory();
         Listing listing = currentProgram.getListing();
@@ -75,9 +75,9 @@ public class ExtractExecutableRegions extends HeadlessScript {
             }
         }
 
-	Regions allRegions = new Regions(execBounds, codeBounds, dataBounds, paddBounds);
+        Regions allRegions = new Regions(execBounds, codeBounds, dataBounds, paddBounds);
         String allRegionsStr = regionsToJson(allRegions);
-	String outputStr = "{"
+        String outputStr = "{"
                          + "\"sha\": " + "\"" + programName + "\""
                          + ", "
                          + "\"regions\": " + allRegionsStr 
@@ -93,10 +93,10 @@ public class ExtractExecutableRegions extends HeadlessScript {
     /**
     * Wraps the main function in a timeout construct.
     */
-    private void runMainWorker(String outputFileName) throws Exception {
+    private void runMainWorker(String outputFileName,  String programName) throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Callable<Void> task = () -> {
-            MainWorker(outputFileName);
+            MainWorker(outputFileName, programName);
             return null;
         };
         Future<Void> future = executor.submit(task);
@@ -120,6 +120,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
     private String[] getAndValidateScriptArgs() {
         String[] scriptArgs = getScriptArgs();
         if (scriptArgs == null || scriptArgs.length < 2) {
+            println("getAndValidateScriptArgs: scriptArgs=" + String.join(", ", scriptArgs));
             throw new IllegalArgumentException("Error: outputFile, timeoutPerFile required.");
         }
         return scriptArgs;
@@ -128,20 +129,19 @@ public class ExtractExecutableRegions extends HeadlessScript {
     /**
      * Get the name of this file, excluding the extension, i.e., the SHA-256.
     */
-    private String getProgramName(Program program) {
-        String programName = program.getName();
+    private String getProgramName() {
+        String programName = currentProgram.getName();
         if (programName.contains(".")) {
             programName = programName.substring(0, programName.lastIndexOf('.'));
         }
-        println("run: programName=" + programName);
         return programName;
     }
 
     /**
      * Check if the program is a PE file.
     */ 
-    private boolean isPEFile(Program program) {
-        Language language = program.getLanguage();
+    private boolean isPEFile() {
+        Language language = currentProgram.getLanguage();
         String languageId = language.getLanguageID().getIdAsString().toLowerCase();
         return languageId.contains("x86") || languageId.contains("x64");
     }
@@ -171,10 +171,10 @@ public class ExtractExecutableRegions extends HeadlessScript {
         List<Bounds> codeBounds = new ArrayList<>();
         List<Bounds> dataBounds = new ArrayList<>();
         List<Bounds> paddBounds = new ArrayList<>();
-        
+
         // The entire region is executable
         execBounds.add(
-	    new Bounds(
+        new Bounds(
                 virtualAddressToPhysicalAddress(lower),
                 virtualAddressToPhysicalAddress(upper) + 1
             )
@@ -190,12 +190,12 @@ public class ExtractExecutableRegions extends HeadlessScript {
         String currentType = null;
         long lowerPhysAddress;
         long upperPhysAddress;
-        
+
         while (current.compareTo(upper) <= 0) {
             Instruction instruction = listing.getInstructionAt(current);
             boolean isData = listing.getDataAt(current) != null;
             String type;
-            
+
             if (instruction != null) {
                 type = "CODE";
                 current = instruction.getMaxAddress().next();
@@ -206,7 +206,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
                 type = "PADD";
                 current = current.next();
             }
-            
+
             if (currentType == null || !currentType.equals(type)) {
                 if (regionStart != null) {
                     lowerPhysAddress = virtualAddressToPhysicalAddress(regionStart);
@@ -228,7 +228,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
                 currentType = type;
             }
         }
-        
+
         // Handle the last region
         if (regionStart != null && currentType != null) {
             lowerPhysAddress = virtualAddressToPhysicalAddress(regionStart);
@@ -246,10 +246,10 @@ public class ExtractExecutableRegions extends HeadlessScript {
                     break;
             }
         }
-        
+
         return new Regions(execBounds, codeBounds, dataBounds, paddBounds);
     }
-    
+
     /**
      * Convert regions to JSON string.
     */
@@ -303,17 +303,17 @@ public class ExtractExecutableRegions extends HeadlessScript {
      * Helper struct that contains the boundaries of the different types of regions.
     */
     private static class Regions {
-	List<Bounds> execBounds;
+        List<Bounds> execBounds;
         List<Bounds> codeBounds;
         List<Bounds> dataBounds;
         List<Bounds> paddBounds;
 
         Regions(List<Bounds> execBounds, List<Bounds> codeBounds,
-		List<Bounds> dataBounds, List<Bounds> paddBounds) {
+                List<Bounds> dataBounds, List<Bounds> paddBounds) {
             this.execBounds = execBounds;
             this.codeBounds = codeBounds;
             this.dataBounds = dataBounds;
             this.paddBounds = paddBounds;
-	}
-    }    
+        }
+    }
 }

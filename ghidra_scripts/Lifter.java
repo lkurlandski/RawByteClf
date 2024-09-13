@@ -16,7 +16,6 @@ import java.util.concurrent.TimeUnit;
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
-import ghidra.program.model.listing.Program;
 
 public abstract class Lifter extends HeadlessScript {
 
@@ -42,28 +41,25 @@ public abstract class Lifter extends HeadlessScript {
         println("run: REQUIRE_HEADLESS_ANALYSIS_COMPLETE=" + REQUIRE_HEADLESS_ANALYSIS_COMPLETE);
         println("run: analysisTimeoutOccurred()=" + analysisTimeoutOccurred());
 
-	if (REQUIRE_HEADLESS_ANALYSIS_COMPLETE && !analysisTimeoutOccurred()) {
+        if (REQUIRE_HEADLESS_ANALYSIS_COMPLETE && !analysisTimeoutOccurred()) {
             println("run: skipped.");
-	    return;
+            return;
         }
-        
+
         String[] scriptArgs = getAndValidateScriptArgs();
         this.outputDir = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
         this.timeoutPerFunc = Integer.parseInt(scriptArgs[2]);
+        String programName = getProgramName();
+        String outputFileName = getOutputFileName(this.outputDir, programName);
+
         println("run: outputDir=" + this.outputDir);
         println("run: timeoutPerFile=" + String.valueOf(this.timeoutPerFile));
-        println("run: timeoutPerFunc=" + String.valueOf(this.timeoutPerFunc));
+        println("run: timeoutPerFunc=" + String.valueOf(this.timeoutPerFunc)); 
+        println("run: programName=" + programName);
+        println("run: outputFileName=" + outputFileName);
 
-        Program program = getCurrentProgram();
-        if (program == null) {
-            println("run: no program.");
-            return;
-        }
- 
-        String programName = getProgramName(program);
-        String outputFileName = getOutputFileName(this.outputDir, programName);        
-        FunctionIterator functions = getFunctions(program);
+        FunctionIterator functions = getFunctions();
         runMainWorker(functions, outputFileName);
     }
 
@@ -71,7 +67,7 @@ public abstract class Lifter extends HeadlessScript {
      * Process a single function and write the output to a file.
     */
     protected abstract String processFunction(Function func) throws Exception;
-    
+
     /**
      * Get the output file's extension, e.g., ".EXTENSION"
     */
@@ -83,6 +79,7 @@ public abstract class Lifter extends HeadlessScript {
     private String[] getAndValidateScriptArgs() {
         String[] scriptArgs = getScriptArgs();
         if (scriptArgs == null || scriptArgs.length < 3) {
+            println("getAndValidateScriptArgs: scriptArgs=" + String.join(", ", scriptArgs));
             throw new IllegalArgumentException("Error: outputDir, timeoutPerFile, timeoutPerFunc required.");
         }
         return scriptArgs;
@@ -91,12 +88,11 @@ public abstract class Lifter extends HeadlessScript {
     /**
      * Get the name of this file, excluding the extension, i.e., the SHA-256.
     */
-    private String getProgramName(Program program) {
-        String programName = program.getName();
+    private String getProgramName() {
+        String programName = currentProgram.getName();
         if (programName.contains(".")) {
             programName = programName.substring(0, programName.lastIndexOf('.'));
         }
-        println("run: programName=" + programName);
         return programName;
     }
 
@@ -106,21 +102,21 @@ public abstract class Lifter extends HeadlessScript {
     private String getOutputFileName(String outputDir, String programName) {
         File dir = new File(outputDir);
         if (!dir.exists()) {
+            println("getOutputFileName: outputDir=" + String.valueOf(outputDir));
             throw new IllegalArgumentException("Error: output directory does not exist.");
         }
         String outputFileName = outputDir + File.separator + programName + getFileExtension();
-        println("run: outputFileName=" + outputFileName);
         return outputFileName;
     }
 
     /**
      * Get an iterator of functions to process.
     */
-    private FunctionIterator getFunctions(Program program) {
+    private FunctionIterator getFunctions() {
         if (SKIP_EXTERNAL_FUNCTIONS) {
-            return program.getFunctionManager().getFunctions(true);
+            return currentProgram.getFunctionManager().getFunctions(true);
         } else {
-            return program.getListing().getFunctions(true);
+            return currentProgram.getListing().getFunctions(true);
         }
     }
 
@@ -152,11 +148,11 @@ public abstract class Lifter extends HeadlessScript {
      * Process every function and write the output of processing to a file.
     */
     private void processFunctions(FunctionIterator functions, String outputFileName) throws Exception {
-	String processedFunc;
+String processedFunc;
         try (FileWriter writer = new FileWriter(outputFileName)) {
             for (Function func : functions) {
                 processedFunc = processFunction(func);
-		writer.write(processedFunc);
+        writer.write(processedFunc);
             }
         } catch (IOException e) {
             throw e;
