@@ -40,7 +40,8 @@ get_time_limit() {
   time_limit=$(scontrol show job "$job_id" | grep -oP 'TimeLimit=\K[^\s]+')
 
   if [[ $time_limit == "UNLIMITED" ]]; then
-    echo 0
+    total_seconds=$((5 * 24 * 60 * 60))
+    echo "$total_seconds"
     return
   fi
 
@@ -49,14 +50,32 @@ get_time_limit() {
     days=$(echo $time_limit | cut -d'-' -f1)
     hms=$(echo $time_limit | cut -d'-' -f2)
   else
-     days=0
-     hms=$time_limit
+    days=0
+    hms=$time_limit
   fi
 
-  # Extract hours, minutes, and seconds
+  # Ensure hms is valid and default to 0 if any component is missing
   hours=$(echo $hms | cut -d':' -f1)
   minutes=$(echo $hms | cut -d':' -f2)
   seconds=$(echo $hms | cut -d':' -f3)
+
+  # Sanity checks: verify that days, hours, minutes, and seconds are valid integers
+  if ! [[ "$days" =~ ^[0-9]+$ ]]; then
+    echo "Error: Invalid days value '$days'" >&2
+    exit 1
+  fi
+  if ! [[ "$hours" =~ ^[0-9]+$ ]]; then
+    echo "Error: Invalid hours value '$hours'" >&2
+    exit 1
+  fi
+  if ! [[ "$minutes" =~ ^[0-9]+$ ]]; then
+    echo "Error: Invalid minutes value '$minutes'" >&2
+    exit 1
+  fi
+  if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
+    echo "Error: Invalid seconds value '$seconds'" >&2
+    exit 1
+  fi
 
   # Convert the time limit to total seconds
   total_seconds=$((days * 86400 + hours * 3600 + minutes * 60 + seconds))
@@ -72,6 +91,10 @@ echo "HH: $HH"
 # Establish some timing variables.
 t_start=$(date +%s.%N)
 TIME=$(get_time_limit)
+if ! [[ "$TIME" =~ ^[0-9]+$ ]]; then
+  echo "Error: Invalid TIME: $TIME"
+  exit 1
+fi
 TIME_FOR_CLEANUP=900
 if [ "$TIME" -le 0 ] || [ "$TIME_FOR_CLEANUP" -le 0 ] || [ "$TIME" -le "$TIME_FOR_CLEANUP" ]; then
   echo "Error: TIME and TIME_FOR_CLEANUP must be greater than 0 and TIME greater than TIME_FOR_CLEANUP."
