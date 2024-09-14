@@ -22,7 +22,6 @@ public abstract class Lifter extends HeadlessScript {
     protected static final boolean SKIP_EXTERNAL_FUNCTIONS = false;
     protected static final boolean FORMAL_SIGNATURE = false;
     protected static final boolean INCLUDE_CALLING_CONVENTION = true;
-    protected static final boolean REPLACE_SIGNATURE = true;
     protected static final boolean REQUIRE_HEADLESS_ANALYSIS_COMPLETE = false;
 
     protected String outputDir = "./";
@@ -37,7 +36,6 @@ public abstract class Lifter extends HeadlessScript {
         println("run: SKIP_EXTERNAL_FUNCTIONS=" + SKIP_EXTERNAL_FUNCTIONS);
         println("run: FORMAL_SIGNATURE=" + FORMAL_SIGNATURE);
         println("run: INCLUDE_CALLING_CONVENTION=" + INCLUDE_CALLING_CONVENTION);
-        println("run: REPLACE_SIGNATURE=" + REPLACE_SIGNATURE);
         println("run: REQUIRE_HEADLESS_ANALYSIS_COMPLETE=" + REQUIRE_HEADLESS_ANALYSIS_COMPLETE);
         println("run: analysisTimeoutOccurred()=" + analysisTimeoutOccurred());
 

@@ -14,10 +14,14 @@ import ghidra.program.model.listing.Function;
 
 public class Decompiler extends Lifter {
 
+    // Its really hard to do this reliably...
+    protected static final boolean REPLACE_SIGNATURE = false;
+
     private DecompInterface decompInterface;
 
     @Override
     protected void run() throws Exception {
+        println("run: REPLACE_SIGNATURE=" + REPLACE_SIGNATURE);
         decompInterface = new DecompInterface();
         decompInterface.openProgram(getCurrentProgram());
         try {
@@ -70,6 +74,8 @@ public class Decompiler extends Lifter {
 
     /**
      * Replace the signature from DecompiledFunction.getC() with the singature from Function.getPrototypeString().
+     *
+     * This doesn't really work.
     */ 
     public String replaceSignature(String decompiledCode, String newSignature) throws Exception {
         // Define a regex pattern that captures a function signature. It allows for varying spaces/newlines.
