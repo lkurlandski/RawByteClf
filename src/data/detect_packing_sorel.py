@@ -152,6 +152,60 @@ DIEC_MODES = ("recursive", "deep", "heuristic")
 DiecMode = Literal["recursive", "deep", "heuristic"]
 
 
+ALL_TYPES = [
+    "Linker",
+    "Compiler",
+    "Tool",
+    "Format",
+    "Packer",
+    "Sign",
+    "Certificate",
+    "Protection",
+    "Library",
+    "Data",
+    "Installer",
+    "Protector",
+    "Cryptor",
+    "Virus",
+    "sfx",
+    "source",
+    "Archive",
+    "Image",
+    "patcher",
+    "GameEngine",
+    "Player",
+    "Crypter",
+    "Joiner",
+    "Converter",
+    "audio",
+    "scrambler",
+    "emulator",
+    "script",
+    "camera",
+    "other",
+    "debug",
+    "extender",
+    "keygen",
+]
+OBFUSCATION_TYPES = [
+    "Packer",
+    "Protector",
+    "Protection",
+    "Crypter",
+    "Cryptor",
+    "patcher",
+    "scrambler",
+    "sfx",
+    "Archive",
+    "Joiner",
+]
+assert all(t in ALL_TYPES for t in OBFUSCATION_TYPES), "Stupid."
+NAME_TO_GENERIC = (
+    "Cryptor detected",
+    "Packer detected",
+)
+
+
 def find_files_with_null(directory: Path | str) -> list[os.PathLike]:
     command = ['grep', '-l', '-r', 'null', str(directory)]
     try:
@@ -263,6 +317,12 @@ class PackingAnalyzerDirectory:
 
 
 class PackingAnalyzer:
+
+    """
+    Note: This class was intended to be used to filter out binaries that are obfuscated in ways
+    that make certain things difficult to do. Although the name of the class suggests that it
+    only looks for 'packers', it also looks for other forms of obfuscation...
+    """
 
     def __init__(
         self,
@@ -464,16 +524,16 @@ class PackingAnalyzer:
             return any(packeds)
 
         def packers_decision(packers: list[str]) -> list[str]:
-            packers = [p if p != "Packer detected" else "Heursitic" for p in packers]
+            packers = [p if p not in NAME_TO_GENERIC else "Generic" for p in packers]
             return list(set(packers) - {""})
 
-        def parse_values_blob(values: list[dict]) -> tuple[bool, list[str]]:
+        def parse_values_blob(values: list[dict], obfuscation: str) -> tuple[bool, list[str]]:
             packeds: list[bool] = []
             packers: list[str] = []
             for value in values:
                 if "values" in value:
-                    packed, packer = parse_values_blob(value.get("values"))
-                elif value.get("type") == "Packer":
+                    packed, packer = parse_values_blob(value.get("values"), obfuscation)
+                elif value.get("type") == obfuscation:
                     packed = True
                     packer = [value.get("name", "")]
                 else:
@@ -485,12 +545,12 @@ class PackingAnalyzer:
 
             return packeds_decision(packeds), packers_decision(packers)
 
-        def parse_detects_blob(detects: list[dict]) -> tuple[bool, list[str]]:
+        def parse_detects_blob(detects: list[dict], obfuscation: str) -> tuple[bool, list[str]]:
             packeds: list[bool] = []
             packers: list[str] = []
 
             for detect in detects:
-                packed, packer = parse_values_blob(detect.get("values", []))
+                packed, packer = parse_values_blob(detect.get("values", []), obfuscation)
                 packeds.append(packed)
                 packers.extend(packer)
 
@@ -526,8 +586,14 @@ class PackingAnalyzer:
                 if d is None:
                     output[sha][mode] = None
                     continue
-                packed, packer = parse_detects_blob(d.get("detects", []))
-                output[sha][mode] = {"packed": packed, "packer": packer}
+                output[sha][mode] = {"is_obfuscated": False}
+                for obfuscation in OBFUSCATION_TYPES:
+                    obfuscated, obfuscator = parse_detects_blob(d.get("detects", []), obfuscation)
+                    output[sha][mode][obfuscation] = {
+                        "obfuscated": obfuscated,
+                        "obfuscator": obfuscator,
+                    }
+                    output[sha][mode]["is_obfuscated"] = output[sha][mode]["is_obfuscated"] or obfuscated
 
             # Write the output to a temporary file and clear up in-memory data structures.
             if (i + 1) % self.consolidate_chunk_size == 0:
@@ -689,6 +755,7 @@ class PackingMap(UserDict):
         self,
         root: Path | str = str(SOREL_PATH / "diec"),
         include: tuple[DiecMode] = tuple(DIEC_MODES),
+        obfuscations: tuple[str] = tuple(OBFUSCATION_TYPES),
         lazy: bool = False,
         chunked: bool = False,
         num_workers: Optional[int] = None,
@@ -699,6 +766,7 @@ class PackingMap(UserDict):
 
         self.p_consolidated = PackingAnalyzerDirectory(root).p_consolidated
         self.include = tuple(include)
+        self.obfuscations = tuple(obfuscations)
         self.lazy = lazy
         self.chunked = chunked
         self.num_workers = num_workers
@@ -806,15 +874,19 @@ class PackingMap(UserDict):
 
         return packing_map
 
-    def get_packing_report(
-        self,
-        report: dict[DiecMode, Optional[dict[Literal["packed", "packer"], bool | str]]],
-    ) -> bool:
+    def get_packing_report(self, report: dict[DiecMode, Optional[dict]]) -> bool:
         for mode in self.include:
             if report[mode] is None:
                 continue
-            if report[mode]["packed"]:
-                return True
+            if self.obfuscations == OBFUSCATION_TYPES:
+                if report[mode]["is_obfuscated"]:
+                    return True
+                continue
+            for obfuscation in self.obfuscations:
+                if report[mode][obfuscation] is None:
+                    continue
+                if report[mode][obfuscation]["obfuscated"]:
+                    return True
         return False
 
 
