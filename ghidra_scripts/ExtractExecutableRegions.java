@@ -64,6 +64,8 @@ public class ExtractExecutableRegions extends HeadlessScript {
         List<Bounds> dataBounds = new ArrayList<>();
         List<Bounds> paddBounds = new ArrayList<>();
 
+        int numBlocks = 0;
+        int numExecutableBlocks = 0;
         for (MemoryBlock block : memory.getBlocks()) {
             if (block.isExecute()) {
                 Address lower = block.getStart();
@@ -73,8 +75,13 @@ public class ExtractExecutableRegions extends HeadlessScript {
                 codeBounds.addAll(regions.codeBounds);
                 dataBounds.addAll(regions.dataBounds);
                 paddBounds.addAll(regions.paddBounds);
+                numExecutableBlocks += 1;
             }
+            numBlocks += 1;
         }
+
+        println("MainWorker: numBlocks=" + String.valueOf(numBlocks));
+        println("MainWorker: numExecutableBlocks=" + String.valueOf(numExecutableBlocks));
 
         Regions allRegions = new Regions(execBounds, codeBounds, dataBounds, paddBounds);
         String allRegionsStr = regionsToJson(allRegions);
@@ -159,7 +166,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
         long physAddr = block.getSourceInfos().get(0).getFileBytesOffset()
                       + sectionOffset;
         if (physAddr < 0) {
-            throw new ArithmeticException();
+            throw new ArithmeticException("physAddr cannot be less than zero.");
         }
         return physAddr;
     }

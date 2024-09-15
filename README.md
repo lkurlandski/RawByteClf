@@ -132,3 +132,9 @@ ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Disassembler.java /h
 ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Decompiler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
 ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/ExtractExecutableRegions.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
 
+
+Errors:
+Throws and ArithmeticException indicating the virtual address is less than 0.
+001212bfef784362c62168e9b6bb24ef8dd2a572dbbdba100d2c7afe768d2ba9
+
+
