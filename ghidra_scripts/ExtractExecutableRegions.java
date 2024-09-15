@@ -30,6 +30,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
     protected static final boolean REQUIRE_HEADLESS_ANALYSIS_COMPLETE = false;
 
     protected int timeoutPerFile = -1;
+    protected String programName;
 
     @Override
     public void run() throws Exception {
@@ -45,15 +46,15 @@ public class ExtractExecutableRegions extends HeadlessScript {
         String[] scriptArgs = getAndValidateScriptArgs();
         String outputFileName = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
-        String programName = getProgramName();
+        this.programName = getProgramName();
         println("run: outputFileName=" + outputFileName);
         println("run: timeoutPerFile=" + String.valueOf(this.timeoutPerFile));
-        println("run: programName=" + programName);
+        println("run: programName=" + this.programName);
 
-        runMainWorker(outputFileName, programName);
+        runMainWorker(outputFileName);
     }
 
-    private void MainWorker(String outputFileName, String programName) throws Exception {
+    private void MainWorker(String outputFileName) throws Exception {
 
         Memory memory = currentProgram.getMemory();
         Listing listing = currentProgram.getListing();
@@ -78,7 +79,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
         Regions allRegions = new Regions(execBounds, codeBounds, dataBounds, paddBounds);
         String allRegionsStr = regionsToJson(allRegions);
         String outputStr = "{"
-                         + "\"sha\": " + "\"" + programName + "\""
+                         + "\"sha\": " + "\"" + this.programName + "\""
                          + ", "
                          + "\"regions\": " + allRegionsStr 
                          + "}"
@@ -93,21 +94,21 @@ public class ExtractExecutableRegions extends HeadlessScript {
     /**
     * Wraps the main function in a timeout construct.
     */
-    private void runMainWorker(String outputFileName,  String programName) throws Exception {
+    private void runMainWorker(String outputFileName) throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Callable<Void> task = () -> {
-            MainWorker(outputFileName, programName);
+            MainWorker(outputFileName);
             return null;
         };
         Future<Void> future = executor.submit(task);
         try {
             future.get(this.timeoutPerFile, TimeUnit.SECONDS);
-            println("run: finished.");
+            println("run: finished (success) <" + this.programName + ">");
         } catch (TimeoutException e) {
-            println("run: timed out.");
+            println("run: finished (timeout) <" + this.programName + ">");
             future.cancel(true);
         } catch (InterruptedException | ExecutionException e) {
-            println("run: crashed.");
+            println("run: finished (crash) <" + this.programName + ">");
             e.printStackTrace();
         } finally {
             executor.shutdown();
