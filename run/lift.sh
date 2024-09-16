@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift-0
+#SBATCH --job-name=lift-1
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
-#SBATCH --time=00-01:00:00
+#SBATCH --time=00-16:00:00
 #SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -61,19 +61,19 @@ get_time_limit() {
 
   # Sanity checks: verify that days, hours, minutes, and seconds are valid integers
   if ! [[ "$days" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid days value '$days'" >&2
+    echo "Error: Invalid days value '$days' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
   if ! [[ "$hours" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid hours value '$hours'" >&2
+    echo "Error: Invalid hours value '$hours' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
   if ! [[ "$minutes" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid minutes value '$minutes'" >&2
+    echo "Error: Invalid minutes value '$minutes' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
   if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid seconds value '$seconds'" >&2
+    echo "Error: Invalid seconds value '$seconds' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
 
@@ -95,7 +95,7 @@ if ! [[ "$TIME" =~ ^[0-9]+$ ]]; then
   echo "Error: Invalid TIME: $TIME"
   exit 1
 fi
-TIME_FOR_CLEANUP=900
+TIME_FOR_CLEANUP=3600
 if [ "$TIME" -le 0 ] || [ "$TIME_FOR_CLEANUP" -le 0 ] || [ "$TIME" -le "$TIME_FOR_CLEANUP" ]; then
   echo "Error: TIME and TIME_FOR_CLEANUP must be greater than 0 and TIME greater than TIME_FOR_CLEANUP."
   exit 1
