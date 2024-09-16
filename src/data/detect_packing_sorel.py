@@ -115,12 +115,14 @@ from collections.abc import Iterable
 from collections import UserDict
 from functools import partial
 import gc
+import hashlib
 from itertools import chain, islice
 from io import BytesIO
 import json
 import multiprocessing as mp
 import os
 from pathlib import Path
+import pickle
 from pprint import pformat, pprint
 import subprocess
 import sys
@@ -764,6 +766,8 @@ class PackingMap(UserDict):
             print("`chunked` is False, but multiple workers were requested. Setting `chunked` to True.")
             chunked = True
 
+        self._cache_file = None
+
         self.p_consolidated = PackingAnalyzerDirectory(root).p_consolidated
         self.include = tuple(include)
         self.obfuscations = tuple(obfuscations)
@@ -780,7 +784,37 @@ class PackingMap(UserDict):
         if self.num_workers is not None:
             self.num_workers = min(self.num_workers, len(self.partial_files))
 
-        super().__init__(self.get_packing_map())
+        if self.cache_file.exists() and self.cache_file.stat().st_size > 0:
+            print(f"Getting the packing map from {self.cache_file=}")
+            with open(self.cache_file, "rb") as fp:
+                packing_map = pickle.load(fp)
+        else:
+            print(f"Building packing map and saving to {self.cache_file=}")
+            self.cache_file.parent.mkdir(exist_ok=True, parents=True)
+            packing_map = self.get_packing_map()
+            with open(self.cache_file, "wb") as fp:
+                pickle.dump(packing_map, fp)
+
+        super().__init__(packing_map)
+
+    @property
+    def cache_file(self) -> Path:
+        if self._cache_file is not None:
+            return self._cache_file
+
+        # This is idiotic but I don't care
+        b_1 = str(self.include).encode()
+        b_2 = str(self.obfuscations).encode()
+        with open(self.partial_files[0], "rb") as fp:
+            fp.seek(64)
+            b_3 = fp.read(64)
+        with open(self.partial_files[-1], "rb") as fp:
+            fp.seek(64)
+            b_4 = fp.read(64)
+        b = b_1 + b_2 + b_3 + b_4
+        h = hashlib.sha256(b).hexdigest()
+        self._cache_file = Path("./cache") / "packing_map" / f"{h}.pkl"
+        return self._cache_file
 
     @property
     def partial_files(self) -> list[os.PathLike]:
