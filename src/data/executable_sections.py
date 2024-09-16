@@ -45,10 +45,12 @@ class ExitCode(IntFlag):
     SUCCESS                     = auto()
     COULD_NOT_PARSE             = auto()
     NO_SECTIONS_FOUND           = auto()
+    NO_NONEMPTY_SECTIONS_FOUND  = auto()
     NO_EXECUTABLE_SECTION_FOUND = auto()
     SECTION_OVER_FILE_BOUNDARY  = auto()
     SECTION_OVER_NEXT_SECTION   = auto()
     SECTION_EMPTY               = auto()
+    SECTION_INVALID             = auto()
 
 
 class GetExecutableSectionBounds:
@@ -63,9 +65,12 @@ class GetExecutableSectionBounds:
     Raises:
      (FileNotFoundError): If the input file does not exist.
      (ValueError): If an invalid `toolkit` is provided.
+     (ValueError): If something really wonky happens when computing the bounds.
 
     Returns:
-     (Boundaries): 
+     (Boundaries): A list of (upper, lower) tuples indicating the boundaries of
+      the PE file that are marked as executable or containing code. Note that
+      the lower bound is inclusive whereas the upper is exclusive (for slicing).
      (ExitCode): Flag indicating the issues (if any) encountered during analysis.
     
     Usage:
@@ -94,6 +99,10 @@ class GetExecutableSectionBounds:
         if not summaries:
             return [], ExitCode.NO_SECTIONS_FOUND
 
+        summaries = [s for s in summaries if s.size > 0]
+        if not summaries:
+            return [], ExitCode.NO_NONEMPTY_SECTIONS_FOUND
+
         if not any(summary.is_executable for summary in summaries):
             return [], ExitCode.NO_EXECUTABLE_SECTION_FOUND
 
@@ -108,6 +117,10 @@ class GetExecutableSectionBounds:
         summaries = self._get_summaries_pefile(binary)
         if not summaries:
             return [], ExitCode.NO_SECTIONS_FOUND
+
+        summaries = [s for s in summaries if s.size > 0]
+        if not summaries:
+            return [], ExitCode.NO_NONEMPTY_SECTIONS_FOUND
 
         if not any(summary.is_executable for summary in summaries):
             return [], ExitCode.NO_EXECUTABLE_SECTION_FOUND
@@ -165,7 +178,8 @@ class GetExecutableSectionBounds:
             (lower, upper), code = self._get_section_bounds(prv, cur, nxt, self.length)
             exit_code = exit_code | code
 
-            if ExitCode.SECTION_EMPTY & code:
+            # Do not add empty or invalid sections to the list.
+            if ExitCode.SECTION_EMPTY & code or ExitCode.SECTION_INVALID & code:
                 continue
 
             boundary.append((lower, upper))
@@ -197,6 +211,9 @@ class GetExecutableSectionBounds:
         if lower == upper:
             code = code | ExitCode.SECTION_EMPTY
 
+        if lower > upper:
+            code = code | ExitCode.SECTION_INVALID
+
         return (lower, upper), code
 
 
@@ -226,10 +243,51 @@ def test(toolkit: Toolkit):
     print(f"time/sample={round(t_d / total, 5)} seconds")
 
 
+def compare_to_ghidra():
+
+    import json
+
+    boundaries = {"ghidra": {}, "lief": {}}
+
+    root = Path("./tmp/regions")
+    files = sorted(root.iterdir())[0:1]
+    for f in files:
+        with open(f, "r") as fp:
+            for l in fp:
+                d = json.loads(l.strip())
+                boundaries["ghidra"][d["sha"]] = [tuple(r) for r in d["regions"]["EXEC"]]
+
+    root = Path("/media/lk3591/easystore/datasets/Sorel/binaries/")
+    files = []
+    for s in tqdm(boundaries["ghidra"], total=len(boundaries["ghidra"])):
+        if s == "000290023014fc33e0e7ccadb5a56dc9b7460a0d3dc6e49cecc2d7536bbaa049":
+            print()
+        f = (root / s[0:2] / s).with_suffix(".exe")
+        b, e = GetExecutableSectionBounds(f)("lief")
+        boundaries["lief"][s] = b
+
+    shas = list(boundaries["lief"].keys())
+    same = 0
+    diff = 0
+    for s in shas:
+        b_g = boundaries["ghidra"][s]
+        b_l = boundaries["lief"][s]
+        if b_g == b_l:
+            same += 1
+        else:
+            diff += 1
+            print(f"{s} | {'==' if b_g == b_l else '!='} | {b_g} | {b_l}")
+
+    print(f"{len(shas)=}")
+    print(f"{same=}")
+    print(f"{diff=}")
+
+
 def main():
     lief.logging.disable()
-    test("lief")
+    # test("lief")
     # test("pefile")
+    compare_to_ghidra()
 
 
 if __name__ == "__main__":
