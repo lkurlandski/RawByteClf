@@ -280,8 +280,8 @@ else
   fs_fin_reg=""
 fi	
 # Search the tmp directory.
-if [[ -f "$p_fin_reg/$HHH.jsonl" ]]; then
-  for stem in $(grep -o '"sha": "[^"]*"' "$p_fin_reg/$HHH.jsonl" | awk -F'"' '{print $4}'); do
+if [[ -f "$p_tmp_reg/$HHH.jsonl" ]]; then
+  for stem in $(grep -o '"sha": "[^"]*"' "$p_tmp_reg/$HHH.jsonl" | awk -F'"' '{print $4}'); do
     fs_fin_reg=$(printf "%s\n%s" "$fs_fin_reg" "$stem")
   done
 fi
