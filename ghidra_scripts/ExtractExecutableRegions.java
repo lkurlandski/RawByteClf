@@ -5,6 +5,7 @@
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -67,7 +68,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
         int numBlocks = 0;
         int numExecutableBlocks = 0;
         for (MemoryBlock block : memory.getBlocks()) {
-            if (block.isExecute()) {
+            if (block.isExecute() && block.isInitialized()) {
                 Address lower = block.getStart();
                 Address upper = block.getEnd();
                 Regions regions = getRegions(listing, lower, upper);
@@ -158,14 +159,42 @@ public class ExtractExecutableRegions extends HeadlessScript {
      * Convert a virtual address to a physical one.
     */
     private long virtualAddressToPhysicalAddress(Address addr) throws ArithmeticException {
+
         Memory memory = currentProgram.getMemory();
         MemoryBlock block = memory.getBlock(addr);
-        long sectionOffset = addr.getOffsetAsBigInteger()
-                           .subtract(block.getStart().getOffsetAsBigInteger())
-                           .longValueExact();
-        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset()
-                      + sectionOffset;
-        if (physAddr < 0) {
+
+        String blockInfo = "("
+                         + "isExecute=" + String.valueOf(block.isExecute()) + ","
+                         + "isInitialized=" + String.valueOf(block.isInitialized()) + ","
+                         + "isLoaded=" + String.valueOf(block.isLoaded()) + ","
+                         + "isMapped=" + String.valueOf(block.isMapped()) + ","
+                         + "isVolatile=" + String.valueOf(block.isVolatile()) + ","
+                         + ")";
+
+        if (block.getSourceInfos().isEmpty()) {
+            println("virtualAddressToPhysicalAddress: blockInfo=" + blockInfo);
+            throw new ArithmeticException("No source information available.");
+        }
+
+        BigInteger addrOffset = addr.getOffsetAsBigInteger();
+        BigInteger blockStart = block.getStart().getOffsetAsBigInteger();
+        if (addrOffset.compareTo(blockStart) < 0) {
+            println("virtualAddressToPhysicalAddress: blockInfo=" + blockInfo);
+            println("virtualAddressToPhysicalAddress: addrOffset=" + addrOffset.toString());
+            println("virtualAddressToPhysicalAddress: blockStart=" + blockStart.toString());
+            throw new ArithmeticException("The address's offset should be larger than the start of its block.");
+        }
+
+        long sectionOffset = addrOffset.subtract(blockStart).longValueExact();
+        long blockOffset = block.getSourceInfos().get(0).getFileBytesOffset();
+        long physAddr = blockOffset + sectionOffset;
+        if (sectionOffset < 0 || blockOffset < 0 || physAddr < 0) {
+            println("virtualAddressToPhysicalAddress: blockInfo=" + blockInfo);
+            println("virtualAddressToPhysicalAddress: addrOffset=" + addrOffset.toString());
+            println("virtualAddressToPhysicalAddress: blockStart=" + blockStart.toString());
+            println("virtualAddressToPhysicalAddress: sectionOffset=" + String.valueOf(sectionOffset));
+            println("virtualAddressToPhysicalAddress: blockOffset=" + String.valueOf(blockOffset));
+            println("virtualAddressToPhysicalAddress: physAddr=" + String.valueOf(physAddr));
             throw new ArithmeticException("physAddr cannot be less than zero.");
         }
         return physAddr;
