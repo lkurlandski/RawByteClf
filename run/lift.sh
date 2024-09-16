@@ -36,8 +36,11 @@
 
 
 get_time_limit() {
+  # This can get pretty wierd and be annoying. The environment variable that's supposed
+  # to store the time is unreliable. The print-out can be unreliable when using job arrays.
+  # Using head seems to work.
   job_id=$SLURM_JOB_ID
-  time_limit=$(scontrol show job "$job_id" | grep -oP 'TimeLimit=\K[^\s]+')
+  time_limit=$(scontrol show job "$job_id" | grep -oP 'TimeLimit=\K[^\s]+' | head -n 1)
 
   if [[ $time_limit == "UNLIMITED" ]]; then
     total_seconds=$((5 * 24 * 60 * 60))
