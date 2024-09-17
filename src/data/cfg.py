@@ -93,13 +93,28 @@ PACKING_ROOTS = {
 def _dataset_to_report_files_and_binaries(
     reports: bool = False,
     binaries: bool = False,
+    disassembled: bool = False,
+    decompiled: bool = False,
 ) -> dict[str, Callable[[], Iterable[Path]]]:
-    assert (reports or binaries) and not (reports and binaries)
+    assert sum([reports, binaries, disassembled, decompiled]) == 1
 
-    s = "reports" if reports else "binaries"
+    if reports:
+        s = "reports"
+        ext = "json"
+    elif binaries:
+        s = "binaries"
+        ext = "exe"
+    elif disassembled:
+        s = "disassembled"
+        ext = "asm"
+    elif decompiled:
+        s = "decompiled"
+        ext = "c"
+
 
     def vt(p: Path, t: Literal["DLL", "ELF", "EXE", "Mach-O"]) -> bool:
         return s in p.as_posix() and t in p.as_posix() and p.is_file()
+
 
     # pylint: disable=unnecessary-lambda
     return {
@@ -109,11 +124,9 @@ def _dataset_to_report_files_and_binaries(
         "local_macho": lambda: (DARWIN_PATH / s).iterdir(),
         "malware_bazaar_elf": lambda: (MALWARE_BAZAAR_PATH / "elf" / s).iterdir(),
         "malware_bazaar_macho": lambda: (MALWARE_BAZAAR_PATH / "macho" / s).iterdir(),
-        "sorel_pe": lambda: (SOREL_PATH / s).rglob("*.exe"),
+        "sorel_pe": lambda: (SOREL_PATH / s).rglob(f"*.{ext}"),
         "virus_share_dll": lambda: [],
-        "virus_share_elf": lambda: chain.from_iterable(
-            (p / s).iterdir() for p in VIRUS_SHARE_ELF_COLLECTION_PATHS.values()
-        ),
+        "virus_share_elf": lambda: chain.from_iterable((p / s).iterdir() for p in VIRUS_SHARE_ELF_COLLECTION_PATHS.values()),
         "virus_share_exe": lambda: [],
         "virus_share_macho": lambda: [],
         "virus_total_dll": lambda: (p for p in VIRUS_TOTAL_PATH.rglob("*") if vt(p, "DLL")),
@@ -128,6 +141,8 @@ def _dataset_to_report_files_and_binaries(
 DATASET_TO_FILES: dict[str, dict[str, Callable[[], Iterable[Path]]]] = {
     "reports": _dataset_to_report_files_and_binaries(reports=True),
     "binaries": _dataset_to_report_files_and_binaries(binaries=True),
+    "disassembled": _dataset_to_report_files_and_binaries(disassembled=True),
+    "decompiled": _dataset_to_report_files_and_binaries(decompiled=True),
 }
 
 SOREL_BUCKET = "sorel-20m"

@@ -14,12 +14,16 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import product, chain, islice
+import inspect
 import math
 import os
 from pathlib import Path
+import pickle
 from pprint import pformat, pprint
+import re
+import shutil
 import sys
-from typing import Callable, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional
 import warnings
 
 if __name__ == "__main__":
@@ -28,26 +32,36 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 import psutil
-from tokenizers import Regex, Tokenizer
-from tokenizers import SentencePieceBPETokenizer as _SentencePieceBPETokenizer
-from tokenizers import SentencePieceUnigramTokenizer as _SentencePieceUnigramTokenizer
-from tokenizers.implementations.base_tokenizer import BaseTokenizer
+from tokenizers import Regex, Tokenizer, NormalizedString
 from tokenizers import models
+from tokenizers.models import Model
+from tokenizers import normalizers
+from tokenizers.normalizers import Normalizer
 from tokenizers import pre_tokenizers
+from tokenizers.pre_tokenizers import PreTokenizer
 from tokenizers import processors
+from tokenizers.processors import PostProcessor
 from tokenizers import trainers
+from tokenizers.trainers import Trainer
 from transformers import HfArgumentParser, PreTrainedTokenizerFast
 from tqdm import tqdm
 
 from src.cfg import BR, SPECIALS, TOKENIZERS_OUTPUT_PATH
-from src.learn.preprocessing import bytes_to_str_ascii, bytes_to_str_utf8
+from src.learn.preprocessing import bytes_to_str_utf8
 from src.data.cfg import DATASET_TO_FILES
 from src.data.utils import read_binary_files_asynch
 from src.utils import batched, get_highest_path, COMPRESSION_TYPES, ENCRYPTION_TYPES
 
 
-TokenizerAlgorithm = Literal["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
+LiftLevel = Literal["raw", "dis", "dec"]
 
+TokenizerAlgorithm = Literal[
+    "Raw",
+    "BPE",
+    "Unigram",
+    "WordPiece",
+    "WordLevel",
+]
 
 SPECIALS = OrderedDict(
     {
@@ -63,16 +77,10 @@ SPECIALS = OrderedDict(
 SPECIALS_IDS = {k: i for i, k in enumerate(SPECIALS)}
 
 
-
 @dataclass
 class TokenizationArgs:
-    algorithm: TokenizerAlgorithm = field(
-        metadata={
-            "help":
-                "One of `Raw`, `BPE`, `Unigram`, `WordPiece`, `WordLevel`, "
-                "`SentencePieceBPE`, `SentencePieceUnigram`"
-        }
-    )
+    lift_level: LiftLevel = field()
+    algorithm: TokenizerAlgorithm = field()
     vocab_size: Optional[int] = field(default=256, metadata={"help": "EXCLUDING SPECIAL TOKENS"})
     num_files: Optional[int] = field(default=None, metadata={"help": ""})
     block_size: int = field(default=2**12, metadata={"help": ""})
@@ -80,75 +88,12 @@ class TokenizationArgs:
     max_token_length: int = field(default=None, metadata={"help": ""})
 
 
-class SentencePieceUnigramTokenizer(_SentencePieceUnigramTokenizer):
-    def train_from_iterator(
-        self,
-        iterator: Union[Iterator[str], Iterator[Iterator[str]]],
-        vocab_size: int = 8000,
-        show_progress: bool = True,
-        special_tokens=None,
-        initial_alphabet: Optional[list[str]] = None,
-        unk_token: Optional[str] = None,
-        length: Optional[int] = None,
-        max_token_length: int = 16,
-    ):
-        max_token_length = 16 if max_token_length is None else max_token_length
-
-        if special_tokens is None:
-            special_tokens = []
-
-        if initial_alphabet is None:
-            initial_alphabet = []
-
-        trainer = trainers.UnigramTrainer(
-            vocab_size=vocab_size,
-            special_tokens=special_tokens,
-            show_progress=show_progress,
-            initial_alphabet=initial_alphabet,
-            unk_token=unk_token,
-            max_piece_length=max_token_length,
-            shrinking_factor=0.75,
-            n_sub_iterations=2,
-        )
-
-        self._tokenizer.train_from_iterator(
-            iterator,
-            trainer=trainer,
-            length=length,
-        )
-
-
-class SentencePieceBPETokenizer(_SentencePieceBPETokenizer):
-    def train_from_iterator(
-        self,
-        iterator: Union[Iterator[str], Iterator[Iterator[str]]],
-        vocab_size: int = 30000,
-        min_frequency: int = 2,
-        special_tokens=None,
-        limit_alphabet: int = 256 + len(SPECIALS),
-        initial_alphabet: list[str] = None,
-        show_progress: bool = True,
-        length: Optional[int] = None,
-    ):
-        if special_tokens is None:
-            special_tokens = []
-
-        if initial_alphabet is None:
-            initial_alphabet = []
-
-        trainer = trainers.BpeTrainer(
-            vocab_size=vocab_size,
-            min_frequency=min_frequency,
-            special_tokens=special_tokens,
-            limit_alphabet=limit_alphabet,
-            initial_alphabet=initial_alphabet,
-            show_progress=show_progress,
-        )
-        self._tokenizer.train_from_iterator(
-            iterator,
-            trainer=trainer,
-            length=length,
-        )
+################################################################################
+# Utilities for streaming the data for training the tokenizers. Note that the
+# typical manner of using asyncio to read files asynchronously results in error:
+    # RuntimeError: There is no current event loop in thread 'Dummy-1'
+# so we use a more convoluted way to read the files quickly.
+################################################################################
 
 
 def process_mem(fmt: str = "G") -> str:
@@ -175,11 +120,6 @@ def tokenization_gen(
     def return_batch(lbs: list[bytes | list[int]]) -> list[str]:
         return [bytes_to_str(bytes(bs)) for bs in lbs]
 
-    # The typical way of doing this results in
-    # RuntimeError: There is no current event loop in thread 'Dummy-1'
-    # when run within the tokenizer routine.
-    # loop = asyncio.get_event_loop()
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     future = read_binary_files_asynch(
@@ -191,8 +131,6 @@ def tokenization_gen(
     lbs = loop.run_until_complete(future)
 
     byte_stream = chain.from_iterable(lbs)
-
-    # byte_stream = chain.from_iterable((open(f, "rb").read() for f in files))
 
     pbar = tqdm(batched(byte_stream, block_size), total=total, dynamic_ncols=True)
 
@@ -207,55 +145,11 @@ def tokenization_gen(
         yield return_batch(batch)
 
 
-class PreTrainedTokenizerFastWithAddedSpecialTokens(PreTrainedTokenizerFast):
-    """
-    This doesn't work for the PreTrainedTokenizerFast, only when it inherits from the
-    PreTrainedTokenizer (slow).
-    """
-
-    def __init__(
-        self,
-        add_cls_token: bool = False,
-        add_bos_token: bool = False,
-        add_eos_token: bool = False,
-        add_sep_token: bool = False,
-        **kwds,
-    ) -> None:
-        super().__init__(**kwds)
-
-        if add_cls_token and add_bos_token:
-            raise ValueError("Cannot add both the cls_token and bos_token.")
-        if add_eos_token and add_sep_token:
-            raise ValueError("Cannot add both the eos_token and sep_token.")
-
-        if add_cls_token:
-            self.prepend_token = [self.cls_token_id]
-        elif add_bos_token:
-            self.prepend_token = [self.bos_token_id]
-        else:
-            self.prepend_token = []
-
-        if add_eos_token:
-            self.append_token = [self.eos_token_id]
-        elif add_sep_token:
-            self.append_token = [self.sep_token_id]
-        else:
-            self.append_token = []
-
-    def build_inputs_with_special_tokens(
-        self,
-        token_ids_0: list[int],
-        token_ids_1: Optional[list[int]] = None,
-    ) -> list:
-
-        print("In the method: build_inputs_with_special_tokens")
-
-        token_ids_0 = self.prepend_token + token_ids_0 + self.append_token
-        if token_ids_1 is None:
-            return token_ids_0
-
-        token_ids_1 = self.prepend_token + token_ids_1 + self.append_token
-        return token_ids_0 + [self.sep_token_id] + token_ids_1
+################################################################################
+# "Tokenzing" a stream of raw-bytes into integers using huggingface's tokenizers
+# library is actually nontrivial. These functions return Tokenizer objects
+# configured with the appropriate pre-tokenization helpers to do just that.
+################################################################################
 
 
 def get_tokenizer_object_8bit() -> Tokenizer:
@@ -322,25 +216,27 @@ def get_tokenizer_object_16bit() -> Tokenizer:
 
 
 def tokenizer_path_read(
+    lift_level: LiftLevel,
     algorithm: TokenizerAlgorithm,
     vocab_size: int,
     num_files: Optional[int] = None,
 ) -> Path:
     if num_files is not None:
-        return tokenizer_path(algorithm, vocab_size, num_files)
+        return tokenizer_path(lift_level, algorithm, vocab_size, num_files)
     return get_highest_path(
-        list(TOKENIZERS_OUTPUT_PATH.glob(f"{algorithm}_{vocab_size}_*.json")),
-        lstrip=f"{algorithm}_{vocab_size}_",
+        list(TOKENIZERS_OUTPUT_PATH.glob(f"{lift_level}_{algorithm}_{vocab_size}_*.json")),
+        lstrip=f"{lift_level}_{algorithm}_{vocab_size}_",
         rstrip=".json",
     )
 
 
 def tokenizer_path(
+    lift_level: LiftLevel,
     algorithm: TokenizerAlgorithm,
     vocab_size: int,
     num_files: int,
 ) -> Path:
-    return TOKENIZERS_OUTPUT_PATH / f"{algorithm}_{vocab_size}_{num_files}.json"
+    return TOKENIZERS_OUTPUT_PATH / f"{lift_level}_{algorithm}_{vocab_size}_{num_files}.json"
 
 
 def get_fast_tokenizer(
@@ -362,6 +258,7 @@ def get_fast_tokenizer(
 
 def get_tokenizer(
     representation: int = 8,
+    lift_level: LiftLevel = "raw",
     algorithm: TokenizerAlgorithm = "Raw",
     vocab_size: Optional[int] = None,
     add_cls_token: bool = False,
@@ -378,6 +275,9 @@ def get_tokenizer(
     tokenizer: Tokenizer
 
     if algorithm.lower() == "raw" or algorithm in COMPRESSION_TYPES + ENCRYPTION_TYPES:
+        if lift_level.lower() != "raw":
+            raise ValueError(f"Must be working with raw bytes. {lift_level=}")
+
         if representation == 8:
             tokenizer = get_tokenizer_object_8bit()
         elif representation == 12:
@@ -388,9 +288,9 @@ def get_tokenizer(
             raise ValueError(f"Representation not supported: {representation}")
 
     else:
-        path: Path = tokenizer_path_read(algorithm, vocab_size)
+        path: Path = tokenizer_path_read(lift_level, algorithm, vocab_size)
         if not path.exists():
-            raise FileNotFoundError(f"For {representation=}, could not locate {path.as_posix()=}")
+            raise FileNotFoundError(f"Could not locate {path.as_posix()=}")
         tokenizer = Tokenizer.from_file(path.as_posix())
 
     if add_bos_token:
@@ -407,8 +307,7 @@ def get_tokenizer(
     else:
         end = None
 
-    # TODO: no idea what this does for the `pair`
-    if start or end:
+    if start or end:  # FYI, I have idea what this does for the `pair`
         tokenizer.post_processor = processors.TemplateProcessing(
             single=f"{start} $0 {end}",
             pair=f"{start} $A {end} {SPECIALS['sep_token']} {start} $B:1 {end}",
@@ -419,117 +318,281 @@ def get_tokenizer(
     return tokenizer
 
 
-def train_tokenizer(
-    algorithm: str,
-    vocab_size: int,
-    batch_size: int,
-    block_size: int,
-    num_files: int = None,
-    max_token_length: int = None,
-    save_to_file: bool = True,
-) -> BaseTokenizer:
+class CapitalizeHexCharactersFromCharacterStream:
 
-    vocab_size_with_specials = vocab_size + len(SPECIALS)
+    def __init__(self) -> None:
+        self.capitalize_in_hex = False
+        self.capitalize_in_fun = False
+        self.history = ""
 
-    if max_token_length and (256**max_token_length < vocab_size):
-        raise ValueError(f"{vocab_size=} too big for {max_token_length=}")
+    def __call__(self, char: str) -> str:
+        self.history += char
+        self.history = self.history[-4:]
 
-    files = list(islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), num_files))
-    length = sum(f.stat().st_size for f in files) // block_size + 1
-    iterator = tokenization_gen(list(map(str, files)), batch_size, block_size, total=length)
-    unk_token = SPECIALS["unk_token"]
-    special_tokens = list(SPECIALS.values())
+        if self.history[-2:] == "0x":
+            self.capitalize_in_hex = True
+            return char
 
-    print("Tokenizing...")
-    if algorithm == "Raw":
-        raise NotImplementedError("No Idea what this is doing...")
-        # num_bits = math.log2(vocab_size - len(special_tokens)) / 8
-        # if not num_bits.is_integer():
-        #     raise ValueError(
-        #         f"{vocab_size=} is invalid for {algorithm=}. Requires power of 2 divisible by 8."
-        #     )
-        # num_bits = int(num_bits)
-        # alphabet = list(BYTE_TO_UTF8.values())
-        # alphabet = ("".join(i) for i in product(alphabet, repeat=num_bits))
-        # vocab = {v: i for i, v in enumerate(special_tokens)}
-        # vocab.update({v: i for i, v in enumerate(alphabet, start=len(special_tokens))})
-        # model = models.WordLevel(
-        #     vocab=vocab,
-        #     unk_token=unk_token,
-        # )
-        # tokenizer = Tokenizer(model)
-        # tokenizer.pre_tokenizer = pre_tokenizers.Sequence(
-        #     [
-        #         pre_tokenizers.Split(Regex("."), behavior="isolated"),
-        #     ]
-        # )
-    elif algorithm == "SentencePieceBPE":
-        tokenizer = SentencePieceBPETokenizer()
-        tokenizer.train_from_iterator(
-            iterator,
-            vocab_size=vocab_size_with_specials,
-            special_tokens=special_tokens,
-            length=length,
-        )
-    elif algorithm == "SentencePieceUnigram":
-        tokenizer = SentencePieceUnigramTokenizer()
-        tokenizer.train_from_iterator(
-            iterator,
-            vocab_size=vocab_size_with_specials,
-            show_progress=False,
-            special_tokens=special_tokens,
-            length=length,
-            unk_token=unk_token,
-            max_token_length=max_token_length,
-        )
-    else:
-        if algorithm == "BPE":
-            model = models.BPE()
-            trainer = trainers.BpeTrainer(
-                vocab_size=vocab_size_with_specials,
-                special_tokens=special_tokens,
-                max_token_length=max_token_length,
-            )
-        elif algorithm == "Unigram":
-            model = models.Unigram()  # FIXME: add unk_token argument
-            trainer = trainers.UnigramTrainer(
-                vocab_size=vocab_size_with_specials,
-                special_tokens=special_tokens,
-                unk_token=unk_token,
-                max_piece_length=max_token_length,
-            )
-        elif algorithm == "WordPiece":
-            model = models.WordPiece()  # FIXME: add unk_token argument
-            trainer = trainers.WordPieceTrainer(
-                vocab_size=vocab_size_with_specials,
-                special_tokens=special_tokens,
-            )
-        elif algorithm == "WordLevel":
-            model = models.WordLevel()  # FIXME: add unk_token argument
-            trainer = trainers.WordLevelTrainer(
-                vocab_size=vocab_size_with_specials,
-                special_tokens=special_tokens,
-            )
+        if self.history[-4:] == "fun_":
+            self.capitalize_in_fun = True
+            return char
+
+        if self.capitalize_in_hex:
+            if not char.isalnum():
+                self.capitalize_in_hex = False
+                return char
+            return char.upper()
+
+        if self.capitalize_in_fun:
+            if char == "(":
+                self.capitalize_in_fun = False
+                return char
+            return char.upper()
+
+        return char
+
+
+class RemoveCommentsFromCharacterStream:
+
+    def __init__(self) -> None:
+        ...
+
+    def __call__(self, char: str) -> str:
+        ...
+
+
+class HexCapitalizationNormalizer:
+
+    def normalize(self, normalized: NormalizedString):
+        func = CapitalizeHexCharactersFromCharacterStream()
+        normalized.map(func)
+
+
+SENTINAL_PATTERN = Regex(r"a^")
+SENTINAL_NORMALIZER = normalizers.Replace(SENTINAL_PATTERN, "")
+SENTINAL_PRETOKENIZER = pre_tokenizers.Split(SENTINAL_PATTERN, "isolated")
+
+RAW_NORMALIZER = None
+RAW_PRETOKENIZER = None
+
+DIS_NORMALIZER = normalizers.Sequence([
+    # Removes the text between four tabs.
+    normalizers.Replace(Regex(r"^(.+?\t)(.+?\t)(.+?\t)(.+?\t)"), ""),
+    # Standardizes text.
+    normalizers.NFD(),
+    normalizers.StripAccents(),
+    normalizers.Lowercase(),
+    # Capitalize hexidecimal digits.
+    normalizers.Normalizer.custom(HexCapitalizationNormalizer()),
+])
+DIS_PRETOKENIZER = pre_tokenizers.Sequence([
+    # Split on any non-alphanumeric character, except "_".
+    pre_tokenizers.Split(Regex(r"[^a-zA-Z0-9_]"), behavior="isolated"),
+    # Split on whitespace.
+    pre_tokenizers.Split(Regex(r"\s"), behavior="removed"),
+    # Split hexadecimal strings into "0x" and the constituent digits.
+    pre_tokenizers.Split(Regex(r"(0x)|[0-9A-F]"), behavior="isolated"),
+])
+
+DEC_NORMALIZER = None
+DEC_PRETOKENIZER = None
+
+
+class TokenizerIOHelper:
+
+    def __init__(self, lift_level: str, algorithm: str, vocab_size: int, num_files: int) -> None:
+        self.lift_level = lift_level
+        self.algorithm = algorithm
+        self.vocab_size = vocab_size
+        self.num_files = num_files
+
+    @property
+    def path(self) -> Path:
+        return TOKENIZERS_OUTPUT_PATH \
+            / f"{self.lift_level}" \
+            / f"{self.algorithm}" \
+            / f"{self.vocab_size}" \
+            / f"{self.num_files}"
+
+    @property
+    def outfile(self) -> Path:
+        return self.path / "tokenizer.json"
+
+    def save(self, tokenizer: Tokenizer) -> None:
+
+        shutil.rmtree(self.path, ignore_errors=True)
+        self.path.mkdir(parents=True)
+
+        if self.lift_level == "raw":
+            raise NotImplementedError()
+        elif self.lift_level == "dis":
+            tokenizer.normalizer = SENTINAL_NORMALIZER
+        elif self.lift_level == "dec":
+            raise NotImplementedError()
         else:
-            raise ValueError(f"{algorithm} is invalid.")
+            raise ValueError(f"{self.lift_level=}")
 
+        tokenizer.save(self.outfile.as_posix())
+
+    def load(self) -> Tokenizer:
+
+        tokenizer = Tokenizer.from_file(self.outfile.as_posix())
+
+        if self.lift_level == "raw":
+            raise NotImplementedError()
+        elif self.lift_level == "dis":
+            tokenizer.normalizer = DIS_NORMALIZER
+        elif self.lift_level == "dec":
+            raise NotImplementedError()
+        else:
+            raise ValueError(f"{self.lift_level=}")
+
+        return tokenizer
+
+    @staticmethod
+    def get_variable_name(var: Any) -> list[str]:
+        callers_local_vars = inspect.currentframe().f_back.f_locals.items()
+        return [var_name for var_name, var_val in callers_local_vars if var_val is var]
+
+
+class TrainTokenizer:
+
+    def __init__(
+        self,
+        lift_level: str,
+        algorithm: str,
+        vocab_size: int,
+        batch_size: int,
+        block_size: int,
+        num_files: int,
+        max_token_length: Optional[int] = None,
+    ) -> None:
+        self.lift_level = lift_level
+        self.algorithm = algorithm
+        self.vocab_size = vocab_size
+        self.batch_size = batch_size
+        self.block_size = block_size
+        self.num_files = num_files
+        self.max_token_length = max_token_length
+
+    def __call__(self) -> Tokenizer:
+        print("Gathering data...")
+        files = self.get_files()
+        length = self.compute_iterator_length(files)
+        bytes_to_str = self.get_bytes_to_str()
+        iterator = tokenization_gen(files, self.batch_size, self.block_size, bytes_to_str, length)
+
+        print("Training tokenizer...")
+        normalizer = self.get_normalizer()
+        pre_tokenizer = self.get_pre_tokenizer()
+        model = self.get_model()
+        trainer = self.get_trainer()
         tokenizer = Tokenizer(model)
-        tokenizer.train_from_iterator(iterator, trainer, length=length)
+        tokenizer.normalizer = normalizer
+        tokenizer.pre_tokenizer = pre_tokenizer
+        tokenizer.train_from_iterator(iterator, trainer, length)
 
-    print("Training complete!", flush=True)
-    if save_to_file:
-        path = tokenizer_path(algorithm, vocab_size, num_files)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tokenizer.save(path.as_posix())
-    return tokenizer
+        return tokenizer
+
+    def get_files(self) -> list[str]:
+        if self.lift_level == "raw":
+            key = "binaries"
+        elif self.lift_level == "dis":
+            key = "disassembled"
+        elif self.lift_level == "dec":
+            key = "decompiled"
+        else:
+            raise ValueError(f"{self.algorithm=}")
+        files = DATASET_TO_FILES[key]["sorel_pe"]()
+        files = sorted(map(str, islice(files, self.num_files)))
+        return files
+
+    def compute_iterator_length(self, files: list[str]) -> Optional[int]:
+        if self.lift_level == "raw":
+            size = sum(os.stat(f).st_size for f in files)
+            return size // self.block_size + 1
+        if self.lift_level == "dis":
+            return None
+        if self.lift_level == "dec":
+            return None
+        raise ValueError(f"{self.lift_level=}")
+
+    def get_bytes_to_str(self) -> Callable[[bytes], str]:
+        if self.lift_level == "raw":
+            return bytes_to_str_utf8
+        if self.lift_level == "dis":
+            return bytes.decode
+        if self.lift_level == "dec":
+            return bytes.decode
+        raise ValueError(f"{self.lift_level=}")
+
+    def get_normalizer(self) -> normalizers.Normalizer:
+        if self.lift_level == "raw":
+            return RAW_NORMALIZER
+        if self.lift_level == "dis":
+            return DIS_NORMALIZER
+        if self.lift_level == "dec":
+            return DEC_NORMALIZER
+        raise ValueError(f"{self.lift_level=}")
+
+    def get_pre_tokenizer(self) -> pre_tokenizers.PreTokenizer:
+        if self.lift_level == "raw":
+            return RAW_PRETOKENIZER
+        if self.lift_level == "dis":
+            return DIS_PRETOKENIZER
+        if self.lift_level == "dec":
+            return DEC_PRETOKENIZER
+        raise ValueError(f"{self.lift_level=}")
+
+    def get_model(self) -> models.Model:
+        # TODO: should the Model recieve the unk_token and/or unk_token_id?
+        if self.algorithm.lower() == "bpe":
+            return models.BPE()
+        if self.algorithm.lower() == "unigram":
+            return models.Unigram()
+        if self.algorithm.lower() == "wordpiece":
+            return models.WordPiece()
+        if self.algorithm == "WordLevel":
+            return models.WordLevel()
+        raise ValueError(f"{self.algorithm=}")
+
+    def get_trainer(self) -> trainers.Trainer:
+        special_tokens = list(SPECIALS.values())
+        vocab_size = self.vocab_size + len(special_tokens)
+        if self.algorithm.lower() == "bpe":
+            return trainers.BpeTrainer(
+                vocab_size=vocab_size,
+                special_tokens=special_tokens,
+                max_token_length=self.max_token_length,
+            )
+        if self.algorithm.lower() == "unigram":
+            return trainers.UnigramTrainer(
+                vocab_size=vocab_size,
+                special_tokens=special_tokens,
+                unk_token=SPECIALS["unk_token"],
+                max_piece_length=self.max_token_length,
+            )
+        if self.algorithm.lower() == "wordpiece":
+            return trainers.WordPieceTrainer(
+                vocab_size=vocab_size,
+                special_tokens=special_tokens,
+            )
+        if self.algorithm == "WordLevel":
+            return trainers.WordLevelTrainer(
+                vocab_size=vocab_size,
+                special_tokens=special_tokens,
+            )
+        raise ValueError(f"{self.algorithm=}")
 
 
-def cli():
+def main():
+    print(f"START @{datetime.now()}")
+
     parser = HfArgumentParser((TokenizationArgs,))
     args = parser.parse_args_into_dataclasses()[0]
-    print(f"args={pformat(args)}")
-    print(BR, flush=True)
-    train_tokenizer(
+
+    trainer = TrainTokenizer(
+        args.lift_level,
         args.algorithm,
         args.vocab_size,
         args.batch_size,
@@ -537,24 +600,14 @@ def cli():
         args.num_files,
         args.max_token_length,
     )
+    tokenizer = trainer()
+
+    io_helper = TokenizerIOHelper(args.lift_level, args.algorithm, args.vocab_size, args.num_files)
+    io_helper.save(tokenizer)
+    tokenizer = io_helper.load()
+
+    print(f"FINISH @{datetime.now()}")
 
 
 if __name__ == "__main__":
-    # gen = tokenization_gen(
-    #     list(DATASET_TO_FILES["binaries"]["sorel_pe"]())[0:100],
-    #     batch_size=10,
-    #     block_size=10,
-    # )
-    # for b in gen:
-    #     print(len(b))
-
-    # tokenizer = get_tokenizer(8, "BPE", 1024, False, True, True, False)
-    # file = list(islice(DATASET_TO_FILES["binaries"]["bodmas_pe"](), 1))[0]
-    # text = bytes_to_str_utf8(file.read_bytes())
-    # encoding = tokenizer(text, add_special_tokens=True)
-
-    print(f"START @{datetime.now()}")
-    print(BR, flush=True)
-    cli()
-    print(f"FINISH @{datetime.now()}")
-    print(BR, flush=True)
+    main()
