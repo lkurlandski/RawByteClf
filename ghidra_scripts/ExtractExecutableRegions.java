@@ -5,6 +5,7 @@
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -30,6 +31,7 @@ public class ExtractExecutableRegions extends HeadlessScript {
     protected static final boolean REQUIRE_HEADLESS_ANALYSIS_COMPLETE = false;
 
     protected int timeoutPerFile = -1;
+    protected String programName;
 
     @Override
     public void run() throws Exception {
@@ -45,15 +47,15 @@ public class ExtractExecutableRegions extends HeadlessScript {
         String[] scriptArgs = getAndValidateScriptArgs();
         String outputFileName = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
-        String programName = getProgramName();
+        this.programName = getProgramName();
         println("run: outputFileName=" + outputFileName);
         println("run: timeoutPerFile=" + String.valueOf(this.timeoutPerFile));
-        println("run: programName=" + programName);
+        println("run: programName=" + this.programName);
 
-        runMainWorker(outputFileName, programName);
+        runMainWorker(outputFileName);
     }
 
-    private void MainWorker(String outputFileName, String programName) throws Exception {
+    private void MainWorker(String outputFileName) throws Exception {
 
         Memory memory = currentProgram.getMemory();
         Listing listing = currentProgram.getListing();
@@ -63,8 +65,10 @@ public class ExtractExecutableRegions extends HeadlessScript {
         List<Bounds> dataBounds = new ArrayList<>();
         List<Bounds> paddBounds = new ArrayList<>();
 
+        int numBlocks = 0;
+        int numExecutableBlocks = 0;
         for (MemoryBlock block : memory.getBlocks()) {
-            if (block.isExecute()) {
+            if (block.isExecute() && block.isInitialized()) {
                 Address lower = block.getStart();
                 Address upper = block.getEnd();
                 Regions regions = getRegions(listing, lower, upper);
@@ -72,13 +76,18 @@ public class ExtractExecutableRegions extends HeadlessScript {
                 codeBounds.addAll(regions.codeBounds);
                 dataBounds.addAll(regions.dataBounds);
                 paddBounds.addAll(regions.paddBounds);
+                numExecutableBlocks += 1;
             }
+            numBlocks += 1;
         }
+
+        println("MainWorker: numBlocks=" + String.valueOf(numBlocks));
+        println("MainWorker: numExecutableBlocks=" + String.valueOf(numExecutableBlocks));
 
         Regions allRegions = new Regions(execBounds, codeBounds, dataBounds, paddBounds);
         String allRegionsStr = regionsToJson(allRegions);
         String outputStr = "{"
-                         + "\"sha\": " + "\"" + programName + "\""
+                         + "\"sha\": " + "\"" + this.programName + "\""
                          + ", "
                          + "\"regions\": " + allRegionsStr 
                          + "}"
@@ -93,21 +102,21 @@ public class ExtractExecutableRegions extends HeadlessScript {
     /**
     * Wraps the main function in a timeout construct.
     */
-    private void runMainWorker(String outputFileName,  String programName) throws Exception {
+    private void runMainWorker(String outputFileName) throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Callable<Void> task = () -> {
-            MainWorker(outputFileName, programName);
+            MainWorker(outputFileName);
             return null;
         };
         Future<Void> future = executor.submit(task);
         try {
             future.get(this.timeoutPerFile, TimeUnit.SECONDS);
-            println("run: finished.");
+            println("run: finished (success) <" + this.programName + ">");
         } catch (TimeoutException e) {
-            println("run: timed out.");
+            println("run: finished (timeout) <" + this.programName + ">");
             future.cancel(true);
         } catch (InterruptedException | ExecutionException e) {
-            println("run: crashed.");
+            println("run: finished (crash) <" + this.programName + ">");
             e.printStackTrace();
         } finally {
             executor.shutdown();
@@ -150,15 +159,43 @@ public class ExtractExecutableRegions extends HeadlessScript {
      * Convert a virtual address to a physical one.
     */
     private long virtualAddressToPhysicalAddress(Address addr) throws ArithmeticException {
+
         Memory memory = currentProgram.getMemory();
         MemoryBlock block = memory.getBlock(addr);
-        long sectionOffset = addr.getOffsetAsBigInteger()
-                           .subtract(block.getStart().getOffsetAsBigInteger())
-                           .longValueExact();
-        long physAddr = block.getSourceInfos().get(0).getFileBytesOffset()
-                      + sectionOffset;
-        if (physAddr < 0) {
-            throw new ArithmeticException();
+
+        String blockInfo = "("
+                         + "isExecute=" + String.valueOf(block.isExecute()) + ","
+                         + "isInitialized=" + String.valueOf(block.isInitialized()) + ","
+                         + "isLoaded=" + String.valueOf(block.isLoaded()) + ","
+                         + "isMapped=" + String.valueOf(block.isMapped()) + ","
+                         + "isVolatile=" + String.valueOf(block.isVolatile()) + ","
+                         + ")";
+
+        if (block.getSourceInfos().isEmpty()) {
+            println("virtualAddressToPhysicalAddress: blockInfo=" + blockInfo);
+            throw new ArithmeticException("No source information available.");
+        }
+
+        BigInteger addrOffset = addr.getOffsetAsBigInteger();
+        BigInteger blockStart = block.getStart().getOffsetAsBigInteger();
+        if (addrOffset.compareTo(blockStart) < 0) {
+            println("virtualAddressToPhysicalAddress: blockInfo=" + blockInfo);
+            println("virtualAddressToPhysicalAddress: addrOffset=" + addrOffset.toString());
+            println("virtualAddressToPhysicalAddress: blockStart=" + blockStart.toString());
+            throw new ArithmeticException("The address's offset should be larger than the start of its block.");
+        }
+
+        long sectionOffset = addrOffset.subtract(blockStart).longValueExact();
+        long blockOffset = block.getSourceInfos().get(0).getFileBytesOffset();
+        long physAddr = blockOffset + sectionOffset;
+        if (sectionOffset < 0 || blockOffset < 0 || physAddr < 0) {
+            println("virtualAddressToPhysicalAddress: blockInfo=" + blockInfo);
+            println("virtualAddressToPhysicalAddress: addrOffset=" + addrOffset.toString());
+            println("virtualAddressToPhysicalAddress: blockStart=" + blockStart.toString());
+            println("virtualAddressToPhysicalAddress: sectionOffset=" + String.valueOf(sectionOffset));
+            println("virtualAddressToPhysicalAddress: blockOffset=" + String.valueOf(blockOffset));
+            println("virtualAddressToPhysicalAddress: physAddr=" + String.valueOf(physAddr));
+            throw new ArithmeticException("physAddr cannot be less than zero.");
         }
         return physAddr;
     }

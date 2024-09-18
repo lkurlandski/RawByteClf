@@ -22,12 +22,12 @@ public abstract class Lifter extends HeadlessScript {
     protected static final boolean SKIP_EXTERNAL_FUNCTIONS = false;
     protected static final boolean FORMAL_SIGNATURE = false;
     protected static final boolean INCLUDE_CALLING_CONVENTION = true;
-    protected static final boolean REPLACE_SIGNATURE = true;
     protected static final boolean REQUIRE_HEADLESS_ANALYSIS_COMPLETE = false;
 
     protected String outputDir = "./";
     protected int timeoutPerFile = -1;
     protected int timeoutPerFunc = -1;
+    protected String programName;
 
     /**
      * Entry point.
@@ -37,7 +37,6 @@ public abstract class Lifter extends HeadlessScript {
         println("run: SKIP_EXTERNAL_FUNCTIONS=" + SKIP_EXTERNAL_FUNCTIONS);
         println("run: FORMAL_SIGNATURE=" + FORMAL_SIGNATURE);
         println("run: INCLUDE_CALLING_CONVENTION=" + INCLUDE_CALLING_CONVENTION);
-        println("run: REPLACE_SIGNATURE=" + REPLACE_SIGNATURE);
         println("run: REQUIRE_HEADLESS_ANALYSIS_COMPLETE=" + REQUIRE_HEADLESS_ANALYSIS_COMPLETE);
         println("run: analysisTimeoutOccurred()=" + analysisTimeoutOccurred());
 
@@ -50,13 +49,13 @@ public abstract class Lifter extends HeadlessScript {
         this.outputDir = scriptArgs[0];
         this.timeoutPerFile = Integer.parseInt(scriptArgs[1]);
         this.timeoutPerFunc = Integer.parseInt(scriptArgs[2]);
-        String programName = getProgramName();
-        String outputFileName = getOutputFileName(this.outputDir, programName);
+        this.programName = getProgramName();
+        String outputFileName = getOutputFileName(this.outputDir, this.programName);
 
         println("run: outputDir=" + this.outputDir);
         println("run: timeoutPerFile=" + String.valueOf(this.timeoutPerFile));
         println("run: timeoutPerFunc=" + String.valueOf(this.timeoutPerFunc)); 
-        println("run: programName=" + programName);
+        println("run: programName=" + this.programName);
         println("run: outputFileName=" + outputFileName);
 
         FunctionIterator functions = getFunctions();
@@ -132,12 +131,12 @@ public abstract class Lifter extends HeadlessScript {
         Future<Void> future = executor.submit(task);
         try {
             future.get(this.timeoutPerFile, TimeUnit.SECONDS);
-            println("run: finished.");
+            println("run: finished (success) <" + this.programName + ">");
         } catch (TimeoutException e) {
-            println("run: timed out.");
+            println("run: finished (timeout) <" + this.programName + ">");
             future.cancel(true);
         } catch (InterruptedException | ExecutionException e) {
-            println("run: crashed.");
+            println("run: finished (crash) <" + this.programName + ">");
             e.printStackTrace();
         } finally {
             executor.shutdown();

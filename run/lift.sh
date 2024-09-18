@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift-0
+#SBATCH --job-name=lift-1
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
-#SBATCH --time=00-01:00:00
+#SBATCH --time=00-16:00:00
 #SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -36,8 +36,11 @@
 
 
 get_time_limit() {
+  # This can get pretty wierd and be annoying. The environment variable that's supposed
+  # to store the time is unreliable. The print-out can be unreliable when using job arrays.
+  # Using head seems to work.
   job_id=$SLURM_JOB_ID
-  time_limit=$(scontrol show job "$job_id" | grep -oP 'TimeLimit=\K[^\s]+')
+  time_limit=$(scontrol show job "$job_id" | grep -oP 'TimeLimit=\K[^\s]+' | head -n 1)
 
   if [[ $time_limit == "UNLIMITED" ]]; then
     total_seconds=$((5 * 24 * 60 * 60))
@@ -61,19 +64,19 @@ get_time_limit() {
 
   # Sanity checks: verify that days, hours, minutes, and seconds are valid integers
   if ! [[ "$days" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid days value '$days'" >&2
+    echo "Error: Invalid days value '$days' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
   if ! [[ "$hours" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid hours value '$hours'" >&2
+    echo "Error: Invalid hours value '$hours' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
   if ! [[ "$minutes" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid minutes value '$minutes'" >&2
+    echo "Error: Invalid minutes value '$minutes' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
   if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
-    echo "Error: Invalid seconds value '$seconds'" >&2
+    echo "Error: Invalid seconds value '$seconds' derived from time_limit '$time_limit'" >&2
     exit 1
   fi
 
@@ -95,7 +98,7 @@ if ! [[ "$TIME" =~ ^[0-9]+$ ]]; then
   echo "Error: Invalid TIME: $TIME"
   exit 1
 fi
-TIME_FOR_CLEANUP=900
+TIME_FOR_CLEANUP=3600
 if [ "$TIME" -le 0 ] || [ "$TIME_FOR_CLEANUP" -le 0 ] || [ "$TIME" -le "$TIME_FOR_CLEANUP" ]; then
   echo "Error: TIME and TIME_FOR_CLEANUP must be greater than 0 and TIME greater than TIME_FOR_CLEANUP."
   exit 1
@@ -166,7 +169,7 @@ p_fin_dis="$P_FIN/disassembled/$HH"
 p_fin_dec="$P_FIN/decompiled/$HH"
 p_fin_reg="$P_FIN/regions/$HH"
 p_fin_log="$P_FIN/ghidraLogs/$HH"
-p_fin_ghi="$P_FIN/ghidraLocation/$HHH"
+p_fin_ghi="$P_FIN/ghidraLocation/$HH"
 mkdir -p "$p_fin_arc"
 mkdir -p "$p_fin_dis"
 mkdir -p "$p_fin_dec"
@@ -280,8 +283,8 @@ else
   fs_fin_reg=""
 fi	
 # Search the tmp directory.
-if [[ -f "$p_fin_reg/$HHH.jsonl" ]]; then
-  for stem in $(grep -o '"sha": "[^"]*"' "$p_fin_reg/$HHH.jsonl" | awk -F'"' '{print $4}'); do
+if [[ -f "$p_tmp_reg/$HHH.jsonl" ]]; then
+  for stem in $(grep -o '"sha": "[^"]*"' "$p_tmp_reg/$HHH.jsonl" | awk -F'"' '{print $4}'); do
     fs_fin_reg=$(printf "%s\n%s" "$fs_fin_reg" "$stem")
   done
 fi
