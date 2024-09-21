@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift-2
+#SBATCH --job-name=lift-3
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
@@ -35,6 +35,7 @@
 # - 130: keyboard interrupt
 
 
+# Unfortunately, this is unreliable because of system bugs outside of my control.
 get_time_limit() {
   # This can get pretty wierd and be annoying. The environment variable that's supposed
   # to store the time is unreliable. The print-out can be unreliable when using job arrays.
@@ -93,7 +94,8 @@ echo "HH: $HH"
 
 # Establish some timing variables.
 t_start=$(date +%s.%N)
-TIME=$(get_time_limit)
+# TIME=$(get_time_limit)
+TIME=$((12 * 3600))
 if ! [[ "$TIME" =~ ^[0-9]+$ ]]; then
   echo "Error: Invalid TIME: $TIME"
   exit 1
@@ -313,6 +315,10 @@ echo "Lifting $cnt files totaling $siz."
 p_log="$p_tmp_log/$HHH.$counter.log"
 t_ghidra=$(date +%s.%N)
 timeout=$(echo "$TIME - ($t_ghidra - $t_start) - $TIME_FOR_CLEANUP" | bc)
+if (( $(echo "$timeout < 1" | bc -l) )); then
+  echo "Not enough time to run analyzeHeadless, so moving to cleanup; timeout: $timeout"
+  break
+fi
 echo "Running analyzeHeadless for $timeout seconds and logging to $p_log"
 
 # Run Ghidra to disassemble and decompile the files.
@@ -335,21 +341,29 @@ code=$?
 echo "analyzeHeadless returned $code"
 counter=$((counter+1))
 
-# If analyzeHeadless completes or fails, its code will be returned by timeout.
-# If analyzeHeadless times out, timeout returns 124.
-# If analyzeHeadless returns 0 or timeout returns 124, we should exit the loop.
+# If 0, then analyzeHeadless has finished correctly.
 if [ $code -eq 0 ]; then
   break
 fi
+# If 124, then analyzeHeadless timed out
 if [ $code -eq 124 ]; then
   break
 fi
-
-# Otherwise, we locate the file that caused an error in the Ghidra log
-# and ensure it is skipped on the next loop iteration.
-fail_line=$(grep "IMPORTING: file" "$p_log" | tail -n 1)
-fail_stem=$(echo "$fail_line" | sed -n 's|.*IMPORTING: file://.*/\(.*\)\.exe.*|\1|p')
-fail_file="$p_tmp_bin/$fail_stem.exe"
+# If 125, 126, 127, something unexpected happened with the timeout command that should be
+# investigated. Nonetheless, we can still try and recover the analysis results.
+if [ "$code" -eq 125 ] || [ "$code" -eq 126 ] || [ "$code" -eq 127 ] ; then
+  break
+fi
+# If 137, then analyzeHeadless was sent a hard kill signal, probably due to a OOM.
+# Otherwise, analyzeHeadless returned with a non-zero exit code, which we handle the same way.
+# We locate a likly "fail file" and remove it from the analysis.
+if [[ -f "$p_log" && $(grep -q "IMPORTING: file" "$p_log") ]]; then
+  fail_line=$(grep "IMPORTING: file" "$p_log" | tail -n 1)
+  fail_stem=$(echo "$fail_line" | sed -n 's|.*IMPORTING: file://.*/\(.*\)\.exe.*|\1|p')
+  fail_file="$p_tmp_bin/$fail_stem.exe"
+else
+  fail_file=$(ls "$p_tmp_bin" | sort | head -n 1)
+fi
 echo "fail_file: $fail_file"
 rm "$fail_file"
 
