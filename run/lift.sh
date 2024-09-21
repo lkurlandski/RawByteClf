@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift-1
+#SBATCH --job-name=lift-2
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
-#SBATCH --time=00-16:00:00
+#SBATCH --time=00-12:00:00
 #SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
