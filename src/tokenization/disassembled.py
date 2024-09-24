@@ -55,7 +55,7 @@ class HexCapitalizationNormalizer:
 class RemoveCommentsFromCharacterStream:
 
     def __init__(self) -> None:
-        ...
+        raise NotImplementedError()
 
     def __call__(self, char: str) -> str:
         ...
@@ -68,20 +68,23 @@ class CommentRemovalNormalizer:
         normalized.map(func)
 
 
-class RemoveSignaturesFromCharacterStream:
-
-    def __init__(self) -> None:
-        ...
-
-    def __call__(self, char: str) -> str:
-        ...
-
-
 class SignatureRemovalNormalizer:
 
     def normalize(self, normalized: NormalizedString):
-        func = RemoveSignaturesFromCharacterStream()
-        normalized.map(func)
+        text = []
+        functions = normalized.split("\n\n", "removed")
+        for function in functions:
+            lines = function.split("\n", "removed")
+            text.append("\n")
+            for line in lines[1:]:
+                text.append(str(line))
+
+        text = "\n".join(text)
+
+        # The straightforward approach seems not to work due to bugs with what clear does.
+        # normalized.clear()
+        # normalized.append(text)
+        normalized.replace(str(normalized.slice((0, len(normalized.normalized)))), text)
 
 
 def _get_dis_normalizer(
