@@ -52,22 +52,6 @@ class HexCapitalizationNormalizer:
         normalized.map(func)
 
 
-class RemoveCommentsFromCharacterStream:
-
-    def __init__(self) -> None:
-        raise NotImplementedError()
-
-    def __call__(self, char: str) -> str:
-        ...
-
-
-class CommentRemovalNormalizer:
-
-    def normalize(self, normalized: NormalizedString):
-        func = RemoveCommentsFromCharacterStream()
-        normalized.map(func)
-
-
 class SignatureRemovalNormalizer:
 
     def normalize(self, normalized: NormalizedString):
@@ -80,16 +64,12 @@ class SignatureRemovalNormalizer:
                 text.append(str(line))
 
         text = "\n".join(text)
-
-        # The straightforward approach seems not to work due to bugs with what clear does.
-        # normalized.clear()
-        # normalized.append(text)
-        normalized.replace(str(normalized.slice((0, len(normalized.normalized)))), text)
+        replace = str(normalized.slice((0, len(normalized.normalized))))
+        normalized.replace(replace, text)
 
 
 def _get_dis_normalizer(
-    capitalize_hex: bool = True,
-    remove_comments: bool = True,
+    capitalize_hex: bool = False,
     remove_signatures: bool = True,
 ) -> Normalizer:
 
@@ -102,8 +82,6 @@ def _get_dis_normalizer(
 
     if capitalize_hex:
         l.append(normalizers.Normalizer.custom(HexCapitalizationNormalizer()))
-    if remove_comments:
-        l.append(normalizers.Normalizer.custom(CommentRemovalNormalizer()))
     if remove_signatures:
         l.append(normalizers.Normalizer.custom(SignatureRemovalNormalizer()))
 
@@ -130,7 +108,7 @@ def _get_dis_pretokenizer(
     return pre_tokenizers.Sequence(l)
 
 
-def get_dis_normalizer(algorithm: TokenizerAlgorithm) -> Normalizer:
+def get_dis_normalizer(algorithm: TokenizerAlgorithm) -> Normalizer:  # pylint: disable=unused-argument
     return _get_dis_normalizer()
 
 
