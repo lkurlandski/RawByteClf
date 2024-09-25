@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift-5
+#SBATCH --job-name=lift-6
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
@@ -237,6 +237,34 @@ t_extract=$(date +%s.%N)
 t_d=$(echo "$t_extract - $t_setup" | bc)
 printf "Extraction time: %.6f seconds\n" $t_d
 
+# If a log file exists, then we're probably rerunning the script.
+# Its likely that we're rerunning it because the most recently attempted file
+# caused a SLURM timeout, so we identify that file and remove it from the queue.
+if [[ -f "$p_fin_log/$HHH.log" ]]; then
+
+  p_log="$p_fin_log/$HHH.log"
+
+  if [[ -f "$p_log" ]] && grep --text -q "IMPORTING: file" "$p_log" ]]; then
+    echo "Inferring fail_from p_log: $p_log"
+    fail_line=$(grep --text "IMPORTING: file" "$p_log" | tail -n 1)
+    fail_stem=$(echo "$fail_line" | sed -n 's|.*IMPORTING: file://.*/\(.*\)\.exe.*|\1|p')
+    fail_file="$p_tmp_bin/$fail_stem.exe"
+  else
+    echo "Inferring fail_from p_tmp_bin: $p_tmp_bin"
+    fail_file=$(ls "$p_tmp_bin" | sort | head -n 1)
+    fail_file="$p_tmp_bin/$fail_file"
+  fi
+  echo "fail_file: $fail_file"
+  rm "$fail_file"
+
+  p_log=""
+  fail_line=""
+  fail_stem=""
+  fail_file=""
+
+fi
+
+exit
 
 counter=0
 while true; do
@@ -357,12 +385,15 @@ fi
 # If 137, then analyzeHeadless was sent a hard kill signal, probably due to a OOM.
 # Otherwise, analyzeHeadless returned with a non-zero exit code, which we handle the same way.
 # We locate a likly "fail file" and remove it from the analysis.
-if [[ -f "$p_log" && $(grep -q "IMPORTING: file" "$p_log") ]]; then
-  fail_line=$(grep "IMPORTING: file" "$p_log" | tail -n 1)
+if [[ -f "$p_log" ]] && grep --text -q "IMPORTING: file" "$p_log" ]]; then
+  echo "Inferring fail_from p_log: $p_log"
+  fail_line=$(grep --text "IMPORTING: file" "$p_log" | tail -n 1)
   fail_stem=$(echo "$fail_line" | sed -n 's|.*IMPORTING: file://.*/\(.*\)\.exe.*|\1|p')
   fail_file="$p_tmp_bin/$fail_stem.exe"
 else
+  echo "Inferring fail_from p_tmp_bin: $p_tmp_bin"
   fail_file=$(ls "$p_tmp_bin" | sort | head -n 1)
+  fail_file="$p_tmp_bin/$fail_file"
 fi
 echo "fail_file: $fail_file"
 rm "$fail_file"
