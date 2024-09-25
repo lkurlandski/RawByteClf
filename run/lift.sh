@@ -264,8 +264,6 @@ if [[ -f "$p_fin_log/$HHH.log" ]]; then
 
 fi
 
-exit
-
 counter=0
 while true; do
 
