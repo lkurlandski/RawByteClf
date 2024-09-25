@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift-4
+#SBATCH --job-name=lift-5
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
