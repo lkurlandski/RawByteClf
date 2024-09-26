@@ -5,6 +5,7 @@ Prepare raw, disassembled, and decompiled data caches. This is essentially norma
 from argparse import ArgumentParser
 import multiprocessing as mp
 from pathlib import Path
+import re
 import time
 from typing import Callable
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -72,7 +73,7 @@ def dis_func(b: bytes, n: str) -> bytes:  # pylint: disable=unused-argument
     for l in s.split("\n"):
         p = l.split("\t")
         if len(p) > 1:
-            t.append(p[-1])
+            t.append(p[-1].strip())
     t = "\n".join([unidecode(l) for l in t])
     return t.encode(encoding="ascii")
 
@@ -87,6 +88,7 @@ def dis(dataset: str) -> None:
 
 def dec_func(b: bytes, n: str) -> bytes:  # pylint: disable=unused-argument
     s = b.decode()
+    s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
     t = []
     for l in s.split("\n"):
         t.append(l)

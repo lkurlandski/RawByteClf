@@ -2,7 +2,7 @@
 Tokenization for disassembly code.
 """
 
-import sys
+from typing import Optional
 
 from tokenizers import Regex, NormalizedString
 from tokenizers import normalizers
@@ -36,23 +36,17 @@ class StripAllExceptInstructionsNormalizer:
     This approach splits each line based on the tab character and keeps the last part.
     """
 
-    def normalize(self, normalized: NormalizedString): 
-        print(f"{len(normalized.normalized)=}")
+    def normalize(self, normalized: NormalizedString):
 
         text = []
         lines = normalized.split("\n", "isolated")
-        print(f"{len(lines)=}")
         for line in lines:
             parts = line.split("\t", "removed")
             text.append(str(parts[-1]))
 
-        print(f"{len(text)=}")
         text = "\n".join(text)
-        print(f"{len(text)=}")
 
         replace_normalized_string(normalized, text)
-        
-        print(f"{sys.getsizeof(normalized.normalized)=}")
 
 
 class CapitalizeHexCharactersFromCharacterStream:
@@ -112,50 +106,18 @@ class SignatureRemovalNormalizer:
         normalized.replace(replace, text)
 
 
-def _get_dis_normalizer(
-    capitalize_hex: bool = False,
-    remove_signatures: bool = True,
-) -> Normalizer:
-
-    l = [
-        normalizers.NFD(),
-        normalizers.StripAccents(),
-        normalizers.Lowercase(),
-    ]
-
-    if capitalize_hex:
-        l.append(normalizers.Normalizer.custom(HexCapitalizationNormalizer()))
-    if remove_signatures:
-        l.append(normalizers.Normalizer.custom(SignatureRemovalNormalizer()))
-
-    return normalizers.Sequence(l)
+def get_dis_normalizer(algorithm: TokenizerAlgorithm) -> Optional[Normalizer]:  # pylint: disable=unused-argument
+    return None
 
 
-def _get_dis_pretokenizer(
-    split_nonalphanumeric: bool = False,
-    split_spaces: bool = False,
-    split_hex: bool = False,
-) -> PreTokenizer:
-
-    l = [
+def get_dis_pretokenizer(algorithm: TokenizerAlgorithm) -> Optional[PreTokenizer]:
+    if algorithm != TokenizerAlgorithm.WORDLEVEL:
+        return pre_tokenizers.Sequence([
+            pre_tokenizers.Split(Regex(r"\n"), behavior="removed"),
+        ])
+    return pre_tokenizers.Sequence([
         pre_tokenizers.Split(Regex(r"\n"), behavior="removed"),
-    ]
-
-    if split_nonalphanumeric:
-        l.append(pre_tokenizers.Split(Regex(r"[^a-zA-Z0-9_]"), behavior="isolated"))
-    if split_spaces:
-        l.append(pre_tokenizers.Split(Regex(r"\s"), behavior="removed"))
-    if split_hex:
-        l.append(pre_tokenizers.Split(Regex(r"(0x)|[0-9A-F]"), behavior="isolated"))
-
-    return pre_tokenizers.Sequence(l)
-
-
-def get_dis_normalizer(algorithm: TokenizerAlgorithm) -> Normalizer:  # pylint: disable=unused-argument
-    return _get_dis_normalizer(False, False)
-
-
-def get_dis_pretokenizer(algorithm: TokenizerAlgorithm) -> PreTokenizer:
-    if algorithm == TokenizerAlgorithm.WORDLEVEL:
-        return _get_dis_pretokenizer(split_nonalphanumeric=True, split_spaces=True, split_hex=True)
-    return _get_dis_pretokenizer()
+        pre_tokenizers.Split(Regex(r"[^a-zA-Z0-9_]"), behavior="isolated"),
+        pre_tokenizers.Split(Regex(r"\s"), behavior="removed"),
+        pre_tokenizers.Split(Regex(r"(0x)|[0-9A-F]"), behavior="isolated"),
+    ])

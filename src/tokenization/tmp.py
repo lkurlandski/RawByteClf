@@ -71,17 +71,16 @@ def test_dec():
 
 def test_gen():
 
-    files = sorted(dis.iterdir())[0:4]
-    iterable = TokenizationTrainingIterator("dis", files, 2, bytes.decode)()
+    iterable = TokenizationTrainingIterator(lift_level="dec", batch_size=64, block_size=64, num_files=16)()
     print(iterable)
     for batch in iterable:
-        print(f"{type(batch)=}")
-        print(f"{len(batch)=}")
+        #print(f"{type(batch)=}")
+        #print(f"{len(batch)=}")
         for item in batch:
-            print(f"{type(item)=}")
-            print(f"{len(item)=}")
-            print(f"{item[0:32]=}")
-
+        #    print(f"{type(item)=}")
+        #    print(f"{len(item)=}")
+            print(f"{item=}")
+        #    return
 
 if __name__ == "__main__":
-    test_dis()
+    test_gen()

@@ -24,6 +24,7 @@ import sys
 import time
 from typing import AsyncGenerator, ClassVar, Generator, NamedTuple, Literal, Optional
 import warnings
+import zipfile
 import zlib
 
 # pylint: disable=wrong-import-position
@@ -50,6 +51,15 @@ from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES, SOREL_
 
 DEFAULT_ASYNCH_CHUNK_SIZE = 500000
 DEFAULT_DISABLE_TQDM = True
+
+
+def get_processed_data(lift_level: str, dataset: Literal["sorel_pe", "bodmas_pe", "assemblage_pe"]) -> Generator[tuple[str, bytes], None, None]:
+    root = Path("./data/")
+    path = root / dataset / lift_level
+    for archive in sorted(path.iterdir()):
+        with zipfile.ZipFile(archive, "r") as zp:
+            for n in sorted(zp.namelist()):
+                yield n, zp.read(n)
 
 
 def print_dataset(

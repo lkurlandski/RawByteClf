@@ -2,6 +2,8 @@
 Tokenization for decompiled code.
 """
 
+from typing import Optional
+
 from tokenizers import Regex, NormalizedString
 from tokenizers import normalizers
 from tokenizers.normalizers import Normalizer
@@ -33,28 +35,19 @@ class CommentRemovalNormalizer:
         normalized.replace(replace, text)
 
 
-def _get_dec_normalizer(remove_comments: bool = True) -> Normalizer:
-    l = [
-        normalizers.Replace(Regex(r"^(.+?\t)(.+?\t)(.+?\t)(.+?\t)"), ""),
-        normalizers.NFD(),
-        normalizers.StripAccents(),
-        normalizers.Lowercase(),
-    ]
-    if remove_comments:
-        l.append(normalizers.Normalizer.custom(CommentRemovalNormalizer()))
-    return normalizers.Sequence(l)
+def get_dec_normalizer(algorithm: TokenizerAlgorithm) -> Optional[Normalizer]:  # pylint: disable=unused-argument
+    return None
 
 
-def _get_dec_pretokenizer() -> PreTokenizer:
-    l = [
-        pre_tokenizers.Split(Regex(r"\n"), behavior="removed"),
-    ]
-    return pre_tokenizers.Sequence(l)
-
-
-def get_dec_normalizer(algorithm: TokenizerAlgorithm) -> Normalizer:
-    return _get_dec_normalizer()
-
-
-def get_dec_pretokenizer(algorithm: TokenizerAlgorithm) -> PreTokenizer:
-    return _get_dec_pretokenizer()
+def get_dec_pretokenizer(algorithm: TokenizerAlgorithm) -> Optional[PreTokenizer]:
+    if algorithm != TokenizerAlgorithm.WORDLEVEL:
+        return pre_tokenizers.Sequence([
+            pre_tokenizers.Split(Regex(r"\n"), behavior="removed"),
+        ])
+    raise NotImplementedError()
+    # return pre_tokenizers.Sequence([
+    #     pre_tokenizers.Split(Regex(r"\n"), behavior="removed"),
+    #     pre_tokenizers.Split(Regex(r"[^a-zA-Z0-9_]"), behavior="isolated"),
+    #     pre_tokenizers.Split(Regex(r"\s"), behavior="removed"),
+    #     pre_tokenizers.Split(Regex(r"(0x)|[0-9A-F]"), behavior="isolated"),
+    # ])

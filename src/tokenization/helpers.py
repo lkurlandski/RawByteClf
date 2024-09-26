@@ -30,16 +30,16 @@ class DirectoryIsEmptyError(FileNotFoundError):
 class TokenizerIOHelper:
 
     def __init__(self, lift_level: LiftLevel, algorithm: TokenizerAlgorithm, vocab_size: int, num_files: int) -> None:
-        self.lift_level = lift_level
-        self.algorithm = algorithm
+        self.lift_level = LiftLevel(lift_level)
+        self.algorithm = TokenizerAlgorithm(algorithm)
         self.vocab_size = vocab_size
         self.num_files = num_files
 
     @property
     def path(self) -> Path:
         return TOKENIZERS_OUTPUT_PATH \
-            / f"{self.lift_level}" \
-            / f"{self.algorithm}" \
+            / f"{self.lift_level.value}" \
+            / f"{self.algorithm.value}" \
             / f"{self.vocab_size}" \
             / f"{self.num_files}"
 
@@ -52,11 +52,12 @@ class TokenizerIOHelper:
         shutil.rmtree(self.path, ignore_errors=True)
         self.path.mkdir(parents=True)
 
-        if self.lift_level == "raw":
+        # Handle custom normalizers and pretokenizers.
+        if self.lift_level == LiftLevel.RAW:
             pass
-        elif self.lift_level == "dis":
-            tokenizer.normalizer = SENTINAL_NORMALIZER
-        elif self.lift_level == "dec":
+        elif self.lift_level == LiftLevel.DIS:
+            pass
+        elif self.lift_level == LiftLevel.DEC:
             pass
         else:
             raise ValueError(f"{self.lift_level=}")
@@ -67,11 +68,12 @@ class TokenizerIOHelper:
 
         tokenizer = Tokenizer.from_file(self.outfile.as_posix())
 
-        if self.lift_level == "raw":
+        # Handle custom normalizers and pretokenizers.
+        if self.lift_level == LiftLevel.RAW:
             pass
-        elif self.lift_level == "dis":
-            tokenizer.normalizer = get_dis_normalizer(self.algorithm)
-        elif self.lift_level == "dec":
+        elif self.lift_level == LiftLevel.DIS:
+            pass
+        elif self.lift_level == LiftLevel.DEC:
             pass
         else:
             raise ValueError(f"{self.lift_level=}")

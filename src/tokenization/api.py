@@ -30,11 +30,11 @@ def get_fast_tokenizer(
        model_max_length: will caused the tokenizer to trim the tokenized input.
     """
 
-    if algorithm == "raw":
-        if lift_level != "raw":
-            raise ValueError(f"{lift_level=}")
-        tokenizer = get_raw_raw_tokenizer(representation)
+    lift_level = LiftLevel(lift_level)
+    algorithm = TokenizerAlgorithm(algorithm)
 
+    if algorithm == TokenizerAlgorithm.WORDLEVEL and lift_level == LiftLevel.RAW:
+        tokenizer = get_raw_raw_tokenizer(representation)
     else:
         tokenizer = TokenizerIOHelper.fromdisk(lift_level, algorithm, vocab_size, None).load()
 
