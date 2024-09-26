@@ -9,16 +9,23 @@ import os
 from pathlib import Path
 from pprint import pformat, pprint
 import sys
+import tempfile
 import time
 from typing import Literal, Optional
+
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
 
 try:
     import lief
     import pefile
 except (ModuleNotFoundError, ImportError):
     print("lief and pefile are not available. Binary analysis is disabled but you can still use caches and their readers.")
-
 from tqdm import tqdm
+
+from src.data.utils import get_data_from_archives
 
 
 SectionSummary = namedtuple("SectionSummary", ("offset", "size", "is_executable"))
@@ -77,13 +84,20 @@ class GetExecutableSectionBounds:
      >>> bounds, error = GetExecutableSectionBounds(file)(toolkit)
     """
 
-    def __init__(self, file: str) -> None:
-        if not os.path.exists(file):
-            raise FileNotFoundError(file)
+    def __init__(self, file: Optional[str] = None, content: Optional[bytes] = None) -> None:
+        if file is not None:
+            if not os.path.exists(file):
+                raise FileNotFoundError(file)
         self.file = file
-        self.length = os.path.getsize(self.file)
+        self.content = content
+        self.length = os.path.getsize(self.file) if self.file is not None else len(self.content)
 
     def __call__(self, toolkit: Toolkit) -> tuple[Boundaries, ExitCode]:
+        if self.file is None:
+            self.file = tempfile.NamedTemporaryFile(delete=False).name
+            with open(self.file, "wb") as fp:
+                fp.write(self.content)
+
         if toolkit == "lief":
             return self._get_boundaries_lief()
         if toolkit == "pefile":
@@ -219,18 +233,19 @@ class GetExecutableSectionBounds:
 
 def test(toolkit: Toolkit):
     total = 10000
-    root = Path("/media/lk3591/easystore/datasets/Sorel/binaries/")
 
-    files = sorted(islice(root.rglob("*.exe"), total))
-
-    t_i = time.time()
+    archives = sorted(Path("/media/lk3591/easystore/datasets/Sorel/ghidra/archived").rglob("*.zip"))
+    files_and_contents = islice(get_data_from_archives(archives), total)
 
     results = {}
-    for file in tqdm(files, total=total):
-        stem = file.stem
-        extractor = GetExecutableSectionBounds(file)
+    for file, contents in files_and_contents:
+        stem = file.strip().split(".")[0]
+        extractor = GetExecutableSectionBounds(content=contents)
         bounds, error = extractor(toolkit)
         results[stem] = (bounds, error)
+        print(stem, error, bounds)
+
+    return
 
     t_f = time.time()
 
@@ -243,51 +258,10 @@ def test(toolkit: Toolkit):
     print(f"time/sample={round(t_d / total, 5)} seconds")
 
 
-def compare_to_ghidra():
-
-    import json
-
-    boundaries = {"ghidra": {}, "lief": {}}
-
-    root = Path("./tmp/regions")
-    files = sorted(root.iterdir())[0:1]
-    for f in files:
-        with open(f, "r") as fp:
-            for l in fp:
-                d = json.loads(l.strip())
-                boundaries["ghidra"][d["sha"]] = [tuple(r) for r in d["regions"]["EXEC"]]
-
-    root = Path("/media/lk3591/easystore/datasets/Sorel/binaries/")
-    files = []
-    for s in tqdm(boundaries["ghidra"], total=len(boundaries["ghidra"])):
-        if s == "000290023014fc33e0e7ccadb5a56dc9b7460a0d3dc6e49cecc2d7536bbaa049":
-            print()
-        f = (root / s[0:2] / s).with_suffix(".exe")
-        b, e = GetExecutableSectionBounds(f)("lief")
-        boundaries["lief"][s] = b
-
-    shas = list(boundaries["lief"].keys())
-    same = 0
-    diff = 0
-    for s in shas:
-        b_g = boundaries["ghidra"][s]
-        b_l = boundaries["lief"][s]
-        if b_g == b_l:
-            same += 1
-        else:
-            diff += 1
-            print(f"{s} | {'==' if b_g == b_l else '!='} | {b_g} | {b_l}")
-
-    print(f"{len(shas)=}")
-    print(f"{same=}")
-    print(f"{diff=}")
-
-
 def main():
     lief.logging.disable()
-    # test("lief")
+    test("lief")
     # test("pefile")
-    compare_to_ghidra()
 
 
 if __name__ == "__main__":
