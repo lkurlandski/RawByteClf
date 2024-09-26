@@ -92,16 +92,24 @@ class GetExecutableSectionBounds:
         self.content = content
         self.length = os.path.getsize(self.file) if self.file is not None else len(self.content)
 
+        if self.file is not None and self.content is not None:
+            raise ValueError("Only one of `file` or `content` can be provided.")
+
     def __call__(self, toolkit: Toolkit) -> tuple[Boundaries, ExitCode]:
         if self.file is None:
             self.file = tempfile.NamedTemporaryFile(delete=False).name
             with open(self.file, "wb") as fp:
                 fp.write(self.content)
 
-        if toolkit == "lief":
-            return self._get_boundaries_lief()
-        if toolkit == "pefile":
-            return self._get_boundaries_pefile()
+        try:
+            if toolkit == "lief":
+                return self._get_boundaries_lief()
+            if toolkit == "pefile":
+                return self._get_boundaries_pefile()
+        except BaseException:
+            if self.content is not None:
+                os.unlink(self.file)
+
         raise ValueError(f"Invalid: {toolkit=}")
 
     def _get_boundaries_lief(self) -> tuple[Boundaries, ExitCode]:
