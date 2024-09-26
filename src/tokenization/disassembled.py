@@ -2,6 +2,8 @@
 Tokenization for disassembly code.
 """
 
+import sys
+
 from tokenizers import Regex, NormalizedString
 from tokenizers import normalizers
 from tokenizers.normalizers import Normalizer
@@ -9,6 +11,48 @@ from tokenizers import pre_tokenizers
 from tokenizers.pre_tokenizers import PreTokenizer
 
 from src.tokenization import TokenizerAlgorithm
+
+
+def replace_normalized_string(org: NormalizedString, new: str) -> NormalizedString:
+
+    SIZE = 2 ** 16
+
+    for i in range(0, len(org.normalized), SIZE):
+        print(f"{i=}")
+        o = org.normalized[i : i + SIZE]
+        n = new[i: i + SIZE]
+        print(f"{len(o)=}")
+        print(f"{len(n)=}")
+        org.replace(o, n)
+
+
+class StripAllExceptInstructionsNormalizer:
+    """
+    The regex-based approach:
+        normalizers.Replace(Regex(r"^(.+?\t)(.+?\t)(.+?\t)(.+?\t)"), ""),
+      does not work for very large files due to
+        Exception: Exception: Compiled regex exceeds size limit of 10485760 bytes.
+    
+    This approach splits each line based on the tab character and keeps the last part.
+    """
+
+    def normalize(self, normalized: NormalizedString): 
+        print(f"{len(normalized.normalized)=}")
+
+        text = []
+        lines = normalized.split("\n", "isolated")
+        print(f"{len(lines)=}")
+        for line in lines:
+            parts = line.split("\t", "removed")
+            text.append(str(parts[-1]))
+
+        print(f"{len(text)=}")
+        text = "\n".join(text)
+        print(f"{len(text)=}")
+
+        replace_normalized_string(normalized, text)
+        
+        print(f"{sys.getsizeof(normalized.normalized)=}")
 
 
 class CapitalizeHexCharactersFromCharacterStream:
@@ -74,7 +118,6 @@ def _get_dis_normalizer(
 ) -> Normalizer:
 
     l = [
-        normalizers.Replace(Regex(r"^(.+?\t)(.+?\t)(.+?\t)(.+?\t)"), ""),
         normalizers.NFD(),
         normalizers.StripAccents(),
         normalizers.Lowercase(),
@@ -109,7 +152,7 @@ def _get_dis_pretokenizer(
 
 
 def get_dis_normalizer(algorithm: TokenizerAlgorithm) -> Normalizer:  # pylint: disable=unused-argument
-    return _get_dis_normalizer()
+    return _get_dis_normalizer(False, False)
 
 
 def get_dis_pretokenizer(algorithm: TokenizerAlgorithm) -> PreTokenizer:

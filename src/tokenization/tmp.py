@@ -7,6 +7,7 @@ Handles preprocessing of malware bytes.
 
 import os
 from pathlib import Path
+from pprint import pprint
 import sys
 
 from tqdm import tqdm
@@ -18,12 +19,13 @@ if __name__ == "__main__":
 
 from src.tokenization.decompiled import _get_dec_normalizer, _get_dec_pretokenizer
 from src.tokenization.disassembled import _get_dis_normalizer, _get_dis_pretokenizer
+from src.tokenization.train import TokenizationTrainingIterator
 
 
-root = Path("/home/lk3591/Documents/datasets/Sorel")
-dis = root / "disassembled"
-dec = root / "decompiled"
-stem = "00001f161d205a8f3c79f7fac7a06782a8eae0f7cf53b8f444644ece9f8aab98"
+root = Path("/media/lk3591/easystore/datasets/Sorel/tmp")
+dis = root / "dis"
+dec = root / "dec"
+stem = "001779de7d1c12500d86b2e5ab55e31dd1e2c5db7dfb3d242878f0d0ac3a5f97"
 dis_file = dis / f"{stem}.asm"
 dec_file = dec / f"{stem}.c"
 
@@ -35,22 +37,8 @@ def pretokenizer_to_str(d) -> str:
 def test_dis():
     text = dis_file.read_text()
 
-    breaks = [109, 1928, 2069, 2486, 43738810, 43739288, 43739769, 43740244]
-    # breaks = []
-    # for i, (t_1, t_2) in enumerate(tqdm(zip(text, text[1:]), total=len(text))):
-    #     if t_1 == "\n" and t_2 == "\n":
-    #         breaks.append(i)
-    #     if len(breaks) < -10:
-    #         break
-    # print(breaks[0:4] + breaks[-4:])
-
-    text = text[:breaks[2]] + "\n\n" + text[breaks[-2]:]
-    print(f"{text}\n{'-' * 88}")
-
-    normalizer = _get_dis_normalizer()
+    normalizer = _get_dis_normalizer(False, False)
     text = normalizer.normalize_str(text)
-    print(f"{text}\n{'-' * 88}")
-
     pretokenizer = _get_dis_pretokenizer()
     text = pretokenizer.pre_tokenize_str(text)
     print(f"{text}\n{'-' * 88}")
@@ -81,5 +69,19 @@ def test_dec():
     print(f"{text}\n{'-' * 88}")
 
 
+def test_gen():
+
+    files = sorted(dis.iterdir())[0:4]
+    iterable = TokenizationTrainingIterator("dis", files, 2, bytes.decode)()
+    print(iterable)
+    for batch in iterable:
+        print(f"{type(batch)=}")
+        print(f"{len(batch)=}")
+        for item in batch:
+            print(f"{type(item)=}")
+            print(f"{len(item)=}")
+            print(f"{item[0:32]=}")
+
+
 if __name__ == "__main__":
-    test_dec()
+    test_dis()

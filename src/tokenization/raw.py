@@ -7,10 +7,12 @@ import warnings
 from tokenizers import Tokenizer, Regex
 from tokenizers import models
 from tokenizers import normalizers
+from tokenizers.normalizers import Normalizer
 from tokenizers import pre_tokenizers
+from tokenizers.pre_tokenizers import PreTokenizer
 from tokenizers import processors
 
-from src.tokenization import SPECIALS
+from src.tokenization import SPECIALS, TokenizerAlgorithm
 from src.tokenization.core import SENTINAL_NORMALIZER, SENTINAL_PRETOKENIZER
 
 
