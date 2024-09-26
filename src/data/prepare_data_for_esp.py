@@ -1,5 +1,5 @@
 """
-Prepare raw, disassembled, and decompiled data caches.
+Prepare raw, disassembled, and decompiled data caches. This is essentially normalization.
 """
 
 from argparse import ArgumentParser
@@ -10,6 +10,7 @@ from typing import Callable
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from tqdm import tqdm
+from unidecode import unidecode
 
 
 NUM_WORKERS = 16
@@ -67,8 +68,13 @@ def raw(dataset: str) -> None:
 
 def dis_func(b: bytes, n: str) -> bytes:  # pylint: disable=unused-argument
     s = b.decode()
-    s = "\n".join([l.split("\t")[-1] for l in s.split("\n")])
-    return s.encode()
+    t = []
+    for l in s.split("\n"):
+        p = l.split("\t")
+        if len(p) > 1:
+            t.append(p[-1])
+    t = "\n".join([unidecode(l) for l in t])
+    return t.encode(encoding="ascii")
 
 def dis(dataset: str) -> None:
 
@@ -79,17 +85,21 @@ def dis(dataset: str) -> None:
     run(path, out, dis_func)
 
 
+def dec_func(b: bytes, n: str) -> bytes:  # pylint: disable=unused-argument
+    s = b.decode()
+    t = []
+    for l in s.split("\n"):
+        t.append(l)
+    t = "\n".join([unidecode(l) for l in t])
+    return t.encode(encoding="ascii")
+
 def dec(dataset: str) -> None:
 
     path = ROOTS[dataset] / IN / "decompiled"
     out = ROOTS[dataset] / OUT / "dec"
     out.mkdir(parents=True, exist_ok=True)
 
-    files = path.rglob("*.zip")
-
-    for f in files:
-        f_out = out / f.name
-        f.symlink_to(f_out)
+    run(path, out, dec_func)
 
 
 def main():
