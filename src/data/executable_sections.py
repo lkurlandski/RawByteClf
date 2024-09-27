@@ -1,5 +1,8 @@
 """
 Identify the regions of a PE executable that are executable.
+
+See https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_section_header
+  for more information on the section headers in a PE file.
 """
 
 from __future__ import annotations
@@ -251,12 +254,6 @@ class GetExecutableSectionBounds:
             code = code | ExitCode.SECTION_LOWER_OVER_UPPER
 
         return (lower, upper), code
-
-
-def get_section_bounds_map(dataset: Literal["sorel_pe", "bodmas_pe", "assemblage_pe"]) -> dict[str, Boundaries]:
-    file = OUTFILES[dataset]
-    with open(file, "r") as fp:
-        return json.load(fp)
 
 
 class Runner:
