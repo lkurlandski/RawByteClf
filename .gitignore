@@ -172,3 +172,4 @@ figures
 ./config/.system
 config/.system
 cache/*
+data/*
