@@ -28,10 +28,13 @@ if __name__ == "__main__":
 
 try:
     import lief
-    import pefile
     lief.logging.disable()
 except (ModuleNotFoundError, ImportError):
-    print("lief and pefile are not available. Binary analysis is disabled but you can still use caches and their readers.")
+    print("WARNING: lief is not available.")
+try:
+    import pefile
+except (ModuleNotFoundError, ImportError):
+    print("WARNING: pefile is not available.")
 from tqdm import tqdm
 
 from src.data.utils import get_data_from_archives
@@ -42,8 +45,8 @@ Boundaries = list[tuple[int, int]]
 
 
 class Toolkit(Enum):
-    LIEF   = "pefile"
-    PEFILE = "lief"
+    PEFILE = "pefile"
+    LIEF   = "lief"
 
 
 IMAGE_SCN_MEM_EXECUTE = 0x20000000
