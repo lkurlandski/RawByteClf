@@ -287,6 +287,7 @@ class Runner:
 
     @staticmethod
     def get_executable_section_bounds(args: tuple) -> tuple[str, Boundaries, ExitCode]:
+        print(f"{os.getpid()=} processing {args[2]}")
         file, content, name, toolkit = args
         bounds, error = GetExecutableSectionBounds(file, content, toolkit)()
         return name, bounds, error
@@ -298,14 +299,17 @@ def main():
     parser.add_argument("--inarchives", type=Path, required=True)
     parser.add_argument("--toolkit", type=Toolkit, default="lief")
     parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--subset", type=int, default=None)
     args = parser.parse_args()
 
     print(f"args={pformat(args.__dict__)}")
 
     archives = args.inarchives.rglob("*.zip")
-    names, contents = tee(islice(get_data_from_archives(archives), 100))
+    names, contents = tee(islice(get_data_from_archives(archives), args.subset))
     names = (name for name, _ in names)
     contents = (content for _, content in contents)
+
+    t_i = time.time()
 
     exe_map = Runner(
         contents=contents,
@@ -313,6 +317,10 @@ def main():
         toolkit=args.toolkit,
         num_workers=args.num_workers
     )()
+
+    t_f = time.time()
+
+    print(f"Time taken: {t_f - t_i:.2f} seconds")
  
     with open(args.outfile, "w") as fp:
         fp.write(json.dumps(exe_map, indent=4))
