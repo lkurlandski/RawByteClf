@@ -24,6 +24,7 @@ elif SYSTEM == System.RC:
 else:
     raise ValueError(f"{SYSTEM=}")
 
+ASSEMBLAGE_PATH = DATASETS_PATH / "Assemblage"
 BODMAS_PATH = DATASETS_PATH / "BODMAS"
 MALWARE_BAZAAR_PATH = DATASETS_PATH / "MalwareBazaar"
 SOREL_PATH = DATASETS_PATH / "Sorel"
@@ -82,6 +83,8 @@ DATASET_NAMES = [
 ]
 
 PACKING_ROOTS = {
+    "assemblage_pe": ASSEMBLAGE_PATH / "diec",
+    "windows_pe": WINDOWS_PATH / "diec",
     "bodmas_pe": BODMAS_PATH / "diec",
     "malware_bazaar_elf": MALWARE_BAZAAR_PATH / "elf" / "diec",
     "sorel_pe": SOREL_PATH / "diec",
@@ -118,6 +121,8 @@ def _dataset_to_report_files_and_binaries(
 
     # pylint: disable=unnecessary-lambda
     return {
+        "assemblage_pe": lambda: (p for p in (ASSEMBLAGE_PATH / s).iterdir()),
+        "windows_pe": lambda: (p for p in (WINDOWS_PATH / s).iterdir()),
         "bodmas_pe": lambda: (BODMAS_PATH / s).iterdir(),
         "local_pe": lambda: (WINDOWS_PATH / s).iterdir(),
         "local_elf": lambda: (LINUX_PATH / s).iterdir(),

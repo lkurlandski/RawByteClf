@@ -235,6 +235,14 @@ def basal_shas(name: str) -> Generator[str, None, None]:
         yield f.stem
 
 
+def assemblage_shas() -> Generator[str, None, None]:
+    return basal_shas("assemblage_pe")
+
+
+def windows_shas() -> Generator[str, None, None]:
+    return basal_shas("windows_pe")
+
+
 def bodmas_shas() -> Generator[str, None, None]:
     return basal_shas("bodmas_pe")
 
@@ -275,6 +283,14 @@ def basal_file_streamer(shas: list[str], name: str) -> Generator[tuple[Path, str
     sha_map = {f.stem : f for f in DATASET_TO_FILES["binaries"][name]() if f.stem in shas}
     for s in shas:
         yield sha_map[s], s
+
+
+def assemblage_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "assemblage_pe")
+
+
+def windows_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "windows_pe")
 
 
 def bodmas_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
@@ -941,6 +957,14 @@ def universal_packing_map(roots: Optional[Path | list[Path]] = None, **kwds) -> 
     return all_maps
 
 
+def not_packed_list(root: str, outfile: Path) -> None:
+    m = PackingMap(root)
+    notpacked = [k for k, v in m.items() if not v]
+    with open(outfile, "w") as fp:
+        for s in notpacked:
+            fp.write(f"{s}\n")
+
+
 def unpack(
     data: str | Path | bytes,
     outfile: Optional[str | Path] = None,
@@ -1035,7 +1059,7 @@ def unpack_samples(
 def main():
 
     parser = ArgumentParser()
-    parser.add_argument("--dataset", choices=["sorel_pe", "bodmas_pe", "virus_share_elf", "malware_bazaar_elf", "virus_total_elf"], required=True)
+    parser.add_argument("--dataset", choices=["sorel_pe", "bodmas_pe", "virus_share_elf", "malware_bazaar_elf", "virus_total_elf", "assemblage_pe", "windows_pe"], required=True)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--merge", action="store_true")
@@ -1057,6 +1081,14 @@ def main():
         p_root = PACKING_ROOTS["sorel_pe"]
         all_shas = sorel_shas
         streamer = sorel_streamer
+    elif args.dataset == "windows_pe":
+        p_root = PACKING_ROOTS["windows_pe"]
+        all_shas = windows_shas
+        streamer = windows_streamer
+    elif args.dataset == "assemblage_pe":
+        p_root = PACKING_ROOTS["assemblage_pe"]
+        all_shas = assemblage_shas
+        streamer = assemblage_streamer
     elif args.dataset == "bodmas_pe":
         p_root = PACKING_ROOTS["bodmas_pe"]
         all_shas = bodmas_shas
