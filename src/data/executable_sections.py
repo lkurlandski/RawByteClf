@@ -2,9 +2,14 @@
 Identify the regions of a PE executable that are executable.
 """
 
-from collections import Counter, namedtuple
-from enum import IntFlag, auto
-from itertools import islice
+from __future__ import annotations
+from argparse import ArgumentParser
+from collections.abc import Iterable
+from collections import Counter, namedtuple, OrderedDict
+from enum import Enum, IntFlag, auto
+from itertools import islice, repeat, tee
+import json
+import multiprocessing as mp
 import os
 from pathlib import Path
 from pprint import pformat, pprint
@@ -21,6 +26,7 @@ if __name__ == "__main__":
 try:
     import lief
     import pefile
+    lief.logging.disable()
 except (ModuleNotFoundError, ImportError):
     print("lief and pefile are not available. Binary analysis is disabled but you can still use caches and their readers.")
 from tqdm import tqdm
@@ -30,7 +36,11 @@ from src.data.utils import get_data_from_archives
 
 SectionSummary = namedtuple("SectionSummary", ("offset", "size", "is_executable"))
 Boundaries = list[tuple[int, int]]
-Toolkit = Literal["lief", "pefile"]
+
+
+class Toolkit(Enum):
+    LIEF   = "pefile"
+    PEFILE = "lief"
 
 
 IMAGE_SCN_MEM_EXECUTE = 0x20000000
@@ -57,7 +67,7 @@ class ExitCode(IntFlag):
     SECTION_OVER_FILE_BOUNDARY  = auto()
     SECTION_OVER_NEXT_SECTION   = auto()
     SECTION_EMPTY               = auto()
-    SECTION_INVALID             = auto()
+    SECTION_LOWER_OVER_UPPER    = auto()
 
 
 class GetExecutableSectionBounds:
@@ -65,52 +75,54 @@ class GetExecutableSectionBounds:
     Extract section boundaries of a PE file that are executable.
 
     Arguments:
-     (Toolkit): The toolkit ("lief" or "pefile") to analysze the binary with.
+     (file): The path to the PE file to analyze. Optional if `content` is provided.
+     (content): The content of the PE file to analyze. Optional if `file` is provided.
+     (toolkit): The toolkit ("lief" or "pefile") to analysze the binary with.
       The values returned are identicail regardless of the toolkit used. The
       primary difference is the fact that lief is ~50x faster.
 
     Raises:
      (FileNotFoundError): If the input file does not exist.
      (ValueError): If an invalid `toolkit` is provided.
-     (ValueError): If something really wonky happens when computing the bounds.
 
     Returns:
      (Boundaries): A list of (upper, lower) tuples indicating the boundaries of
       the PE file that are marked as executable or containing code. Note that
       the lower bound is inclusive whereas the upper is exclusive (for slicing).
      (ExitCode): Flag indicating the issues (if any) encountered during analysis.
-    
+
     Usage:
-     >>> bounds, error = GetExecutableSectionBounds(file)(toolkit)
+     >>> bounds, error = GetExecutableSectionBounds(file)()
     """
 
-    def __init__(self, file: Optional[str] = None, content: Optional[bytes] = None) -> None:
-        if file is not None:
-            if not os.path.exists(file):
-                raise FileNotFoundError(file)
+    def __init__(
+        self,
+        file: Optional[str] = None,
+        content: Optional[bytes] = None,
+        toolkit: Toolkit | str = Toolkit("lief"),
+    ) -> None:
+        if (file is not None) == (content is not None):
+            raise ValueError("One and only one of `file` or `content` must be provided.")
+
         self.file = file
         self.content = content
-        self.length = os.path.getsize(self.file) if self.file is not None else len(self.content)
+        self.toolkit = Toolkit(toolkit)
+        self.length = len(content) if file is None else os.path.getsize(file)
 
-        if self.file is not None and self.content is not None:
-            raise ValueError("Only one of `file` or `content` can be provided.")
-
-    def __call__(self, toolkit: Toolkit) -> tuple[Boundaries, ExitCode]:
+    def __call__(self) -> tuple[Boundaries, ExitCode]:
         if self.file is None:
             self.file = tempfile.NamedTemporaryFile(delete=False).name
             with open(self.file, "wb") as fp:
                 fp.write(self.content)
 
         try:
-            if toolkit == "lief":
+            if self.toolkit == Toolkit.LIEF:
                 return self._get_boundaries_lief()
-            if toolkit == "pefile":
+            if self.toolkit == Toolkit.PEFILE:
                 return self._get_boundaries_pefile()
-        except BaseException:
+        finally:
             if self.content is not None:
                 os.unlink(self.file)
-
-        raise ValueError(f"Invalid: {toolkit=}")
 
     def _get_boundaries_lief(self) -> tuple[Boundaries, ExitCode]:
         binary = lief.parse(self.file)
@@ -200,8 +212,10 @@ class GetExecutableSectionBounds:
             (lower, upper), code = self._get_section_bounds(prv, cur, nxt, self.length)
             exit_code = exit_code | code
 
-            # Do not add empty or invalid sections to the list.
-            if ExitCode.SECTION_EMPTY & code or ExitCode.SECTION_INVALID & code:
+            # Do not add to boundaries list and do not trigger unsuccessful exit code.
+            if ExitCode.SECTION_EMPTY & code:
+                continue
+            if ExitCode.SECTION_LOWER_OVER_UPPER & code:
                 continue
 
             boundary.append((lower, upper))
@@ -234,42 +248,77 @@ class GetExecutableSectionBounds:
             code = code | ExitCode.SECTION_EMPTY
 
         if lower > upper:
-            code = code | ExitCode.SECTION_INVALID
+            code = code | ExitCode.SECTION_LOWER_OVER_UPPER
 
         return (lower, upper), code
 
 
-def test(toolkit: Toolkit):
-    total = 10000
+def get_section_bounds_map(dataset: Literal["sorel_pe", "bodmas_pe", "assemblage_pe"]) -> dict[str, Boundaries]:
+    file = OUTFILES[dataset]
+    with open(file, "r") as fp:
+        return json.load(fp)
 
-    archives = sorted(Path("/media/lk3591/easystore/datasets/Sorel/ghidra/archived").rglob("*.zip"))
-    files_and_contents = islice(get_data_from_archives(archives), total)
 
-    results = {}
-    for file, contents in files_and_contents:
-        stem = file.strip().split(".")[0]
-        extractor = GetExecutableSectionBounds(content=contents)
-        bounds, error = extractor(toolkit)
-        results[stem] = (bounds, error)
-        print(stem, error, bounds)
+class Runner:
 
-    return
+    def __init__(
+        self,
+        files: Optional[Iterable[str]] = repeat(None),
+        contents: Optional[Iterable[bytes]] = repeat(None),
+        names: Optional[Iterable[str]] = repeat(None),
+        toolkit: Toolkit = Toolkit.LIEF,
+        num_workers: Optional[int] = None,
+    ) -> None:
+        self.files = files
+        self.contents = contents
+        self.names = names
+        self.toolkit = toolkit
+        self.num_workers = num_workers
 
-    t_f = time.time()
+    def __call__(self, total: Optional[int] = None) -> dict[str, tuple[Boundaries, ExitCode]]:
+        iterable = zip(self.files, self.contents, self.names, repeat(self.toolkit))
 
-    t_d = t_f - t_i
-    bounds = [b for b, _ in results.values()]
-    print(f"bounds={pformat(bounds)}")
-    errors = dict(Counter([e.name for _, e in results.values()]))
-    print(f"errors={pformat(errors)}")
-    print(f"runtime={round(t_d)} seconds")
-    print(f"time/sample={round(t_d / total, 5)} seconds")
+        if self.num_workers is not None and self.num_workers > 1:
+            with mp.Pool(self.num_workers) as pool:
+                name_boundaries_error = pool.imap(Runner.get_executable_section_bounds, iterable)
+        else:
+            name_boundaries_error = [Runner.get_executable_section_bounds(i) for i in tqdm(iterable, total=total)]
+
+        d = {name: {"bounds": bounds, "return": error.name} for name, bounds, error in name_boundaries_error}
+        d = OrderedDict(sorted(d.items(), key=lambda x: x[0]))
+        return d
+
+    @staticmethod
+    def get_executable_section_bounds(args: tuple) -> tuple[str, Boundaries, ExitCode]:
+        file, content, name, toolkit = args
+        bounds, error = GetExecutableSectionBounds(file, content, toolkit)()
+        return name, bounds, error
 
 
 def main():
-    lief.logging.disable()
-    test("lief")
-    # test("pefile")
+    parser = ArgumentParser()
+    parser.add_argument("--outfile", type=Path, required=True)
+    parser.add_argument("--inarchives", type=Path, required=True)
+    parser.add_argument("--toolkit", type=Toolkit, default="lief")
+    parser.add_argument("--num_workers", type=int, default=1)
+    args = parser.parse_args()
+
+    print(f"args={pformat(args.__dict__)}")
+
+    archives = args.inarchives.rglob("*.zip")
+    names, contents = tee(islice(get_data_from_archives(archives), 100))
+    names = (name for name, _ in names)
+    contents = (content for _, content in contents)
+
+    exe_map = Runner(
+        contents=contents,
+        names=names,
+        toolkit=args.toolkit,
+        num_workers=args.num_workers
+    )()
+ 
+    with open(args.outfile, "w") as fp:
+        fp.write(json.dumps(exe_map, indent=4))
 
 
 if __name__ == "__main__":

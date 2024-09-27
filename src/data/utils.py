@@ -53,6 +53,13 @@ DEFAULT_ASYNCH_CHUNK_SIZE = 500000
 DEFAULT_DISABLE_TQDM = True
 
 
+def get_data_from_archives(archives: list[Path]) -> Generator[tuple[str, bytes], None, None]:
+    for archive in archives:
+        with zipfile.ZipFile(archive, "r") as zp:
+            for n in sorted(zp.namelist()):
+                yield n, zp.read(n)
+
+
 def get_processed_data(lift_level: str, dataset: Literal["sorel_pe", "bodmas_pe", "assemblage_pe"]) -> Generator[tuple[str, bytes], None, None]:
     root = Path("./data/")
     path = root / dataset / lift_level
