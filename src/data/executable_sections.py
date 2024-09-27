@@ -258,6 +258,11 @@ class GetExecutableSectionBounds:
 
 class Runner:
 
+    # Time for 1024 files:
+      # num_workers=1: 110
+      # num_workers=2:  92
+      # num_workers=4:  92
+
     def __init__(
         self,
         files: Optional[Iterable[str]] = repeat(None),
@@ -277,7 +282,7 @@ class Runner:
 
         if self.num_workers is not None and self.num_workers > 1:
             with mp.Pool(self.num_workers) as pool:
-                name_boundaries_error = pool.imap(Runner.get_executable_section_bounds, iterable)
+                name_boundaries_error = list(pool.imap(Runner.get_executable_section_bounds, iterable))
         else:
             name_boundaries_error = [Runner.get_executable_section_bounds(i) for i in tqdm(iterable, total=total)]
 
@@ -287,7 +292,6 @@ class Runner:
 
     @staticmethod
     def get_executable_section_bounds(args: tuple) -> tuple[str, Boundaries, ExitCode]:
-        print(f"{os.getpid()=} processing {args[2]}")
         file, content, name, toolkit = args
         bounds, error = GetExecutableSectionBounds(file, content, toolkit)()
         return name, bounds, error
@@ -304,10 +308,9 @@ def main():
 
     print(f"args={pformat(args.__dict__)}")
 
-    archives = args.inarchives.rglob("*.zip")
-    names, contents = tee(islice(get_data_from_archives(archives), args.subset))
-    names = (name for name, _ in names)
-    contents = (content for _, content in contents)
+    archives = sorted(args.inarchives.rglob("*.zip"))
+    names = islice((n for n, _ in get_data_from_archives(archives, names=True, contents=False)), args.subset)
+    contents = islice((c for _, c in get_data_from_archives(archives, names=False, contents=True)), args.subset)
 
     t_i = time.time()
 

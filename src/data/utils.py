@@ -53,11 +53,17 @@ DEFAULT_ASYNCH_CHUNK_SIZE = 500000
 DEFAULT_DISABLE_TQDM = True
 
 
-def get_data_from_archives(archives: list[Path]) -> Generator[tuple[str, bytes], None, None]:
+def get_data_from_archives(
+    archives: list[Path],
+    names: bool = True,
+    contents: bool = True,
+) -> Generator[tuple[Optional[str], Optional[bytes]], None, None]:
     for archive in archives:
         with zipfile.ZipFile(archive, "r") as zp:
             for n in sorted(zp.namelist()):
-                yield n, zp.read(n)
+                b = zp.read(n) if contents else None
+                n = n if names else None
+                yield n, b
 
 
 def get_processed_data(lift_level: str, dataset: Literal["sorel_pe", "bodmas_pe", "assemblage_pe"]) -> Generator[tuple[str, bytes], None, None]:
