@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
 try:
     import lief
-    lief.logging.disable()
+    lief.logging.disable()  # pylint: disable=no-member
 except (ModuleNotFoundError, ImportError):
     print("WARNING: lief is not available.")
 try:
@@ -131,7 +131,7 @@ class GetExecutableSectionBounds:
                 os.unlink(self.file)
 
     def _get_boundaries_lief(self) -> tuple[Boundaries, ExitCode]:
-        binary = lief.parse(self.file)
+        binary = lief.parse(self.file)  # pylint: disable=no-member
         if binary is None:
             return [], ExitCode.COULD_NOT_PARSE
 

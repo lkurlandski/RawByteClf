@@ -332,7 +332,7 @@ class Decompressor:
 def decompress_error_resilient(b: bytes, decompress: Decompressor) -> Optional[tuple[int, bytes]]:
     try:
         return decompress(b)
-    except Exception as err:
+    except Exception:
         return None
 
 
