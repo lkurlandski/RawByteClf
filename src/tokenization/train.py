@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import Generator
 from datetime import datetime
 from itertools import chain, islice
+import random
 import os
 from pathlib import Path
 from pprint import pformat, pprint
@@ -27,7 +28,7 @@ from tokenizers import trainers
 from tqdm import tqdm
 
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8  # pylint: disable=no-name-in-module
-from src.data.utils import get_processed_data
+from src.data.utils import get_data_from_archives
 from src.tokenization import SPECIALS, TokenizerAlgorithm, LiftLevel
 from src.tokenization.disassembled import get_dis_normalizer, get_dis_pretokenizer
 from src.tokenization.decompiled import get_dec_normalizer, get_dec_pretokenizer
@@ -65,10 +66,21 @@ class TokenizationTrainingIterator:
         self.idx: Optional[int] = None
 
     def __call__(self) -> TokenizationTrainingIterator:
-        documents = islice((b for n, b in get_processed_data(self.lift_level.value, "sorel_pe")), self.num_files)
+        archives = []
+        for root, dirs, files in os.walk("./data", followlinks=True):
+            for file in files:
+                if file.endswith(".zip"):
+                    archives.append(os.path.join(root, file))
+        archives = [Path(archive) for archive in archives]
+        archives = [f for f in archives if f.parent.name == self.lift_level.value]
+        archives.sort()
+        random.shuffle(archives)
+        if len(archives) == 0:
+            raise FileNotFoundError(f"No archives found for {self.lift_level=}")
 
+        documents = islice((b for _, b in get_data_from_archives(archives, False, True)), self.num_files)
         batch = []
-        for document in documents:
+        for document in tqdm(documents, total=self.num_files, desc="Decomposing documents..."):
             for word in self.decompose_document(document):
                 batch.append(word)
                 if len(batch) == self.batch_size:
@@ -128,7 +140,7 @@ class TokenizationTrainingIterator:
 
     def decompose_document(self, document: bytes) -> list[bytes]:
         if self.lift_level == LiftLevel.RAW:
-            return list(batched(document, RAW_WORD_SIZE))
+            return [document[i:i+RAW_WORD_SIZE] for i in range(0, len(document), RAW_WORD_SIZE)]
         if self.lift_level == LiftLevel.DIS:
             return document.split(b"\n")
         if self.lift_level == LiftLevel.DEC:
@@ -227,6 +239,8 @@ class TrainTokenizer:
 def main():
     print(f"START @{datetime.now()}")
 
+    random.seed(0)
+
     parser = ArgumentParser()
     parser.add_argument("--lift_level", type=LiftLevel, required=True)
     parser.add_argument("--algorithm", type=TokenizerAlgorithm, required=True)
@@ -239,7 +253,7 @@ def main():
 
     print(f"args={pformat(args.__dict__)}")
 
-    iterator = TokenizationTrainingIterator(args.lift_level, args.batch_size, args.num_files)()
+    iterator = TokenizationTrainingIterator(args.lift_level, args.batch_size, args.block_size, args.num_files)()
     tokenizer = TrainTokenizer(iterator, args.lift_level, args.algorithm, args.vocab_size, args.max_token_length)()
     io_helper = TokenizerIOHelper(args.lift_level, args.algorithm, args.vocab_size, args.num_files)
     io_helper.save(tokenizer)
