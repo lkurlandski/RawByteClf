@@ -22,6 +22,7 @@ ROOTS = {
     "sorel_pe": ROOT / "Sorel",
     "bodmas_pe": ROOT / "BODMAS",
     "assemblage_pe": ROOT / "Assemblage",
+    "windows_pe": ROOT / "Windows",
 }
 IN = "ghidra"
 OUT = "processed"
@@ -125,7 +126,7 @@ def dec(dataset: str) -> None:
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--dataset", type=str, choices=["sorel_pe", "bodmas_pe", "assemblage_pe"], required=True)
+    parser.add_argument("--dataset", type=str, choices=["sorel_pe", "bodmas_pe", "assemblage_pe", "windows_pe"], required=True)
     parser.add_argument("--lift_level", type=str, choices=["raw", "dis", "dec"], required=True)
     parser.add_argument("--num_workers", type=int, default=None)
     args = parser.parse_args()
