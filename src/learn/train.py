@@ -224,7 +224,7 @@ from src.learn.utils import (
     interpret_bytes_as_integers,
     chunk_mask,
 )
-from src.learn.tokenization import get_tokenizer
+from src.learn.tokenization.api import get_fast_tokenizer
 
 
 random.seed(0)
@@ -1232,6 +1232,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "root": args.root,
         "packing_protocol": args.packing_protocol,
         "representation": args.representation,
+        "lift_level": arg.lift_level,
         "algorithm": args.algorithm,
         "vocab_size": args.vocab_size,
         "max_length": args.max_length,
@@ -1265,9 +1266,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     prediction_loss_only = args.task[0:3] in ("mlm", "clm")
     training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
 
-    tokenizer = get_tokenizer(
-        representation=args.representation,
+    tokenizer = get_fast_tokenizer(
+        lift_level=args.lift_level,
         algorithm=args.algorithm,
+        representation=args.representation,
         vocab_size=args.vocab_size,
         model_max_length=args.max_length,
         add_cls_token=False,

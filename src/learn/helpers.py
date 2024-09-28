@@ -49,9 +49,6 @@ TASKS.extend([f"clf-sor-{k}" for k in KEYS])
 TASKS.extend([f"clf-elf-{k}" for k in KEYS])
 
 
-TOKENIZERS = ["Raw", "BPE", "Unigram", "WordPiece", "WordLevel", "SentencePieceBPE", "SentencePieceUnigram"]
-
-
 def print_options(options: list[str]) -> str:
     return "One of " + ", ".join([f"`{x}`" for x in options[:-1]]) + f", or {options[-1]}."
 
@@ -131,7 +128,8 @@ class Args:
     data_read_bytes: Optional[int] = field(default=None)
     packing_protocol: str = field(default="Any")
     representation: int = field(default=8)
-    algorithm: str = field(default="Raw")
+    lift_level: str = field(default="raw")
+    algorithm: str = field(default="wdl")
     vocab_size: Optional[int] = field(default=None)
     compression_level: int = field(default=9)
 
@@ -260,6 +258,7 @@ class OutputHelper:
         *,
         packing_protocol: str,
         representation: int,
+        lift_level: str,
         algorithm: str,
         vocab_size: Optional[int],
         max_length: int,
