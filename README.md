@@ -138,3 +138,8 @@ Throws and ArithmeticException indicating the virtual address is less than 0.
 001212bfef784362c62168e9b6bb24ef8dd2a572dbbdba100d2c7afe768d2ba9
 
 lift.sh doesn't get the time correctly on job 15 of the job array.
+
+
+
+grep -L "analyzeHeadless returned 0" ./logs/lift-6_* | sed -n 's/.*_\([0-9]\+\)\.out/\1/p' | paste -sd,
+

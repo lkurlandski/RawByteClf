@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=lift-6
+#SBATCH --job-name=lift-8
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
-#SBATCH --time=00-12:00:00
+#SBATCH --time=00-06:00:00
 #SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -95,7 +95,7 @@ echo "HH: $HH"
 # Establish some timing variables.
 t_start=$(date +%s.%N)
 # TIME=$(get_time_limit)
-TIME=$((12 * 3600))
+TIME=$((6 * 3600))
 if ! [[ "$TIME" =~ ^[0-9]+$ ]]; then
   echo "Error: Invalid TIME: $TIME"
   exit 1
