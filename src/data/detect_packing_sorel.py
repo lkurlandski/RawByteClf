@@ -115,12 +115,14 @@ from collections.abc import Iterable
 from collections import UserDict
 from functools import partial
 import gc
+import hashlib
 from itertools import chain, islice
 from io import BytesIO
 import json
 import multiprocessing as mp
 import os
 from pathlib import Path
+import pickle
 from pprint import pformat, pprint
 import subprocess
 import sys
@@ -152,6 +154,60 @@ DIEC_MODES = ("recursive", "deep", "heuristic")
 DiecMode = Literal["recursive", "deep", "heuristic"]
 
 
+ALL_TYPES = [
+    "Linker",
+    "Compiler",
+    "Tool",
+    "Format",
+    "Packer",
+    "Sign",
+    "Certificate",
+    "Protection",
+    "Library",
+    "Data",
+    "Installer",
+    "Protector",
+    "Cryptor",
+    "Virus",
+    "sfx",
+    "source",
+    "Archive",
+    "Image",
+    "patcher",
+    "GameEngine",
+    "Player",
+    "Crypter",
+    "Joiner",
+    "Converter",
+    "audio",
+    "scrambler",
+    "emulator",
+    "script",
+    "camera",
+    "other",
+    "debug",
+    "extender",
+    "keygen",
+]
+OBFUSCATION_TYPES = [
+    "Packer",
+    "Protector",
+    "Protection",
+    "Crypter",
+    "Cryptor",
+    "patcher",
+    "scrambler",
+    "sfx",
+    "Archive",
+    "Joiner",
+]
+assert all(t in ALL_TYPES for t in OBFUSCATION_TYPES), "Stupid."
+NAME_TO_GENERIC = (
+    "Cryptor detected",
+    "Packer detected",
+)
+
+
 def find_files_with_null(directory: Path | str) -> list[os.PathLike]:
     command = ['grep', '-l', '-r', 'null', str(directory)]
     try:
@@ -177,6 +233,14 @@ def sorel_shas() -> Generator[str, None, None]:
 def basal_shas(name: str) -> Generator[str, None, None]:
     for f in DATASET_TO_FILES["binaries"][name]():
         yield f.stem
+
+
+def assemblage_shas() -> Generator[str, None, None]:
+    return basal_shas("assemblage_pe")
+
+
+def windows_shas() -> Generator[str, None, None]:
+    return basal_shas("windows_pe")
 
 
 def bodmas_shas() -> Generator[str, None, None]:
@@ -221,6 +285,14 @@ def basal_file_streamer(shas: list[str], name: str) -> Generator[tuple[Path, str
         yield sha_map[s], s
 
 
+def assemblage_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "assemblage_pe")
+
+
+def windows_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
+    return basal_file_streamer(shas, "windows_pe")
+
+
 def bodmas_streamer(shas: list[str]) -> Generator[tuple[Path, str], None, None]:
     return basal_file_streamer(shas, "bodmas_pe")
 
@@ -263,6 +335,12 @@ class PackingAnalyzerDirectory:
 
 
 class PackingAnalyzer:
+
+    """
+    Note: This class was intended to be used to filter out binaries that are obfuscated in ways
+    that make certain things difficult to do. Although the name of the class suggests that it
+    only looks for 'packers', it also looks for other forms of obfuscation...
+    """
 
     def __init__(
         self,
@@ -464,16 +542,16 @@ class PackingAnalyzer:
             return any(packeds)
 
         def packers_decision(packers: list[str]) -> list[str]:
-            packers = [p if p != "Packer detected" else "Heursitic" for p in packers]
+            packers = [p if p not in NAME_TO_GENERIC else "Generic" for p in packers]
             return list(set(packers) - {""})
 
-        def parse_values_blob(values: list[dict]) -> tuple[bool, list[str]]:
+        def parse_values_blob(values: list[dict], obfuscation: str) -> tuple[bool, list[str]]:
             packeds: list[bool] = []
             packers: list[str] = []
             for value in values:
                 if "values" in value:
-                    packed, packer = parse_values_blob(value.get("values"))
-                elif value.get("type") == "Packer":
+                    packed, packer = parse_values_blob(value.get("values"), obfuscation)
+                elif value.get("type") == obfuscation:
                     packed = True
                     packer = [value.get("name", "")]
                 else:
@@ -485,12 +563,12 @@ class PackingAnalyzer:
 
             return packeds_decision(packeds), packers_decision(packers)
 
-        def parse_detects_blob(detects: list[dict]) -> tuple[bool, list[str]]:
+        def parse_detects_blob(detects: list[dict], obfuscation: str) -> tuple[bool, list[str]]:
             packeds: list[bool] = []
             packers: list[str] = []
 
             for detect in detects:
-                packed, packer = parse_values_blob(detect.get("values", []))
+                packed, packer = parse_values_blob(detect.get("values", []), obfuscation)
                 packeds.append(packed)
                 packers.extend(packer)
 
@@ -526,8 +604,14 @@ class PackingAnalyzer:
                 if d is None:
                     output[sha][mode] = None
                     continue
-                packed, packer = parse_detects_blob(d.get("detects", []))
-                output[sha][mode] = {"packed": packed, "packer": packer}
+                output[sha][mode] = {"is_obfuscated": False}
+                for obfuscation in OBFUSCATION_TYPES:
+                    obfuscated, obfuscator = parse_detects_blob(d.get("detects", []), obfuscation)
+                    output[sha][mode][obfuscation] = {
+                        "obfuscated": obfuscated,
+                        "obfuscator": obfuscator,
+                    }
+                    output[sha][mode]["is_obfuscated"] = output[sha][mode]["is_obfuscated"] or obfuscated
 
             # Write the output to a temporary file and clear up in-memory data structures.
             if (i + 1) % self.consolidate_chunk_size == 0:
@@ -689,6 +773,7 @@ class PackingMap(UserDict):
         self,
         root: Path | str = str(SOREL_PATH / "diec"),
         include: tuple[DiecMode] = tuple(DIEC_MODES),
+        obfuscations: tuple[str] = tuple(OBFUSCATION_TYPES),
         lazy: bool = False,
         chunked: bool = False,
         num_workers: Optional[int] = None,
@@ -697,8 +782,11 @@ class PackingMap(UserDict):
             print("`chunked` is False, but multiple workers were requested. Setting `chunked` to True.")
             chunked = True
 
+        self._cache_file = None
+
         self.p_consolidated = PackingAnalyzerDirectory(root).p_consolidated
         self.include = tuple(include)
+        self.obfuscations = tuple(obfuscations)
         self.lazy = lazy
         self.chunked = chunked
         self.num_workers = num_workers
@@ -712,7 +800,37 @@ class PackingMap(UserDict):
         if self.num_workers is not None:
             self.num_workers = min(self.num_workers, len(self.partial_files))
 
-        super().__init__(self.get_packing_map())
+        if self.cache_file.exists() and self.cache_file.stat().st_size > 0:
+            print(f"Getting the packing map from {self.cache_file=}")
+            with open(self.cache_file, "rb") as fp:
+                packing_map = pickle.load(fp)
+        else:
+            print(f"Building packing map and saving to {self.cache_file=}")
+            self.cache_file.parent.mkdir(exist_ok=True, parents=True)
+            packing_map = self.get_packing_map()
+            with open(self.cache_file, "wb") as fp:
+                pickle.dump(packing_map, fp)
+
+        super().__init__(packing_map)
+
+    @property
+    def cache_file(self) -> Path:
+        if self._cache_file is not None:
+            return self._cache_file
+
+        # This is idiotic but I don't care
+        b_1 = str(self.include).encode()
+        b_2 = str(self.obfuscations).encode()
+        with open(self.partial_files[0], "rb") as fp:
+            fp.seek(64)
+            b_3 = fp.read(64)
+        with open(self.partial_files[-1], "rb") as fp:
+            fp.seek(64)
+            b_4 = fp.read(64)
+        b = b_1 + b_2 + b_3 + b_4
+        h = hashlib.sha256(b).hexdigest()
+        self._cache_file = Path("./cache") / "packing_map" / f"{h}.pkl"
+        return self._cache_file
 
     @property
     def partial_files(self) -> list[os.PathLike]:
@@ -806,15 +924,19 @@ class PackingMap(UserDict):
 
         return packing_map
 
-    def get_packing_report(
-        self,
-        report: dict[DiecMode, Optional[dict[Literal["packed", "packer"], bool | str]]],
-    ) -> bool:
+    def get_packing_report(self, report: dict[DiecMode, Optional[dict]]) -> bool:
         for mode in self.include:
             if report[mode] is None:
                 continue
-            if report[mode]["packed"]:
-                return True
+            if self.obfuscations == OBFUSCATION_TYPES:
+                if report[mode]["is_obfuscated"]:
+                    return True
+                continue
+            for obfuscation in self.obfuscations:
+                if report[mode][obfuscation] is None:
+                    continue
+                if report[mode][obfuscation]["obfuscated"]:
+                    return True
         return False
 
 
@@ -833,6 +955,14 @@ def universal_packing_map(roots: Optional[Path | list[Path]] = None, **kwds) -> 
         m = PackingMap(root, **kwds)
         all_maps.update(dict(m))
     return all_maps
+
+
+def not_packed_list(root: str, outfile: Path) -> None:
+    m = PackingMap(root)
+    notpacked = sorted([k for k, v in m.items() if not v])
+    with open(outfile, "w") as fp:
+        for s in notpacked:
+            fp.write(f"{s}\n")
 
 
 def unpack(
@@ -929,7 +1059,7 @@ def unpack_samples(
 def main():
 
     parser = ArgumentParser()
-    parser.add_argument("--dataset", choices=["sorel_pe", "bodmas_pe", "virus_share_elf", "malware_bazaar_elf", "virus_total_elf"], required=True)
+    parser.add_argument("--dataset", choices=["sorel_pe", "bodmas_pe", "virus_share_elf", "malware_bazaar_elf", "virus_total_elf", "assemblage_pe", "windows_pe"], required=True)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--merge", action="store_true")
@@ -951,6 +1081,14 @@ def main():
         p_root = PACKING_ROOTS["sorel_pe"]
         all_shas = sorel_shas
         streamer = sorel_streamer
+    elif args.dataset == "windows_pe":
+        p_root = PACKING_ROOTS["windows_pe"]
+        all_shas = windows_shas
+        streamer = windows_streamer
+    elif args.dataset == "assemblage_pe":
+        p_root = PACKING_ROOTS["assemblage_pe"]
+        all_shas = assemblage_shas
+        streamer = assemblage_streamer
     elif args.dataset == "bodmas_pe":
         p_root = PACKING_ROOTS["bodmas_pe"]
         all_shas = bodmas_shas

@@ -142,4 +142,11 @@ lift.sh doesn't get the time correctly on job 15 of the job array.
 
 
 grep -L "analyzeHeadless returned 0" ./logs/lift-6_* | sed -n 's/.*_\([0-9]\+\)\.out/\1/p' | paste -sd,
+pip install tokenizers==0.20.0
+
+## Set of for ESP
+
+ln -s /media/lk3591/easystore/datasets/Sorel/processed/raw ./data/raw
+ln -s /media/lk3591/easystore/datasets/Sorel/processed/dec ./data/dec
+ln -s /media/lk3591/easystore/datasets/Sorel/processed/dis ./data/dis
 
