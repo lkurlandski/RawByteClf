@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=liftMini-BODMAS-1
+#SBATCH --job-name=liftMini-Windows-1
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
@@ -19,7 +19,7 @@ if [[ $DATASET == "" ]]; then
    exit
 fi
 
-HH=$(printf "%01x" "$SLURM_ARRAY_TASK_ID")  # use 01 or 02
+HH=$(printf "%02x" "$SLURM_ARRAY_TASK_ID")  # use 01 or 02
 echo "HH: $HH"
 
 # Establish some timing variables.
