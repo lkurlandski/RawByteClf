@@ -151,3 +151,8 @@ ln -s /media/lk3591/easystore/datasets/Sorel/processed/raw ./data/raw
 ln -s /media/lk3591/easystore/datasets/Sorel/processed/dec ./data/dec
 ln -s /media/lk3591/easystore/datasets/Sorel/processed/dis ./data/dis
 
+
+
+/home/lk3591/miniconda3/envs/RawByteClf/lib/python3.10/site-packages/transformers/dependency_versions_table.py
+"tokenizers": "tokenizers>=0.14,<0.21",
+
