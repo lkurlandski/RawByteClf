@@ -959,7 +959,7 @@ def universal_packing_map(roots: Optional[Path | list[Path]] = None, **kwds) -> 
 
 def not_packed_list(root: str, outfile: Path) -> None:
     m = PackingMap(root)
-    notpacked = [k for k, v in m.items() if not v]
+    notpacked = sorted([k for k, v in m.items() if not v])
     with open(outfile, "w") as fp:
         for s in notpacked:
             fp.write(f"{s}\n")
