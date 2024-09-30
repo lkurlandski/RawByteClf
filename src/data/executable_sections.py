@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 from typing import Literal, Optional
+import zipfile
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -315,6 +316,13 @@ def main():
     names = islice((n for n, _ in get_data_from_archives(archives, names=True, contents=False)), args.subset)
     contents = islice((c for _, c in get_data_from_archives(archives, names=False, contents=True)), args.subset)
 
+    total = args.subset
+    if total is None and (args.num_workers is None or args.num_workers < 2):
+        total = 0
+        for f in archives:
+            with zipfile.ZipFile(f, "r") as zp:
+                total += len(zp.namelist())
+
     t_i = time.time()
 
     exe_map = Runner(
@@ -322,7 +330,7 @@ def main():
         names=names,
         toolkit=args.toolkit,
         num_workers=args.num_workers
-    )()
+    )(total)
 
     t_f = time.time()
 
