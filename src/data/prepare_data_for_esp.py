@@ -6,9 +6,11 @@ from argparse import ArgumentParser
 from functools import partial
 import json
 import multiprocessing as mp
+import os
 from pathlib import Path
 from pprint import pformat
 import re
+import sys
 import time
 from typing import Callable
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -16,8 +18,19 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from tqdm import tqdm
 from unidecode import unidecode
 
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-ROOT = Path("/media/lk3591/easystore/datasets")
+from src.cfg import System, SYSTEM
+
+
+if SYSTEM == System.LAB:
+    ROOT = Path("/media/lk3591/easystore/datasets")
+elif SYSTEM == System.RC:
+    ROOT = Path("/shared/rc/admalware/")
+else:
+    raise NotImplementedError()
+
 ROOTS = {
     "sorel_pe": ROOT / "Sorel",
     "bodmas_pe": ROOT / "BODMAS",
