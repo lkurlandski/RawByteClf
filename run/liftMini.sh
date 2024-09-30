@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=liftMini-Windows-3
+#SBATCH --job-name=liftMini-Windows-4
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
@@ -11,7 +11,7 @@
 #SBATCH --cpus-per-task=1
 
 
-RERUN="0"  # Use 1 to detect and eliminate problematic files on re-runs.
+RERUN="1"  # Use 1 to detect and eliminate problematic files on re-runs.
 
 DATASET=$1
 if [[ $DATASET == "" ]]; then
