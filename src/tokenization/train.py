@@ -27,7 +27,7 @@ from tokenizers.pre_tokenizers import PreTokenizer
 from tokenizers import trainers
 from tqdm import tqdm
 
-from src.enums import TokenizerAlgorithm, LiftLevel
+from src.enums import TokenizationAlgorithm, LiftLevel
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8  # pylint: disable=no-name-in-module
 from src.data.utils import get_data_from_archives
 from src.tokenization import SPECIALS
@@ -155,17 +155,17 @@ class TrainTokenizer:
         self,
         iterator: TokenizationTrainingIterator,
         lift_level: LiftLevel,
-        algorithm: TokenizerAlgorithm,
+        algorithm: TokenizationAlgorithm,
         vocab_size: int,
         max_token_length: Optional[int] = None,
     ) -> None:
         self.iterator = iterator
         self.lift_level = LiftLevel(lift_level)
-        self.algorithm = TokenizerAlgorithm(algorithm)
+        self.algorithm = TokenizationAlgorithm(algorithm)
         self.vocab_size = vocab_size
         self.max_token_length = max_token_length
 
-        if self.lift_level == LiftLevel.RAW and self.algorithm == TokenizerAlgorithm.WORDLEVEL:
+        if self.lift_level == LiftLevel.RAW and self.algorithm == TokenizationAlgorithm.WORDLEVEL:
             raise ValueError("WordLevel tokenization at the raw-byte level does not need training.")
 
     def __call__(self) -> Tokenizer:
@@ -198,38 +198,38 @@ class TrainTokenizer:
         raise ValueError(f"{self.lift_level=}")
 
     def get_model(self) -> models.Model:
-        if self.algorithm == TokenizerAlgorithm.BPE:
+        if self.algorithm == TokenizationAlgorithm.BPE:
             return models.BPE()
-        if self.algorithm == TokenizerAlgorithm.UNIGRAM:
+        if self.algorithm == TokenizationAlgorithm.UNIGRAM:
             return models.Unigram()
-        if self.algorithm == TokenizerAlgorithm.WORDPIECE:
+        if self.algorithm == TokenizationAlgorithm.WORDPIECE:
             return models.WordPiece()
-        if self.algorithm == TokenizerAlgorithm.WORDLEVEL:
+        if self.algorithm == TokenizationAlgorithm.WORDLEVEL:
             return models.WordLevel()
         raise ValueError(f"{self.algorithm=}")
 
     def get_trainer(self) -> trainers.Trainer:
         special_tokens = list(SPECIALS.values())
         vocab_size = self.vocab_size + len(special_tokens)
-        if self.algorithm == TokenizerAlgorithm.BPE:
+        if self.algorithm == TokenizationAlgorithm.BPE:
             return trainers.BpeTrainer(
                 vocab_size=vocab_size,
                 special_tokens=special_tokens,
                 max_token_length=self.max_token_length,
             )
-        if self.algorithm == TokenizerAlgorithm.UNIGRAM:
+        if self.algorithm == TokenizationAlgorithm.UNIGRAM:
             return trainers.UnigramTrainer(
                 vocab_size=vocab_size,
                 special_tokens=special_tokens,
                 unk_token=SPECIALS["unk_token"],
                 max_piece_length=self.max_token_length,
             )
-        if self.algorithm == TokenizerAlgorithm.WORDPIECE:
+        if self.algorithm == TokenizationAlgorithm.WORDPIECE:
             return trainers.WordPieceTrainer(
                 vocab_size=vocab_size,
                 special_tokens=special_tokens,
             )
-        if self.algorithm == TokenizerAlgorithm.WORDLEVEL:
+        if self.algorithm == TokenizationAlgorithm.WORDLEVEL:
             return trainers.WordLevelTrainer(
                 vocab_size=vocab_size,
                 special_tokens=special_tokens,
@@ -244,7 +244,7 @@ def main():
 
     parser = ArgumentParser()
     parser.add_argument("--lift_level", type=LiftLevel, required=True)
-    parser.add_argument("--algorithm", type=TokenizerAlgorithm, required=True)
+    parser.add_argument("--algorithm", type=TokenizationAlgorithm, required=True)
     parser.add_argument("--vocab_size", type=int, required=True)
     parser.add_argument("--num_files", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=2**10)

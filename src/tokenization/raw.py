@@ -12,7 +12,7 @@ from tokenizers import pre_tokenizers
 from tokenizers.pre_tokenizers import PreTokenizer
 from tokenizers import processors
 
-from src.enums import TokenizerAlgorithm
+from src.enums import TokenizationAlgorithm
 from src.tokenization import SPECIALS
 from src.tokenization.core import SENTINAL_NORMALIZER, SENTINAL_PRETOKENIZER
 
@@ -90,9 +90,9 @@ def get_raw_raw_tokenizer(representation: int) -> Tokenizer:
     raise ValueError(f"{representation=}")
 
 
-def get_raw_normalizer(algorithm: TokenizerAlgorithm) -> Normalizer:
+def get_raw_normalizer(algorithm: TokenizationAlgorithm) -> Normalizer:
     return SENTINAL_NORMALIZER
 
 
-def get_raw_pretokenizer(algorithm: TokenizerAlgorithm) -> PreTokenizer:
+def get_raw_pretokenizer(algorithm: TokenizationAlgorithm) -> PreTokenizer:
     return SENTINAL_PRETOKENIZER

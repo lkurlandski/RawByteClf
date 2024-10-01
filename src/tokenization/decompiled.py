@@ -10,7 +10,7 @@ from tokenizers.normalizers import Normalizer
 from tokenizers import pre_tokenizers
 from tokenizers.pre_tokenizers import PreTokenizer
 
-from src.enums import TokenizerAlgorithm
+from src.enums import TokenizationAlgorithm
 
 
 class CommentRemovalNormalizer:
@@ -35,12 +35,12 @@ class CommentRemovalNormalizer:
         normalized.replace(replace, text)
 
 
-def get_dec_normalizer(algorithm: TokenizerAlgorithm) -> Optional[Normalizer]:  # pylint: disable=unused-argument
+def get_dec_normalizer(algorithm: TokenizationAlgorithm) -> Optional[Normalizer]:  # pylint: disable=unused-argument
     return None
 
 
-def get_dec_pretokenizer(algorithm: TokenizerAlgorithm) -> Optional[PreTokenizer]:
-    if algorithm != TokenizerAlgorithm.WORDLEVEL:
+def get_dec_pretokenizer(algorithm: TokenizationAlgorithm) -> Optional[PreTokenizer]:
+    if algorithm != TokenizationAlgorithm.WORDLEVEL:
         return pre_tokenizers.Sequence([
             pre_tokenizers.Split(Regex(r"\n"), behavior="removed"),
         ])

@@ -11,7 +11,7 @@ class LiftLevel(Enum):
     DEC = "dec"
 
 
-class TokenizerAlgorithm(Enum):
+class TokenizationAlgorithm(Enum):
     BPE       = "bpe"
     UNIGRAM   = "uni"
     WORDPIECE = "wdp"
