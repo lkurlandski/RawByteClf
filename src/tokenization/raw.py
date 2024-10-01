@@ -90,9 +90,9 @@ def get_raw_raw_tokenizer(representation: int) -> Tokenizer:
     raise ValueError(f"{representation=}")
 
 
-def get_raw_normalizer(algorithm: TokenizationAlgorithm) -> Normalizer:
+def get_raw_normalizer(algorithm: TokenizationAlgorithm) -> Normalizer:  # pylint: disable=unused-argument
     return SENTINAL_NORMALIZER
 
 
-def get_raw_pretokenizer(algorithm: TokenizationAlgorithm) -> PreTokenizer:
+def get_raw_pretokenizer(algorithm: TokenizationAlgorithm) -> PreTokenizer:  # pylint: disable=unused-argument
     return SENTINAL_PRETOKENIZER

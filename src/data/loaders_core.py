@@ -1351,13 +1351,21 @@ def get_materials_esp_lm(lift_level: str) -> Materials:
     )
 
 
-def get_materials_esp_clf_binary() -> Materials:
-    ...
+def get_materials_esp_clm(lift_level: str) -> Materials:
+    return get_materials_esp_lm(lift_level)
 
 
-def get_materials_esp_clf_multiclass() -> Materials:
-    ...
+def get_materials_esp_mlm(lift_level: str) -> Materials:
+    return get_materials_esp_lm(lift_level)
 
 
-def get_materials_esp_clf_multilabel() -> Materials:
-    ...
+def get_materials_esp_det(lift_level: str) -> Materials:
+    raise NotImplementedError()
+
+
+def get_materials_esp_fam(lift_level: str) -> Materials:
+    raise NotImplementedError()
+
+
+def get_materials_esp_beh(lift_level: str) -> Materials:
+    raise NotImplementedError()

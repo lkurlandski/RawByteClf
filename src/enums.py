@@ -6,9 +6,9 @@ from enum import Enum
 
 
 class LiftLevel(Enum):
-    RAW = "raw"
-    DIS = "dis"
-    DEC = "dec"
+    RAW          = "raw"
+    DISASSEMBLED = "dis"
+    DECOMPILED   = "dec"
 
 
 class TokenizationAlgorithm(Enum):
@@ -19,10 +19,10 @@ class TokenizationAlgorithm(Enum):
 
 
 class System(Enum):
-    ARM = "arm"
-    WIN = "win"
-    RC  = "rc"
-    LAB = "lab"
+    ARMITAGE   = "arm"
+    WINTERMUTE = "win"
+    SPORC      = "rc"
+    GCCIS      = "lab"
 
 
 class EncryptionAlgorithm(Enum):
@@ -35,3 +35,34 @@ class CompressionAlgorithm(Enum):
     LZMA = "lzma"
     ZLIB = "zlib"
     S7Z  = "s7z"
+
+
+class Task(Enum):
+    MLM = "mlm"
+    CLM = "clm"
+    DET = "det"
+    FAM = "fam"
+    BEH = "beh"
+
+
+class PackingProtocol(Enum):
+    ANY = "any"
+    YES = "yes"
+    NO  = "no"
+    UNK = "unk"
+
+
+class BitsInByte(Enum):
+    EIGHT   = 8
+    TWELVE  = 12
+    SIXTEEN = 16
+
+
+class SplitMode(Enum):
+    RANDOM   = "rnd"
+    TEMPORAL = "tmp"
+
+
+class WeightedLossAlgorithm(Enum):
+    SAMPLE_REWEIGHTING      = "srw"
+    INVERSE_CLASS_FREQUENCY = "icf"

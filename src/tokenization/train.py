@@ -68,7 +68,7 @@ class TokenizationTrainingIterator:
 
     def __call__(self) -> TokenizationTrainingIterator:
         archives = []
-        for root, dirs, files in os.walk("./data", followlinks=True):
+        for root, dirs, files in os.walk("./data", followlinks=True):  # pylint: disable=unused-variable
             for file in files:
                 if file.endswith(".zip"):
                     archives.append(os.path.join(root, file))
@@ -133,18 +133,18 @@ class TokenizationTrainingIterator:
     def bytes_to_str(self) -> Callable:
         if self.lift_level == LiftLevel.RAW:
             return bytes_to_str_utf8
-        if self.lift_level == LiftLevel.DIS:
+        if self.lift_level == LiftLevel.DISASSEMBLED:
             return bytes.decode
-        if self.lift_level == LiftLevel.DEC:
+        if self.lift_level == LiftLevel.DECOMPILED:
             return bytes.decode
         raise ValueError(f"{self.lift_level=}")
 
     def decompose_document(self, document: bytes) -> list[bytes]:
         if self.lift_level == LiftLevel.RAW:
             return [document[i:i+RAW_WORD_SIZE] for i in range(0, len(document), RAW_WORD_SIZE)]
-        if self.lift_level == LiftLevel.DIS:
+        if self.lift_level == LiftLevel.DISASSEMBLED:
             return document.split(b"\n")
-        if self.lift_level == LiftLevel.DEC:
+        if self.lift_level == LiftLevel.DECOMPILED:
             return document.split(b"\n")
         raise ValueError(f"{self.lift_level=}")
 
@@ -182,18 +182,18 @@ class TrainTokenizer:
     def get_normalizer(self) -> Optional[Normalizer]:
         if self.lift_level == LiftLevel.RAW:
             return get_raw_normalizer(self.algorithm)
-        if self.lift_level == LiftLevel.DIS:
+        if self.lift_level == LiftLevel.DISASSEMBLED:
             return get_dis_normalizer(self.algorithm)
-        if self.lift_level == LiftLevel.DEC:
+        if self.lift_level == LiftLevel.DECOMPILED:
             return get_dec_normalizer(self.algorithm)
         raise ValueError(f"{self.lift_level=}")
 
     def get_pretokenizer(self) -> Optional[PreTokenizer]:
         if self.lift_level == LiftLevel.RAW:
             return get_raw_pretokenizer(self.algorithm)
-        if self.lift_level == LiftLevel.DIS:
+        if self.lift_level == LiftLevel.DISASSEMBLED:
             return get_dis_pretokenizer(self.algorithm)
-        if self.lift_level == LiftLevel.DEC:
+        if self.lift_level == LiftLevel.DECOMPILED:
             return get_dec_pretokenizer(self.algorithm)
         raise ValueError(f"{self.lift_level=}")
 

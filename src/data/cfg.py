@@ -10,19 +10,15 @@ from pathlib import Path
 import sys
 from typing import Literal
 
-
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
 from src.cfg import System, SYSTEM
 
 
-if SYSTEM == System.ARMITAGE or SYSTEM == System.LAB:
+if SYSTEM == System.ARMITAGE:
     DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
+elif SYSTEM == System.LAB:
+    DATASETS_PATH = Path("/media/lk3591/easystore/datasets/")
 elif SYSTEM == System.RC:
     DATASETS_PATH = Path("/shared/rc/admalware")
-else:
-    raise ValueError(f"{SYSTEM=}")
 
 ASSEMBLAGE_PATH = DATASETS_PATH / "Assemblage"
 BODMAS_PATH = DATASETS_PATH / "BODMAS"

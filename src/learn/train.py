@@ -20,10 +20,6 @@ Train and evaluate the models for malware family classification.
 # NOTE 0: storing token class probabilities for every token in a long input sequence requires
     an infeasible amount of memory (hundreds of GBs) for long sequences with a reasonbly-
     sized test dataset.
-
-FIXME: always use bos and eos tokens as this simplifies the preprocessing logic.
-FIXME: when streaming in classification mode with num_train epochs, the output helper gets 
-     set in max_steps mode after CUDA OOMs.
 """
 
 from collections import Counter
@@ -54,8 +50,8 @@ if __name__ == "__main__":
 from accelerate.utils import DistributedDataParallelKwargs
 try:
     from captum.attr import KernelShap
-except (ModuleNotFoundError, ImportError) as err:
-    pass
+except (ModuleNotFoundError, ImportError):
+    print("ModuleNotFound: captum")
 import datasets
 from datasets import (
     DatasetDict,
@@ -121,11 +117,17 @@ try:
     from ray import tune
     from ray.tune.search.hyperopt import HyperOptSearch
     from ray.tune import TuneError
-except (ModuleNotFoundError, ImportError) as err:
-    print(err)
+except (ModuleNotFoundError, ImportError):
+    print("ModuleNotFound: ray")
 
 from src.cfg import BR, System, SYSTEM
-from src.enums import CompressionAlgorithm, EncryptionAlgorithm, LiftLevel, TokenizationAlgorithm
+from src.enums import (
+    CompressionAlgorithm,
+    EncryptionAlgorithm,
+    LiftLevel,
+    Task,
+    TokenizationAlgorithm,
+)
 from src.utils import (
     getattr_recursively,
     count_parameters,
@@ -154,15 +156,6 @@ from src.architectures.hrrformer import (
     HRRForCausalLM,
     HRRPreTrainedModel,
 )
-try:
-    from src.architectures.mamba import (
-        MambaConfig,
-        MambaForSequenceClassification,
-        MambaLMHeadModel as MambaForCausalLM,
-        MambaPreTrainedModel,
-    )
-except (ModuleNotFoundError, ImportError) as err:
-    print(err)
 from src.architectures.mamba_hf import (
     MambaConfig,
     MambaForSequenceClassification,
@@ -176,10 +169,11 @@ from src.architectures.rwkv import (
 )
 from src.data.loaders_core import (
     Materials,
-    get_materials_esp_lm,
-    get_materials_esp_clf_binary,
-    get_materials_esp_clf_multiclass,
-    get_materials_esp_clf_multilabel,
+    get_materials_esp_clm,
+    get_materials_esp_mlm,
+    get_materials_esp_det,
+    get_materials_esp_fam,
+    get_materials_esp_beh,
 )
 from src.data.loaders_hf import get_dataset_hf, print_dataset_hf
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
@@ -195,20 +189,6 @@ from src.learn.preprocessing import (
     hf_compress_bytes,
     hf_encrypt_bytes,
 )
-try:
-    from src.learn.tuning import (
-        hp_space_malconv,
-        hp_space_longformer,
-        hp_space_hrrformer,
-    )
-except (ModuleNotFoundError, ImportError) as err:
-    print(err)
-    def _hp_space(trial: Any) -> dict[str, float | int]:
-        raise NotImplementedError()
-    hp_space_malconv = _hp_space
-    hp_space_longformer = _hp_space
-    hp_space_hrrformer = _hp_space
-
 from src.learn.printers import print_tokenizer, print_data_collator, print_config
 from src.learn.utils import (
     pad_to_multiple_of_fn,
@@ -228,6 +208,12 @@ from src.tokenization.api import get_fast_tokenizer
 random.seed(0)
 np.random.seed(0)
 torch.random.manual_seed(0)
+
+
+def _hp_space(trial: Any) -> dict[str, float | int]:
+    raise NotImplementedError()
+
+hp_space_malconv = hp_space_longformer = hp_space_hrrformer = _hp_space
 
 
 PAD_TO = 8
@@ -308,7 +294,7 @@ class TrainingArguments(HfTrainingArguments):
         # by the transformers.TrainingArguments. This let's us pass in "true" from the command line,
         # and have the flag be set to True, i.e., resume training from the last checkpoint.
         if isinstance(self.resume_from_checkpoint, str) and self.resume_from_checkpoint.lower() == "true":
-            self.resume_from_checkpoint = True  # FIXME: Instance of 'bool' has no 'lower' member (no-member)
+            self.resume_from_checkpoint = True
 
         # If no metric is supplied, eval_loss is a good one :)
         if self.metric_for_best_model is None:
@@ -427,14 +413,14 @@ class SaveConfigToCheckpointCallback(TrainerCallback):
 
 class UtilCallback(TrainerCallback):
 
-    def __init__(self, do_print: bool = False, *args, **kwds) -> None:
+    def __init__(self, *args, do_print: bool = True, **kwds) -> None:
         super().__init__(*args, **kwds)
         self.do_print = do_print
         self._time_step_start = -1.0
         self._time_step_end = -1.0
         self._time_step_deltas: list[float] = []
 
-    def on_log(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
+    def on_log(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:  # pylint: disable=unused-argument
         m = get_mem(unit="B")
         d = {"mem_used": m[2], "mem_avail": m[1], "mem_total": m[0]}
         state.log_history[-1].update(d)
@@ -448,10 +434,10 @@ class UtilCallback(TrainerCallback):
             state.log_history[-1].update(d)
             self._time_step_deltas = []
 
-    def on_step_begin(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
+    def on_step_begin(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:  # pylint: disable=unused-argument
         self._time_step_start = time.time()
 
-    def on_step_end(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:
+    def on_step_end(self, args: HfTrainingArguments, state: TrainerState, control: TrainerControl, **kwds) -> None:  # pylint: disable=unused-argument
         self._time_step_end = time.time()
         self._time_step_deltas.append(self._time_step_end - self._time_step_start)
 
@@ -493,7 +479,7 @@ class StaticGraphTrainer(Trainer):
     """
 
     def _wrap_model(self, model, training=True, dataloader=None):
-        model = super()._wrap_model(model, training, dataloader)
+        model = super()._wrap_model(model, training, dataloader)  # pylint: disable=no-member
 
         if self.args.parallel_mode == ParallelMode.DISTRIBUTED:
             if is_torch_neuroncore_available():
@@ -928,13 +914,8 @@ def get_model(
     config: Optional[PretrainedConfig] = None,
     **kwds,
 ) -> PreTrainedModel:
-    if model_name_or_path is None and config is None:
-        raise ValueError("Must specify `model_name_or_path` or `config`.")
-    if model_name_or_path is None == config is None:  # FIXME: broken.
-        warnings.warn(
-            f"Specified both `model_name_or_path` or `config`. {model_name_or_path=} will take "
-            f"precidence over {type(config)=} if its a path that exists."
-        )
+    if (model_name_or_path is None) == (config is None):
+        raise ValueError("Must specify `model_name_or_path` xor `config`.")
 
     # PreTrainedModel doesn't like None values for num_labels id2label and label2id.
     for k in ["num_labels", "id2label", "label2id"]:
@@ -1137,20 +1118,18 @@ def get_processed_dataset_hf(
         kwds = get_map_kwds_for_hf_datasets(func, dataset, features=features, desc=desc)
         dataset = dataset.map(**kwds)
 
-    # TODO: Consider re-implementing the compression and encyption as preprocessing options.
-    # if args.algorithm in COMPRESSION_TYPES:
-    #     func = partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level)
-    #     desc = "Compressing bytes..."
-    #     kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
-    #     dataset = dataset.map(**kwds)
-    # if args.algorithm in ENCRYPTION_TYPES:
-    #     func = partial(hf_encrypt_bytes, encryption_type=args.algorithm, key=None)
-    #     desc = "Encrypting bytes..."
-    #     kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
-    #     dataset = dataset.map(**kwds)
+    if args.compression_algorithm is not None:
+        func = partial(hf_compress_bytes, compression_type=args.compression_algorithm, compression_level=args.compression_level)
+        desc = "Compressing bytes..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
+        dataset = dataset.map(**kwds)
+    if args.encryption_algorithm is not None:
+        func = partial(hf_encrypt_bytes, encryption_type=args.encryption_algorithm, key=None)
+        desc = "Encrypting bytes..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
+        dataset = dataset.map(**kwds)
 
-    # if args.algorithm.lower() == "raw" or args.algorithm in (COMPRESSION_TYPES + ENCRYPTION_TYPES):
-    if args.lift_level.lower() == "raw" and args.algorithm.lower() == "wdl":
+    if args.lift_level == LiftLevel.RAW and args.algorithm == TokenizationAlgorithm.WORDLEVEL:
         func = partial(
             hf_bytes_to_input_ids,
             bits_in_byte=args.representation,
@@ -1178,8 +1157,6 @@ def get_processed_dataset_pt(
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
 ):
 
-    raise NotImplementedError("Depricated.")
-
     if not isinstance(materials.files["tr"][0], (str, Path)):
         raise NotImplementedError()
 
@@ -1188,14 +1165,13 @@ def get_processed_dataset_pt(
 
     preprocess_fns = []
 
-    if args.algorithm in COMPRESSION_TYPES:
-        func = partial(compress, compression_type=args.algorithm, compression_level=args.compression_level)
+    if args.compression_algorithm is not None:
+        func = partial(compress, compression_type=args.compression_algorithm, compression_level=args.compression_level)
         preprocess_fns.append(func)
-    if args.algorithm in ENCRYPTION_TYPES:
-        func = partial(encrypt, encryption_type=args.algorithm, key=None)
+    if args.encryption_algorithm is not None:
+        func = partial(encrypt, encryption_type=args.encryption_algorithm, key=None)
         preprocess_fns.append(func)
-
-    if args.algorithm.lower() == "raw" or args.algorithm in (COMPRESSION_TYPES + ENCRYPTION_TYPES):
+    if args.lift_level == LiftLevel.RAW and args.algorithm == TokenizationAlgorithm.WORDLEVEL:
         func = partial(
             bytes_to_input_ids,
             bits_in_byte=args.representation,
@@ -1236,21 +1212,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     kwds = {
         "root": args.root,
         "packing_protocol": args.packing_protocol,
-        "representation": args.representation,
+        "bits_in_byte": args.bits_in_byte,
         "lift_level": args.lift_level,
-        "algorithm": args.algorithm,
+        "tokenization_algorithm": args.tokenization_algorithm,
         "vocab_size": args.vocab_size,
         "max_length": args.max_length,
         "model_name_or_path": args.model_name_or_path,
         "task": args.task,
         "arch_config": args.arch_config,
         "split_mode": args.split_mode,
-        "tr_size": args.tr_size,
-        "depth": args.depth,
-        "min_freq": args.min_freq,
-        "top_k": args.top_k,
-        "tr_samples_per_class": args.tr_samples_per_class,
-        "max_imbalance_ratio": args.max_imbalance_ratio,
         "weighted_loss": args.weighted_loss,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
@@ -1292,16 +1262,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
-    if args.task in ("clm", "mlm"):
-        materials = get_materials_esp_lm(args.lift_level)
-    elif args.task == "clf-bin":
-        materials = get_materials_esp_clf_binary()
-    elif args.task == "clf-fam":
-        materials = get_materials_esp_clf_multiclass()
-    elif args.task == "clf-beh":
-        materials = get_materials_esp_clf_multilabel()
-    else:
-        raise ValueError(f"{args.task=}")
+    if args.task == Task.CLM:
+        materials = get_materials_esp_clm(args.lift_level)
+    elif args.task == Task.MLM:
+        materials = get_materials_esp_mlm(args.lift_level)
+    elif args.task == Task.DET:
+        materials = get_materials_esp_det(args.lift_level)
+    elif args.task == Task.FAM:
+        materials = get_materials_esp_fam(args.lift_level)
+    elif args.task == Task.BEH:
+        materials = get_materials_esp_beh(args.lift_level)
 
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
@@ -1331,6 +1301,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR)
     del num_shards
 
+
     config = get_config(
         args.model_name_or_path,
         tokenizer,
@@ -1355,28 +1326,28 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     #     if "attention_mask" in tokenizer.model_input_names:
     #         tokenizer.model_input_names.remove("attention_mask")
 
-    if args.task[0:3] == "clf":
-        data_collator = DataCollatorWithPadding(
-            tokenizer=tokenizer,
-            padding="longest",
-            pad_to_multiple_of=pad_to_multiple_of,
-            max_length=args.max_length,  # hopefully, the sequences were truncated before hand...
-        )
-        compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
-    elif args.task[0:3] == "mlm":
+    if args.Task in Task.CLM:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=True,
             pad_to_multiple_of=pad_to_multiple_of,
         )
         compute_metrics = None
-    elif args.task[0:3] == "clm":
+    elif args.Task == Task.MLM:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=False,
             pad_to_multiple_of=pad_to_multiple_of,
         )
         compute_metrics = None
+    else:
+        data_collator = DataCollatorWithPadding(
+            tokenizer=tokenizer,
+            padding="longest",
+            pad_to_multiple_of=pad_to_multiple_of,
+            max_length=args.max_length,
+        )
+        compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
 
     print_data_collator(data_collator)
     print(BR)
@@ -1384,7 +1355,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR)
 
     callbacks = []
-    if training_arguments.save_strategy == IntervalStrategy.STEPS or training_arguments.evaluation_strategy == IntervalStrategy.STEPS:
+    if training_arguments.save_strategy == IntervalStrategy.STEPS or training_arguments.evaluation_strategy == IntervalStrategy.STEPS:  # pylint: disable=consider-using-in
         callbacks.append(RobustEpochCallback())
     if args.early_stopping:
         callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
@@ -1392,8 +1363,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR)
 
 
-    # TODO: this is a fucking train wreck waiting to happen. Refactor and document.
-    # Note that the Trainer needs to be last from the MRO to work properly.
+    # This lovely bit of logic creates a custom types that inherits from transformers.Trainer
+    # based upon several requirements, e.g., the weighted loss function. Note that the Trainer
+    # needs to be last from the MRO to work properly, therefore, must be the last list element.
     model_trainer_base_classes = [Trainer]
 
     if (isinstance(config, MambaConfig) and config.mode == "bi" and config.tie_directions
@@ -1693,7 +1665,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
             return attributions
 
-        attributions: list[Tensor] = _attribute()
+        attributions: list[Tensor] = _attribute()  # pylint: disable=no-value-for-parameter
         with open(oh.attribution_results_file, "wb") as fp:
             torch.save(attributions, fp)
 

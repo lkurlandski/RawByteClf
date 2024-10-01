@@ -118,7 +118,7 @@ def main():
     # Remove shas if needed
     if args.exclude_shas is not None:
         with open(args.exclude_shas, "r") as fp:
-            exclude = set([f.strip() for f in fp])
+            exclude = {f.strip() for f in fp}
         print(f"Removing {len(exclude)=} shas.")
         files = [f for f in files if f not in exclude]
 

@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
 try:
     import lief
-    lief.logging.disable()  # pylint: disable=no-member
+    lief.logging.disable()  # pylint: disable=no-member,c-extension-no-member
 except (ModuleNotFoundError, ImportError):
     print("WARNING: lief is not available.")
 try:
@@ -55,8 +55,8 @@ IMAGE_SCN_CNT_CODE    = 0x00000020
 
 
 def set_pefile_flags():
-    global IMAGE_SCN_MEM_EXECUTE
-    global IMAGE_SCN_CNT_CODE
+    global IMAGE_SCN_MEM_EXECUTE  # pylint: disable=global-statement
+    global IMAGE_SCN_CNT_CODE     # pylint: disable=global-statement
 
     for char, code in pefile.section_characteristics:
         if char == "IMAGE_SCN_MEM_EXECUTE":
@@ -118,7 +118,7 @@ class GetExecutableSectionBounds:
 
     def __call__(self) -> tuple[Boundaries, ExitCode]:
         if self.file is None:
-            self.file = tempfile.NamedTemporaryFile(delete=False).name
+            self.file = tempfile.NamedTemporaryFile(delete=False).name  # pylint: disable=consider-using-with
             with open(self.file, "wb") as fp:
                 fp.write(self.content)
 
@@ -127,12 +127,13 @@ class GetExecutableSectionBounds:
                 return self._get_boundaries_lief()
             if self.toolkit == Toolkit.PEFILE:
                 return self._get_boundaries_pefile()
+            raise TypeError(f"{type(self.toolkit)}")
         finally:
             if self.content is not None:
                 os.unlink(self.file)
 
     def _get_boundaries_lief(self) -> tuple[Boundaries, ExitCode]:
-        binary = lief.parse(self.file)  # pylint: disable=no-member
+        binary = lief.parse(self.file)  # pylint: disable=no-member,c-extension-no-member
         if binary is None:
             return [], ExitCode.COULD_NOT_PARSE
 
@@ -234,7 +235,7 @@ class GetExecutableSectionBounds:
 
     @staticmethod
     def _get_section_bounds(
-        prv: Optional[SectionSummary],
+        prv: Optional[SectionSummary],  # pylint: disable=unused-argument
         cur: SectionSummary,
         nxt: Optional[SectionSummary],
         length: int,
@@ -335,7 +336,7 @@ def main():
     t_f = time.time()
 
     print(f"Time taken: {t_f - t_i:.2f} seconds")
- 
+
     with open(args.outfile, "w") as fp:
         fp.write(json.dumps(exe_map, indent=4))
 

@@ -23,7 +23,7 @@ def print_tokenizer(tokenizer: PreTrainedTokenizerFast) -> None:
         "model_input_names",
     ]
 
-    tokens_to_ids = {k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)}
+    tokens_to_ids = {k: v for k, v in zip(tokenizer.all_special_tokens, tokenizer.all_special_ids)}  # pylint: disable=unnecessary-comprehension
     specials = [(k, v, tokens_to_ids[v]) for k, v in tokenizer.special_tokens_map.items()]
 
     print(f"Tokenizer: {tokenizer.__class__.__name__}")
