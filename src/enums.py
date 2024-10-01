@@ -30,8 +30,8 @@ class EncryptionAlgorithm(Enum):
 
 
 class CompressionAlgorithm(Enum):
-    GZIP   = "gzip"
-    BZIP2  = "bzip2"
-    LZMA   = "lzma"
-    ZLIB   = "zlib"
-    SEVENZ = "7z"
+    GZIP = "gzip"
+    BZ2  = "bz2"
+    LZMA = "lzma"
+    ZLIB = "zlib"
+    S7Z  = "s7z"

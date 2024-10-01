@@ -125,6 +125,7 @@ except (ModuleNotFoundError, ImportError) as err:
     print(err)
 
 from src.cfg import BR, System, SYSTEM
+from src.enums import CompressionAlgorithm, EncryptionAlgorithm, LiftLevel, TokenizationAlgorithm
 from src.utils import (
     getattr_recursively,
     count_parameters,
@@ -132,9 +133,7 @@ from src.utils import (
     object_from_superset_of_constructor_kwds,
     to_long_tensor,
     compress,
-    COMPRESSION_TYPES,
     encrypt,
-    ENCRYPTION_TYPES,
     compose_functions,
     remove_empty_directories,
 )
@@ -1138,17 +1137,17 @@ def get_processed_dataset_hf(
         kwds = get_map_kwds_for_hf_datasets(func, dataset, features=features, desc=desc)
         dataset = dataset.map(**kwds)
 
-    # TODO: this is a mess.
-    if args.algorithm in COMPRESSION_TYPES:
-        func = partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level)
-        desc = "Compressing bytes..."
-        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
-        dataset = dataset.map(**kwds)
-    if args.algorithm in ENCRYPTION_TYPES:
-        func = partial(hf_encrypt_bytes, encryption_type=args.algorithm, key=None)
-        desc = "Encrypting bytes..."
-        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
-        dataset = dataset.map(**kwds)
+    # TODO: Consider re-implementing the compression and encyption as preprocessing options.
+    # if args.algorithm in COMPRESSION_TYPES:
+    #     func = partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level)
+    #     desc = "Compressing bytes..."
+    #     kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
+    #     dataset = dataset.map(**kwds)
+    # if args.algorithm in ENCRYPTION_TYPES:
+    #     func = partial(hf_encrypt_bytes, encryption_type=args.algorithm, key=None)
+    #     desc = "Encrypting bytes..."
+    #     kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
+    #     dataset = dataset.map(**kwds)
 
     # if args.algorithm.lower() == "raw" or args.algorithm in (COMPRESSION_TYPES + ENCRYPTION_TYPES):
     if args.lift_level.lower() == "raw" and args.algorithm.lower() == "wdl":
@@ -1178,6 +1177,8 @@ def get_processed_dataset_pt(
     num_shards: Optional[int] = None,  # pylint: disable=unused-argument
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
 ):
+
+    raise NotImplementedError("Depricated.")
 
     if not isinstance(materials.files["tr"][0], (str, Path)):
         raise NotImplementedError()
