@@ -2,11 +2,12 @@
 Core file operations to construct labeled datasets for classification tasks.
 """
 
+from __future__ import annotations
 from collections import defaultdict, Counter
 from collections.abc import Sequence, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
-from itertools import chain
+from itertools import chain, repeat
 import math
 import os
 from pathlib import Path
@@ -28,7 +29,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from tqdm import tqdm
 
-from src.utils import get_max_keys_from_dict, flatten, get_unique_files
+from src.enums import LiftLevel
+from src.utils import get_max_keys_from_dict, flatten, get_unique_files, rglob, unique_value
 from src.data.cfg import (
     SOREL_PATH,
     BODMAS_PATH,
@@ -69,6 +71,42 @@ class ArchivedFile:
     def __init__(self, archive: str | Path, name: str) -> None:
         self.archive = archive
         self.name = name
+
+    @staticmethod
+    def list_from_archives(archives: list[str | Path]) -> list[ArchivedFile]:
+        archived_files = []
+        for archive in archives:
+            for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
+                archived_files.append(ArchivedFile(archive, name))
+        return archived_files
+
+    @staticmethod
+    def list_from_real_files(archives: list[str | Path], files: list[str | Path]) -> list[ArchivedFile]:
+
+        # Should the order of the ArchivedFile correspond to archives or files?
+        raise NotImplementedError("The sepcification for this function are unclear at the moment.")
+
+        lengths = [len(a.stem) for a in archives]
+        if len(set(lengths)) == 1:
+            l = lengths[0]
+            d = {a.stem: [] for a in archives}
+            for f in files:
+                d[str(f)[0:l]].append(f)
+
+            archived_files = []
+            for a in archives:
+                afs = zip(repeat(a), d[a.stem])
+                archived_files.extend(afs)
+
+            return archived_files
+
+        warnings.warn("Getting list of ArchivedFile from real files slowly...")
+        archived_files = []
+        for archive in archives:
+            for f in files:
+                if str(f).startswith(archive.stem):
+                    archived_files.append(f)
+        return archived_files
 
 
 @dataclass
@@ -495,7 +533,7 @@ def tr_vl_ts_split_idx_guarentee(
                 tr_dist[l] += 1
                 tr_idx.append(i)
             else:
-                warnings.warn("Trouble adding sample to a split. Adding to tr by default.")
+                warnings.warn(f"Trouble adding sample to a split. Adding to tr by default. {len(tr_idx)=} {tr_size=}")
                 tr_dist[l] += 1
                 tr_idx.append(i)
 
@@ -1322,7 +1360,7 @@ def get_materials_clf_elf(
 ################################################################################
 
 
-def get_materials_esp_lm(lift_level: str) -> Materials:
+def get_materials_esp_lm(lift_level: LiftLevel) -> Materials:
 
     archives = []
     for root, dirs, files in os.walk("./data", followlinks=True):
@@ -1351,21 +1389,62 @@ def get_materials_esp_lm(lift_level: str) -> Materials:
     )
 
 
-def get_materials_esp_clm(lift_level: str) -> Materials:
+def get_materials_esp_clm(lift_level: LiftLevel) -> Materials:
     return get_materials_esp_lm(lift_level)
 
 
-def get_materials_esp_mlm(lift_level: str) -> Materials:
+def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
     return get_materials_esp_lm(lift_level)
 
 
-def get_materials_esp_det(lift_level: str) -> Materials:
+def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
+    lift_level = LiftLevel(lift_level)
+
+    paths = {
+        "mal": Path(f"./data/BODMAS/{lift_level.value}"),
+        "ben": Path(f"./data/Assemblage/{lift_level.value}")
+    }
+
+    archives = {k: sorted(map(Path, rglob(p, "*.zip", True))) for k, p in paths.items()}
+
+    files_and_labels = {}
+    for k, ps in archives.items():
+        d = {n: k for n, _ in get_data_from_archives(ps, names=True, contents=False)}
+        files_and_labels.update(d)
+
+    materials = _get_materials_clf(
+        files_and_labels=files_and_labels,
+        tr_size=0.85,
+        vl_size=0.15,
+        ts_size=0.00,
+        max_imbalance_ratio=2.0,
+        min_size=-1,
+        must_exist=False,
+        temporal=False,        # FIXME
+        timestamps_file=None,  # FIXME
+    )
+    print(f"{materials=}")
+
+    # Replace the logical files with real ArchivedFile objects that can be accessed.
+    for split in materials.files:
+        for label, label_id in materials.label2id.items():
+            l = unique_value([len(a.stem) for a in archives[label]])
+            m = {a.stem[0:l] : a for a in archives[label]}
+            idx = np.where(materials.labels[split] == label_id)[0]
+            for i in idx:
+                f = materials.files[split][i]
+                a = m[f[0:l]]
+                af = ArchivedFile(a, f)
+                materials.files[split][i] = af
+
+    print(f"{materials=}")
+
+    return materials
+
+
+def get_materials_esp_fam(lift_level: LiftLevel) -> Materials:
     raise NotImplementedError()
 
 
-def get_materials_esp_fam(lift_level: str) -> Materials:
-    raise NotImplementedError()
-
-
-def get_materials_esp_beh(lift_level: str) -> Materials:
+def get_materials_esp_beh(lift_level: LiftLevel) -> Materials:
     raise NotImplementedError()

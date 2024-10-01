@@ -6,6 +6,7 @@ import asyncio
 import bz2
 from collections.abc import Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
+import fnmatch
 import gzip
 import inspect
 from io import BytesIO
@@ -19,7 +20,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Generator, Literal, Optional
 import zlib
 
 from Crypto.Cipher import AES
@@ -31,6 +32,20 @@ import torch
 from torch import nn, ByteTensor, LongTensor, Tensor
 
 from src.enums import CompressionAlgorithm, EncryptionAlgorithm
+
+
+def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:
+    for root, dirs, files in os.walk(top, followlinks=True):
+        for file in files:
+            if fnmatch.fnmatch(file, pattern):
+                yield os.path.join(root, file)
+
+
+def unique_value(iterable):
+    values = set(iterable)
+    if len(values) != 1:
+        raise ValueError("The iterable does not contain a unique value")
+    return values.pop()
 
 
 def getattr_recursively(obj: Any, attr: str) -> Any:
