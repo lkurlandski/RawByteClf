@@ -50,7 +50,7 @@ from src.data.label_datasets import (
     ThreatLabelRefiner,
 )
 from src.data.labeling import FilterArgs, Labeler, Label
-from src.data.utils import get_sha_timestamp_map
+from src.data.utils import get_sha_timestamp_map, get_data_from_archives
 
 
 MIN_SAMPLES_PER_CLASS_PER_SPLIT = 1
@@ -64,9 +64,16 @@ SplitNames = Literal["tr", "vl", "ts"]
 FilesAndLabels = tuple[list[os.PathLike], Optional[Sequence[int]]]
 
 
+class ArchivedFile:
+
+    def __init__(self, archive: str | Path, name: str) -> None:
+        self.archive = archive
+        self.name = name
+
+
 @dataclass
 class Materials:
-    files: dict[SplitNames, list[os.PathLike]]
+    files: dict[SplitNames, list[str | ArchivedFile]]
     labels: Optional[dict[SplitNames, Sequence[int | Sequence[int]]]] = None
     id2label: dict[int, str] = None
     label2id: dict[str, int] = None
@@ -1310,43 +1317,47 @@ def get_materials_clf_elf(
     return _get_materials_clf_multilabel(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
-def main():
+################################################################################
+# Load Materials Endpoints For ESP
+################################################################################
 
-    # materials = _get_materials_clf_multilabel_few_shot_learning(
-    #     get_sorel_file_label_map("beh"),
-    #     1,
-    #     vl_min_samples_per_class=1,
-    #     vl_max_samples_per_class=10,
-    #     top_k=None,
-    # )
 
-    # materials = _get_materials_clf_multilabel(
-    #     get_sorel_file_label_map("beh"),
-    #     tr_size=0.8,
-    #     vl_size=0.1,
-    #     ts_size=0.1,
-    #     must_exist=False,
-    #     max_imbalance_ratio=100,
-    # )
+def get_materials_esp_lm(lift_level: str) -> Materials:
 
-    # materials = get_materials_clf_bodmas(
-    #     0.85, 0.15, 0.0, None, top_k=None, min_freq=None, temporal=True
-    # )
+    archives = []
+    for root, dirs, files in os.walk("./data", followlinks=True):
+        for file in files:
+            if file.endswith(".zip") and root.endswith(lift_level):
+                archives.append(os.path.join(root, file))
 
-    # materials = get_materials_clf_sorel(
-    #     0.85, 0.15, 0.0, None, name="fam", top_k=None, min_freq=None, temporal=True
-    # )
+    archived_files = []
+    for archive in archives:
+        for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
+            archived_files.append(ArchivedFile(archive, name))
 
-    # materials = get_materials_clf_bodmas(
-    #     0.85, 0.15, 0.0, 2, top_k=None, min_freq=None, temporal=True
-    # )
+    n = len(archived_files)
+    files = {
+        "tr": [f for i, f in enumerate(archived_files) if i < (0.8 * n)],
+        "vl": [f for i, f in enumerate(archived_files) if i >= (0.8 * n)],
+        "ts": [],
+    }
 
-    materials = get_materials_clf_sorel(
-        0.85, 0.15, 0.0, 2, name="fam", top_k=None, min_freq=None, temporal=True
+    return Materials(
+        files=files,
+        labels=None,
+        id2label=None,
+        label2id=None,
+        dist=None,
     )
 
-    print(materials)
+
+def get_materials_esp_clf_binary() -> Materials:
+    ...
 
 
-if __name__ == "__main__":
-    main()
+def get_materials_esp_clf_multiclass() -> Materials:
+    ...
+
+
+def get_materials_esp_clf_multilabel() -> Materials:
+    ...

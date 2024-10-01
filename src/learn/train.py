@@ -177,11 +177,10 @@ from src.architectures.rwkv import (
 )
 from src.data.loaders_core import (
     Materials,
-    get_materials_pretrain_sorel,
-    get_materials_pretrain_elf,
-    get_materials_clf_bodmas,
-    get_materials_clf_sorel,
-    get_materials_clf_elf,
+    get_materials_esp_lm,
+    get_materials_esp_clf_binary,
+    get_materials_esp_clf_multiclass,
+    get_materials_esp_clf_multilabel,
 )
 from src.data.loaders_hf import get_dataset_hf, print_dataset_hf
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
@@ -224,7 +223,7 @@ from src.learn.utils import (
     interpret_bytes_as_integers,
     chunk_mask,
 )
-from src.learn.tokenization.api import get_fast_tokenizer
+from src.tokenization.api import get_fast_tokenizer
 
 
 random.seed(0)
@@ -1139,6 +1138,7 @@ def get_processed_dataset_hf(
         kwds = get_map_kwds_for_hf_datasets(func, dataset, features=features, desc=desc)
         dataset = dataset.map(**kwds)
 
+    # TODO: this is a mess.
     if args.algorithm in COMPRESSION_TYPES:
         func = partial(hf_compress_bytes, compression_type=args.algorithm, compression_level=args.compression_level)
         desc = "Compressing bytes..."
@@ -1150,7 +1150,8 @@ def get_processed_dataset_hf(
         kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
         dataset = dataset.map(**kwds)
 
-    if args.algorithm.lower() == "raw" or args.algorithm in (COMPRESSION_TYPES + ENCRYPTION_TYPES):
+    # if args.algorithm.lower() == "raw" or args.algorithm in (COMPRESSION_TYPES + ENCRYPTION_TYPES):
+    if args.lift_level.lower() == "raw" and args.algorithm.lower() == "wdl":
         func = partial(
             hf_bytes_to_input_ids,
             bits_in_byte=args.representation,
@@ -1177,6 +1178,9 @@ def get_processed_dataset_pt(
     num_shards: Optional[int] = None,  # pylint: disable=unused-argument
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
 ):
+
+    if not isinstance(materials.files["tr"][0], (str, Path)):
+        raise NotImplementedError()
 
     if materials.problem_type == "multi_label_classification":
         raise NotImplementedError()
@@ -1232,7 +1236,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "root": args.root,
         "packing_protocol": args.packing_protocol,
         "representation": args.representation,
-        "lift_level": arg.lift_level,
+        "lift_level": args.lift_level,
         "algorithm": args.algorithm,
         "vocab_size": args.vocab_size,
         "max_length": args.max_length,
@@ -1287,64 +1291,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
-    if args.task in ("mlm-sor", "clm-sor"):
-        materials = get_materials_pretrain_sorel(
-            args.tr_size,
-            args.vl_size,
-            args.ts_size,
-            packing_protocol=args.packing_protocol,
-            remove_clf_files=SYSTEM != System.ARMITAGE,
-            # temporal=args.split_mode == "temporal", TODO: add temporal
-        )
-        oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
-    elif args.task in ("mlm-elf", "clm-elf"):
-        materials = get_materials_pretrain_elf(
-            args.tr_size,
-            args.vl_size,
-            args.ts_size,
-            packing_protocol=args.packing_protocol,
-            remove_clf_files=SYSTEM != System.ARMITAGE,
-            # temporal=args.split_mode == "temporal",  TODO: add temporal
-        )
-        oh.update(tr_size=len(materials.files["tr"]))  # TODO: improve
-    elif args.task == "clf-bod":
-        materials = get_materials_clf_bodmas(
-            args.tr_size,
-            args.vl_size,
-            args.ts_size,
-            args.tr_samples_per_class,
-            top_k=args.top_k,
-            min_freq=args.min_freq,
-            max_imbalance_ratio=args.max_imbalance_ratio,
-            packing_protocol=args.packing_protocol,
-            temporal=args.split_mode == "temporal",
-        )
-    elif args.task[0:7] == "clf-sor":
-        materials = get_materials_clf_sorel(
-            args.tr_size,
-            args.vl_size,
-            args.ts_size,
-            args.tr_samples_per_class,
-            name=args.task[8:],
-            top_k=args.top_k,
-            min_freq=args.min_freq,
-            max_imbalance_ratio=args.max_imbalance_ratio,
-            packing_protocol=args.packing_protocol,
-            temporal=args.split_mode == "temporal",
-        )
-    elif args.task[0:7] == "clf-elf":
-        materials = get_materials_clf_elf(
-            args.tr_size,
-            args.vl_size,
-            args.ts_size,
-            args.tr_samples_per_class,
-            name=args.task[8:],
-            top_k=args.top_k,
-            min_freq=args.min_freq,
-            max_imbalance_ratio=args.max_imbalance_ratio,
-            packing_protocol=args.packing_protocol,
-            temporal=args.split_mode == "temporal",
-        )
+    if args.task in ("clm", "mlm"):
+        materials = get_materials_esp_lm(args.lift_level)
+    elif args.task == "clf-bin":
+        materials = get_materials_esp_clf_binary()
+    elif args.task == "clf-fam":
+        materials = get_materials_esp_clf_multiclass()
+    elif args.task == "clf-beh":
+        materials = get_materials_esp_clf_multilabel()
+    else:
+        raise ValueError(f"{args.task=}")
 
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
