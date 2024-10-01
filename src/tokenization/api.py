@@ -6,7 +6,8 @@ from typing import Optional
 
 from transformers import PreTrainedTokenizerFast
 
-from src.tokenization import SPECIALS, TokenizerAlgorithm, LiftLevel
+from src.enums import TokenizerAlgorithm, LiftLevel
+from src.tokenization import SPECIALS
 from src.tokenization.core import get_postprocessor
 from src.tokenization.helpers import TokenizerIOHelper
 from src.tokenization.raw import get_raw_raw_tokenizer

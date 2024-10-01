@@ -17,7 +17,7 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from src.cfg import TOKENIZERS_OUTPUT_PATH
-from src.tokenization import LiftLevel, TokenizerAlgorithm
+from src.enums import TokenizerAlgorithm, LiftLevel
 from src.tokenization.core import SENTINAL_NORMALIZER, SENTINAL_PRETOKENIZER
 from src.tokenization.disassembled import get_dis_normalizer, get_dis_pretokenizer
 from src.tokenization.decompiled import get_dec_normalizer, get_dec_pretokenizer

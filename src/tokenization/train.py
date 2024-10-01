@@ -27,9 +27,10 @@ from tokenizers.pre_tokenizers import PreTokenizer
 from tokenizers import trainers
 from tqdm import tqdm
 
+from src.enums import TokenizerAlgorithm, LiftLevel
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8  # pylint: disable=no-name-in-module
 from src.data.utils import get_data_from_archives
-from src.tokenization import SPECIALS, TokenizerAlgorithm, LiftLevel
+from src.tokenization import SPECIALS
 from src.tokenization.disassembled import get_dis_normalizer, get_dis_pretokenizer
 from src.tokenization.decompiled import get_dec_normalizer, get_dec_pretokenizer
 from src.tokenization.raw import get_raw_normalizer, get_raw_pretokenizer

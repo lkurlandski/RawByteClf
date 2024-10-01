@@ -12,7 +12,8 @@ from tokenizers import pre_tokenizers
 from tokenizers.pre_tokenizers import PreTokenizer
 from tokenizers import processors
 
-from src.tokenization import SPECIALS, TokenizerAlgorithm
+from src.enums import TokenizerAlgorithm
+from src.tokenization import SPECIALS
 from src.tokenization.core import SENTINAL_NORMALIZER, SENTINAL_PRETOKENIZER
 
 

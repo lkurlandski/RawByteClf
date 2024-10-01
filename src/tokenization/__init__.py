@@ -7,19 +7,6 @@ from enum import Enum
 from typing import Literal
 
 
-class LiftLevel(Enum):
-    RAW = "raw"
-    DIS = "dis"
-    DEC = "dec"
-
-
-class TokenizerAlgorithm(Enum):
-    BPE       = "bpe"
-    UNIGRAM   = "uni"
-    WORDPIECE = "wdp"
-    WORDLEVEL = "wdl"
-
-
 SPECIALS = OrderedDict(
     {
         "pad_token": "<pad>",

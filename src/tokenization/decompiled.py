@@ -10,7 +10,7 @@ from tokenizers.normalizers import Normalizer
 from tokenizers import pre_tokenizers
 from tokenizers.pre_tokenizers import PreTokenizer
 
-from src.tokenization import TokenizerAlgorithm
+from src.enums import TokenizerAlgorithm
 
 
 class CommentRemovalNormalizer:
