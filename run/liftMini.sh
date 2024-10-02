@@ -1,10 +1,10 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=liftMini-Windows-5
+#SBATCH --job-name=liftMini-Windows-7
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%A_%a.out
-#SBATCH --time=00-02:00:00
+#SBATCH --time=00-8:00:00
 #SBATCH --mem=8G
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -24,12 +24,12 @@ echo "HH: $HH"
 
 # Establish some timing variables.
 t_start=$(date +%s.%N)
-TIME=$((2 * 3600))
+TIME=$((8 * 3600))
 if ! [[ "$TIME" =~ ^[0-9]+$ ]]; then
   echo "Error: Invalid TIME: $TIME"
   exit 1
 fi
-TIME_FOR_CLEANUP=900
+TIME_FOR_CLEANUP=3600
 if [ "$TIME" -le 0 ] || [ "$TIME_FOR_CLEANUP" -le 0 ] || [ "$TIME" -le "$TIME_FOR_CLEANUP" ]; then
   echo "Error: TIME and TIME_FOR_CLEANUP must be greater than 0 and TIME greater than TIME_FOR_CLEANUP."
   exit 1
