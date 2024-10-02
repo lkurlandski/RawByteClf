@@ -181,6 +181,7 @@ class Materials:
             for s, d in dists.items():  # s: split, d: class distribution
                 for k, v in d.items():  # k: class label, v: class count
                     dist[k][s] = v
+            dist = dict(dist)
         else:
             dist = None
         return (
@@ -636,9 +637,19 @@ def tr_vl_ts_split_idx_guarentee(
         assert len(ts_dist) == len(ts_dist_fin), f"{len(ts_dist)=} should equal {len(ts_dist_fin)=}"
 
 
-    elif split_mode == SplitMode.TEMPORAL_CLASSWISE:
-        raise NotImplementedError()
+    elif split_mode == SplitMode.TEMPORAL_ABSOLUTE:
 
+        tr_idx = list(range(0, tr_size))
+        vl_idx = list(range(tr_size, tr_size + vl_size))
+        ts_idx = list(range(tr_size + vl_size, tr_size + vl_size + ts_size))
+
+        tr_dist = Counter(labels[tr_idx])
+        vl_dist = Counter(labels[vl_idx])
+        ts_dist = Counter(labels[ts_idx])
+        if vl_size > 0 and set(tr_dist) != set(vl_dist):
+            raise ValueError(f"tr_dist=\n{pformat(tr_dist)}\nvl_dist={pformat(vl_dist)}")
+        if ts_size > 0 and set(tr_dist) != set(ts_dist):
+            raise ValueError(f"tr_dist=\n{pformat(tr_dist)}\nts_dist={pformat(ts_dist)}")
 
     assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
 
@@ -1462,8 +1473,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     lift_level = LiftLevel(lift_level)
 
     paths = {
+        "ben": Path(f"./data/Assemblage/{lift_level.value}"),
         "mal": Path(f"./data/BODMAS/{lift_level.value}"),
-        "ben": Path(f"./data/Assemblage/{lift_level.value}")
     }
 
     archives = {k: sorted(map(Path, rglob(p, "*.zip", True))) for k, p in paths.items()}
@@ -1480,10 +1491,10 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         tr_size=0.85,
         vl_size=0.15,
         ts_size=0.00,
-        max_imbalance_ratio=2.0,
+        max_imbalance_ratio=10.0,
         min_size=-1,
         must_exist=False,
-        split_mode=SplitMode.RANDOM,
+        split_mode=SplitMode.TEMPORAL_ABSOLUTE,
         timestamps_file=timestamps_file,
     )
     print(f"{materials=}")
