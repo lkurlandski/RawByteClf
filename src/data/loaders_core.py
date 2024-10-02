@@ -191,6 +191,44 @@ class Materials:
         )
 
 
+def is_temporal_classwise(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
+    """Checks whether the materials are split temporally within each class.
+    """
+    sha_timestamp_map = get_sha_timestamp_map(timestamps_file)
+    timestamps = {}
+    for split, files in materials.files.items():
+        t = [sha_timestamp_map[Path(f).stem] for f in files]
+        timestamps[split] = np.sort(np.array(t, np.int64))
+    for i in materials.id2label:
+        idx = {split: np.where(labels == i)[0] for split, labels in materials.labels.items()}
+        cuttoffs = [
+            timestamps["tr"][idx["tr"]].max(),
+            timestamps["vl"][idx["vl"]].min(),
+            timestamps["vl"][idx["vl"]].max(),
+            timestamps["ts"][idx["ts"]].min(initial=np.iinfo(np.int64).max),
+        ]
+        if not bool(np.all(np.diff(cuttoffs) > 0)):
+            return False
+    return True
+
+
+def is_temporal_absolute(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
+    """Checks whether the materials are split temporally over the entire datasets.
+    """
+    sha_timestamp_map = get_sha_timestamp_map(timestamps_file)
+    timestamps = {}
+    for split, files in materials.files.items():
+        t = [sha_timestamp_map[Path(f).stem] for f in files]
+        timestamps[split] = np.sort(np.array(t, dtype=np.int64))
+    cuttoffs = [
+        timestamps["tr"].max(),
+        timestamps["vl"].min(),
+        timestamps["vl"].max(),
+        timestamps["ts"].min(initial=np.iinfo(np.int64).max),
+    ]
+    return bool(np.all(np.diff(cuttoffs) > 0))
+
+
 def get_tr_vl_ts_files_and_labels(
     files: list[os.PathLike],
     labels: np.ndarray | list[int | Sequence[int]],
@@ -491,34 +529,26 @@ def tr_vl_ts_split_idx_guarentee(
                 f" per class for {len(values)} classes."
             )
 
-    if timestamps is not None:
-        timestamps = np.array(timestamps)
-        if not np.all(np.diff(timestamps) >= 0):
-            raise ValueError("Timestamps are not sorted.")
-
-    # For each element in the collection, assign it to a particular split if that split has not
-    # reached its quota for that class. Note that if the timestamps are provided and the labels
-    # correspond to the sorted timestamps, the tr set will contain earlier samples than the vl set,
-    # and the vl set will contain earlier samples than the ts set.
+    # These stuctures contain the class distribution and indices for each split.
     tr_dist, tr_idx = {v: 0 for v in values}, []
     vl_dist, vl_idx = {v: 0 for v in values}, []
     ts_dist, ts_idx = {v: 0 for v in values}, []
-    for i, l in enumerate(labels):
-        if tr_size > 0 and tr_dist[l] < samples_per_class:
-            tr_dist[l] += 1
-            tr_idx.append(i)
-        elif vl_size > 0 and vl_dist[l] < samples_per_class:
-            vl_dist[l] += 1
-            vl_idx.append(i)
-        elif ts_size > 0 and ts_dist[l] < samples_per_class:
-            ts_dist[l] += 1
-            ts_idx.append(i)
-
-    # Add the remaining samples to the splits if they have not already been added.
-    added = set(tr_idx) | set(vl_idx) | set(ts_idx)
 
     if timestamps is None:
-        # If not using a temporal split, simply add the samples randomly.
+        # If not using a temporal split, add a certain number of samples to every split,
+        # then add the remaining samples randomly.
+        for i, l in enumerate(labels):
+            if tr_size > 0 and tr_dist[l] < samples_per_class:
+                tr_dist[l] += 1
+                tr_idx.append(i)
+            elif vl_size > 0 and vl_dist[l] < samples_per_class:
+                vl_dist[l] += 1
+                vl_idx.append(i)
+            elif ts_size > 0 and ts_dist[l] < samples_per_class:
+                ts_dist[l] += 1
+                ts_idx.append(i)
+
+        added = set(tr_idx) | set(vl_idx) | set(ts_idx)
         for i, l in enumerate(labels):
             if i in added:
                 continue
@@ -533,23 +563,34 @@ def tr_vl_ts_split_idx_guarentee(
                 tr_dist[l] += 1
                 tr_idx.append(i)
             else:
-                warnings.warn(f"Trouble adding sample to a split. Adding to tr by default. {len(tr_idx)=} {tr_size=}")
-                tr_dist[l] += 1
-                tr_idx.append(i)
+                warnings.warn(f"Trouble adding sample to a split {i=} {l=}.")
+                if ts_size > 0:
+                    ts_dist[l] += 1
+                    ts_idx.append(i)
+                elif vl_size > 0:
+                    vl_dist[l] += 1
+                    vl_idx.append(i)
+                elif tr_size > 0:
+                    tr_dist[l] += 1
+                    tr_idx.append(i)
 
     else:
         # If using the temporal split, add the samples based on their timestamp.
         # The number of samples in the tr, vl, and ts sets should approximately match the
         # tr_prop, vl_prop, and ts_prop values (although in reality this will likely be innaccurate).
+
+        timestamps = np.array(timestamps)
+        if not np.all(np.diff(timestamps) >= 0):
+            raise ValueError("Timestamps are not sorted. Files, labels and timestamps need to be placed in temporal order.")
+
         classes_and_counts_org = {cls: cnt for cls, cnt in zip(values, counts)}
-        classes_and_counts_cur = {cls: tr_dist[cls] + vl_dist[cls] + ts_dist[cls] for cls in values}
         tr_dist_fin, vl_dist_fin, ts_dist_fin = {}, {}, {}
         for cls in values:
             tr_cnt, vl_cnt, ts_cnt = distribute_elements_to_meet_proportions(
                 tr_dist[cls],
                 vl_dist[cls],
                 tr_dist[cls],
-                classes_and_counts_org[cls] - classes_and_counts_cur[cls],
+                classes_and_counts_org[cls],
                 tr_prop,
                 vl_prop,
                 ts_prop,
@@ -562,9 +603,8 @@ def tr_vl_ts_split_idx_guarentee(
             assert vl_dist_fin[cls] >= vl_dist[cls], f"{vl_dist_fin[cls]=} should be greater or equal to {vl_dist[cls]} for {cls=}."
             assert ts_dist_fin[cls] >= ts_dist[cls], f"{ts_dist_fin[cls]=} should be greater or equal to {ts_dist[cls]} for {cls=}."
 
+        # Since the labels are sorted according to timestamp, we simply add them to the appropriate split.
         for i, l in enumerate(labels):
-            if i in added:
-                continue
             if tr_dist[l] < tr_dist_fin[l]:
                 tr_dist[l] += 1
                 tr_idx.append(i)
@@ -575,9 +615,16 @@ def tr_vl_ts_split_idx_guarentee(
                 ts_dist[l] += 1
                 ts_idx.append(i)
             else:
-                warnings.warn("Trouble adding sample to a split. Will not add to preserve temporal consistency.")
-                tr_dist[l] += 1
-                tr_idx.append(i)
+                warnings.warn(f"Trouble adding sample to a split {i=} {l=}.")
+                if ts_size > 0:
+                    ts_dist[l] += 1
+                    ts_idx.append(i)
+                elif vl_size > 0:
+                    vl_dist[l] += 1
+                    vl_idx.append(i)
+                elif tr_size > 0:
+                    tr_dist[l] += 1
+                    tr_idx.append(i)
 
         assert len(tr_dist) == len(tr_dist_fin), f"{len(tr_dist)=} should equal {len(tr_dist_fin)=}"
         assert len(vl_dist) == len(vl_dist_fin), f"{len(vl_dist)=} should equal {len(vl_dist_fin)=}"
@@ -1000,6 +1047,8 @@ def _get_materials_clf(
     labels = np.array([label2id[files_and_labels[f]] for f in files])
 
     if temporal:
+        # For the temporal split, we reorder the collections in a temporal fashion,
+        # ie, the files and labels are ordered according to their timestamps.
         timestamps = np.array([files_and_timestamps[f] for f in files])
         sort_idx = np.argsort(timestamps)
         files = [files[i] for i in sort_idx]
@@ -1412,6 +1461,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         d = {n: k for n, _ in get_data_from_archives(ps, names=True, contents=False)}
         files_and_labels.update(d)
 
+    timestamps_file = [TIMESTAMPS_FILES["bodmas_pe"], TIMESTAMPS_FILES["assemblage_pe"]]
+
     materials = _get_materials_clf(
         files_and_labels=files_and_labels,
         tr_size=0.85,
@@ -1420,10 +1471,13 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         max_imbalance_ratio=2.0,
         min_size=-1,
         must_exist=False,
-        temporal=False,        # FIXME
-        timestamps_file=None,  # FIXME
+        temporal=True,
+        timestamps_file=timestamps_file,
     )
     print(f"{materials=}")
+
+    assert is_temporal_classwise(materials, timestamps_file)
+    assert is_temporal_absolute(materials, timestamps_file)
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
     for split in materials.files:
@@ -1436,7 +1490,6 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
                 a = m[f[0:l]]
                 af = ArchivedFile(a, f)
                 materials.files[split][i] = af
-
     print(f"{materials=}")
 
     return materials

@@ -56,6 +56,7 @@ ELF_CLASSIFICATION_DATASETS = ("malware_bazaar_elf", "virus_share_elf", "virus_t
 ELF_LABEL_CACHE_DIR = Path("./cache") / "labels" / "elf"
 
 TIMESTAMPS_FILES = {
+    "assemblage_pe": ASSEMBLAGE_PATH / "timestamps.json",
     "bodmas_pe": BODMAS_PATH / "timestamps.json",
     "sorel_pe": SOREL_PATH / "timestamps.json",
 }
