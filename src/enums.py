@@ -59,8 +59,9 @@ class BitsInByte(Enum):
 
 
 class SplitMode(Enum):
-    RANDOM   = "rnd"
-    TEMPORAL = "tmp"
+    RANDOM             = "random"
+    TEMPORAL_CLASSWISE = "tmpclf"
+    TEMPORAL_ABSOLUTE  = "tmpabs"
 
 
 class WeightedLossAlgorithm(Enum):

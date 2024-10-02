@@ -29,7 +29,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from tqdm import tqdm
 
-from src.enums import LiftLevel
+from src.enums import LiftLevel, SplitMode
 from src.utils import get_max_keys_from_dict, flatten, get_unique_files, rglob, unique_value
 from src.data.cfg import (
     SOREL_PATH,
@@ -85,6 +85,7 @@ class ArchivedFile:
 
         # Should the order of the ArchivedFile correspond to archives or files?
         raise NotImplementedError("The sepcification for this function are unclear at the moment.")
+        # pylint: disable=unreachable
 
         lengths = [len(a.stem) for a in archives]
         if len(set(lengths)) == 1:
@@ -497,6 +498,7 @@ def tr_vl_ts_split_idx_guarentee(
     vl_size: int | float,
     ts_size: int | float,
     samples_per_class: int = 1,
+    split_mode: SplitMode = SplitMode.RANDOM,
     timestamps: Optional[Sequence[int]] = None,
 ) -> dict[SplitNames, np.ndarray]:
     """
@@ -529,12 +531,14 @@ def tr_vl_ts_split_idx_guarentee(
                 f" per class for {len(values)} classes."
             )
 
+
     # These stuctures contain the class distribution and indices for each split.
     tr_dist, tr_idx = {v: 0 for v in values}, []
     vl_dist, vl_idx = {v: 0 for v in values}, []
     ts_dist, ts_idx = {v: 0 for v in values}, []
 
-    if timestamps is None:
+
+    if split_mode == SplitMode.RANDOM:
         # If not using a temporal split, add a certain number of samples to every split,
         # then add the remaining samples randomly.
         for i, l in enumerate(labels):
@@ -574,7 +578,8 @@ def tr_vl_ts_split_idx_guarentee(
                     tr_dist[l] += 1
                     tr_idx.append(i)
 
-    else:
+
+    elif split_mode == SplitMode.TEMPORAL_CLASSWISE:
         # If using the temporal split, add the samples based on their timestamp.
         # The number of samples in the tr, vl, and ts sets should approximately match the
         # tr_prop, vl_prop, and ts_prop values (although in reality this will likely be innaccurate).
@@ -629,6 +634,11 @@ def tr_vl_ts_split_idx_guarentee(
         assert len(tr_dist) == len(tr_dist_fin), f"{len(tr_dist)=} should equal {len(tr_dist_fin)=}"
         assert len(vl_dist) == len(vl_dist_fin), f"{len(vl_dist)=} should equal {len(vl_dist_fin)=}"
         assert len(ts_dist) == len(ts_dist_fin), f"{len(ts_dist)=} should equal {len(ts_dist_fin)=}"
+
+
+    elif split_mode == SplitMode.TEMPORAL_CLASSWISE:
+        raise NotImplementedError()
+
 
     assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
 
@@ -741,7 +751,7 @@ def filter_file_label_map(
     min_size: int = 0,
     max_size: int = sys.maxsize,
     must_exist: bool = True,
-    temporal: bool = False,
+    split_mode: SplitMode = SplitMode.RANDOM,
     files_and_timestamps: Optional[dict[os.PathLike, int]] = None,
 ) -> dict[os.PathLike, str]:
     """
@@ -761,7 +771,7 @@ def filter_file_label_map(
             (not os.path.exists(f) or (min_size <= os.path.getsize(f) <= max_size))
         }
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         files_and_labels = {
             f: l for f, l in files_and_labels.items() if files_and_timestamps.get(f) is not None
         }
@@ -1002,7 +1012,7 @@ def _get_materials_clf(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
-    temporal: bool = False,
+    split_mode: SplitMode = SplitMode.RANDOM,
     timestamps_file: Optional[Path] = None,
 ) -> Materials:
 
@@ -1015,7 +1025,7 @@ def _get_materials_clf(
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
     files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         shas_and_timestamps = get_sha_timestamp_map(timestamps_file)
         files_and_timestamps = {f: shas_and_timestamps.get(os.path.basename(f).split(".")[0]) for f in files_and_labels}
     else:
@@ -1029,11 +1039,11 @@ def _get_materials_clf(
         max_imbalance_ratio=max_imbalance_ratio,
         min_size=min_size,
         must_exist=must_exist,
-        temporal=temporal,
+        split_mode=split_mode,
         files_and_timestamps=files_and_timestamps,
     )
     # Remove the timestamps for files that have been filtered out.
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         files_and_timestamps = {
             f: files_and_timestamps[f] for f in files_and_labels if f in files_and_timestamps
         }
@@ -1046,7 +1056,7 @@ def _get_materials_clf(
     files = list(files_and_labels.keys())
     labels = np.array([label2id[files_and_labels[f]] for f in files])
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         # For the temporal split, we reorder the collections in a temporal fashion,
         # ie, the files and labels are ordered according to their timestamps.
         timestamps = np.array([files_and_timestamps[f] for f in files])
@@ -1059,7 +1069,8 @@ def _get_materials_clf(
         files, labels = shuffle(files, labels)
 
     idx = tr_vl_ts_split_idx_guarentee(
-        labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT, timestamps,
+        labels, tr_size, vl_size, ts_size,
+        MIN_SAMPLES_PER_CLASS_PER_SPLIT, split_mode, timestamps,
     )
 
     files, labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
@@ -1076,7 +1087,7 @@ def _get_materials_clf_few_shot_learning(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
-    temporal: bool = False,
+    split_mode: SplitMode = SplitMode.RANDOM,
     timestamps_file: Optional[Path] = None,
     **kwds,
 ) -> Materials:
@@ -1087,7 +1098,7 @@ def _get_materials_clf_few_shot_learning(
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
     files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         shas_and_timestamps = get_sha_timestamp_map(timestamps_file)
         files_and_timestamps = {f: shas_and_timestamps.get(os.path.basename(f).split(".")[0]) for f in files_and_labels}
     else:
@@ -1099,11 +1110,11 @@ def _get_materials_clf_few_shot_learning(
         min_freq=tr_samples_per_class + vl_min_samples_per_class,
         min_size=min_size,
         must_exist=must_exist,
-        temporal=temporal,
+        split_mode=split_mode,
         files_and_timestamps=files_and_timestamps,
     )
     # Remove the timestamps for files that have been filtered out.
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         files_and_timestamps = {
             f: files_and_timestamps[f] for f in files_and_labels if f in files_and_timestamps
         }
@@ -1118,7 +1129,7 @@ def _get_materials_clf_few_shot_learning(
     labels = np.array([label2id[files_and_labels[f]] for f in files])
 
     # Order the files, labels, and timestamps according to the timestamps.
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         timestamps = np.array([files_and_timestamps[f] for f in files])
         sort_idx = np.argsort(timestamps)
         files = [files[i] for i in sort_idx]
@@ -1250,6 +1261,7 @@ def _get_materials_clf_multilabel_few_shot_learning(
         raise TypeError(f"Function got some unexpected keyword argument(s): {invalid}")
 
     raise NotImplementedError("This needs a bit more work. The unit tests are not passing.")  # pylint: disable=unreachable
+    # pylint: disable=unreachable
 
     # First, remove the files that we do not want to use.
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
@@ -1471,7 +1483,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         max_imbalance_ratio=2.0,
         min_size=-1,
         must_exist=False,
-        temporal=True,
+        split_mode=SplitMode.RANDOM,
         timestamps_file=timestamps_file,
     )
     print(f"{materials=}")
