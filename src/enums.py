@@ -67,3 +67,10 @@ class SplitMode(Enum):
 class WeightedLossAlgorithm(Enum):
     SAMPLE_REWEIGHTING      = "srw"
     INVERSE_CLASS_FREQUENCY = "icf"
+
+
+class DatasetName(Enum):
+    ASSEMBLAGE = "ass"
+    BODMAS     = "bod"
+    SOREL      = "sor"
+    WINDOWS    = "win"

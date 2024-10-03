@@ -7,6 +7,7 @@ from collections import defaultdict, Counter
 from collections.abc import Sequence, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from itertools import chain, repeat
 import math
 import os
@@ -29,7 +30,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from tqdm import tqdm
 
-from src.enums import LiftLevel, SplitMode
+from src.enums import LiftLevel, SplitMode, DatasetName
 from src.utils import get_max_keys_from_dict, flatten, get_unique_files, rglob, unique_value
 from src.data.cfg import (
     SOREL_PATH,
@@ -43,6 +44,7 @@ from src.data.cfg import (
     SOREL_AVCLASS_CACHE,
     SOREL_AVCLASS_FAMILY_CACHE,
     TIMESTAMPS_FILES,
+    VALID_TIMESTAMP_RANGES,
 )
 from src.data.detect_packing_sorel import PackingMap, universal_packing_map
 from src.data.label_datasets import (
@@ -191,6 +193,18 @@ class Materials:
             f"num_classes={len(self.id2label) if self.id2label is not None else None}\n"
             f"dist={pformat(dist) if dist is not None else None}"
         )
+
+    # def convert_files_to_archived_file(self, archives: list[Path]) -> Materials:
+    #     file_to_archive_map = {f: None for f in chain.from_iterable(self.files.values())}
+
+    #     def archive_to_files_map() -> dict[str, list[str]]:
+    #         d = defaultdict(list)
+    #         for k, v in file_to_archive_map.items():
+    #             d[v].append(k)
+    #         return dict(d)
+
+    #     for k in sorted(file_to_archive_map.keys()):
+    #         s = Path(k).stem
 
 
 def is_temporal_classwise(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
@@ -1346,7 +1360,7 @@ def get_materials_clf_bodmas(
 ) -> Materials:
 
     kwds["packing_root"] = PACKING_ROOTS["bodmas_pe"]
-    kwds["timestamps_file"] = TIMESTAMPS_FILES["bodmas_pe"]
+    kwds["timestamps_file"] = TIMESTAMPS_FILES[DatasetName.BODMAS]
 
     files_and_labels = get_bodmas_file_label_map()
 
@@ -1367,7 +1381,7 @@ def get_materials_clf_sorel(
         raise NotImplementedError()
 
     kwds["packing_root"] = PACKING_ROOTS["sorel_pe"]
-    kwds["timestamps_file"] = TIMESTAMPS_FILES["sorel_pe"]
+    kwds["timestamps_file"] = TIMESTAMPS_FILES[DatasetName.SOREL]
 
     files_and_labels = get_sorel_file_label_map(name)
 
@@ -1472,20 +1486,47 @@ def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
 def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     lift_level = LiftLevel(lift_level)
 
-    paths = {
-        "ben": Path(f"./data/Assemblage/{lift_level.value}"),
-        "mal": Path(f"./data/BODMAS/{lift_level.value}"),
-    }
+    # Configuration for file timestamps to include.
+    timestamp_ranges = (
+        int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+        int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    )
 
-    archives = {k: sorted(map(Path, rglob(p, "*.zip", True))) for k, p in paths.items()}
+    # Get data for each dataset.
+    timestamps_files   = {dnm: TIMESTAMPS_FILES[dnm] for dnm in DatasetName}
+    sha_timestamp_maps = {dnm: get_sha_timestamp_map(timestamps_files[dnm]) for dnm in DatasetName}
+    directories        = {dnm: Path(f"./data/{dnm.value}/{lift_level.value}") for dnm in DatasetName}
+    archives           = {dnm: sorted(map(Path, rglob(directories[dnm], "*.zip", True))) for dnm in DatasetName}
 
+    # Remove files with no timestamp, an invalid timestamp, or a timestamp outside the range.
+    files = {}
+    for dnm in DatasetName:
+        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], timestamp_ranges[0])
+        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], timestamp_ranges[1])
+        fs = [f for f, _ in get_data_from_archives(archives[dnm], names=True, contents=False)]
+        print(f"{dnm.value}: {len(fs)=} -->", end=" ")
+        fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
+        print(f"{len(fs)=} -->", end=" ")
+        fs = [f for f in fs if lower <= sha_timestamp_maps[dnm].get(Path(f).stem) <= upper]
+        print(f"{len(fs)=}")
+        files[dnm] = sorted(fs)
+
+    # Create file-label map for malware detection.
     files_and_labels = {}
-    for k, ps in archives.items():
-        d = {n: k for n, _ in get_data_from_archives(ps, names=True, contents=False)}
-        files_and_labels.update(d)
+    for dnm in DatasetName:
+        if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
+            k = "ben"
+        elif dnm in (DatasetName.BODMAS, DatasetName.SOREL):
+            k = "mal"
+        else:
+            raise ValueError(f"Invalid dataset name: {dnm=}")
+        for f in files[dnm]:
+            files_and_labels[f] = k
 
-    timestamps_file = [TIMESTAMPS_FILES["bodmas_pe"], TIMESTAMPS_FILES["assemblage_pe"]]
+    print(f"{len(files_and_labels)=}")
+    print(f"{len(set(files_and_labels.values()))=}")
 
+    # Get the dataset materials.
     materials = _get_materials_clf(
         files_and_labels=files_and_labels,
         tr_size=0.85,
@@ -1495,24 +1536,28 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         min_size=-1,
         must_exist=False,
         split_mode=SplitMode.TEMPORAL_ABSOLUTE,
-        timestamps_file=timestamps_file,
+        timestamps_file=list(timestamps_files.values()),
     )
     print(f"{materials=}")
 
-    assert is_temporal_classwise(materials, timestamps_file)
-    assert is_temporal_absolute(materials, timestamps_file)
+    # Verify that the temporal split was formed correctly.
+    assert is_temporal_classwise(materials, list(timestamps_files.values()))
+    assert is_temporal_absolute(materials, list(timestamps_files.values()))
+
+    # Invert the map so we can quickly figure out which archive each file came from.
+    file_to_archive_map = {}
+    for dns in DatasetName:
+        for f in files[dns]:
+            file_to_archive_map[f] = archives[dns]
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
     for split in materials.files:
-        for label, label_id in materials.label2id.items():
-            l = unique_value([len(a.stem) for a in archives[label]])
-            m = {a.stem[0:l] : a for a in archives[label]}
-            idx = np.where(materials.labels[split] == label_id)[0]
-            for i in idx:
-                f = materials.files[split][i]
-                a = m[f[0:l]]
-                af = ArchivedFile(a, f)
-                materials.files[split][i] = af
+        length = len(materials.files[split])
+        for i in range(length):
+            f = materials.files[split][i]
+            a = file_to_archive_map[f]
+            af = ArchivedFile(a, f)
+            materials.files[split][i] = af
     print(f"{materials=}")
 
     return materials
