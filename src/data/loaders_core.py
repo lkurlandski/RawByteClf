@@ -82,35 +82,6 @@ class ArchivedFile:
                 archived_files.append(ArchivedFile(archive, name))
         return archived_files
 
-    @staticmethod
-    def list_from_real_files(archives: list[str | Path], files: list[str | Path]) -> list[ArchivedFile]:
-
-        # Should the order of the ArchivedFile correspond to archives or files?
-        raise NotImplementedError("The sepcification for this function are unclear at the moment.")
-        # pylint: disable=unreachable
-
-        lengths = [len(a.stem) for a in archives]
-        if len(set(lengths)) == 1:
-            l = lengths[0]
-            d = {a.stem: [] for a in archives}
-            for f in files:
-                d[str(f)[0:l]].append(f)
-
-            archived_files = []
-            for a in archives:
-                afs = zip(repeat(a), d[a.stem])
-                archived_files.extend(afs)
-
-            return archived_files
-
-        warnings.warn("Getting list of ArchivedFile from real files slowly...")
-        archived_files = []
-        for archive in archives:
-            for f in files:
-                if str(f).startswith(archive.stem):
-                    archived_files.append(f)
-        return archived_files
-
 
 @dataclass
 class Materials:
@@ -194,17 +165,56 @@ class Materials:
             f"dist={pformat(dist) if dist is not None else None}"
         )
 
-    # def convert_files_to_archived_file(self, archives: list[Path]) -> Materials:
-    #     file_to_archive_map = {f: None for f in chain.from_iterable(self.files.values())}
+    def convert_files_to_archived_file(self, file_to_archive_map: dict[str, str]) -> Materials:
+        for split in self.files:
+            length = len(self.files[split])
+            for i in range(length):
+                f = self.files[split][i]
+                a = file_to_archive_map[f]
+                af = ArchivedFile(a, f)
+                self.files[split][i] = af
+        return self
 
-    #     def archive_to_files_map() -> dict[str, list[str]]:
-    #         d = defaultdict(list)
-    #         for k, v in file_to_archive_map.items():
-    #             d[v].append(k)
-    #         return dict(d)
+    def spacially_bias(self, ratio: float, minority_class: str = "mal", splits: tuple[str] = ("tr", "vl", "ts")) -> Materials:
+        if ratio <= 0.0 or ratio >= 1.0:
+            raise ValueError(f"{ratio=}")
+        if minority_class not in self.label2id:
+            raise ValueError(f"{minority_class=}")
+        if self.problem_type != "single_label_classification":
+            raise ValueError(f"{self.problem_type=}")
 
-    #     for k in sorted(file_to_archive_map.keys()):
-    #         s = Path(k).stem
+        majority_class = unique_value([l for l in self.label2id if l != minority_class])
+
+        for split in splits:
+            if len(self.files[split]) == 0:
+                continue
+
+            num_to_remove, minority_label_idx, majority_label_idx, idx_to_remove = None, None, None, None
+
+            dist      = self.get_split_dist(split)                         # Class distribution for this split
+            cur_count = dist[minority_class]                               # Number of samples in minority class in this split
+            tgt_count = int((ratio * dist[majority_class]) / (1 - ratio))  # Number of samples in minority class there should be in this split
+
+            if tgt_count < cur_count:    # remove samples from minority class
+                num_to_remove = cur_count - tgt_count
+                minority_label_idx = np.where(self.labels[split] == self.label2id[minority_class])[0]
+                idx_to_remove = np.random.choice(minority_label_idx, size=num_to_remove, replace=False)
+            elif tgt_count > cur_count:  # remove samples from majority class
+                num_to_remove = tgt_count - cur_count
+                majority_label_idx = np.where(self.labels[split] == self.label2id[majority_class])[0]
+                idx_to_remove = np.random.choice(majority_label_idx, size=num_to_remove, replace=False)
+            else:
+                continue
+
+            if len(np.unique(idx_to_remove)) != len(idx_to_remove):
+                raise RuntimeError(f"{len(np.unique(idx_to_remove))=} != {len(idx_to_remove)}")
+
+            self.labels[split] = np.delete(self.labels[split], idx_to_remove)
+            idx_to_remove      = set(idx_to_remove.tolist()) if len(idx_to_remove) > 512 else tuple(idx_to_remove.tolist())
+            self.files[split]  = [f for i, f in enumerate(self.files[split]) if i not in idx_to_remove]
+
+
+        return self
 
 
 def is_temporal_classwise(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
@@ -790,7 +800,7 @@ def filter_file_label_map(
         }
 
     # Remove files that are too small or too large, if they exist.
-    if min_size > 0 or max_size < sys.maxsize:
+    if must_exist and (min_size > 0 or max_size < sys.maxsize):
         files_and_labels = {
             f: l for f, l in files_and_labels.items() if
             (not os.path.exists(f) or (min_size <= os.path.getsize(f) <= max_size))
@@ -1484,13 +1494,13 @@ def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
 
 
 def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
-    lift_level = LiftLevel(lift_level)
-
-    # Configuration for file timestamps to include.
-    timestamp_ranges = (
+    PERCENTAGE_OF_MALWARE = 0.25
+    TIMESTAMP_RANGES = (
         int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
         int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     )
+
+    lift_level = LiftLevel(lift_level)
 
     # Get data for each dataset.
     timestamps_files   = {dnm: TIMESTAMPS_FILES[dnm] for dnm in DatasetName}
@@ -1501,8 +1511,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     # Remove files with no timestamp, an invalid timestamp, or a timestamp outside the range.
     files = {}
     for dnm in DatasetName:
-        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], timestamp_ranges[0])
-        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], timestamp_ranges[1])
+        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_RANGES[0])
+        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_RANGES[1])
         fs = [f for f, _ in get_data_from_archives(archives[dnm], names=True, contents=False)]
         print(f"{dnm.value}: {len(fs)=} -->", end=" ")
         fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
@@ -1532,8 +1542,6 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         tr_size=0.85,
         vl_size=0.15,
         ts_size=0.00,
-        max_imbalance_ratio=10.0,
-        min_size=-1,
         must_exist=False,
         split_mode=SplitMode.TEMPORAL_ABSOLUTE,
         timestamps_file=list(timestamps_files.values()),
@@ -1544,20 +1552,16 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     assert is_temporal_classwise(materials, list(timestamps_files.values()))
     assert is_temporal_absolute(materials, list(timestamps_files.values()))
 
-    # Invert the map so we can quickly figure out which archive each file came from.
+    # Add (or remove, depending on your perspective) spacial bias
+    materials = materials.spacially_bias(PERCENTAGE_OF_MALWARE, "mal")
+    print(f"{materials=}")
+
+    # Replace the logical files with real ArchivedFile objects that can be accessed.
     file_to_archive_map = {}
     for dns in DatasetName:
         for f in files[dns]:
             file_to_archive_map[f] = archives[dns]
-
-    # Replace the logical files with real ArchivedFile objects that can be accessed.
-    for split in materials.files:
-        length = len(materials.files[split])
-        for i in range(length):
-            f = materials.files[split][i]
-            a = file_to_archive_map[f]
-            af = ArchivedFile(a, f)
-            materials.files[split][i] = af
+    materials = materials.convert_files_to_archived_file(file_to_archive_map)
     print(f"{materials=}")
 
     return materials
