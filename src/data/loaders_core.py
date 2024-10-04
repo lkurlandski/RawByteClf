@@ -1538,11 +1538,25 @@ def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
 
 
 def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
-    # FIXME: need to integrate the spacial bias before the train test split is formed
-    # FIXME: need to remove files that exist in multiple classes from both classes
 
-    PERCENTAGE_OF_MALWARE = 0.25
-    TIMESTAMP_RANGES = (
+    # Due to the way the data is distributed temporally, spacially biasing the data
+    # before the train test split is formed can result in individual splits with
+    # different ratios of malware vs goodware. Spacially biasing the splits after
+    # splitting results in the number of samples in each split being difficult to
+    # set, but this is probably better than having different ratios. The tr/vl/ts
+    # sizes need to be tuned to see whats its going to look like after the fact.
+    class WhenToBiasSpacially(Enum):
+        BEFORE = "bef"
+        AFTER  = "aft"
+
+    WHEN_TO_BIAS = WhenToBiasSpacially.AFTER
+
+    TR_SIZE = 0.75
+    VL_SIZE = 0.25
+    TS_SIZE = 0.00
+
+    PERCENTAGE_MALWARE = 0.25
+    TIMESTAMP_RANGES   = (
         int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
         int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     )
@@ -1607,7 +1621,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         files[dnm] = fs
 
     # Create file-label map for malware detection. Remove spacial bias.
-    print("Removing spacial bias.")
+    print("Getting file label map.")
     files_and_labels = {}
     for dnm in DatasetName:
         if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
@@ -1618,22 +1632,30 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
             raise ValueError(f"Invalid dataset name: {dnm=}")
         for f in files[dnm]:
             files_and_labels[f] = k
-    print(f"dist = {Counter(files_and_labels.values())} --> ", end="")
-    files_and_labels = spacially_bias(files_and_labels, PERCENTAGE_OF_MALWARE, minority_class="mal")
-    print(f"{Counter(files_and_labels.values())}")
+
+    if WHEN_TO_BIAS == WhenToBiasSpacially.BEFORE:
+        print(f"Spacially biasing the entire corpus to {PERCENTAGE_OF_MALWARE}")
+        print(f"dist = {Counter(files_and_labels.values())} --> ", end="")
+        files_and_labels = spacially_bias(files_and_labels, PERCENTAGE_OF_MALWARE, minority_class="mal")
+        print(f"{Counter(files_and_labels.values())}")
 
     # Get the dataset materials.
     print("Acquiring raw materials.")
     materials = _get_materials_clf(
         files_and_labels=files_and_labels,
-        tr_size=0.85,
-        vl_size=0.15,
+        tr_size=0.50,
+        vl_size=0.50,
         ts_size=0.00,
         must_exist=False,
         split_mode=SplitMode.TEMPORAL_ABSOLUTE,
         timestamps_file=list(timestamps_files.values()),
     )
     print(f"{materials=}")
+
+    if WHEN_TO_BIAS == WhenToBiasSpacially.AFTER:
+        print(f"Spacially biasing each split to {PERCENTAGE_OF_MALWARE}")
+        materials = materials.spacially_bias(PERCENTAGE_OF_MALWARE, minority_class="mal")
+        print(f"{materials=}")
 
     # Verify that the temporal split was formed correctly.
     print("Verifying temporal bias.")
@@ -1649,6 +1671,18 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
     print(f"{materials=}")
 
+    if VERBOSE:
+        print("-" * 80)
+        n_tr = len(materials.files["tr"])
+        n_vl = len(materials.files["vl"])
+        n_to = n_tr + n_vl
+        print(f"tr-vl ratio = {round(100 * n_tr / n_to)}% - {round(100 * n_vl / n_to)}%")
+        n_tr_mal = np.sum(materials.labels["tr"] == materials.label2id["mal"])
+        n_tr_ben = np.sum(materials.labels["tr"] == materials.label2id["ben"])
+        print(f"tr mal-ben ratio = {round(100 * n_tr_mal / n_tr)}% {round(100 * n_tr_ben / n_tr)}%")
+        n_vl_mal = np.sum(materials.labels["vl"] == materials.label2id["mal"])
+        n_vl_ben = np.sum(materials.labels["vl"] == materials.label2id["ben"])
+        print(f"vl mal-ben ratio = {round(100 * n_vl_mal / n_vl)}% {round(100 * n_vl_ben / n_vl)}%")
     return materials
 
 
