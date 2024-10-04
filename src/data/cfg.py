@@ -11,7 +11,7 @@ import sys
 from typing import Literal
 
 from src.cfg import System, SYSTEM
-from src.enums import DatasetName
+from src.enums import DatasetName, LiftLevel
 
 
 if SYSTEM == System.ARMITAGE:
@@ -61,6 +61,15 @@ TIMESTAMPS_FILES = {
     DatasetName.BODMAS:     BODMAS_PATH     / "timestamps.json",
     DatasetName.SOREL:      SOREL_PATH      / "timestamps.json",
     DatasetName.WINDOWS:    WINDOWS_PATH    / "timestamps.json",
+}
+
+
+DIGESTS_FILES = {
+    dnm: {
+        lift_level: Path(f"./data/{dnm.value}/{lift_level.value}") / "digests.json"
+        for lift_level in LiftLevel
+    }
+    for dnm in DatasetName
 }
 
 DATASET_NAMES = [

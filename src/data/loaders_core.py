@@ -45,6 +45,7 @@ from src.data.cfg import (
     SOREL_AVCLASS_FAMILY_CACHE,
     TIMESTAMPS_FILES,
     VALID_TIMESTAMP_RANGES,
+    DIGESTS_FILES,
 )
 from src.data.detect_packing_sorel import PackingMap, universal_packing_map
 from src.data.label_datasets import (
@@ -54,7 +55,7 @@ from src.data.label_datasets import (
     ThreatLabelRefiner,
 )
 from src.data.labeling import FilterArgs, Labeler, Label
-from src.data.utils import get_sha_timestamp_map, get_data_from_archives
+from src.data.utils import get_sha_timestamp_map, get_sha_digest_map, get_data_from_archives
 
 
 MIN_SAMPLES_PER_CLASS_PER_SPLIT = 1
@@ -213,6 +214,7 @@ class Materials:
             idx_to_remove      = set(idx_to_remove.tolist()) if len(idx_to_remove) > 512 else tuple(idx_to_remove.tolist())
             self.files[split]  = [f for i, f in enumerate(self.files[split]) if i not in idx_to_remove]
 
+        self.dist = self.dist_tr | self.dist_vl | self.dist_ts
 
         return self
 
@@ -1509,6 +1511,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     archives           = {dnm: sorted(map(Path, rglob(directories[dnm], "*.zip", True))) for dnm in DatasetName}
 
     # Remove files with no timestamp, an invalid timestamp, or a timestamp outside the range.
+    print("Removing files that do not meet timestamp requirements.")
     files = {}
     for dnm in DatasetName:
         lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_RANGES[0])
@@ -1520,6 +1523,44 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         fs = [f for f in fs if lower <= sha_timestamp_maps[dnm].get(Path(f).stem) <= upper]
         print(f"{len(fs)=}")
         files[dnm] = sorted(fs)
+
+    # Remove files that are identical.
+    digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level] for dnm in DatasetName}
+    sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
+ 
+    print("Removing files that are duplicates.")
+    present = {"ben": set(), "mal": set()}
+    for dnm in DatasetName:
+        if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
+            k = "ben"
+            j = "mal"
+        elif dnm in (DatasetName.BODMAS, DatasetName.SOREL):
+            k = "mal"
+            j = "ben"
+        else:
+            raise ValueError(f"Invalid dataset name: {dnm=}")
+
+        fs = files[dnm]
+        rm = set()
+        print(f"{dnm.value}: {len(fs)=} -->", end=" ")
+
+        for i, f in enumerate(fs):
+            s = Path(f).stem
+            d = sha_digest_maps[dnm][s]
+
+            if d in present[j]:
+                m = f"The same sample belongs to multiple classes! {dnm.value=} {k=} {s=} {d=}"
+                # raise RuntimeError(m)
+                # warnings.warn(m)
+                rm.add(i)  # FIXME: remove the sample from both sets!
+
+            if d in present[k]:
+                rm.add(i)
+            present[k].add(d)
+
+        fs = [f for i, f in enumerate(fs) if i not in rm]
+        print(f"{len(fs)=}")
+        files[dnm] = fs
 
     # Create file-label map for malware detection.
     files_and_labels = {}
@@ -1533,10 +1574,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         for f in files[dnm]:
             files_and_labels[f] = k
 
-    print(f"{len(files_and_labels)=}")
-    print(f"{len(set(files_and_labels.values()))=}")
-
     # Get the dataset materials.
+    print("Acquiring raw materials.")
     materials = _get_materials_clf(
         files_and_labels=files_and_labels,
         tr_size=0.85,
@@ -1549,14 +1588,17 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     print(f"{materials=}")
 
     # Verify that the temporal split was formed correctly.
+    print("Verifying temporal bias.")
     assert is_temporal_classwise(materials, list(timestamps_files.values()))
     assert is_temporal_absolute(materials, list(timestamps_files.values()))
 
     # Add (or remove, depending on your perspective) spacial bias
+    print("Removing spacial bias.")
     materials = materials.spacially_bias(PERCENTAGE_OF_MALWARE, "mal")
     print(f"{materials=}")
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
+    print("Converting to str | Path to ArchivedFile.")
     file_to_archive_map = {}
     for dns in DatasetName:
         for f in files[dns]:

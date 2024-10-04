@@ -22,7 +22,7 @@ from pathlib import Path
 from pprint import pprint, pformat
 import sys
 import time
-from typing import AsyncGenerator, ClassVar, Generator, NamedTuple, Literal, Optional
+from typing import Any, AsyncGenerator, ClassVar, Generator, NamedTuple, Literal, Optional
 import warnings
 import zipfile
 import zlib
@@ -46,7 +46,7 @@ from tqdm.asyncio import tqdm as atqdm
 import py7zr
 
 from src.utils import batched
-from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES, SOREL_PATH, TIMESTAMPS_FILES
+from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES, SOREL_PATH, TIMESTAMPS_FILES, DIGESTS_FILES
 
 
 DEFAULT_ASYNCH_CHUNK_SIZE = 500000
@@ -575,10 +575,8 @@ def earliest_malware_sighting(
     return None
 
 
-def get_sha_timestamp_map(files: Optional[tuple[str]] = None) -> dict[str, Optional[int]]:
-    if files is None:
-        files = tuple(TIMESTAMPS_FILES.values())
-    elif isinstance(files, (str, Path)):
+def get_sha_data_map(files: tuple[str]) -> dict[str, Optional[Any]]:
+    if isinstance(files, (str, Path)):
         files = (files,)
 
     d = {}
@@ -586,6 +584,14 @@ def get_sha_timestamp_map(files: Optional[tuple[str]] = None) -> dict[str, Optio
         with open(f, "r") as file:
             d.update(json.load(file))
     return d
+
+
+def get_sha_timestamp_map(files: tuple[str] | str = tuple(TIMESTAMPS_FILES.values())) -> dict[str, Optional[int]]:
+    return get_sha_data_map(files)
+
+
+def get_sha_digest_map(files: tuple[str] | str = tuple(DIGESTS_FILES.values())) -> dict[str, Optional[str]]:
+    return get_sha_data_map(files)
 
 
 def main():
