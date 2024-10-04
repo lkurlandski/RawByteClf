@@ -8,6 +8,7 @@ from collections.abc import Sequence, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from itertools import chain, repeat
 import math
 import os
@@ -1538,6 +1539,7 @@ def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
 
 
 def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
+    VERBOSE = True
 
     # Due to the way the data is distributed temporally, spacially biasing the data
     # before the train test split is formed can result in individual splits with
@@ -1549,17 +1551,15 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         BEFORE = "bef"
         AFTER  = "aft"
 
-    WHEN_TO_BIAS = WhenToBiasSpacially.AFTER
+    WHEN_TO_BIAS       = WhenToBiasSpacially.AFTER
+    PERCENTAGE_MALWARE = 0.25
 
     TR_SIZE = 0.75
     VL_SIZE = 0.25
     TS_SIZE = 0.00
 
-    PERCENTAGE_MALWARE = 0.25
-    TIMESTAMP_RANGES   = (
-        int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
-        int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
-    )
+    TIMESTAMP_EARLY = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
+    TIMESTAMP_LATE  = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
 
     lift_level = LiftLevel(lift_level)
 
@@ -1573,8 +1573,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     print("Removing files that do not meet timestamp requirements.")
     files = {}
     for dnm in DatasetName:
-        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_RANGES[0])
-        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_RANGES[1])
+        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_EARLY)
+        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_LATE)
         fs = [f for f, _ in get_data_from_archives(archives[dnm], names=True, contents=False)]
         print(f"{dnm.value}: {len(fs)=} -->", end=" ")
         fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
@@ -1588,7 +1588,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
 
     print("Removing files that are duplicates.")
-    present = {"ben": set(), "mal": set()}
+    present: dict[str, set[str]] = {"ben": set(), "mal": set()}
+    noisy: set[str] = set()
     for dnm in DatasetName:
         if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
             k = "ben"
@@ -1608,9 +1609,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
             d = sha_digest_maps[dnm][s]
 
             if d in present[j]:
-                m = f"The same sample belongs to multiple classes! {dnm.value=} {k=} {s=} {d=}"
-                warnings.warn(m)
-                rm.add(i)
+                noisy.add(d)                
 
             if d in present[k]:
                 rm.add(i)
@@ -1619,6 +1618,20 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         fs = [f for i, f in enumerate(fs) if i not in rm]
         print(f"{len(fs)=}")
         files[dnm] = fs
+
+    if noisy:
+        warnings.warn(f"Removing {len(noisy)} samples present in both classes.")
+        for dnm in DatasetName:
+            fs = files[dnm]
+            rm = set()
+            for i, f in enumerate(fs):
+                s = Path(f).stem
+                d = sha_digest_maps[dnm][s]
+                if d in noisy:
+                    rm.add(i)
+            fs = [f for i, f in enumerate(fs) if i not in rm]
+            print(f"{len(fs)=}")
+            files[dnm] = fs
 
     # Create file-label map for malware detection. Remove spacial bias.
     print("Getting file label map.")
@@ -1634,9 +1647,9 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
             files_and_labels[f] = k
 
     if WHEN_TO_BIAS == WhenToBiasSpacially.BEFORE:
-        print(f"Spacially biasing the entire corpus to {PERCENTAGE_OF_MALWARE}")
+        print(f"Spacially biasing the entire corpus to {PERCENTAGE_MALWARE}")
         print(f"dist = {Counter(files_and_labels.values())} --> ", end="")
-        files_and_labels = spacially_bias(files_and_labels, PERCENTAGE_OF_MALWARE, minority_class="mal")
+        files_and_labels = spacially_bias(files_and_labels, PERCENTAGE_MALWARE, minority_class="mal")
         print(f"{Counter(files_and_labels.values())}")
 
     # Get the dataset materials.
@@ -1653,8 +1666,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     print(f"{materials=}")
 
     if WHEN_TO_BIAS == WhenToBiasSpacially.AFTER:
-        print(f"Spacially biasing each split to {PERCENTAGE_OF_MALWARE}")
-        materials = materials.spacially_bias(PERCENTAGE_OF_MALWARE, minority_class="mal")
+        print(f"Spacially biasing each split to {PERCENTAGE_MALWARE}")
+        materials = materials.spacially_bias(PERCENTAGE_MALWARE, minority_class="mal")
         print(f"{materials=}")
 
     # Verify that the temporal split was formed correctly.
