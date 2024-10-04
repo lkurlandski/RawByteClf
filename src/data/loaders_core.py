@@ -1539,7 +1539,6 @@ def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
 
 
 def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
-    VERBOSE = True
 
     # Due to the way the data is distributed temporally, spacially biasing the data
     # before the train test split is formed can result in individual splits with
@@ -1570,13 +1569,13 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     archives           = {dnm: sorted(map(Path, rglob(directories[dnm], "*.zip", True))) for dnm in DatasetName}
 
     # Remove files with no timestamp, an invalid timestamp, or a timestamp outside the range.
-    print("Removing files that do not meet timestamp requirements.")
+    print("\tRemoving files that do not meet timestamp requirements.")
     files = {}
     for dnm in DatasetName:
         lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_EARLY)
         upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_LATE)
         fs = [f for f, _ in get_data_from_archives(archives[dnm], names=True, contents=False)]
-        print(f"{dnm.value}: {len(fs)=} -->", end=" ")
+        print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
         fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
         print(f"{len(fs)=} -->", end=" ")
         fs = [f for f in fs if lower <= sha_timestamp_maps[dnm].get(Path(f).stem) <= upper]
@@ -1587,7 +1586,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level] for dnm in DatasetName}
     sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
 
-    print("Removing files that are duplicates.")
+    print("\tRemoving files that are duplicates.")
     present: dict[str, set[str]] = {"ben": set(), "mal": set()}
     noisy: set[str] = set()
     for dnm in DatasetName:
@@ -1602,14 +1601,14 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
 
         fs = files[dnm]
         rm = set()
-        print(f"{dnm.value}: {len(fs)=} -->", end=" ")
+        print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
 
         for i, f in enumerate(fs):
             s = Path(f).stem
             d = sha_digest_maps[dnm][s]
 
             if d in present[j]:
-                noisy.add(d)                
+                noisy.add(d)
 
             if d in present[k]:
                 rm.add(i)
@@ -1620,7 +1619,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         files[dnm] = fs
 
     if noisy:
-        warnings.warn(f"Removing {len(noisy)} samples present in both classes.")
+        print(f"\tDetected {len(noisy)} non-unique samples leaking across different classes.")
         for dnm in DatasetName:
             fs = files[dnm]
             rm = set()
@@ -1630,11 +1629,11 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
                 if d in noisy:
                     rm.add(i)
             fs = [f for i, f in enumerate(fs) if i not in rm]
-            print(f"{len(fs)=}")
             files[dnm] = fs
+            print(f"\t\t{dnm.value}: {len(rm)=}.")
 
     # Create file-label map for malware detection. Remove spacial bias.
-    print("Getting file label map.")
+    print("\tGetting file label map.")
     files_and_labels = {}
     for dnm in DatasetName:
         if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
@@ -1647,55 +1646,68 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
             files_and_labels[f] = k
 
     if WHEN_TO_BIAS == WhenToBiasSpacially.BEFORE:
-        print(f"Spacially biasing the entire corpus to {PERCENTAGE_MALWARE}")
-        print(f"dist = {Counter(files_and_labels.values())} --> ", end="")
+        print(f"\tSpacially biasing the entire corpus to {PERCENTAGE_MALWARE}")
+        print(f"\t\tdist = {Counter(files_and_labels.values())} --> ", end=" ")
         files_and_labels = spacially_bias(files_and_labels, PERCENTAGE_MALWARE, minority_class="mal")
         print(f"{Counter(files_and_labels.values())}")
 
     # Get the dataset materials.
-    print("Acquiring raw materials.")
+    print("\tAcquiring raw materials.")
     materials = _get_materials_clf(
         files_and_labels=files_and_labels,
-        tr_size=0.50,
-        vl_size=0.50,
-        ts_size=0.00,
+        tr_size=TR_SIZE,
+        vl_size=VL_SIZE,
+        ts_size=TS_SIZE,
         must_exist=False,
         split_mode=SplitMode.TEMPORAL_ABSOLUTE,
         timestamps_file=list(timestamps_files.values()),
     )
-    print(f"{materials=}")
 
     if WHEN_TO_BIAS == WhenToBiasSpacially.AFTER:
-        print(f"Spacially biasing each split to {PERCENTAGE_MALWARE}")
+        print(f"\tSpacially biasing each split to {PERCENTAGE_MALWARE}")
+        _value_1 = f"{materials.dist_tr=}"
+        _value_2 = f"{materials.dist_vl=}"
+        _value_3 = f"{materials.dist_ts=}"
         materials = materials.spacially_bias(PERCENTAGE_MALWARE, minority_class="mal")
-        print(f"{materials=}")
+        print(f"\t\t{_value_1} --> {materials.dist_tr=}")
+        print(f"\t\t{_value_2} --> {materials.dist_vl=}")
+        print(f"\t\t{_value_3} --> {materials.dist_ts=}")
 
     # Verify that the temporal split was formed correctly.
-    print("Verifying temporal bias.")
+    print("\tVerifying temporal bias.")
     assert is_temporal_classwise(materials, list(timestamps_files.values()))
     assert is_temporal_absolute(materials, list(timestamps_files.values()))
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
-    print("Converting to str | Path to ArchivedFile.")
+    print("\tConverting to ArchivedFile.")
     file_to_archive_map = {}
     for dns in DatasetName:
         for f in files[dns]:
             file_to_archive_map[f] = archives[dns]
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
-    print(f"{materials=}")
 
-    if VERBOSE:
-        print("-" * 80)
-        n_tr = len(materials.files["tr"])
-        n_vl = len(materials.files["vl"])
-        n_to = n_tr + n_vl
-        print(f"tr-vl ratio = {round(100 * n_tr / n_to)}% - {round(100 * n_vl / n_to)}%")
-        n_tr_mal = np.sum(materials.labels["tr"] == materials.label2id["mal"])
-        n_tr_ben = np.sum(materials.labels["tr"] == materials.label2id["ben"])
-        print(f"tr mal-ben ratio = {round(100 * n_tr_mal / n_tr)}% {round(100 * n_tr_ben / n_tr)}%")
-        n_vl_mal = np.sum(materials.labels["vl"] == materials.label2id["mal"])
-        n_vl_ben = np.sum(materials.labels["vl"] == materials.label2id["ben"])
-        print(f"vl mal-ben ratio = {round(100 * n_vl_mal / n_vl)}% {round(100 * n_vl_ben / n_vl)}%")
+    print("\tComputing final ratios.")
+    def fmt(t: float, b: float) -> str:
+        if b == 0:
+            return "nan"
+        return f"{round(100 * t / b)}%"
+
+    n_tr = len(materials.files["tr"])
+    n_vl = len(materials.files["vl"])
+    n_ts = len(materials.files["ts"])
+    n_to = n_tr + n_vl + n_ts
+    n_tr_mal = np.sum(materials.labels["tr"] == materials.label2id["mal"])
+    n_tr_ben = np.sum(materials.labels["tr"] == materials.label2id["ben"])
+    n_vl_mal = np.sum(materials.labels["vl"] == materials.label2id["mal"])
+    n_vl_ben = np.sum(materials.labels["vl"] == materials.label2id["ben"])
+    n_ts_mal = np.sum(materials.labels["ts"] == materials.label2id["mal"])
+    n_ts_ben = np.sum(materials.labels["ts"] == materials.label2id["ben"])
+
+    print(f"\t\tto: tr-vl-ts = {fmt(n_tr, n_to)} {fmt(n_vl, n_to)} {fmt(n_ts, n_to)}")
+    print(f"\t\ttr: mal-ben  = {fmt(n_tr_mal, n_tr)} {fmt(n_tr_ben, n_tr)}")
+    print(f"\t\tvl: mal-ben  = {fmt(n_vl_mal, n_vl)} {fmt(n_vl_ben, n_vl)}")
+    print(f"\t\tts: mal-ben  = {fmt(n_ts_mal, n_ts)} {fmt(n_ts_ben, n_ts)}")
+
     return materials
 
 
