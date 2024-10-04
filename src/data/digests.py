@@ -15,8 +15,12 @@ from typing import Optional
 
 from tqdm import tqdm
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
 
+from src.utils import rglob
 from src.data.utils import get_data_from_archives
 
 
@@ -58,7 +62,7 @@ def main():
     print(f"args={pformat(args.__dict__)}")
 
     if args.input.is_dir():
-        archives = sorted(args.input.rglob("*.zip"))
+        archives = sorted(rglob(args.input, "*.zip"))
     else:
         archives = [args.input]
 
