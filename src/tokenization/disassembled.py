@@ -10,7 +10,7 @@ from tokenizers.normalizers import Normalizer
 from tokenizers import pre_tokenizers
 from tokenizers.pre_tokenizers import PreTokenizer
 
-from src.tokenization import TokenizerAlgorithm
+from src.enums import TokenizationAlgorithm
 
 
 def replace_normalized_string(org: NormalizedString, new: str) -> NormalizedString:
@@ -106,12 +106,12 @@ class SignatureRemovalNormalizer:
         normalized.replace(replace, text)
 
 
-def get_dis_normalizer(algorithm: TokenizerAlgorithm) -> Optional[Normalizer]:  # pylint: disable=unused-argument
+def get_dis_normalizer(algorithm: TokenizationAlgorithm) -> Optional[Normalizer]:  # pylint: disable=unused-argument
     return None
 
 
-def get_dis_pretokenizer(algorithm: TokenizerAlgorithm) -> Optional[PreTokenizer]:
-    if algorithm != TokenizerAlgorithm.WORDLEVEL:
+def get_dis_pretokenizer(algorithm: TokenizationAlgorithm) -> Optional[PreTokenizer]:
+    if algorithm != TokenizationAlgorithm.WORDLEVEL:
         return pre_tokenizers.Sequence([
             pre_tokenizers.Split(Regex(r"\n"), behavior="removed"),
         ])

@@ -6,6 +6,7 @@ import asyncio
 import bz2
 from collections.abc import Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
+import fnmatch
 import gzip
 import inspect
 from io import BytesIO
@@ -19,7 +20,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Generator, Literal, Optional
 import zlib
 
 from Crypto.Cipher import AES
@@ -29,6 +30,22 @@ from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
 import py7zr
 import torch
 from torch import nn, ByteTensor, LongTensor, Tensor
+
+from src.enums import CompressionAlgorithm, EncryptionAlgorithm
+
+
+def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:
+    for root, dirs, files in os.walk(top, followlinks=True):
+        for file in files:
+            if fnmatch.fnmatch(file, pattern):
+                yield os.path.join(root, file)
+
+
+def unique_value(iterable):
+    values = set(iterable)
+    if len(values) != 1:
+        raise ValueError("The iterable does not contain a unique value")
+    return values.pop()
 
 
 def getattr_recursively(obj: Any, attr: str) -> Any:
@@ -571,40 +588,40 @@ def flatten(xs):
             yield x
 
 
-COMPRESSION_TYPES = ("gzip", "bzip2", "lzma", "zlib", "7z")
-
-
 def compress(
     bs: bytes,
-    compression_type: Literal["gzip", "bzip2", "lzma", "zlib", "7z"],
+    compression_type: CompressionAlgorithm,
     compression_level: int = 9,
     **kwds,
 ) -> bytes:
-    if compression_type == "gzip":
+
+    compression_type = CompressionAlgorithm(compression_type)
+
+    if compression_type == CompressionAlgorithm.GZIP:
         if kwds.get("compresslevel", compression_level) != compression_level:
             raise RuntimeError("Cannot specify both `compresslevel` and `compression_level`.")
         kwds["compresslevel"] = compression_level
         return gzip.compress(bs, **kwds)
 
-    if compression_type == "bzip2":
+    if compression_type == CompressionAlgorithm.BZ2:
         if kwds.get("compresslevel", compression_level) != compression_level:
             raise RuntimeError("Cannot specify both `compresslevel` and `compression_level`.")
         kwds["compresslevel"] = compression_level
         return bz2.compress(bs, **kwds)
 
-    if compression_type == "lzma":
+    if compression_type == CompressionAlgorithm.LZMA:
         if kwds.get("preset", compression_level) != compression_level:
             raise RuntimeError("Cannot specify both `preset` and `compression_level`.")
         kwds["preset"] = compression_level
         return lzma.compress(bs, **kwds)
 
-    if compression_type == "zlib":
+    if compression_type == CompressionAlgorithm.ZLIB:
         if kwds.get("level", compression_level) != compression_level:
             raise RuntimeError("Cannot specify both `level` and `compression_level`.")
         kwds["level"] = compression_level
         return zlib.compress(bs, **kwds)
 
-    if compression_type == "7z":
+    if compression_type == CompressionAlgorithm.S7Z:
         fp = BytesIO()
         with py7zr.SevenZipFile(fp, "w", **kwds) as archive:
             archive.writef(BytesIO(bs), "tmp")
@@ -614,13 +631,13 @@ def compress(
     raise ValueError(f"Unknown compression type: {compression_type}")
 
 
-ENCRYPTION_TYPES = ("aes",)
+def encrypt(bs: bytes, encryption_type: EncryptionAlgorithm, key: Optional[bytes] = None, **kwds) -> bytes:
 
+    encryption_type = EncryptionAlgorithm(encryption_type)
 
-def encrypt(bs: bytes, encryption_type: Literal["aes",], key: Optional[bytes] = None, **kwds) -> bytes:
     key = np.random.randint(0, 256, 16, dtype=np.uint8).tobytes() if key is None else key
 
-    if encryption_type == "aes":
+    if encryption_type == EncryptionAlgorithm.AES:
         kwds["mode"] = kwds.pop("mode", AES.MODE_CTR)
         cipher = AES.new(key, **kwds)
         return key + cipher.encrypt(bs)

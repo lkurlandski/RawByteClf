@@ -18,8 +18,10 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from tqdm import tqdm
 from unidecode import unidecode
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# pylint: enable=wrong-import-position
 
 from src.cfg import System, SYSTEM
 
@@ -72,7 +74,7 @@ def run(path: Path, out: Path, func: Callable[[bytes, str], bytes]) -> None:
     for f, f_out, (s_org, s_new) in zip(files, outfiles, info):
         print(f"Processed {f} -> {f_out} ({s_org} -> {s_new})")
 
-    delta = sum([s_org - s_new for s_org, s_new in info])
+    delta = sum((s_org - s_new for s_org, s_new in info))
     print(f"Total Delta: {delta / 1e9:.1f}GB")
 
 
@@ -165,4 +167,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

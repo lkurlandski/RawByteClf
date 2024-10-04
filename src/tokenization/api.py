@@ -6,7 +6,8 @@ from typing import Optional
 
 from transformers import PreTrainedTokenizerFast
 
-from src.tokenization import SPECIALS, TokenizerAlgorithm, LiftLevel
+from src.enums import TokenizationAlgorithm, LiftLevel
+from src.tokenization import SPECIALS
 from src.tokenization.core import get_postprocessor
 from src.tokenization.helpers import TokenizerIOHelper
 from src.tokenization.raw import get_raw_raw_tokenizer
@@ -14,7 +15,7 @@ from src.tokenization.raw import get_raw_raw_tokenizer
 
 def get_fast_tokenizer(
     lift_level: LiftLevel,
-    algorithm: TokenizerAlgorithm,
+    algorithm: TokenizationAlgorithm,
     representation: Optional[int] = None,
     vocab_size: Optional[int] = None,
     add_cls_token: bool = False,
@@ -31,9 +32,9 @@ def get_fast_tokenizer(
     """
 
     lift_level = LiftLevel(lift_level)
-    algorithm = TokenizerAlgorithm(algorithm)
+    algorithm = TokenizationAlgorithm(algorithm)
 
-    if algorithm == TokenizerAlgorithm.WORDLEVEL and lift_level == LiftLevel.RAW:
+    if algorithm == TokenizationAlgorithm.WORDLEVEL and lift_level == LiftLevel.RAW:
         tokenizer = get_raw_raw_tokenizer(representation)
     else:
         tokenizer = TokenizerIOHelper.fromdisk(lift_level, algorithm, vocab_size, None).load()

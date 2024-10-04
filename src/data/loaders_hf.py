@@ -6,9 +6,11 @@ import asyncio
 from collections.abc import Generator
 from functools import partial
 import os
+from pathlib import Path
 from pprint import pformat
 import sys
 from typing import Optional
+import zipfile
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -29,9 +31,10 @@ import pandas as pd
 
 from src.data.loaders_core import (
     Materials,
+    ArchivedFile,
     SplitNames,
 )
-from src.data.loaders_pt import read_binary_files_asynch, read_binary_files
+from src.data.utils import read_binary_files_asynch, read_binary_files
 
 
 FEATURES_CLM = Features({"name": Value("string"), "bytes": Value("binary")})
@@ -40,6 +43,41 @@ FEATURES_CLF_MULTILABEL = Features({"name": Value("string"), "bytes": Value("bin
 DF_CLM = pd.DataFrame({"name": [""], "bytes": [b""]}).drop(index=0)
 DF_CLF = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [0]}).drop(index=0)
 DF_CLF_MULTILABEL = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [[0]]}).drop(index=0)
+
+
+def generator_from_zipfiles(
+    files: list[ArchivedFile],
+    labels: Optional[np.ndarray] = None,
+    max_length: Optional[int] = None,
+) -> Generator[dict[str, str | bytes | int], None, None]:
+
+    print("generator_from_zipfile")
+
+    zp = None
+
+    try:
+
+        archive: str = ""
+        for i, archived_file in enumerate(files):
+
+            if archived_file.archive != archive:
+                archive = archived_file.archive
+                zp = zipfile.ZipFile(archive, "r")  # pylint: disable=consider-using-with
+
+            b = zp.read(archived_file.name)[0:max_length]
+            n = archived_file.name.split("/")[-1].split(".")[0]
+
+            r = {"bytes": b, "name": n}
+            if labels is not None and labels[i] is not None:
+                r["labels"] = labels[i]
+
+            assert all(x is not None for x in r.values())
+
+            yield r
+
+    finally:
+        if isinstance(zp, zipfile.ZipFile):
+            zp.close()
 
 
 def generator(
@@ -52,7 +90,7 @@ def generator(
     kwds = {"max_length": max_length, "in_memory_dtype": "bytes", "disable_tqdm": True}
 
     data: Optional[bytes] = [None for _ in range(len(files))]
-    for i in range(len(files)):
+    for i in range(len(files)):  # pylint: disable=consider-using-enumerate
         if data[i] is None:
             data = [None for _ in range(len(files))]
             idx = list(range(i, min(i + asynch_chunk_size, len(files))))
@@ -106,7 +144,7 @@ def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict, n_samples: int 
 
     if isinstance(dataset, DatasetDict):
         files = [list(f.values())[0] for f in d.cache_files for d in dataset.values()]
-        print(f" Cache Files: [")
+        print(" Cache Files: [")
         for f in files:
             print(f"  {str(f)},")
         print(" ]")
@@ -149,7 +187,13 @@ def get_dataset_hf(
         kwds["files"] = materials.files[split]
         if materials.labels is not None:
             kwds["labels"] = materials.labels[split]
-        datasets[split] = Dataset.from_generator(generator, features=features, gen_kwargs=kwds)
+
+        if isinstance(materials.files[split][0], ArchivedFile):
+            gen = generator_from_zipfiles
+        elif isinstance(materials.files[split][0], (str, Path)):
+            gen = generator
+
+        datasets[split] = Dataset.from_generator(gen, features=features, gen_kwargs=kwds)
 
     if streaming:
         if num_shards is None or num_shards == 0:

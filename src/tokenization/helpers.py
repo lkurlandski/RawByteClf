@@ -17,7 +17,7 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from src.cfg import TOKENIZERS_OUTPUT_PATH
-from src.tokenization import LiftLevel, TokenizerAlgorithm
+from src.enums import TokenizationAlgorithm, LiftLevel
 from src.tokenization.core import SENTINAL_NORMALIZER, SENTINAL_PRETOKENIZER
 from src.tokenization.disassembled import get_dis_normalizer, get_dis_pretokenizer
 from src.tokenization.decompiled import get_dec_normalizer, get_dec_pretokenizer
@@ -29,9 +29,9 @@ class DirectoryIsEmptyError(FileNotFoundError):
 
 class TokenizerIOHelper:
 
-    def __init__(self, lift_level: LiftLevel, algorithm: TokenizerAlgorithm, vocab_size: int, num_files: int) -> None:
+    def __init__(self, lift_level: LiftLevel, algorithm: TokenizationAlgorithm, vocab_size: int, num_files: int) -> None:
         self.lift_level = LiftLevel(lift_level)
-        self.algorithm = TokenizerAlgorithm(algorithm)
+        self.algorithm = TokenizationAlgorithm(algorithm)
         self.vocab_size = vocab_size
         self.num_files = num_files
 
@@ -55,9 +55,9 @@ class TokenizerIOHelper:
         # Handle custom normalizers and pretokenizers.
         if self.lift_level == LiftLevel.RAW:
             pass
-        elif self.lift_level == LiftLevel.DIS:
+        elif self.lift_level == LiftLevel.DISASSEMBLED:
             pass
-        elif self.lift_level == LiftLevel.DEC:
+        elif self.lift_level == LiftLevel.DECOMPILED:
             pass
         else:
             raise ValueError(f"{self.lift_level=}")
@@ -71,9 +71,9 @@ class TokenizerIOHelper:
         # Handle custom normalizers and pretokenizers.
         if self.lift_level == LiftLevel.RAW:
             pass
-        elif self.lift_level == LiftLevel.DIS:
+        elif self.lift_level == LiftLevel.DISASSEMBLED:
             pass
-        elif self.lift_level == LiftLevel.DEC:
+        elif self.lift_level == LiftLevel.DECOMPILED:
             pass
         else:
             raise ValueError(f"{self.lift_level=}")
@@ -84,7 +84,7 @@ class TokenizerIOHelper:
     def fromdisk(
         cls,
         lift_level: LiftLevel,
-        algorithm: Optional[TokenizerAlgorithm],
+        algorithm: Optional[TokenizationAlgorithm],
         vocab_size: Optional[int],
         num_files: Optional[int],
     ) -> TokenizerIOHelper:

@@ -1,0 +1,76 @@
+"""
+Custom options.
+"""
+
+from enum import Enum
+
+
+class LiftLevel(Enum):
+    RAW          = "raw"
+    DISASSEMBLED = "dis"
+    DECOMPILED   = "dec"
+
+
+class TokenizationAlgorithm(Enum):
+    BPE       = "bpe"
+    UNIGRAM   = "uni"
+    WORDPIECE = "wdp"
+    WORDLEVEL = "wdl"
+
+
+class System(Enum):
+    ARMITAGE   = "arm"
+    WINTERMUTE = "win"
+    SPORC      = "rc"
+    GCCIS      = "lab"
+
+
+class EncryptionAlgorithm(Enum):
+    AES = "aes"
+
+
+class CompressionAlgorithm(Enum):
+    GZIP = "gzip"
+    BZ2  = "bz2"
+    LZMA = "lzma"
+    ZLIB = "zlib"
+    S7Z  = "s7z"
+
+
+class Task(Enum):
+    MLM = "mlm"
+    CLM = "clm"
+    DET = "det"
+    FAM = "fam"
+    BEH = "beh"
+
+
+class PackingProtocol(Enum):
+    ANY = "any"
+    YES = "yes"
+    NO  = "no"
+    UNK = "unk"
+
+
+class BitsInByte(Enum):
+    EIGHT   = 8
+    TWELVE  = 12
+    SIXTEEN = 16
+
+
+class SplitMode(Enum):
+    RANDOM             = "random"
+    TEMPORAL_CLASSWISE = "tmpclf"
+    TEMPORAL_ABSOLUTE  = "tmpabs"
+
+
+class WeightedLossAlgorithm(Enum):
+    SAMPLE_REWEIGHTING      = "srw"
+    INVERSE_CLASS_FREQUENCY = "icf"
+
+
+class DatasetName(Enum):
+    ASSEMBLAGE = "ass"
+    BODMAS     = "bod"
+    SOREL      = "sor"
+    WINDOWS    = "win"

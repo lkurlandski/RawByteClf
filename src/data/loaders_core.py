@@ -2,11 +2,13 @@
 Core file operations to construct labeled datasets for classification tasks.
 """
 
+from __future__ import annotations
 from collections import defaultdict, Counter
 from collections.abc import Sequence, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
-from itertools import chain
+from datetime import datetime, timezone
+from itertools import chain, repeat
 import math
 import os
 from pathlib import Path
@@ -28,7 +30,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from tqdm import tqdm
 
-from src.utils import get_max_keys_from_dict, flatten, get_unique_files
+from src.enums import LiftLevel, SplitMode, DatasetName
+from src.utils import get_max_keys_from_dict, flatten, get_unique_files, rglob, unique_value
 from src.data.cfg import (
     SOREL_PATH,
     BODMAS_PATH,
@@ -41,6 +44,7 @@ from src.data.cfg import (
     SOREL_AVCLASS_CACHE,
     SOREL_AVCLASS_FAMILY_CACHE,
     TIMESTAMPS_FILES,
+    VALID_TIMESTAMP_RANGES,
 )
 from src.data.detect_packing_sorel import PackingMap, universal_packing_map
 from src.data.label_datasets import (
@@ -50,7 +54,7 @@ from src.data.label_datasets import (
     ThreatLabelRefiner,
 )
 from src.data.labeling import FilterArgs, Labeler, Label
-from src.data.utils import get_sha_timestamp_map
+from src.data.utils import get_sha_timestamp_map, get_data_from_archives
 
 
 MIN_SAMPLES_PER_CLASS_PER_SPLIT = 1
@@ -64,9 +68,24 @@ SplitNames = Literal["tr", "vl", "ts"]
 FilesAndLabels = tuple[list[os.PathLike], Optional[Sequence[int]]]
 
 
+class ArchivedFile:
+
+    def __init__(self, archive: str | Path, name: str) -> None:
+        self.archive = archive
+        self.name = name
+
+    @staticmethod
+    def list_from_archives(archives: list[str | Path]) -> list[ArchivedFile]:
+        archived_files = []
+        for archive in archives:
+            for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
+                archived_files.append(ArchivedFile(archive, name))
+        return archived_files
+
+
 @dataclass
 class Materials:
-    files: dict[SplitNames, list[os.PathLike]]
+    files: dict[SplitNames, list[str | ArchivedFile]]
     labels: Optional[dict[SplitNames, Sequence[int | Sequence[int]]]] = None
     id2label: dict[int, str] = None
     label2id: dict[str, int] = None
@@ -135,6 +154,7 @@ class Materials:
             for s, d in dists.items():  # s: split, d: class distribution
                 for k, v in d.items():  # k: class label, v: class count
                     dist[k][s] = v
+            dist = dict(dist)
         else:
             dist = None
         return (
@@ -144,6 +164,95 @@ class Materials:
             f"num_classes={len(self.id2label) if self.id2label is not None else None}\n"
             f"dist={pformat(dist) if dist is not None else None}"
         )
+
+    def convert_files_to_archived_file(self, file_to_archive_map: dict[str, str]) -> Materials:
+        for split in self.files:
+            length = len(self.files[split])
+            for i in range(length):
+                f = self.files[split][i]
+                a = file_to_archive_map[f]
+                af = ArchivedFile(a, f)
+                self.files[split][i] = af
+        return self
+
+    def spacially_bias(self, ratio: float, minority_class: str = "mal", splits: tuple[str] = ("tr", "vl", "ts")) -> Materials:
+        if ratio <= 0.0 or ratio >= 1.0:
+            raise ValueError(f"{ratio=}")
+        if minority_class not in self.label2id:
+            raise ValueError(f"{minority_class=}")
+        if self.problem_type != "single_label_classification":
+            raise ValueError(f"{self.problem_type=}")
+
+        majority_class = unique_value([l for l in self.label2id if l != minority_class])
+
+        for split in splits:
+            if len(self.files[split]) == 0:
+                continue
+
+            num_to_remove, minority_label_idx, majority_label_idx, idx_to_remove = None, None, None, None
+
+            dist      = self.get_split_dist(split)                         # Class distribution for this split
+            cur_count = dist[minority_class]                               # Number of samples in minority class in this split
+            tgt_count = int((ratio * dist[majority_class]) / (1 - ratio))  # Number of samples in minority class there should be in this split
+
+            if tgt_count < cur_count:    # remove samples from minority class
+                num_to_remove = cur_count - tgt_count
+                minority_label_idx = np.where(self.labels[split] == self.label2id[minority_class])[0]
+                idx_to_remove = np.random.choice(minority_label_idx, size=num_to_remove, replace=False)
+            elif tgt_count > cur_count:  # remove samples from majority class
+                num_to_remove = tgt_count - cur_count
+                majority_label_idx = np.where(self.labels[split] == self.label2id[majority_class])[0]
+                idx_to_remove = np.random.choice(majority_label_idx, size=num_to_remove, replace=False)
+            else:
+                continue
+
+            if len(np.unique(idx_to_remove)) != len(idx_to_remove):
+                raise RuntimeError(f"{len(np.unique(idx_to_remove))=} != {len(idx_to_remove)}")
+
+            self.labels[split] = np.delete(self.labels[split], idx_to_remove)
+            idx_to_remove      = set(idx_to_remove.tolist()) if len(idx_to_remove) > 512 else tuple(idx_to_remove.tolist())
+            self.files[split]  = [f for i, f in enumerate(self.files[split]) if i not in idx_to_remove]
+
+
+        return self
+
+
+def is_temporal_classwise(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
+    """Checks whether the materials are split temporally within each class.
+    """
+    sha_timestamp_map = get_sha_timestamp_map(timestamps_file)
+    timestamps = {}
+    for split, files in materials.files.items():
+        t = [sha_timestamp_map[Path(f).stem] for f in files]
+        timestamps[split] = np.sort(np.array(t, np.int64))
+    for i in materials.id2label:
+        idx = {split: np.where(labels == i)[0] for split, labels in materials.labels.items()}
+        cuttoffs = [
+            timestamps["tr"][idx["tr"]].max(),
+            timestamps["vl"][idx["vl"]].min(),
+            timestamps["vl"][idx["vl"]].max(),
+            timestamps["ts"][idx["ts"]].min(initial=np.iinfo(np.int64).max),
+        ]
+        if not bool(np.all(np.diff(cuttoffs) > 0)):
+            return False
+    return True
+
+
+def is_temporal_absolute(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
+    """Checks whether the materials are split temporally over the entire datasets.
+    """
+    sha_timestamp_map = get_sha_timestamp_map(timestamps_file)
+    timestamps = {}
+    for split, files in materials.files.items():
+        t = [sha_timestamp_map[Path(f).stem] for f in files]
+        timestamps[split] = np.sort(np.array(t, dtype=np.int64))
+    cuttoffs = [
+        timestamps["tr"].max(),
+        timestamps["vl"].min(),
+        timestamps["vl"].max(),
+        timestamps["ts"].min(initial=np.iinfo(np.int64).max),
+    ]
+    return bool(np.all(np.diff(cuttoffs) > 0))
 
 
 def get_tr_vl_ts_files_and_labels(
@@ -414,6 +523,7 @@ def tr_vl_ts_split_idx_guarentee(
     vl_size: int | float,
     ts_size: int | float,
     samples_per_class: int = 1,
+    split_mode: SplitMode = SplitMode.RANDOM,
     timestamps: Optional[Sequence[int]] = None,
 ) -> dict[SplitNames, np.ndarray]:
     """
@@ -446,34 +556,28 @@ def tr_vl_ts_split_idx_guarentee(
                 f" per class for {len(values)} classes."
             )
 
-    if timestamps is not None:
-        timestamps = np.array(timestamps)
-        if not np.all(np.diff(timestamps) >= 0):
-            raise ValueError("Timestamps are not sorted.")
 
-    # For each element in the collection, assign it to a particular split if that split has not
-    # reached its quota for that class. Note that if the timestamps are provided and the labels
-    # correspond to the sorted timestamps, the tr set will contain earlier samples than the vl set,
-    # and the vl set will contain earlier samples than the ts set.
+    # These stuctures contain the class distribution and indices for each split.
     tr_dist, tr_idx = {v: 0 for v in values}, []
     vl_dist, vl_idx = {v: 0 for v in values}, []
     ts_dist, ts_idx = {v: 0 for v in values}, []
-    for i, l in enumerate(labels):
-        if tr_size > 0 and tr_dist[l] < samples_per_class:
-            tr_dist[l] += 1
-            tr_idx.append(i)
-        elif vl_size > 0 and vl_dist[l] < samples_per_class:
-            vl_dist[l] += 1
-            vl_idx.append(i)
-        elif ts_size > 0 and ts_dist[l] < samples_per_class:
-            ts_dist[l] += 1
-            ts_idx.append(i)
 
-    # Add the remaining samples to the splits if they have not already been added.
-    added = set(tr_idx) | set(vl_idx) | set(ts_idx)
 
-    if timestamps is None:
-        # If not using a temporal split, simply add the samples randomly.
+    if split_mode == SplitMode.RANDOM:
+        # If not using a temporal split, add a certain number of samples to every split,
+        # then add the remaining samples randomly.
+        for i, l in enumerate(labels):
+            if tr_size > 0 and tr_dist[l] < samples_per_class:
+                tr_dist[l] += 1
+                tr_idx.append(i)
+            elif vl_size > 0 and vl_dist[l] < samples_per_class:
+                vl_dist[l] += 1
+                vl_idx.append(i)
+            elif ts_size > 0 and ts_dist[l] < samples_per_class:
+                ts_dist[l] += 1
+                ts_idx.append(i)
+
+        added = set(tr_idx) | set(vl_idx) | set(ts_idx)
         for i, l in enumerate(labels):
             if i in added:
                 continue
@@ -488,23 +592,35 @@ def tr_vl_ts_split_idx_guarentee(
                 tr_dist[l] += 1
                 tr_idx.append(i)
             else:
-                warnings.warn("Trouble adding sample to a split. Adding to tr by default.")
-                tr_dist[l] += 1
-                tr_idx.append(i)
+                warnings.warn(f"Trouble adding sample to a split {i=} {l=}.")
+                if ts_size > 0:
+                    ts_dist[l] += 1
+                    ts_idx.append(i)
+                elif vl_size > 0:
+                    vl_dist[l] += 1
+                    vl_idx.append(i)
+                elif tr_size > 0:
+                    tr_dist[l] += 1
+                    tr_idx.append(i)
 
-    else:
+
+    elif split_mode == SplitMode.TEMPORAL_CLASSWISE:
         # If using the temporal split, add the samples based on their timestamp.
         # The number of samples in the tr, vl, and ts sets should approximately match the
         # tr_prop, vl_prop, and ts_prop values (although in reality this will likely be innaccurate).
+
+        timestamps = np.array(timestamps)
+        if not np.all(np.diff(timestamps) >= 0):
+            raise ValueError("Timestamps are not sorted. Files, labels and timestamps need to be placed in temporal order.")
+
         classes_and_counts_org = {cls: cnt for cls, cnt in zip(values, counts)}
-        classes_and_counts_cur = {cls: tr_dist[cls] + vl_dist[cls] + ts_dist[cls] for cls in values}
         tr_dist_fin, vl_dist_fin, ts_dist_fin = {}, {}, {}
         for cls in values:
             tr_cnt, vl_cnt, ts_cnt = distribute_elements_to_meet_proportions(
                 tr_dist[cls],
                 vl_dist[cls],
                 tr_dist[cls],
-                classes_and_counts_org[cls] - classes_and_counts_cur[cls],
+                classes_and_counts_org[cls],
                 tr_prop,
                 vl_prop,
                 ts_prop,
@@ -517,9 +633,8 @@ def tr_vl_ts_split_idx_guarentee(
             assert vl_dist_fin[cls] >= vl_dist[cls], f"{vl_dist_fin[cls]=} should be greater or equal to {vl_dist[cls]} for {cls=}."
             assert ts_dist_fin[cls] >= ts_dist[cls], f"{ts_dist_fin[cls]=} should be greater or equal to {ts_dist[cls]} for {cls=}."
 
+        # Since the labels are sorted according to timestamp, we simply add them to the appropriate split.
         for i, l in enumerate(labels):
-            if i in added:
-                continue
             if tr_dist[l] < tr_dist_fin[l]:
                 tr_dist[l] += 1
                 tr_idx.append(i)
@@ -530,13 +645,35 @@ def tr_vl_ts_split_idx_guarentee(
                 ts_dist[l] += 1
                 ts_idx.append(i)
             else:
-                warnings.warn("Trouble adding sample to a split. Will not add to preserve temporal consistency.")
-                tr_dist[l] += 1
-                tr_idx.append(i)
+                warnings.warn(f"Trouble adding sample to a split {i=} {l=}.")
+                if ts_size > 0:
+                    ts_dist[l] += 1
+                    ts_idx.append(i)
+                elif vl_size > 0:
+                    vl_dist[l] += 1
+                    vl_idx.append(i)
+                elif tr_size > 0:
+                    tr_dist[l] += 1
+                    tr_idx.append(i)
 
         assert len(tr_dist) == len(tr_dist_fin), f"{len(tr_dist)=} should equal {len(tr_dist_fin)=}"
         assert len(vl_dist) == len(vl_dist_fin), f"{len(vl_dist)=} should equal {len(vl_dist_fin)=}"
         assert len(ts_dist) == len(ts_dist_fin), f"{len(ts_dist)=} should equal {len(ts_dist_fin)=}"
+
+
+    elif split_mode == SplitMode.TEMPORAL_ABSOLUTE:
+
+        tr_idx = list(range(0, tr_size))
+        vl_idx = list(range(tr_size, tr_size + vl_size))
+        ts_idx = list(range(tr_size + vl_size, tr_size + vl_size + ts_size))
+
+        tr_dist = Counter(labels[tr_idx])
+        vl_dist = Counter(labels[vl_idx])
+        ts_dist = Counter(labels[ts_idx])
+        if vl_size > 0 and set(tr_dist) != set(vl_dist):
+            raise ValueError(f"tr_dist=\n{pformat(tr_dist)}\nvl_dist={pformat(vl_dist)}")
+        if ts_size > 0 and set(tr_dist) != set(ts_dist):
+            raise ValueError(f"tr_dist=\n{pformat(tr_dist)}\nts_dist={pformat(ts_dist)}")
 
     assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
 
@@ -649,7 +786,7 @@ def filter_file_label_map(
     min_size: int = 0,
     max_size: int = sys.maxsize,
     must_exist: bool = True,
-    temporal: bool = False,
+    split_mode: SplitMode = SplitMode.RANDOM,
     files_and_timestamps: Optional[dict[os.PathLike, int]] = None,
 ) -> dict[os.PathLike, str]:
     """
@@ -663,13 +800,13 @@ def filter_file_label_map(
         }
 
     # Remove files that are too small or too large, if they exist.
-    if min_size > 0 or max_size < sys.maxsize:
+    if must_exist and (min_size > 0 or max_size < sys.maxsize):
         files_and_labels = {
             f: l for f, l in files_and_labels.items() if
             (not os.path.exists(f) or (min_size <= os.path.getsize(f) <= max_size))
         }
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         files_and_labels = {
             f: l for f, l in files_and_labels.items() if files_and_timestamps.get(f) is not None
         }
@@ -910,7 +1047,7 @@ def _get_materials_clf(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
-    temporal: bool = False,
+    split_mode: SplitMode = SplitMode.RANDOM,
     timestamps_file: Optional[Path] = None,
 ) -> Materials:
 
@@ -923,7 +1060,7 @@ def _get_materials_clf(
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
     files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         shas_and_timestamps = get_sha_timestamp_map(timestamps_file)
         files_and_timestamps = {f: shas_and_timestamps.get(os.path.basename(f).split(".")[0]) for f in files_and_labels}
     else:
@@ -937,11 +1074,11 @@ def _get_materials_clf(
         max_imbalance_ratio=max_imbalance_ratio,
         min_size=min_size,
         must_exist=must_exist,
-        temporal=temporal,
+        split_mode=split_mode,
         files_and_timestamps=files_and_timestamps,
     )
     # Remove the timestamps for files that have been filtered out.
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         files_and_timestamps = {
             f: files_and_timestamps[f] for f in files_and_labels if f in files_and_timestamps
         }
@@ -954,7 +1091,9 @@ def _get_materials_clf(
     files = list(files_and_labels.keys())
     labels = np.array([label2id[files_and_labels[f]] for f in files])
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
+        # For the temporal split, we reorder the collections in a temporal fashion,
+        # ie, the files and labels are ordered according to their timestamps.
         timestamps = np.array([files_and_timestamps[f] for f in files])
         sort_idx = np.argsort(timestamps)
         files = [files[i] for i in sort_idx]
@@ -965,7 +1104,8 @@ def _get_materials_clf(
         files, labels = shuffle(files, labels)
 
     idx = tr_vl_ts_split_idx_guarentee(
-        labels, tr_size, vl_size, ts_size, MIN_SAMPLES_PER_CLASS_PER_SPLIT, timestamps,
+        labels, tr_size, vl_size, ts_size,
+        MIN_SAMPLES_PER_CLASS_PER_SPLIT, split_mode, timestamps,
     )
 
     files, labels = get_tr_vl_ts_files_and_labels(files, labels, idx)
@@ -982,7 +1122,7 @@ def _get_materials_clf_few_shot_learning(
     packing_protocol: Literal["yes", "no", "any", "unk"] = "any",
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
-    temporal: bool = False,
+    split_mode: SplitMode = SplitMode.RANDOM,
     timestamps_file: Optional[Path] = None,
     **kwds,
 ) -> Materials:
@@ -993,7 +1133,7 @@ def _get_materials_clf_few_shot_learning(
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
     files_and_labels = {f: files_and_labels[f] for f in files_to_keep}
 
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         shas_and_timestamps = get_sha_timestamp_map(timestamps_file)
         files_and_timestamps = {f: shas_and_timestamps.get(os.path.basename(f).split(".")[0]) for f in files_and_labels}
     else:
@@ -1005,11 +1145,11 @@ def _get_materials_clf_few_shot_learning(
         min_freq=tr_samples_per_class + vl_min_samples_per_class,
         min_size=min_size,
         must_exist=must_exist,
-        temporal=temporal,
+        split_mode=split_mode,
         files_and_timestamps=files_and_timestamps,
     )
     # Remove the timestamps for files that have been filtered out.
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         files_and_timestamps = {
             f: files_and_timestamps[f] for f in files_and_labels if f in files_and_timestamps
         }
@@ -1024,7 +1164,7 @@ def _get_materials_clf_few_shot_learning(
     labels = np.array([label2id[files_and_labels[f]] for f in files])
 
     # Order the files, labels, and timestamps according to the timestamps.
-    if temporal:
+    if split_mode != SplitMode.RANDOM:
         timestamps = np.array([files_and_timestamps[f] for f in files])
         sort_idx = np.argsort(timestamps)
         files = [files[i] for i in sort_idx]
@@ -1156,6 +1296,7 @@ def _get_materials_clf_multilabel_few_shot_learning(
         raise TypeError(f"Function got some unexpected keyword argument(s): {invalid}")
 
     raise NotImplementedError("This needs a bit more work. The unit tests are not passing.")  # pylint: disable=unreachable
+    # pylint: disable=unreachable
 
     # First, remove the files that we do not want to use.
     files_to_keep = filter_packed_files(list(files_and_labels.keys()), packing_protocol, root=packing_root)
@@ -1229,7 +1370,7 @@ def get_materials_clf_bodmas(
 ) -> Materials:
 
     kwds["packing_root"] = PACKING_ROOTS["bodmas_pe"]
-    kwds["timestamps_file"] = TIMESTAMPS_FILES["bodmas_pe"]
+    kwds["timestamps_file"] = TIMESTAMPS_FILES[DatasetName.BODMAS]
 
     files_and_labels = get_bodmas_file_label_map()
 
@@ -1250,7 +1391,7 @@ def get_materials_clf_sorel(
         raise NotImplementedError()
 
     kwds["packing_root"] = PACKING_ROOTS["sorel_pe"]
-    kwds["timestamps_file"] = TIMESTAMPS_FILES["sorel_pe"]
+    kwds["timestamps_file"] = TIMESTAMPS_FILES[DatasetName.SOREL]
 
     files_and_labels = get_sorel_file_label_map(name)
 
@@ -1310,43 +1451,125 @@ def get_materials_clf_elf(
     return _get_materials_clf_multilabel(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
-def main():
+################################################################################
+# Load Materials Endpoints For ESP
+################################################################################
 
-    # materials = _get_materials_clf_multilabel_few_shot_learning(
-    #     get_sorel_file_label_map("beh"),
-    #     1,
-    #     vl_min_samples_per_class=1,
-    #     vl_max_samples_per_class=10,
-    #     top_k=None,
-    # )
 
-    # materials = _get_materials_clf_multilabel(
-    #     get_sorel_file_label_map("beh"),
-    #     tr_size=0.8,
-    #     vl_size=0.1,
-    #     ts_size=0.1,
-    #     must_exist=False,
-    #     max_imbalance_ratio=100,
-    # )
+def get_materials_esp_lm(lift_level: LiftLevel) -> Materials:
 
-    # materials = get_materials_clf_bodmas(
-    #     0.85, 0.15, 0.0, None, top_k=None, min_freq=None, temporal=True
-    # )
+    archives = []
+    for root, dirs, files in os.walk("./data", followlinks=True):
+        for file in files:
+            if file.endswith(".zip") and root.endswith(lift_level):
+                archives.append(os.path.join(root, file))
 
-    # materials = get_materials_clf_sorel(
-    #     0.85, 0.15, 0.0, None, name="fam", top_k=None, min_freq=None, temporal=True
-    # )
+    archived_files = []
+    for archive in archives:
+        for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
+            archived_files.append(ArchivedFile(archive, name))
 
-    # materials = get_materials_clf_bodmas(
-    #     0.85, 0.15, 0.0, 2, top_k=None, min_freq=None, temporal=True
-    # )
+    n = len(archived_files)
+    files = {
+        "tr": [f for i, f in enumerate(archived_files) if i < (0.8 * n)],
+        "vl": [f for i, f in enumerate(archived_files) if i >= (0.8 * n)],
+        "ts": [],
+    }
 
-    materials = get_materials_clf_sorel(
-        0.85, 0.15, 0.0, 2, name="fam", top_k=None, min_freq=None, temporal=True
+    return Materials(
+        files=files,
+        labels=None,
+        id2label=None,
+        label2id=None,
+        dist=None,
     )
 
-    print(materials)
+
+def get_materials_esp_clm(lift_level: LiftLevel) -> Materials:
+    return get_materials_esp_lm(lift_level)
 
 
-if __name__ == "__main__":
-    main()
+def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
+    return get_materials_esp_lm(lift_level)
+
+
+def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
+    PERCENTAGE_OF_MALWARE = 0.25
+    TIMESTAMP_RANGES = (
+        int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+        int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    )
+
+    lift_level = LiftLevel(lift_level)
+
+    # Get data for each dataset.
+    timestamps_files   = {dnm: TIMESTAMPS_FILES[dnm] for dnm in DatasetName}
+    sha_timestamp_maps = {dnm: get_sha_timestamp_map(timestamps_files[dnm]) for dnm in DatasetName}
+    directories        = {dnm: Path(f"./data/{dnm.value}/{lift_level.value}") for dnm in DatasetName}
+    archives           = {dnm: sorted(map(Path, rglob(directories[dnm], "*.zip", True))) for dnm in DatasetName}
+
+    # Remove files with no timestamp, an invalid timestamp, or a timestamp outside the range.
+    files = {}
+    for dnm in DatasetName:
+        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_RANGES[0])
+        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_RANGES[1])
+        fs = [f for f, _ in get_data_from_archives(archives[dnm], names=True, contents=False)]
+        print(f"{dnm.value}: {len(fs)=} -->", end=" ")
+        fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
+        print(f"{len(fs)=} -->", end=" ")
+        fs = [f for f in fs if lower <= sha_timestamp_maps[dnm].get(Path(f).stem) <= upper]
+        print(f"{len(fs)=}")
+        files[dnm] = sorted(fs)
+
+    # Create file-label map for malware detection.
+    files_and_labels = {}
+    for dnm in DatasetName:
+        if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
+            k = "ben"
+        elif dnm in (DatasetName.BODMAS, DatasetName.SOREL):
+            k = "mal"
+        else:
+            raise ValueError(f"Invalid dataset name: {dnm=}")
+        for f in files[dnm]:
+            files_and_labels[f] = k
+
+    print(f"{len(files_and_labels)=}")
+    print(f"{len(set(files_and_labels.values()))=}")
+
+    # Get the dataset materials.
+    materials = _get_materials_clf(
+        files_and_labels=files_and_labels,
+        tr_size=0.85,
+        vl_size=0.15,
+        ts_size=0.00,
+        must_exist=False,
+        split_mode=SplitMode.TEMPORAL_ABSOLUTE,
+        timestamps_file=list(timestamps_files.values()),
+    )
+    print(f"{materials=}")
+
+    # Verify that the temporal split was formed correctly.
+    assert is_temporal_classwise(materials, list(timestamps_files.values()))
+    assert is_temporal_absolute(materials, list(timestamps_files.values()))
+
+    # Add (or remove, depending on your perspective) spacial bias
+    materials = materials.spacially_bias(PERCENTAGE_OF_MALWARE, "mal")
+    print(f"{materials=}")
+
+    # Replace the logical files with real ArchivedFile objects that can be accessed.
+    file_to_archive_map = {}
+    for dns in DatasetName:
+        for f in files[dns]:
+            file_to_archive_map[f] = archives[dns]
+    materials = materials.convert_files_to_archived_file(file_to_archive_map)
+    print(f"{materials=}")
+
+    return materials
+
+
+def get_materials_esp_fam(lift_level: LiftLevel) -> Materials:
+    raise NotImplementedError()
+
+
+def get_materials_esp_beh(lift_level: LiftLevel) -> Materials:
+    raise NotImplementedError()

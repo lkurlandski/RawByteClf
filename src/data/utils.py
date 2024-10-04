@@ -289,7 +289,7 @@ class Decompressor:
         for fn in fns:
             try:
                 return fn(fp)
-            except Exception as err:
+            except Exception as err:  # pylint: disable=broad-exception-caught
                 print(err)
                 fp.seek(0)
 
@@ -332,7 +332,7 @@ class Decompressor:
 def decompress_error_resilient(b: bytes, decompress: Decompressor) -> Optional[tuple[int, bytes]]:
     try:
         return decompress(b)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return None
 
 
@@ -498,37 +498,6 @@ async def write_binary_files_asynch(
     for batch_files, batch_data in iterable:
         tasks = [write_binary_file_asynch(f, b) for f, b in zip(batch_files, batch_data)]
         await asyncio.gather(*tasks)
-
-
-def time_decompressor(n: int = 10000):
-
-    # Num files: len(sizes)=79163
-    # Average decompression time: 0.0017401391113650562
-    # Average compressed size: 210191.44859340854
-    # Average uncompressed size: 444060.41214961535
-
-    files = islice(DATASET_TO_FILES["binaries"]["sorel_pe"](), n)
-    loop = asyncio.get_event_loop()
-    future = read_binary_files_asynch(files)
-    data = loop.run_until_complete(future)
-    decompress = Decompressor(Decompressor.ZLIB)
-
-    sizes = []
-    times = []
-    for i, cb in enumerate(tqdm(data, total=n)):
-        t_i = time.time()
-        try:
-            _, db = decompress(cb)
-        except Exception:
-            continue
-        t_f = time.time()
-        times.append(t_f - t_i)
-        sizes.append((cb, len(db)))
-
-    print(f"Decompressed: {len(sizes)=} / {i + 1}")
-    print(f"Average decompression time: {np.mean(times)}")
-    print(f"Average compressed size: {np.mean([s[0] for s in sizes])}")
-    print(f"Average uncompressed size: {np.mean([s[1] for s in sizes])}")
 
 
 async def decompress_sorel_collection(

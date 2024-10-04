@@ -617,8 +617,8 @@ class PackingAnalyzer:
             if (i + 1) % self.consolidate_chunk_size == 0:
                 save_partial(output, i)
 
-        if output:  # pylint: disable=undefined-loop-variable
-            save_partial(output, i + len(output) if total > self.consolidate_chunk_size else i)
+        if output:
+            save_partial(output, i + len(output) if total > self.consolidate_chunk_size else i)  # pylint: disable=undefined-loop-variable
 
     def consolidate_final(self) -> None:
 

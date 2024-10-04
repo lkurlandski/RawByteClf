@@ -33,24 +33,20 @@ else:
 # pylint: enable=wrong-import-position
 
 from src.cfg import OUTPUT_PATH
+from src.enums import (
+    BitsInByte,
+    CompressionAlgorithm,
+    EncryptionAlgorithm,
+    LiftLevel,
+    PackingProtocol,
+    SplitMode,
+    Task,
+    TokenizationAlgorithm,
+    WeightedLossAlgorithm,
+)
 from src.utils import get_highest_path, is_jsonable
 from src.data.labeling import KEYS
 from src.learn.utils import str_or_bool_to_str, float_to_int
-
-
-TASKS = [
-    "clm-sor",
-    "clm-elf",
-    "mlm-sor",
-    "mlm-elf",
-    "clf-bod",
-]
-TASKS.extend([f"clf-sor-{k}" for k in KEYS])
-TASKS.extend([f"clf-elf-{k}" for k in KEYS])
-
-
-def print_options(options: list[str]) -> str:
-    return "One of " + ", ".join([f"`{x}`" for x in options[:-1]]) + f", or {options[-1]}."
 
 
 def str_to_type(s: Optional[Any], t: type) -> Optional[Any]:
@@ -109,77 +105,70 @@ def str_to_probable_type(s: str) -> Optional[str | int | float | bool]:
 class Args:
 
     # Programmatic/implementation
-    root: Path = field(default=OUTPUT_PATH)
-    streaming: bool = field(default=False)
-    exit_after_map: bool = field(default=False)
-    do_tune: bool = field(default=False)
-    do_attribute: bool = field(default=False)
+    root: Path            = field(default=OUTPUT_PATH)
+    streaming: bool       = field(default=False)
+    exit_after_map: bool  = field(default=False)
+    do_tune: bool         = field(default=False)
+    do_attribute: bool    = field(default=False)
     skip_eval_check: bool = field(default=False)
+    dataset_backend: str  = field(default="PT")
     auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
-    dataset_backend: str = field(default="PT")
 
     # Architecture
-    model_name_or_path: str = field(default="mamba")
+    model_name_or_path: str          = field(default="mamba")
     arch_config_file: Optional[Path] = field(default=None)
-    arch_config: Optional[str] = field(default=None)
+    arch_config: Optional[str]       = field(default=None)
 
     # Data/Representation
-    max_length: int = field(default=4096)
-    data_read_bytes: Optional[int] = field(default=None)
-    packing_protocol: str = field(default="Any")
-    representation: int = field(default=8)
-    lift_level: str = field(default="raw")
-    algorithm: str = field(default="wdl")
-    vocab_size: Optional[int] = field(default=None)
-    compression_level: int = field(default=9)
+    max_length: Optional[int]                             = field(default=None)
+    data_read_bytes: Optional[int]                        = field(default=None)
+    packing_protocol: PackingProtocol                     = field(default=PackingProtocol.ANY)
+    bits_in_byte: BitsInByte                              = field(default=BitsInByte.EIGHT)
+    lift_level: LiftLevel                                 = field(default=LiftLevel.RAW)
+    tokenization_algorithm: TokenizationAlgorithm         = field(default=TokenizationAlgorithm.WORDLEVEL)
+    encryption_algorithm: Optional[EncryptionAlgorithm]   = field(default=None)
+    compression_algorithm: Optional[CompressionAlgorithm] = field(default=None)
+    vocab_size: Optional[int]                             = field(default=256)
+    compression_level: int                                = field(default=9)
 
     # Training/Stopping
-    weighted_loss: Optional[str] = field(default=None)
-    beta: Optional[float] = field(default=None)
-    early_stopping: bool = field(default=False)
-    early_stopping_patience: int = field(default=1)
-    early_stopping_threshold: float = field(default=0.0)
+    weighted_loss: Optional[WeightedLossAlgorithm]    = field(default=None)
+    beta: Optional[float]                             = field(default=None)
+    early_stopping: bool                              = field(default=False)
+    early_stopping_patience: int                      = field(default=1)
+    early_stopping_threshold: float                   = field(default=0.0)
 
     # Task-specific
-    task: str = field(default="clf-bod")
-    depth: int = field(default=1)
-    split_mode: Optional[str] = field(default="random")
-    tr_size: Optional[float] = field(default=None)
-    vl_size: Optional[float] = field(default=None)
-    ts_size: Optional[float] = field(default=None)
-    min_freq: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
-    top_k: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    task: Task                          = field(default=Task.CLM)
+    split_mode: Optional[str]           = field(default=SplitMode.RANDOM)
+    tr_size: Optional[float]            = field(default=None)
+    vl_size: Optional[float]            = field(default=None)
+    ts_size: Optional[float]            = field(default=None)
+    min_freq: Optional[str]             = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    top_k: Optional[str]                = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
     tr_samples_per_class: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
-    max_imbalance_ratio: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    max_imbalance_ratio: Optional[str]  = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
 
     # Finetuning
-    pretraining_task: Optional[str] = field(default=None)
-    pretraining_checkpoint: str = field(default="-1")
-    ft_freeze_positional_embeddings: bool = field(default=False)
-    ft_duplicate_positional_embeddings: bool = field(default=False)
-    ft_initialize_positional_embeddings: bool = field(default=False)
+    pretraining_task: Optional[Task]          = field(default=None)
+    pretraining_checkpoint: str               = field(default="-1")   # We use str to allow for an index or a path
 
     def __post_init__(self) -> None:
-        # Simple type conversions from string into the appropriate type.
-        self.top_k = str_to_int(self.top_k)
-        self.min_freq = str_to_int(self.min_freq)
+        self.top_k                = str_to_int(self.top_k)
+        self.min_freq             = str_to_int(self.min_freq)
         self.tr_samples_per_class = str_to_int(self.tr_samples_per_class)
-        self.max_imbalance_ratio = str_to_int(self.max_imbalance_ratio)
+        self.max_imbalance_ratio  = str_to_int(self.max_imbalance_ratio)
 
-        self.ft_freeze_positional_embeddings = str_to_bool(self.ft_freeze_positional_embeddings)
-        self.ft_duplicate_positional_embeddings = str_to_bool(self.ft_duplicate_positional_embeddings)
-        self.ft_initialize_positional_embeddings = str_to_bool(self.ft_initialize_positional_embeddings)
-        self.streaming = str_to_bool(self.streaming)
-        self.exit_after_map = str_to_bool(self.exit_after_map)
-        self.do_tune = str_to_bool(self.do_tune)
-        self.do_attribute = str_to_bool(self.do_attribute)
+        self.streaming       = str_to_bool(self.streaming)
+        self.exit_after_map  = str_to_bool(self.exit_after_map)
+        self.do_tune         = str_to_bool(self.do_tune)
+        self.do_attribute    = str_to_bool(self.do_attribute)
         self.skip_eval_check = str_to_bool(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
 
-        self.pretraining_task = str_to_str(self.pretraining_task)
-        if self.pretraining_checkpoint.strip().lstrip("-").isdigit():
-            self.pretraining_checkpoint = int(self.pretraining_checkpoint)
-        self.weighted_loss = str_to_str(self.weighted_loss)
+        self.pretraining_task       = str_to_str(self.pretraining_task)
+        self.pretraining_checkpoint = int(self.pretraining_checkpoint) if self.pretraining_checkpoint.strip().lstrip("-").isdigit() else self.pretraining_checkpoint
+        self.weighted_loss          = str_to_str(self.weighted_loss)
 
         # Parse the architecture configuration from JSON or from a file.
         if self.arch_config_file and self.arch_config:
@@ -206,14 +195,9 @@ class Args:
 
         # Set dependent default values.
         if self.data_read_bytes is None:
-            self.data_read_bytes = int(self.max_length * self.representation // 8)
-
-        self.packing_protocol = self.packing_protocol.lower()
-        if self.packing_protocol not in ("yes", "no", "unk", "any"):
-            raise ValueError(f"packing_protocol must be one of 'yes', 'no', 'unk' or 'any'. Got {self.packing_protocol=}")
-
-        if self.split_mode not in ("random", "temporal"):
-            raise ValueError(f"split_mode must be one of 'random' or 'temporal'. Got {self.split_mode=}")
+            self.data_read_bytes = int(self.max_length * self.bits_in_byte // 8)
+        if self.vocab_size is None:
+            self.vocab_size = 2 ** self.bits_in_byte
 
 
 class OutputHelper:
@@ -256,23 +240,17 @@ class OutputHelper:
         self,
         root: Path,
         *,
-        packing_protocol: str,
-        representation: int,
-        lift_level: str,
-        algorithm: str,
-        vocab_size: Optional[int],
+        packing_protocol: PackingProtocol,
+        bits_in_byte: BitsInByte,
+        lift_level: LiftLevel,
+        tokenization_algorithm: TokenizationAlgorithm,
+        vocab_size: int,
         max_length: int,
         model_name_or_path: str,
         arch_config: Optional[dict],
-        task: str,
-        split_mode: Literal["random", "temporal"],
-        tr_size: int | float,
-        weighted_loss: Optional[str],
-        depth: int,
-        tr_samples_per_class: Optional[int],
-        min_freq: Optional[int],
-        top_k: Optional[int],
-        max_imbalance_ratio: Optional[int],
+        task: Task,
+        split_mode: SplitMode,
+        weighted_loss: Optional[WeightedLossAlgorithm],
         trainer_config: Optional[dict],
     ) -> None:
 
@@ -289,10 +267,11 @@ class OutputHelper:
             self.model_name = model_name_or_path
 
         self._meta_args = [
-            f"packing_protocol--{packing_protocol}",
-            f"representation--{representation}",
-            f"algorithm--{algorithm}",
-            f"vocab_size--{vocab_size if vocab_size is not None else 2 ** representation}",
+            f"lift_level--{lift_level.value}"
+            f"packing_protocol--{packing_protocol.value}",
+            f"bits_in_byte--{bits_in_byte.value}",
+            f"tokenization_algorithm--{tokenization_algorithm.value}",
+            f"vocab_size--{vocab_size}",
             f"max_length--{max_length if max_length is not None else 'None'}",
         ]
 
@@ -300,22 +279,7 @@ class OutputHelper:
         self._model_args.extend([f"{k}--{v}" for k, v in arch_config.items()])
 
         # Experiment hyperparameters
-        self._task_args = [f"task--{task}", f"weighted_loss--{weighted_loss}", f"split_mode--{split_mode}"]
-        if task[0:3] == "clf":
-            self._task_args.extend([
-                f"tr_size--{tr_size}",  # should be None if not doing base classification
-                f"tr_samples_per_class--{tr_samples_per_class}",  # should be None if not doing few-shot
-                f"top_k--{top_k}",
-                f"min_freq--{min_freq}",
-                f"max_imbalance_ratio--{max_imbalance_ratio}",
-            ])
-        elif task[0:3] in ("mlm", "clm"):
-            self._task_args.extend([
-                f"tr_size--{tr_size}",
-                f"depth--{depth}",
-            ])
-        else:
-            raise ValueError(f"Unknown task: {task}")
+        self._task_args = [f"task--{task.value}", f"weighted_loss--{weighted_loss}", f"split_mode--{split_mode}"]
 
         if "world_size" not in trainer_config:
             raise KeyError("world_size not found in trainer_config.")

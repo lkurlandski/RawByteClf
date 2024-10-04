@@ -10,19 +10,16 @@ from pathlib import Path
 import sys
 from typing import Literal
 
-
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
 from src.cfg import System, SYSTEM
+from src.enums import DatasetName
 
 
-if SYSTEM == System.ARMITAGE or SYSTEM == System.LAB:
+if SYSTEM == System.ARMITAGE:
     DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
+elif SYSTEM == System.LAB:
+    DATASETS_PATH = Path("/media/lk3591/easystore/datasets/")
 elif SYSTEM == System.RC:
     DATASETS_PATH = Path("/shared/rc/admalware")
-else:
-    raise ValueError(f"{SYSTEM=}")
 
 ASSEMBLAGE_PATH = DATASETS_PATH / "Assemblage"
 BODMAS_PATH = DATASETS_PATH / "BODMAS"
@@ -60,8 +57,10 @@ ELF_CLASSIFICATION_DATASETS = ("malware_bazaar_elf", "virus_share_elf", "virus_t
 ELF_LABEL_CACHE_DIR = Path("./cache") / "labels" / "elf"
 
 TIMESTAMPS_FILES = {
-    "bodmas_pe": BODMAS_PATH / "timestamps.json",
-    "sorel_pe": SOREL_PATH / "timestamps.json",
+    DatasetName.ASSEMBLAGE: ASSEMBLAGE_PATH / "timestamps.json",
+    DatasetName.BODMAS:     BODMAS_PATH     / "timestamps.json",
+    DatasetName.SOREL:      SOREL_PATH      / "timestamps.json",
+    DatasetName.WINDOWS:    WINDOWS_PATH    / "timestamps.json",
 }
 
 DATASET_NAMES = [
@@ -156,3 +155,10 @@ SOREL_PREFIX = "09-DEC-2020/binaries/"
 MALWARE_BAZAAR_URL = "https://mb-api.abuse.ch/api/v1/"
 
 MAX_SHARD_SIZE = "1GB"  # MUST BE AN INTEGER FOLLOWED BY A UNIT (e.g. 1GB, 500MB, 100KB)
+
+VALID_TIMESTAMP_RANGES = {
+    DatasetName.ASSEMBLAGE : (0, 1713153600), # VALID=(01-01-1970 - 04-14-2024) -- PRESENT=(09-13-2012 - 10-06-2023)
+    DatasetName.BODMAS     : (0, 1601524800), # VALID=(01-01-1970 - 10-01-2020) -- PRESENT=(08-29-2019 - 09-30-2020)
+    DatasetName.SOREL      : (0, 1554955200), # VALID=(01-01-1970 - 04-11-2019) -- PRESENT=(01-01-1970 - 02-07-2106)
+    DatasetName.WINDOWS    : (0, 1672549200), # VALID=(01-01-1970 - 01-01-2023) -- PRESENT=(01-01-1970 - 02-04-2106)
+}
