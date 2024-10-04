@@ -1538,7 +1538,13 @@ def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
     return get_materials_esp_lm(lift_level)
 
 
-def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
+def get_materials_esp_det(
+    lift_level: LiftLevel,
+    tr_size: float = 0.75,
+    vl_size: float = 0.25,
+    ts_size: float = 0.00,
+    ratio: float   = 0.25,
+) -> Materials:
 
     # Due to the way the data is distributed temporally, spacially biasing the data
     # before the train test split is formed can result in individual splits with
@@ -1550,13 +1556,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         BEFORE = "bef"
         AFTER  = "aft"
 
-    WHEN_TO_BIAS       = WhenToBiasSpacially.AFTER
-    PERCENTAGE_MALWARE = 0.25
-
-    TR_SIZE = 0.75
-    VL_SIZE = 0.25
-    TS_SIZE = 0.00
-
+    WHEN_TO_BIAS    = WhenToBiasSpacially.AFTER
     TIMESTAMP_EARLY = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
     TIMESTAMP_LATE  = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
 
@@ -1646,29 +1646,29 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
             files_and_labels[f] = k
 
     if WHEN_TO_BIAS == WhenToBiasSpacially.BEFORE:
-        print(f"\tSpacially biasing the entire corpus to {PERCENTAGE_MALWARE}")
+        print(f"\tSpacially biasing the entire corpus to {ratio}")
         print(f"\t\tdist = {Counter(files_and_labels.values())} --> ", end=" ")
-        files_and_labels = spacially_bias(files_and_labels, PERCENTAGE_MALWARE, minority_class="mal")
+        files_and_labels = spacially_bias(files_and_labels, ratio, minority_class="mal")
         print(f"{Counter(files_and_labels.values())}")
 
     # Get the dataset materials.
     print("\tAcquiring raw materials.")
     materials = _get_materials_clf(
         files_and_labels=files_and_labels,
-        tr_size=TR_SIZE,
-        vl_size=VL_SIZE,
-        ts_size=TS_SIZE,
+        tr_size=tr_size,
+        vl_size=vl_size,
+        ts_size=ts_size,
         must_exist=False,
         split_mode=SplitMode.TEMPORAL_ABSOLUTE,
         timestamps_file=list(timestamps_files.values()),
     )
 
     if WHEN_TO_BIAS == WhenToBiasSpacially.AFTER:
-        print(f"\tSpacially biasing each split to {PERCENTAGE_MALWARE}")
+        print(f"\tSpacially biasing each split to {ratio}")
         _value_1 = f"{materials.dist_tr=}"
         _value_2 = f"{materials.dist_vl=}"
         _value_3 = f"{materials.dist_ts=}"
-        materials = materials.spacially_bias(PERCENTAGE_MALWARE, minority_class="mal")
+        materials = materials.spacially_bias(ratio, minority_class="mal")
         print(f"\t\t{_value_1} --> {materials.dist_tr=}")
         print(f"\t\t{_value_2} --> {materials.dist_vl=}")
         print(f"\t\t{_value_3} --> {materials.dist_ts=}")
