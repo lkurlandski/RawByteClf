@@ -1543,7 +1543,8 @@ def get_materials_esp_det(
     tr_size: float = 0.75,
     vl_size: float = 0.25,
     ts_size: float = 0.00,
-    ratio: float   = 0.25,
+    ratio_pre_split: Optional[float] = None,
+    ratio_pos_split: Optional[float] = None,
 ) -> Materials:
 
     # Due to the way the data is distributed temporally, spacially biasing the data
@@ -1552,11 +1553,7 @@ def get_materials_esp_det(
     # splitting results in the number of samples in each split being difficult to
     # set, but this is probably better than having different ratios. The tr/vl/ts
     # sizes need to be tuned to see whats its going to look like after the fact.
-    class WhenToBiasSpacially(Enum):
-        BEFORE = "bef"
-        AFTER  = "aft"
 
-    WHEN_TO_BIAS    = WhenToBiasSpacially.AFTER
     TIMESTAMP_EARLY = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
     TIMESTAMP_LATE  = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
 
@@ -1645,10 +1642,10 @@ def get_materials_esp_det(
         for f in files[dnm]:
             files_and_labels[f] = k
 
-    if WHEN_TO_BIAS == WhenToBiasSpacially.BEFORE:
-        print(f"\tSpacially biasing the entire corpus to {ratio}")
+    if ratio_pre_split is not None:
+        print(f"\tSpacially biasing the entire corpus to {ratio_pre_split}")
         print(f"\t\tdist = {Counter(files_and_labels.values())} --> ", end=" ")
-        files_and_labels = spacially_bias(files_and_labels, ratio, minority_class="mal")
+        files_and_labels = spacially_bias(files_and_labels, ratio_pre_split, minority_class="mal")
         print(f"{Counter(files_and_labels.values())}")
 
     # Get the dataset materials.
@@ -1663,7 +1660,7 @@ def get_materials_esp_det(
         timestamps_file=list(timestamps_files.values()),
     )
 
-    if WHEN_TO_BIAS == WhenToBiasSpacially.AFTER:
+    if ratio_pos_split is not None:
         print(f"\tSpacially biasing each split to {ratio}")
         _value_1 = f"{materials.dist_tr=}"
         _value_2 = f"{materials.dist_vl=}"
