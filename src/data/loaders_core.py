@@ -182,7 +182,7 @@ class Materials:
         if minority_class not in self.label2id:
             raise ValueError(f"{minority_class=}")
         if self.problem_type != "single_label_classification":
-            raise ValueError(f"{self.problem_type=}")
+            raise ValueError("Only binary classification permitted.")
 
         majority_class = unique_value([l for l in self.label2id if l != minority_class])
 
@@ -217,6 +217,48 @@ class Materials:
         self.dist = self.dist_tr | self.dist_vl | self.dist_ts
 
         return self
+
+
+# This is a copy-paste of the above, modified to operate on files_and_labels instead of materials.
+def spacially_bias(
+    files_and_labels: dict[str, str],
+    ratio: float,
+    minority_class: str = "mal",
+    majority_class: str = "ben",
+) -> dict[str, str]:
+
+    files  = np.array(list(files_and_labels.keys()))
+    labels = np.array(list(files_and_labels.values()))
+    dist   = Counter(labels)
+
+    if ratio <= 0.0 or ratio >= 1.0:
+        raise ValueError(f"{ratio=}")
+    if minority_class not in dist:
+        raise ValueError(f"{minority_class=}")
+    if not isinstance(labels[0], (int, str)) or len(dist) != 2:
+        raise ValueError("Only binary classification permitted.")
+
+    majority_class = unique_value([l for l in dist if l != minority_class])
+
+    cur_count  = dist[minority_class]
+    tgt_count  = int((ratio * dist[majority_class]) / (1 - ratio))
+    num_remove = abs(cur_count - tgt_count)
+
+    candidates = np.array([])
+    if tgt_count < cur_count:
+        candidates = np.where(labels == minority_class)[0]
+    elif tgt_count > cur_count:  # remove samples from majority class
+        candidates = np.where(labels == majority_class)[0]
+
+    remove = np.random.choice(candidates, size=num_remove, replace=False)
+
+    if len(np.unique(remove)) != num_remove:
+        raise RuntimeError(f"{len(np.unique(remove))=} != {num_remove}")
+
+    files  = np.delete(files,  remove)
+    labels = np.delete(labels, remove)
+
+    return {file: label for file, label in zip(files, labels)}
 
 
 def is_temporal_classwise(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
@@ -1530,7 +1572,7 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     # Remove files that are identical.
     digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level] for dnm in DatasetName}
     sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
- 
+
     print("Removing files that are duplicates.")
     present = {"ben": set(), "mal": set()}
     for dnm in DatasetName:
@@ -1564,7 +1606,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
         print(f"{len(fs)=}")
         files[dnm] = fs
 
-    # Create file-label map for malware detection.
+    # Create file-label map for malware detection. Remove spacial bias.
+    print("Removing spacial bias.")
     files_and_labels = {}
     for dnm in DatasetName:
         if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
@@ -1575,6 +1618,9 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
             raise ValueError(f"Invalid dataset name: {dnm=}")
         for f in files[dnm]:
             files_and_labels[f] = k
+    print(f"dist = {Counter(files_and_labels.values())} --> ", end="")
+    files_and_labels = spacially_bias(files_and_labels, PERCENTAGE_OF_MALWARE, minority_class="mal")
+    print(f"{Counter(files_and_labels.values())}")
 
     # Get the dataset materials.
     print("Acquiring raw materials.")
@@ -1593,11 +1639,6 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
     print("Verifying temporal bias.")
     assert is_temporal_classwise(materials, list(timestamps_files.values()))
     assert is_temporal_absolute(materials, list(timestamps_files.values()))
-
-    # Add (or remove, depending on your perspective) spacial bias
-    print("Removing spacial bias.")
-    materials = materials.spacially_bias(PERCENTAGE_OF_MALWARE, "mal")
-    print(f"{materials=}")
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
     print("Converting to str | Path to ArchivedFile.")
