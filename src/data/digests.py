@@ -62,9 +62,10 @@ def main():
     print(f"args={pformat(args.__dict__)}")
 
     if args.input.is_dir():
-        archives = sorted(rglob(args.input, "*.zip"))
+        archives = sorted(map(Path, rglob(args.input, "*.zip")))
     else:
         archives = [args.input]
+    print(f"{len(archives)=}")
 
     t_i = time.time()
 
