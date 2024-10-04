@@ -1496,6 +1496,9 @@ def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
 
 
 def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
+    # FIXME: need to integrate the spacial bias before the train test split is formed
+    # FIXME: need to remove files that exist in multiple classes from both classes
+
     PERCENTAGE_OF_MALWARE = 0.25
     TIMESTAMP_RANGES = (
         int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
@@ -1550,9 +1553,8 @@ def get_materials_esp_det(lift_level: LiftLevel) -> Materials:
 
             if d in present[j]:
                 m = f"The same sample belongs to multiple classes! {dnm.value=} {k=} {s=} {d=}"
-                # raise RuntimeError(m)
-                # warnings.warn(m)
-                rm.add(i)  # FIXME: remove the sample from both sets!
+                warnings.warn(m)
+                rm.add(i)
 
             if d in present[k]:
                 rm.add(i)
