@@ -1577,10 +1577,9 @@ def get_materials_esp_det(
         print(f"{len(fs)=} -->", end=" ")
         fs = [f for f in fs if lower <= sha_timestamp_maps[dnm].get(Path(f).stem) <= upper]
         print(f"{len(fs)=}")
-        files[dnm] = sorted(fs)
+        files[dnm] = np.array(fs)
 
     # Remove files that are identical.
-    # FIXME: keep the instance with the earliest timestamp.
     digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level] for dnm in DatasetName}
     sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
 
@@ -1597,7 +1596,11 @@ def get_materials_esp_det(
         else:
             raise ValueError(f"Invalid dataset name: {dnm=}")
 
+        # Sort the files by timestamp, therefore, when we remove duplicates, we keep the earliest.
         fs = files[dnm]
+        ts = np.array([sha_timestamp_maps[dnm][Path(f).stem] for f in fs], dtype=np.int64)
+        idx = np.argsort(ts)
+        fs = fs[idx]
         rm = set()
         print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
 
@@ -1612,9 +1615,9 @@ def get_materials_esp_det(
                 rm.add(i)
             present[k].add(d)
 
-        fs = [f for i, f in enumerate(fs) if i not in rm]
-        print(f"{len(fs)=}")
+        fs = np.delete(fs, list(rm))
         files[dnm] = fs
+        print(f"{len(fs)=}")
 
     if noisy:
         print(f"\tDetected {len(noisy)} non-unique samples leaking across different classes.")
@@ -1626,7 +1629,7 @@ def get_materials_esp_det(
                 d = sha_digest_maps[dnm][s]
                 if d in noisy:
                     rm.add(i)
-            fs = [f for i, f in enumerate(fs) if i not in rm]
+            fs = np.delete(fs, list(rm))
             files[dnm] = fs
             print(f"\t\t{dnm.value}: {len(rm)=}.")
 
