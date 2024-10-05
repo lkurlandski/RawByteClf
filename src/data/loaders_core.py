@@ -1648,9 +1648,9 @@ def get_materials_esp_det(
 
     if ratio_pre_split is not None and ratio_pre_split > 0:
         print(f"\tSpacially biasing the entire corpus to {ratio_pre_split}")
-        print(f"\t\tdist = {Counter(files_and_labels.values())} --> ", end=" ")
+        print(f"\t\tdist = {dict(Counter(files_and_labels.values()))} --> ", end=" ")
         files_and_labels = spacially_bias(files_and_labels, ratio_pre_split, minority_class="mal")
-        print(f"{Counter(files_and_labels.values())}")
+        print(f"{dict(Counter(files_and_labels.values()))}")
 
     # Get the dataset materials.
     print("\tAcquiring raw materials.")
