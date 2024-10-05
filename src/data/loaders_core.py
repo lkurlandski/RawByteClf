@@ -1571,7 +1571,7 @@ def get_materials_esp_det(
     for dnm in DatasetName:
         lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_EARLY)
         upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_LATE)
-        fs = [f for f, _ in get_data_from_archives(archives[dnm], names=True, contents=False)]
+        fs = [f for f, _ in tqdm(get_data_from_archives(archives[dnm], names=True, contents=False), leave=False)]
         print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
         fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
         print(f"{len(fs)=} -->", end=" ")
@@ -1580,6 +1580,7 @@ def get_materials_esp_det(
         files[dnm] = sorted(fs)
 
     # Remove files that are identical.
+    # FIXME: keep the instance with the earliest timestamp.
     digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level] for dnm in DatasetName}
     sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
 
@@ -1642,7 +1643,7 @@ def get_materials_esp_det(
         for f in files[dnm]:
             files_and_labels[f] = k
 
-    if ratio_pre_split is not None:
+    if ratio_pre_split is not None and ratio_pre_split > 0:
         print(f"\tSpacially biasing the entire corpus to {ratio_pre_split}")
         print(f"\t\tdist = {Counter(files_and_labels.values())} --> ", end=" ")
         files_and_labels = spacially_bias(files_and_labels, ratio_pre_split, minority_class="mal")
@@ -1660,20 +1661,22 @@ def get_materials_esp_det(
         timestamps_file=list(timestamps_files.values()),
     )
 
-    if ratio_pos_split is not None:
-        print(f"\tSpacially biasing each split to {ratio}")
+    if ratio_pos_split is not None and ratio_pos_split > 0:
+        print(f"\tSpacially biasing each split to {ratio_pos_split}")
         _value_1 = f"{materials.dist_tr=}"
         _value_2 = f"{materials.dist_vl=}"
         _value_3 = f"{materials.dist_ts=}"
-        materials = materials.spacially_bias(ratio, minority_class="mal")
+        materials = materials.spacially_bias(ratio_pos_split, minority_class="mal")
         print(f"\t\t{_value_1} --> {materials.dist_tr=}")
         print(f"\t\t{_value_2} --> {materials.dist_vl=}")
         print(f"\t\t{_value_3} --> {materials.dist_ts=}")
 
     # Verify that the temporal split was formed correctly.
     print("\tVerifying temporal bias.")
-    assert is_temporal_classwise(materials, list(timestamps_files.values()))
-    assert is_temporal_absolute(materials, list(timestamps_files.values()))
+    if not is_temporal_classwise(materials, list(timestamps_files.values())):
+        raise RuntimeError("Materials are not class-wise temporal.")
+    if not is_temporal_absolute(materials, list(timestamps_files.values())):
+        raise RuntimeError("Materials are not absolutely-temporal.")
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
     print("\tConverting to ArchivedFile.")
