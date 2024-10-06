@@ -10,7 +10,9 @@ import os
 from pathlib import Path
 from pprint import pformat
 import re
+import shutil
 import sys
+from tempfile import NamedTemporaryFile
 import time
 from typing import Callable
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -24,12 +26,17 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from src.cfg import System, SYSTEM
+from src.enums import LiftLevel
+from src.utils import rglob
+from src.data.utils import get_data_from_archives
 
 
 if SYSTEM == System.LAB:
     ROOT = Path("/media/lk3591/easystore/datasets")
 elif SYSTEM == System.RC:
     ROOT = Path("/shared/rc/admalware/")
+elif SYSTEM == System.ARMITAGE:
+    ROOT = Path("/home/lk3591/Documents/datasets")
 else:
     raise NotImplementedError()
 
@@ -61,9 +68,8 @@ def _run(f: Path, f_out: Path, func: Callable[[bytes, str], bytes], disable_tqdm
 
 
 def run(path: Path, out: Path, func: Callable[[bytes, str], bytes]) -> None:
-    files = sorted(path.rglob("*.zip"))
+    files = sorted(map(Path, rglob(path, "*.zip")))
     outfiles = [out / f.name for f in files]
-
 
     if NUM_WORKERS is not None and NUM_WORKERS > 1:
         with mp.Pool(NUM_WORKERS) as pool:
@@ -139,30 +145,98 @@ def dec(dataset: str) -> None:
     run(path, out, dec_func)
 
 
+def _purge(file: Path, shas: list[str]) -> int:
+    shas = set(shas)
+    with NamedTemporaryFile() as file_tmp:
+        with ZipFile(file, "r") as zp_in, ZipFile(file_tmp.name, "w") as zp_out:
+            count = len(zp_in.namelist())
+            for name in zp_in.namelist():
+                if name.split(".")[0] not in shas:
+                    buffer = zp_in.read(name)
+                    zp_out.writestr(name, buffer, ZIP_DEFLATED, 9)
+                    count -= 1
+
+        file.unlink()
+        shutil.copy2(file_tmp.name, file)
+
+    return count
+
+
+def purge(dataset: str, lift_level: str, shas: list[str]) -> None:
+    shas = sorted(shas)
+    path = ROOTS[dataset] / OUT / lift_level
+    files = sorted(map(Path, rglob(path, "*.zip")))
+    iterable = [(f, [s for s in shas if s.startswith(f.stem)]) for f in files]
+    if NUM_WORKERS is not None and NUM_WORKERS > 1:
+        with mp.Pool(NUM_WORKERS) as pool:
+            counts = pool.starmap(_purge, iterable)
+    else:
+        counts = []
+        for f, s in tqdm(iterable):
+            count = _purge(f, s)
+            counts.append(count)
+
+    print(f"{dataset} {lift_level}: purged {sum(counts)} files.")
+
+
+def sync(dataset: str) -> None:
+    sha_inter = set()
+    sha_union = set()
+    for lift_level in ["raw", "dis", "dec"]:
+        path = ROOTS[dataset] / OUT / lift_level
+        files = sorted(map(Path, rglob(path, "*.zip")))
+        shas = [name.split(".")[0] for name, _ in get_data_from_archives(files, contents=False)]
+        sha_union.update(shas)
+        sha_inter = sha_inter.intersection(shas) if sha_inter else set(shas)
+
+    shas_to_purge = list(sha_union - sha_inter)
+    for lift_level in ["raw", "dis", "dec"]:
+        purge(dataset, lift_level, shas_to_purge)
+
+
 def main():
     parser = ArgumentParser()
+    parser.add_argument("--process", action="store_true", help="Process the data.")
+    parser.add_argument("--purge", action="store_true", help="Purge the data.")
+    parser.add_argument("--sync", action="store_true", help="Syncronize the data.")
     parser.add_argument("--dataset", type=str, choices=["sorel_pe", "bodmas_pe", "assemblage_pe", "windows_pe"], required=True)
-    parser.add_argument("--lift_level", type=str, choices=["raw", "dis", "dec"], required=True)
+    parser.add_argument("--lift_level", type=str, default=None, choices=["raw", "dis", "dec"])
+    parser.add_argument("--purge_file", type=Path, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     args = parser.parse_args()
 
     print(f"args={pformat(args.__dict__)}")
+
+    if not any([args.process, args.purge, args.sync]):
+        raise ValueError("No action specified.")
+    if sum(bool(a) for a in [args.process, args.purge, args.sync]) != 1:
+        raise ValueError("Only one action can be specified.")
+    if args.purge and not args.purge_file:
+        raise ValueError("Purge action requires a purge file.")
+    if not args.lift_level and not args.sync:
+        raise ValueError("Lift level must be specified for this action.")
 
     global NUM_WORKERS
     NUM_WORKERS = args.num_workers
 
     t_i = time.time()
 
-    if args.lift_level == "raw":
-        raw(args.dataset)
-    if args.lift_level == "dis":
-        dis(args.dataset)
-    if args.lift_level == "dec":
-        dec(args.dataset)
+    if args.process:
+        if args.lift_level == "raw":
+            raw(args.dataset)
+        if args.lift_level == "dis":
+            dis(args.dataset)
+        if args.lift_level == "dec":
+            dec(args.dataset)
+
+    if args.purge:
+        purge(args.dataset, args.lift_level, args.purge_file.read_text().splitlines())
+    if args.sync:
+        sync(args.dataset)
 
     t_f = time.time()
 
-    print(f"Finished. Time Elpased: {t_f - t_i:.2f}s")
+    print(f"Finished preprocessing. Time Elpased: {t_f - t_i:.2f}s")
 
 
 if __name__ == "__main__":
