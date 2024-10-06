@@ -212,7 +212,8 @@ def main():
     if sum(bool(a) for a in [args.process, args.purge, args.sync]) != 1:
         raise ValueError("Only one action can be specified.")
     if args.purge and not args.purge_file:
-        raise ValueError("Purge action requires a purge file.")
+        args.purge_file = ROOTS[args.dataset] / "purge.txt"
+        print(f"Using default {args.purge_file=}")
     if not args.lift_level and not args.sync:
         raise ValueError("Lift level must be specified for this action.")
 
@@ -236,7 +237,7 @@ def main():
 
     t_f = time.time()
 
-    print(f"Finished preprocessing. Time Elpased: {t_f - t_i:.2f}s")
+    print(f"Finished. Time Elpased: {t_f - t_i:.2f}s")
 
 
 if __name__ == "__main__":
