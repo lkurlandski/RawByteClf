@@ -1547,6 +1547,7 @@ def get_materials_esp_det(
     ts_size: float = 0.00,
     ratio_pre_split: Optional[float] = None,
     ratio_pos_split: Optional[float] = None,
+    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
 ) -> Materials:
     # pylint: disable=multiple-statements
@@ -1561,7 +1562,8 @@ def get_materials_esp_det(
     TIMESTAMP_EARLY = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
     TIMESTAMP_LATE  = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
 
-    lift_level = LiftLevel(lift_level)
+    lift_level     = LiftLevel(lift_level)
+    lift_level_ddp = LiftLevel(lift_level_ddp)
 
     # Get data for each dataset.
     timestamps_files   = {dnm: TIMESTAMPS_FILES[dnm] for dnm in DatasetName}
@@ -1584,7 +1586,7 @@ def get_materials_esp_det(
         files[dnm] = np.array(fs)
 
     # Remove files that are identical.
-    digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level] for dnm in DatasetName}
+    digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level_ddp] for dnm in DatasetName}
     sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
 
     print("\tRemoving files that are duplicates.")
@@ -1735,10 +1737,12 @@ def get_materials_esp_beh(
     tr_size: float = 0.75,
     vl_size: float = 0.25,
     ts_size: float = 0.00,
+    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
 ) -> Materials:
 
-    lift_level = LiftLevel(lift_level)
-    dnm        = DatasetName.SOREL
+    lift_level     = LiftLevel(lift_level)
+    lift_level_ddp = LiftLevel(lift_level_ddp)
+    dnm            = DatasetName.SOREL
 
     sha_label_map = get_sorel_sha_label_map("beh")
     directory = Path(f"./data/{dnm.value}/{lift_level.value}")
@@ -1752,7 +1756,7 @@ def get_materials_esp_beh(
     print(f"{len(sha_label_map)=}")
 
     # Remove samples that hash to the same digest.
-    digests_file     = DIGESTS_FILES[dnm][lift_level]
+    digests_file     = DIGESTS_FILES[dnm][lift_level_ddp]
     sha_digest_map   = get_sha_digest_map(digests_file)
     digest_label_map = defaultdict(Counter)
     rm = set()
