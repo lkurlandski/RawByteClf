@@ -37,8 +37,11 @@ from src.enums import CompressionAlgorithm, EncryptionAlgorithm
 
 @contextlib.contextmanager
 def print_context(suppress: bool = False):
-    with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+    if not suppress:
         yield
+    else:
+        with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+            yield
 
 
 def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:
