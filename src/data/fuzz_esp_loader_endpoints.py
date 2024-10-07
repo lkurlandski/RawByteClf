@@ -187,7 +187,7 @@ def get_beh_iterable() -> list[dict[str, Any]]:
     sizes            = list(zip(tr_sizes, vl_sizes))
 
     iterable = []
-    for (tr_size, vl_size), r_pre, r_pos in product(sizes, ratios_pre_split, ratios_pos_split):
+    for tr_size, vl_size in sizes:
         kwds = {
             "lift_level": lift_level,
             "tr_size": tr_size,
@@ -195,6 +195,7 @@ def get_beh_iterable() -> list[dict[str, Any]]:
             "ts_size": ts_size,
             "lift_level_ddp": lift_level_ddp,
         }
+        iterable.append(kwds)
 
     return iterable
 
@@ -215,7 +216,7 @@ def main():
     if args.task == "fam":
         run(get_fam_iterable(), args.root / "fam", get_materials_esp_fam, args.num_workers, args.subset)
     if args.task == "beh":
-        run(get_beh_iterable(), args.root / "beh", get_materials_esp_fam, args.num_workers, args.subset)
+        run(get_beh_iterable(), args.root / "beh", get_materials_esp_beh, args.num_workers, args.subset)
 
 
 if __name__ == "__main__":
