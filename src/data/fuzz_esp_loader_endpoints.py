@@ -10,10 +10,10 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 from pprint import pformat, pprint
-from random import shuffle, seed
+import random
 import sys
 import time
-from typing import Callable
+from typing import Any, Callable, Optional
 
 import numpy as np
 from tqdm import tqdm
@@ -33,19 +33,27 @@ from src.data.loaders_core import (
     get_materials_esp_beh,
 )
 
-seed(0)
 
-
-NUM_WORKERS = None
-SUPPRESS    = True
-DEBUG       = True
+SUPPRESS = True
+DEBUG    = False
 
 
 def round_2(number: float | int) -> float:
     return round(number, 2)
 
 
-def analyze(materials: Materials, binary: bool = False) -> dict[str, float]:
+def concatenate_files(files: list[Path], outfile: Path, unlink: bool = False) -> None:
+    with open(outfile, "w") as fp:
+        for f in files:
+            if f.as_posix() == outfile.as_posix():
+                continue
+            t = f.read_text()
+            fp.write(t)
+            if unlink:
+                f.unlink()
+
+
+def analyze(materials: Materials) -> dict[str, float]:
 
     def f(t: float, b: float) -> float:
         if b == 0:
@@ -64,7 +72,7 @@ def analyze(materials: Materials, binary: bool = False) -> dict[str, float]:
         "p_vl": f(n_vl, n_to),
     }
 
-    if not binary:
+    if len(materials.id2label) > 2:
         return info
 
     n_tr_mal = np.sum(materials.labels["tr"] == materials.label2id["mal"])
@@ -94,7 +102,7 @@ def get_materials_and_log_info(kwds: dict, outdir: Path, get_materials: Callable
         except Exception as err:
             error = err
 
-    result = analyze(materials, True) if materials is not None else str(error)
+    result = analyze(materials) if materials is not None else str(error)
     d = {"kwds": kwds, "results": result}
     s = json.dumps(d)
     with open(outfile, "a") as fp:
@@ -107,14 +115,41 @@ def get_materials_and_log_info(kwds: dict, outdir: Path, get_materials: Callable
     return materials is not None
 
 
-def det():
-    lift_level = "raw"
-    ts_size    = 0.00
+def run(
+    iterable: list,
+    outdir: Path,
+    get_materials: Callable,
+    num_workers: Optional[int] = None,
+    subset: Optional[int] = None,
+) -> None:
+    random.shuffle(iterable)
+    iterable = iterable[0:subset]
 
-    outdir = Path("./output/fuzz/det/")
     outdir.mkdir(exist_ok=True, parents=True)
     for f in outdir.iterdir():
         f.unlink()
+
+    runner = partial(
+        get_materials_and_log_info,
+        get_materials=get_materials,
+        outdir=outdir,
+    )
+
+    print(f"Running {get_materials.__name__} {len(iterable)} times with {num_workers} workers.")
+    if num_workers is not None and num_workers > 1:
+        with mp.Pool(num_workers) as pool:
+            overall = pool.map(runner, iterable)
+    else:
+        overall = [runner(i) for i in tqdm(iterable)]
+    print(f"Finished without error on {sum(overall)} / {len(overall)} runs.")
+
+    concatenate_files(list(outdir.iterdir()), outdir / "result.jsonl", unlink=True)
+
+
+def get_det_iterable() -> list[dict[str, Any]]:
+    lift_level     = "raw"
+    lift_level_ddp = "dec"
+    ts_size        = 0.00
 
     ratios_pre_split = list(map(round_2, np.arange(0.00, 1.00,  0.05).tolist()))
     ratios_pos_split = list(map(round_2, np.arange(0.00, 1.00,  0.05).tolist()))
@@ -131,61 +166,56 @@ def det():
             "ts_size": ts_size,
             "ratio_pre_split": r_pre,
             "ratio_pos_split": r_pos,
+            "lift_level_ddp": lift_level_ddp,
         }
         iterable.append(kwds)
-    shuffle(iterable)
-    if DEBUG:
-        iterable = iterable[0:16]
-        print(f"iterable={pformat(iterable)}")
 
-    runner = partial(
-        get_materials_and_log_info,
-        get_materials=get_materials_esp_det,
-        outdir=outdir,
-    )
-
-    print(f"Running get_materials_esp_det with {len(iterable)} times.")
-    if NUM_WORKERS is not None and NUM_WORKERS > 1:
-        with mp.Pool(NUM_WORKERS) as pool:
-            overall = pool.map(runner, iterable)
-    else:
-        overall = [runner(i) for i in tqdm(iterable)]
-
-    outfile = outdir / "result.jsonl"
-    with open(outfile, "w") as fp:
-        for f in outdir.iterdir():
-            if f.name == outfile.name:
-                continue
-            t = f.read_text()
-            fp.write(t)
-            f.unlink()
-
-    print(f"get_materials_esp_det finished without error on {sum(overall)} / {len(overall)} runs.")
+    return iterable
 
 
-def fam():
-    ...
+def get_fam_iterable() -> list[dict[str, Any]]:
+    raise NotImplementedError()
 
 
-def beh():
-    ...
+def get_beh_iterable() -> list[dict[str, Any]]:
+    lift_level     = "raw"
+    lift_level_ddp = "dec"
+    ts_size        = 0.00
+ 
+    tr_sizes         = list(map(round_2, np.arange(0.95, 0.50, -0.05).tolist()))
+    vl_sizes         = list(map(round_2, np.arange(0.05, 0.55,  0.05).tolist()))
+    sizes            = list(zip(tr_sizes, vl_sizes))
+
+    iterable = []
+    for (tr_size, vl_size), r_pre, r_pos in product(sizes, ratios_pre_split, ratios_pos_split):
+        kwds = {
+            "lift_level": lift_level,
+            "tr_size": tr_size,
+            "vl_size": vl_size,
+            "ts_size": ts_size,
+            "lift_level_ddp": lift_level_ddp,
+        }
+
+    return iterable
 
 
 def main():
     parser = ArgumentParser()
     parser.add_argument("--task", type=str, choices=["det", "fam", "beh"])
-    parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--num_workers", type=int, default=None)
+    parser.add_argument("--subset", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--root", type=Path, default=Path("./output/fuzz"))
     args = parser.parse_args()
 
-    global NUM_WORKERS
-    NUM_WORKERS = args.num_workers
+    random.seed(args.seed)
 
     if args.task == "det":
-        det()
+        run(get_det_iterable(), args.root / "det", get_materials_esp_det, args.num_workers, args.subset)
     if args.task == "fam":
-        fam()
+        run(get_fam_iterable(), args.root / "fam", get_materials_esp_fam, args.num_workers, args.subset)
     if args.task == "beh":
-        beh()
+        run(get_beh_iterable(), args.root / "beh", get_materials_esp_fam, args.num_workers, args.subset)
 
 
 if __name__ == "__main__":
