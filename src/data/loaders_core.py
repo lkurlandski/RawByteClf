@@ -32,7 +32,7 @@ from sklearn.utils import shuffle
 from tqdm import tqdm
 
 from src.enums import LiftLevel, SplitMode, DatasetName
-from src.utils import get_max_keys_from_dict, flatten, get_unique_files, rglob, unique_value
+from src.utils import get_max_keys_from_dict, flatten, get_unique_files, rglob, unique_value, print_context
 from src.data.cfg import (
     SOREL_PATH,
     BODMAS_PATH,
@@ -979,7 +979,7 @@ def get_bodmas_file_label_map() -> dict[os.PathLike, str]:
     return files_and_labels
 
 
-def _get_sorel_file_label_map() -> dict[os.PathLike, Label]:
+def _get_sorel_sha_label_map() -> dict[str, Label]:
 
     filter_args = FilterArgs(
         class_=(None, 2),
@@ -996,21 +996,23 @@ def _get_sorel_file_label_map() -> dict[os.PathLike, Label]:
         SOREL_AVCLASS_FAMILY_CACHE,
         filter_args
     )()
-    files_and_labels = {
-        str(f): labeler.data.get(f.stem) for f in DATASET_TO_FILES["binaries"]["sorel_pe"]()
-    }
-    files_and_labels = {
-        f: l for f, l in files_and_labels.items() if l is not None and l.is_labeled
-    }
-    return files_and_labels
+    return {sha : label for sha, label in labeler.data.items() if label is not None and label.is_labeled}
 
 
-def get_sorel_file_label_map(name: str) -> dict[os.PathLike, tuple[str]]:
+def get_sorel_sha_label_map(name: str) -> dict[str, tuple[str]]:
 
-    files_and_labels = _get_sorel_file_label_map()
-    files_and_labels = {f: getattr(l, name) for f, l in files_and_labels.items()}
-    files_and_labels = {f: l for f, l in files_and_labels.items() if l is not None}
-    return files_and_labels
+    shas_and_labels = _get_sorel_sha_label_map()
+    shas_and_labels = {f: getattr(l, name) for f, l in shas_and_labels.items()}
+    shas_and_labels = {f: l for f, l in shas_and_labels.items() if l is not None}
+    return shas_and_labels
+
+
+def get_sorel_file_label_map(name: str) -> dict[os.PathLike, Label]:
+
+    shas_and_labels = get_sorel_sha_label_map(name)
+    files = DATASET_TO_FILES["binaries"]["sorel_pe"]()
+    files_and_labels = {str(f): shas_and_labels.get(f.stem) for f in files}
+    return {f: l for f, l in files_and_labels.items() if l is not None}
 
 
 def _get_elf_file_label_map() -> dict[os.PathLike, Label]:
@@ -1399,7 +1401,7 @@ def get_materials_pretrain_sorel(
     files = list(map(lambda p: p.as_posix(), DATASET_TO_FILES["binaries"]["sorel_pe"]()))
     remove = []
     if remove_clf_files:
-        files_and_labels = _get_sorel_file_label_map() | get_bodmas_file_label_map()
+        files_and_labels = _get_sorel_sha_label_map() | get_bodmas_file_label_map()
         remove = [os.path.basename(f).split(".")[0] for f in files_and_labels.keys()]
     return _get_materials_pretrain(
         files, tr_size, vl_size, ts_size, packing_root=PACKING_ROOTS["sorel_pe"], remove=remove, **kwds
@@ -1545,7 +1547,9 @@ def get_materials_esp_det(
     ts_size: float = 0.00,
     ratio_pre_split: Optional[float] = None,
     ratio_pos_split: Optional[float] = None,
+    verbose: bool = True,
 ) -> Materials:
+    # pylint: disable=multiple-statements
 
     # Due to the way the data is distributed temporally, spacially biasing the data
     # before the train test split is formed can result in individual splits with
@@ -1572,11 +1576,11 @@ def get_materials_esp_det(
         lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_EARLY)
         upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_LATE)
         fs = [f for f, _ in tqdm(get_data_from_archives(archives[dnm], names=True, contents=False), leave=False)]
-        print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
+        if verbose: print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
         fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
-        print(f"{len(fs)=} -->", end=" ")
+        if verbose: print(f"{len(fs)=} -->", end=" ")
         fs = [f for f in fs if lower <= sha_timestamp_maps[dnm].get(Path(f).stem) <= upper]
-        print(f"{len(fs)=}")
+        if verbose: print(f"{len(fs)=}")
         files[dnm] = np.array(fs)
 
     # Remove files that are identical.
@@ -1602,7 +1606,7 @@ def get_materials_esp_det(
         idx = np.argsort(ts)
         fs = fs[idx]
         rm = set()
-        print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
+        if verbose: print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
 
         for i, f in enumerate(fs):
             s = Path(f).stem
@@ -1617,10 +1621,10 @@ def get_materials_esp_det(
 
         fs = np.delete(fs, list(rm))
         files[dnm] = fs
-        print(f"{len(fs)=}")
+        if verbose: print(f"{len(fs)=}")
 
     if noisy:
-        print(f"\tDetected {len(noisy)} non-unique samples leaking across different classes.")
+        if verbose: print(f"\tDetected {len(noisy)} non-unique samples leaking across different classes.")
         for dnm in DatasetName:
             fs = files[dnm]
             rm = set()
@@ -1648,9 +1652,9 @@ def get_materials_esp_det(
 
     if ratio_pre_split is not None and ratio_pre_split > 0:
         print(f"\tSpacially biasing the entire corpus to {ratio_pre_split}")
-        print(f"\t\tdist = {dict(Counter(files_and_labels.values()))} --> ", end=" ")
+        if verbose: print(f"\t\tdist = {dict(Counter(files_and_labels.values()))} --> ", end=" ")
         files_and_labels = spacially_bias(files_and_labels, ratio_pre_split, minority_class="mal")
-        print(f"{dict(Counter(files_and_labels.values()))}")
+        if verbose: print(f"{dict(Counter(files_and_labels.values()))}")
 
     # Get the dataset materials.
     print("\tAcquiring raw materials.")
@@ -1670,9 +1674,9 @@ def get_materials_esp_det(
         _value_2 = f"{materials.dist_vl=}"
         _value_3 = f"{materials.dist_ts=}"
         materials = materials.spacially_bias(ratio_pos_split, minority_class="mal")
-        print(f"\t\t{_value_1} --> {materials.dist_tr=}")
-        print(f"\t\t{_value_2} --> {materials.dist_vl=}")
-        print(f"\t\t{_value_3} --> {materials.dist_ts=}")
+        if verbose: print(f"\t\t{_value_1} --> {materials.dist_tr=}")
+        if verbose: print(f"\t\t{_value_2} --> {materials.dist_vl=}")
+        if verbose: print(f"\t\t{_value_3} --> {materials.dist_ts=}")
 
     # Verify that the temporal split was formed correctly.
     print("\tVerifying temporal bias.")
@@ -1682,11 +1686,16 @@ def get_materials_esp_det(
         raise RuntimeError("Materials are not absolutely-temporal.")
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
-    print("\tConverting to ArchivedFile.")
+    if verbose: print("\tConverting to ArchivedFile.")
     file_to_archive_map = {}
-    for dns in DatasetName:
-        for f in files[dns]:
-            file_to_archive_map[f] = archives[dns]
+    for dnm in DatasetName:
+        for f in files[dnm]:
+            for a in archives[dnm]:
+                if f.startswith(a.stem):
+                    file_to_archive_map[f] = a
+                    break
+            else:
+                raise RuntimeError(f"Could not find the archive containing {f=} where {archives[dnm]=}")
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
 
     print("\tComputing final ratios.")
@@ -1706,17 +1715,86 @@ def get_materials_esp_det(
     n_ts_mal = np.sum(materials.labels["ts"] == materials.label2id["mal"])
     n_ts_ben = np.sum(materials.labels["ts"] == materials.label2id["ben"])
 
-    print(f"\t\tto: tr-vl-ts = {fmt(n_tr, n_to)} {fmt(n_vl, n_to)} {fmt(n_ts, n_to)}")
-    print(f"\t\ttr: mal-ben  = {fmt(n_tr_mal, n_tr)} {fmt(n_tr_ben, n_tr)}")
-    print(f"\t\tvl: mal-ben  = {fmt(n_vl_mal, n_vl)} {fmt(n_vl_ben, n_vl)}")
-    print(f"\t\tts: mal-ben  = {fmt(n_ts_mal, n_ts)} {fmt(n_ts_ben, n_ts)}")
+    if verbose: print(f"\t\tto: tr-vl-ts = {fmt(n_tr, n_to)} {fmt(n_vl, n_to)} {fmt(n_ts, n_to)}")
+    if verbose: print(f"\t\ttr: mal-ben  = {fmt(n_tr_mal, n_tr)} {fmt(n_tr_ben, n_tr)}")
+    if verbose: print(f"\t\tvl: mal-ben  = {fmt(n_vl_mal, n_vl)} {fmt(n_vl_ben, n_vl)}")
+    if verbose: print(f"\t\tts: mal-ben  = {fmt(n_ts_mal, n_ts)} {fmt(n_ts_ben, n_ts)}")
 
     return materials
 
 
 def get_materials_esp_fam(lift_level: LiftLevel) -> Materials:
     raise NotImplementedError()
+    # shas_and_labels = get_sorel_sha_label_map("fam")
+    # shas_and_labels = {f: l[0] for f, l in shas_and_labels.items()}
+    # return _get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
 
 
-def get_materials_esp_beh(lift_level: LiftLevel) -> Materials:
-    raise NotImplementedError()
+def get_materials_esp_beh(
+    lift_level: LiftLevel,
+    tr_size: float = 0.75,
+    vl_size: float = 0.25,
+    ts_size: float = 0.00,
+) -> Materials:
+
+    lift_level = LiftLevel(lift_level)
+    dnm        = DatasetName.SOREL
+
+    sha_label_map = get_sorel_sha_label_map("beh")
+    directory = Path(f"./data/{dnm.value}/{lift_level.value}")
+    archives  = sorted(map(Path, rglob(directory, "*.zip", True)))
+
+    files = (f for f, _ in get_data_from_archives(archives, names=True, contents=False))
+    files = (f for f in files if sha_label_map.get(Path(f).stem) is not None)
+    files = np.array(list(tqdm(files, leave=False)))
+    sha_label_map = {Path(f).stem: sha_label_map[Path(f).stem] for f in files}
+    print(f"{len(files)=}")
+    print(f"{len(sha_label_map)=}")
+
+    # Remove samples that hash to the same digest.
+    digests_file     = DIGESTS_FILES[dnm][lift_level]
+    sha_digest_map   = get_sha_digest_map(digests_file)
+    digest_label_map = defaultdict(Counter)
+    rm = set()
+    for i, f in enumerate(files):
+        s = Path(f).stem
+        d = sha_digest_map[s]
+        l = sha_label_map[s]
+        if d in digest_label_map:
+            rm.add(i)
+        digest_label_map[d].update([l])
+    files = np.delete(files, list(rm))
+
+    # Re-label the samples with the most popular label from other samples with the same digest.
+    sha_label_map = {}
+    for f in files:
+        s = Path(f).stem
+        d = sha_digest_map[s]
+        l = max(digest_label_map[d], key=digest_label_map[d].get)
+        sha_label_map[s] = l
+
+    # Get the dataset materials.
+    print("\tAcquiring raw materials.")
+    materials = _get_materials_clf_multilabel(
+        sha_label_map,
+        tr_size,
+        vl_size,
+        ts_size,
+        min_freq=10,
+        max_imbalance_ratio=100,
+        must_exist=False,
+    )
+
+    # Replace the logical files with real ArchivedFile objects that can be accessed.
+    print("\tConverting to ArchivedFile.")
+    file_to_archive_map = {}
+    for f in files:
+        for a in archives:
+            if f.startswith(a.stem):
+                file_to_archive_map[f.split(".")[0]] = a
+                break
+        else:
+            raise RuntimeError(f"Could not find the archive containing {f=} where {archives=}")
+    materials = materials.convert_files_to_archived_file(file_to_archive_map)
+
+    return materials
