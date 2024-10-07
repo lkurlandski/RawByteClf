@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from pprint import pformat, pprint
 import random
+from statistics import mean
 import sys
 import time
 from typing import Any, Callable, Optional
@@ -89,7 +90,8 @@ def analyze(materials: Materials) -> dict[str, float]:
     return info
 
 
-def get_materials_and_log_info(kwds: dict, outdir: Path, get_materials: Callable) -> bool:
+def get_materials_and_log_info(kwds: dict, outdir: Path, get_materials: Callable) -> tuple[bool, float]:
+    t_i = time.time()
     outfile = outdir / f"{os.getpid()}.jsonl"
 
     if not outdir.exists:
@@ -112,7 +114,7 @@ def get_materials_and_log_info(kwds: dict, outdir: Path, get_materials: Callable
         status = "success" if materials is not None else "failure"
         print(f"Processed ({status}) {list(kwds.values())} --> {outfile}")
 
-    return materials is not None
+    return materials is not None, time.time() - t_i
 
 
 def run(
@@ -141,9 +143,14 @@ def run(
             overall = pool.map(runner, iterable)
     else:
         overall = [runner(i) for i in tqdm(iterable)]
-    print(f"Finished without error on {sum(overall)} / {len(overall)} runs.")
+
+    status = [b for b, t in overall]
+    times  = [t for b, t in overall]
+    print(f"Finished without error on {sum(status)} / {len(overall)} runs.")
+    print(f"Mean runtime: {round(mean(times[1:]))} seconds.")
 
     concatenate_files(list(outdir.iterdir()), outdir / "result.jsonl", unlink=True)
+    return overall
 
 
 def get_det_iterable() -> list[dict[str, Any]]:
@@ -181,7 +188,7 @@ def get_beh_iterable() -> list[dict[str, Any]]:
     lift_level     = "raw"
     lift_level_ddp = "dec"
     ts_size        = 0.00
- 
+
     tr_sizes         = list(map(round_2, np.arange(0.95, 0.50, -0.05).tolist()))
     vl_sizes         = list(map(round_2, np.arange(0.05, 0.55,  0.05).tolist()))
     sizes            = list(zip(tr_sizes, vl_sizes))
