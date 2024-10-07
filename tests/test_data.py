@@ -9,8 +9,11 @@ import gzip
 from io import BytesIO
 from itertools import chain
 import lzma
+import math
 import os
 from pathlib import Path
+from pprint import pformat
+import random
 import shutil
 import subprocess
 import sys
@@ -19,9 +22,9 @@ import time
 import unittest
 import zlib
 
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import numpy as np
 import py7zr
 
 from src.data.detect_packing_sorel import PackingMap, unpack
@@ -34,14 +37,19 @@ from src.data.loaders_core import (
     tr_vl_ts_split,
     tr_vl_ts_split_idx_guarentee,
     get_bodmas_file_label_map,
-    _get_sorel_file_label_map,
+    # _get_sorel_file_label_map,
     get_sorel_file_label_map,
     _get_materials_clf,
     _get_materials_clf_multilabel,
     _get_materials_clf_few_shot_learning,
     _get_materials_clf_multilabel_few_shot_learning,
+    spacially_bias,
 )
 from src.data.utils import Decompressor
+
+
+random.seed(0)
+np.random.seed(0)
 
 
 class TestSplitFunctions(unittest.TestCase):
@@ -665,6 +673,118 @@ class Test_GetSorelFileLabelMap(unittest.TestCase):
     def test_vuln(self):
         files_and_labels = self.get_sorel_file_label_map("vuln")
         self.check_file_label_map(files_and_labels, single_label=False)
+
+
+class TestSpacialBiasingMaterials:
+    ...
+
+
+class TestSpacialBiasing(unittest.TestCase):
+
+    num = 65536
+
+    @staticmethod
+    def _get_files_and_label(num: int, p_mal: float) -> dict:
+        if num > 8 ** 8:
+            raise RuntimeError()
+        d = {}
+        for i in range(num):
+            s = f"{i:#010x}"[2:]
+            r = np.random.rand()
+            d[s] = "mal" if r < p_mal else "ben"
+        return d
+
+    @staticmethod
+    def _check(d_i: dict, d_f: dict, ratio: float):
+        assert len(d_f) <= len(d_i)
+        assert set(d_i.keys()).union(set(d_f.keys())) == set(d_i.keys())
+        assert all(d_i[k] == d_f[k] for k in d_f)
+
+        c_i = Counter(d_i.values())
+        c_f = Counter(d_f.values())
+        assert len(c_i) == len(c_f) == 2
+        assert c_i["mal"] == c_f["mal"] or c_i["ben"] == c_f["ben"], f"Biasing lost samples from both classes: {dict(c_i)=} {dict(c_f)=}."
+
+        p_mal_i = c_i["mal"] / len(d_i)
+        p_mal_f = c_f["mal"] / len(d_f)
+        assert math.isclose(p_mal_f, ratio, abs_tol=0.01), f"{p_mal_f=} != {ratio=} ({p_mal_i=})"
+
+    def test_malware_reduction_1(self):
+        p_mal = 0.95
+        ratio = 0.05
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_malware_reduction_2(self):
+        p_mal = 0.85
+        ratio = 0.15
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_malware_reduction_3(self):
+        p_mal = 0.75
+        ratio = 0.25
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_goodware_reduction_1(self):
+        p_mal = 0.05
+        ratio = 0.25
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_goodware_reduction_2(self):
+        p_mal = 0.15
+        ratio = 0.35
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_goodware_reduction_3(self):
+        p_mal = 0.25
+        ratio = 0.45
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_no_reduction_1(self):
+        p_mal = 0.10
+        ratio = 0.10
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_no_reduction_2(self):
+        p_mal = 0.20
+        ratio = 0.20
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_no_reduction_3(self):
+        p_mal = 0.30
+        ratio = 0.30
+        d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+        d_f = spacially_bias(d_i, ratio)
+        TestSpacialBiasing._check(d_i, d_f, ratio)
+
+    def test_fuzzing(self):
+        p_mals = [round(i * 0.01, 2) for i in range(5, 100, 5)]
+        ratios = [round(i * 0.01, 2) for i in range(5, 100, 5)]
+        errors = []
+        for p_mal in p_mals:
+            for ratio in ratios:
+                try:
+                    d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
+                    d_f = spacially_bias(d_i, ratio)
+                    TestSpacialBiasing._check(d_i, d_f, ratio)
+                except Exception as err:
+                    errors.append((p_mal, ratio, err))
+        assert errors == [], pformat(errors)
 
 
 if __name__ == "__main__":
