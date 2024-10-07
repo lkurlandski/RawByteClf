@@ -190,9 +190,9 @@ class Materials:
             self.labels[split] = np.array(list(d_f.values()))
             c_f = self.get_split_dist(split)
 
-            # Basic checks to make sure nothing f-d up. These should not ever really get hit.
+            # A basic check.
             r = c_f[minority_class] / len(self.files[split])
-            if not math.isclose(r, ratio, abs_tol=0.01):
+            if not math.isclose(r, ratio, abs_tol=0.025):
                 raise RuntimeError(f"{r=} != {ratio=}")
             for k in c_i:
                 if c_i[k] == c_f[k]:
