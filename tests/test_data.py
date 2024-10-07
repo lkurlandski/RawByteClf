@@ -713,63 +713,63 @@ class TestSpacialBiasing(unittest.TestCase):
         p_mal = 0.95
         ratio = 0.05
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_malware_reduction_2(self):
         p_mal = 0.85
         ratio = 0.15
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_malware_reduction_3(self):
         p_mal = 0.75
         ratio = 0.25
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_goodware_reduction_1(self):
         p_mal = 0.05
         ratio = 0.25
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_goodware_reduction_2(self):
         p_mal = 0.15
         ratio = 0.35
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_goodware_reduction_3(self):
         p_mal = 0.25
         ratio = 0.45
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_no_reduction_1(self):
         p_mal = 0.10
         ratio = 0.10
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_no_reduction_2(self):
         p_mal = 0.20
         ratio = 0.20
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_no_reduction_3(self):
         p_mal = 0.30
         ratio = 0.30
         d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-        d_f = spacially_bias(d_i, ratio)
+        d_f = spacially_bias(d_i, ratio=ratio)
         TestSpacialBiasing._check(d_i, d_f, ratio)
 
     def test_fuzzing(self):
@@ -780,7 +780,7 @@ class TestSpacialBiasing(unittest.TestCase):
             for ratio in ratios:
                 try:
                     d_i = TestSpacialBiasing._get_files_and_label(self.num, p_mal)
-                    d_f = spacially_bias(d_i, ratio)
+                    d_f = spacially_bias(d_i, ratio=ratio)
                     TestSpacialBiasing._check(d_i, d_f, ratio)
                 except Exception as err:
                     errors.append((p_mal, ratio, err))

@@ -178,42 +178,27 @@ class Materials:
         return self
 
     def spacially_bias(self, ratio: float, minority_class: str = "mal", splits: tuple[str] = ("tr", "vl", "ts")) -> Materials:
-        if ratio <= 0.0 or ratio >= 1.0:
-            raise ValueError(f"{ratio=}")
-        if minority_class not in self.label2id:
-            raise ValueError(f"{minority_class=}")
-        if self.problem_type != "single_label_classification":
-            raise ValueError("Only binary classification permitted.")
-
-        majority_class = unique_value([l for l in self.label2id if l != minority_class])
 
         for split in splits:
             if len(self.files[split]) == 0:
                 continue
 
-            num_to_remove, minority_label_idx, majority_label_idx, idx_to_remove = None, None, None, None
+            c_i = self.get_split_dist(split)
+            d_i = {str(file): int(label) for file, label in zip(self.files[split], self.labels[split])}
+            d_f = spacially_bias(d_i, ratio, self.label2id[minority_class])
+            self.files[split]  = list(d_f.keys())
+            self.labels[split] = np.array(list(d_f.values()))
+            c_f = self.get_split_dist(split)
 
-            dist      = self.get_split_dist(split)                         # Class distribution for this split
-            cur_count = dist[minority_class]                               # Number of samples in minority class in this split
-            tgt_count = int((ratio * dist[majority_class]) / (1 - ratio))  # Number of samples in minority class there should be in this split
-
-            if tgt_count < cur_count:    # remove samples from minority class
-                num_to_remove = cur_count - tgt_count
-                minority_label_idx = np.where(self.labels[split] == self.label2id[minority_class])[0]
-                idx_to_remove = np.random.choice(minority_label_idx, size=num_to_remove, replace=False)
-            elif tgt_count > cur_count:  # remove samples from majority class
-                num_to_remove = tgt_count - cur_count
-                majority_label_idx = np.where(self.labels[split] == self.label2id[majority_class])[0]
-                idx_to_remove = np.random.choice(majority_label_idx, size=num_to_remove, replace=False)
+            # Basic checks to make sure nothing f-d up. These should not ever really get hit.
+            r = c_f[minority_class] / len(self.files[split])
+            if not math.isclose(r, ratio, abs_tol=0.01):
+                raise RuntimeError(f"{r=} != {ratio=}")
+            for k in c_i:
+                if c_i[k] == c_f[k]:
+                    break
             else:
-                continue
-
-            if len(np.unique(idx_to_remove)) != len(idx_to_remove):
-                raise RuntimeError(f"{len(np.unique(idx_to_remove))=} != {len(idx_to_remove)}")
-
-            self.labels[split] = np.delete(self.labels[split], idx_to_remove)
-            idx_to_remove      = set(idx_to_remove.tolist()) if len(idx_to_remove) > 512 else tuple(idx_to_remove.tolist())
-            self.files[split]  = [f for i, f in enumerate(self.files[split]) if i not in idx_to_remove]
+                raise RuntimeError(f"Biasing lost samples from both classes: {dict(c_i)=} {dict(c_f)=}.")
 
         self.dist = self.dist_tr | self.dist_vl | self.dist_ts
 
@@ -221,7 +206,7 @@ class Materials:
 
 
 def spacially_bias(
-    files_and_labels: dict[str, str],
+    files_and_labels: dict[str, str | int],
     ratio: float,
     minority_class: str = "mal",
 ) -> dict[str, str]:
@@ -247,8 +232,8 @@ def spacially_bias(
         raise ValueError(f"{ratio=}")
     if minority_class not in dist:
         raise ValueError(f"{minority_class=}")
-    if not isinstance(labels[0], (int, str)) or len(dist) != 2:
-        raise ValueError("Only binary classification permitted.")
+    if not isinstance(labels[0], (int, str, np.integer)) or len(dist) != 2:
+        raise ValueError(f"Only binary classification permitted. {type(labels[0])=} {dist=}")
 
     # The class labels for the classes which should respectively contain more and less samples.
     majority_class = unique_value([l for l in dist if l != minority_class])
@@ -262,7 +247,7 @@ def spacially_bias(
         removal_class = majority_class
         tgt_count     = int(dist[minority_class] * (1 - ratio) / ratio)
     else:
-        return file_and_labels
+        return files_and_labels
 
     # Determine the number of samples to remove.
     num_remove = dist[removal_class] - tgt_count
@@ -278,8 +263,8 @@ def spacially_bias(
         raise RuntimeError(f"{len(np.unique(remove))=} != {num_remove}")
 
     # Remove the samples and return the dataset.
-    files  = np.delete(files,  remove)
-    labels = np.delete(labels, remove)
+    files  = np.delete(files,  remove).tolist()
+    labels = np.delete(labels, remove).tolist()
 
     return {file: label for file, label in zip(files, labels)}
 
