@@ -262,7 +262,7 @@ def spacially_bias(
         r = round(c[minority_class] / len(labels), 4)
         if not math.isclose(r, ratio, abs_tol=0.025):  # 2.5% tolerance
             raise RuntimeError(f"The resulting ratio, {r} after biasing is not close to the target ratio {ratio}.")
-        if not (c[minority_class] == dist[minority_class] and c[majority_class] == dist[majority_class]):
+        if not (c[minority_class] == dist[minority_class] or c[majority_class] == dist[majority_class]):
             raise RuntimeError(f"Biasing lost samples from both classes: initial={dict(dist)} final={dict(c)}.")
 
     return {file: label for file, label in zip(files, labels)}
