@@ -158,8 +158,10 @@ def get_det_iterable() -> list[dict[str, Any]]:
     lift_level_ddp = "dec"
     ts_size        = 0.00
 
-    ratios_pre_split = list(map(round_2, np.arange(0.00, 1.00,  0.05).tolist()))
-    ratios_pos_split = list(map(round_2, np.arange(0.00, 1.00,  0.05).tolist()))
+    # ratios_pre_split = list(map(round_2, np.arange(0.00, 1.00,  0.05).tolist()))
+    # ratios_pos_split = list(map(round_2, np.arange(0.00, 1.00,  0.05).tolist()))
+    ratios_pre_split = list(map(round_2, np.arange(0.00, 1.00,  0.10).tolist()))
+    ratios_pos_split = list(map(round_2, np.arange(0.00, 0.60,  0.10).tolist()))
     tr_sizes         = list(map(round_2, np.arange(0.95, 0.50, -0.05).tolist()))
     vl_sizes         = list(map(round_2, np.arange(0.05, 0.55,  0.05).tolist()))
     sizes            = list(zip(tr_sizes, vl_sizes))
