@@ -177,31 +177,16 @@ class Materials:
                 self.files[split][i] = af
         return self
 
-    # TODO: refactor the checks into the spacially_bias function.
-    # TODO: improve the error message on failures.
-    # TODO: adjust the tolerance?
     def spacially_bias(self, ratio: float, minority_class: str = "mal", splits: tuple[str] = ("tr", "vl", "ts")) -> Materials:
 
         for split in splits:
             if len(self.files[split]) == 0:
                 continue
 
-            c_i = self.get_split_dist(split)
             d_i = {str(file): int(label) for file, label in zip(self.files[split], self.labels[split])}
             d_f = spacially_bias(d_i, ratio, self.label2id[minority_class])
             self.files[split]  = list(d_f.keys())
             self.labels[split] = np.array(list(d_f.values()))
-            c_f = self.get_split_dist(split)
-
-            # A basic check.
-            r = c_f[minority_class] / len(self.files[split])
-            if not math.isclose(r, ratio, abs_tol=0.025):
-                raise RuntimeError(f"{r=} != {ratio=}")
-            for k in c_i:
-                if c_i[k] == c_f[k]:
-                    break
-            else:
-                raise RuntimeError(f"Biasing lost samples from both classes: {dict(c_i)=} {dict(c_f)=}.")
 
         self.dist = self.dist_tr | self.dist_vl | self.dist_ts
 
@@ -212,16 +197,19 @@ def spacially_bias(
     files_and_labels: dict[str, str | int],
     ratio: float,
     minority_class: str = "mal",
+    check: bool = True,
 ) -> dict[str, str]:
     """
     Manipulate the distribution adding/removing samples.
 
     Args:
-        ratio (float): the desired ratio of the minority class relative to the number of samples in the split
+        files_and_labels (dict): a dictionary of samples and their corresponding labels.
+        ratio (float): the desired ratio of the minority class relative to the number of samples in the split.
         minority_class (str): the name of the class for which there should be less of.
+        check (bool): whether to check the resulting distribution for correctness.
 
     Returns:
-        (Materials): modified self
+        dict: the new distribution with some samples removed.
     """
 
     files       = np.array(list(files_and_labels.keys()))
@@ -268,6 +256,14 @@ def spacially_bias(
     # Remove the samples and return the dataset.
     files  = np.delete(files,  remove).tolist()
     labels = np.delete(labels, remove).tolist()
+
+    if check:
+        c = Counter(labels)
+        r = round(c[minority_class] / len(labels), 4)
+        if not math.isclose(r, ratio, abs_tol=0.025):  # 2.5% tolerance
+            raise RuntimeError(f"The resulting ratio, {r} after biasing is not close to the target ratio {ratio}.")
+        if not (c[minority_class] == dist[minority_class] and c[majority_class] == dist[majority_class]):
+            raise RuntimeError(f"Biasing lost samples from both classes: initial={dict(dist)} final={dict(c)}.")
 
     return {file: label for file, label in zip(files, labels)}
 
@@ -725,10 +721,13 @@ def tr_vl_ts_split_idx_guarentee(
         tr_dist = Counter(labels[tr_idx])
         vl_dist = Counter(labels[vl_idx])
         ts_dist = Counter(labels[ts_idx])
-        if vl_size > 0 and set(tr_dist) != set(vl_dist):
-            raise ValueError(f"tr_dist=\n{pformat(tr_dist)}\nvl_dist={pformat(vl_dist)}")
-        if ts_size > 0 and set(tr_dist) != set(ts_dist):
-            raise ValueError(f"tr_dist=\n{pformat(tr_dist)}\nts_dist={pformat(ts_dist)}")
+        if (vl_size > 0 and set(tr_dist) != set(vl_dist)) or (ts_size > 0 and set(tr_dist) != set(ts_dist)):
+            raise RuntimeError(
+                f"Creating a temporal split with {tr_size=} {vl_size=} {ts_size=} "
+                "resulted in one of the splits losing all representatives of one or more classes "
+                f"(tr_dist={pformat(tr_dist)} vl_dist={pformat(vl_dist)} "
+                f"tr_dist=\n{pformat(tr_dist)}\nts_dist={pformat(ts_dist)})."
+            )
 
     assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
 
