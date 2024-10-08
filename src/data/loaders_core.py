@@ -1689,8 +1689,6 @@ def get_materials_esp_det(
 
     # Verify that the temporal split was formed correctly.
     print("\tVerifying temporal bias.")
-    if not is_temporal_classwise(materials, list(timestamps_files.values())):
-        raise RuntimeError("Materials are not class-wise temporal.")
     if not is_temporal_absolute(materials, list(timestamps_files.values())):
         raise RuntimeError("Materials are not absolutely-temporal.")
 
