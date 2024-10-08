@@ -8,16 +8,17 @@ from collections.abc import Sequence, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import Enum
-from itertools import chain, repeat
+import hashlib
+from itertools import chain
 import math
 import os
 from pathlib import Path
+import pickle
 from pprint import pprint, pformat
 import random
 import sys
 import time
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 import warnings
 
 # pylint: disable=wrong-import-position
@@ -32,13 +33,10 @@ from sklearn.utils import shuffle
 from tqdm import tqdm
 
 from src.enums import LiftLevel, SplitMode, DatasetName
-from src.utils import get_max_keys_from_dict, flatten, get_unique_files, rglob, unique_value, print_context
+from src.utils import flatten, get_unique_files, rglob, unique_value
 from src.data.cfg import (
-    SOREL_PATH,
-    BODMAS_PATH,
     BODMAS_LABELS_FILE,
     DATASET_TO_FILES,
-    SOREL_META_CSV,
     ELF_CLASSIFICATION_DATASETS,
     PACKING_ROOTS,
     SOREL_CLARAVY_CACHE,
@@ -48,13 +46,7 @@ from src.data.cfg import (
     VALID_TIMESTAMP_RANGES,
     DIGESTS_FILES,
 )
-from src.data.detect_packing_sorel import PackingMap, universal_packing_map
-from src.data.label_datasets import (
-    get_label_mapping_virus_total_reports_sorel,
-    get_label_mapping_virus_total_reports_elf,
-    ThreatLabelExtractor,
-    ThreatLabelRefiner,
-)
+from src.data.detect_packing_sorel import universal_packing_map
 from src.data.labeling import FilterArgs, Labeler, Label
 from src.data.utils import get_sha_timestamp_map, get_sha_digest_map, get_data_from_archives
 
@@ -163,6 +155,7 @@ class Materials:
             f"len(tr)={len(self.files['tr'])}\n"
             f"len(vl)={len(self.files['vl'])}\n"
             f"len(ts)={len(self.files['ts'])}\n"
+            f"problem_type={self.problem_type}\n"
             f"num_classes={len(self.id2label) if self.id2label is not None else None}\n"
             f"dist={pformat(dist) if dist is not None else None}"
         )
@@ -727,7 +720,7 @@ def tr_vl_ts_split_idx_guarentee(
         # Ensure that the split is strict by grouping elements identical timestamps into the same set.
         if ts_size != 0 or vl_size == 0:
             raise NotImplementedError(f"Not implemented for {tr_size=} {vl_size=} {ts_size=}")
- 
+
         if vl_size > 0:
             k = vl_idx[0]                     # first element idx in vl set
             t = timestamps[k]                 # earliest timestamp in vl set
@@ -1538,41 +1531,123 @@ def get_materials_clf_elf(
 ################################################################################
 
 
-def get_materials_esp_lm(lift_level: LiftLevel) -> Materials:
+DISABLE_ESP_CACHE = False
 
-    archives = []
-    for root, dirs, files in os.walk("./data", followlinks=True):
-        for file in files:
-            if file.endswith(".zip") and root.endswith(lift_level):
-                archives.append(os.path.join(root, file))
 
-    archived_files = []
+def esp_cache_file(get_materials: Callable, **kwds) -> Path:
+    identifier = ",".join([f"{k}={kwds[k]}" for k in sorted(kwds)])
+    b = identifier.encode("utf-8")
+    h = hashlib.sha256(b).hexdigest()
+    parent = Path("./cache") / "materials"
+    parent.mkdir(parents=True, exist_ok=True)
+    return parent / f"{get_materials.__name__}_{h}.pkl"
+
+
+def _get_materials_esp_lm(
+    lift_level: LiftLevel,
+    tr_size: float = 0.75,
+    vl_size: float = 0.25,
+    ts_size: float = 0.00,
+    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    verbose: bool = True,
+) -> Materials:
+    # pylint: disable=multiple-statements
+
+    lift_level     = LiftLevel(lift_level)
+    lift_level_ddp = LiftLevel(lift_level_ddp)
+
+    cache_file = esp_cache_file(
+        _get_materials_esp_lm,
+        lift_level=lift_level,
+        tr_size=tr_size,
+        vl_size=vl_size,
+        ts_size=ts_size,
+        lift_level_ddp=lift_level_ddp,
+    )
+
+    if not DISABLE_ESP_CACHE and cache_file.exists():
+        print(f"Loading materials from cache: {cache_file}.")
+        with open(cache_file, "rb") as fp:
+            return pickle.load(fp)
+
+    print("\tGetting SHAs being used in finetuning tasks.")
+    shas = set()
+    for func in (get_materials_esp_det, get_materials_esp_fam, get_materials_esp_beh):
+        materials = func(lift_level, verbose=False)
+        shas.update((af.name for af in chain.from_iterable(materials.files.values())))
+
+    sha_digest_map = {}
+    for dnm in DatasetName:
+        _sha_digest_map = get_sha_digest_map(DIGESTS_FILES[dnm][lift_level_ddp])
+        _sha_digest_map = {k: v for k, v in _sha_digest_map.items() if k not in shas}
+        sha_digest_map.update(_sha_digest_map)
+
+    archives = map(Path, rglob("./data", "*.zip", True))
+    archives = sorted(a for a in archives if a.parent.name == lift_level.value)
+
+    skipped_cause_finetuning = 0
+    skipped_cause_duplicates = 0
+    archived_files: list[ArchivedFile] = []
+    present_digests: set[str] = set()
     for archive in archives:
         for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
+            s = name.split(".")[0]
+            if s in shas:
+                skipped_cause_finetuning += 1
+                continue
+            d = sha_digest_map[s]
+            if d in present_digests:
+                skipped_cause_duplicates += 1
+                continue
             archived_files.append(ArchivedFile(archive, name))
+    print(f"\tAcquired {len(archived_files)} for pretraining.")
+    if verbose: print(f"\tSkipped {skipped_cause_finetuning=} due to finetuning.")
+    if verbose: print(f"\tSkipped {skipped_cause_duplicates=} due to duplicates.")
 
-    n = len(archived_files)
-    files = {
-        "tr": [f for i, f in enumerate(archived_files) if i < (0.8 * n)],
-        "vl": [f for i, f in enumerate(archived_files) if i >= (0.8 * n)],
-        "ts": [],
-    }
+    archived_files.sort(key=lambda af: af.name)
+    tr_vl_ts_files = tr_vl_ts_split(archived_files, tr_size, vl_size, ts_size)
+    materials = Materials(files=tr_vl_ts_files)
 
-    return Materials(
-        files=files,
-        labels=None,
-        id2label=None,
-        label2id=None,
-        dist=None,
+    print(f"Saving materials to cache: {cache_file}.")
+    with open(cache_file, "wb") as fp:
+        pickle.dump(materials, fp)
+    return materials
+
+
+def get_materials_esp_clm(
+    lift_level: LiftLevel,
+    tr_size: float = 0.75,
+    vl_size: float = 0.25,
+    ts_size: float = 0.00,
+    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    verbose: bool = True,
+) -> Materials:
+    return _get_materials_esp_lm(
+        lift_level,
+        tr_size,
+        vl_size,
+        ts_size,
+        lift_level_ddp,
+        verbose,
     )
 
 
-def get_materials_esp_clm(lift_level: LiftLevel) -> Materials:
-    return get_materials_esp_lm(lift_level)
-
-
-def get_materials_esp_mlm(lift_level: LiftLevel) -> Materials:
-    return get_materials_esp_lm(lift_level)
+def get_materials_esp_mlm(
+    lift_level: LiftLevel,
+    tr_size: float = 0.75,
+    vl_size: float = 0.25,
+    ts_size: float = 0.00,
+    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    verbose: bool = True,
+) -> Materials:
+    return _get_materials_esp_lm(
+        lift_level,
+        tr_size,
+        vl_size,
+        ts_size,
+        lift_level_ddp,
+        verbose,
+    )
 
 
 def get_materials_esp_det(
@@ -1587,6 +1662,25 @@ def get_materials_esp_det(
 ) -> Materials:
     # pylint: disable=multiple-statements
 
+    lift_level     = LiftLevel(lift_level)
+    lift_level_ddp = LiftLevel(lift_level_ddp)
+
+    cache_file = esp_cache_file(
+        get_materials_esp_det,
+        lift_level=lift_level,
+        tr_size=tr_size,
+        vl_size=vl_size,
+        ts_size=ts_size,
+        ratio_pre_split=ratio_pre_split,
+        ratio_pos_split=ratio_pos_split,
+        lift_level_ddp=lift_level_ddp,
+    )
+
+    if not DISABLE_ESP_CACHE and cache_file.exists():
+        print(f"Loading materials from cache: {cache_file}.")
+        with open(cache_file, "rb") as fp:
+            return pickle.load(fp)
+
     # Due to the way the data is distributed temporally, spacially biasing the data
     # before the train test split is formed can result in individual splits with
     # different ratios of malware vs goodware. Spacially biasing the splits after
@@ -1596,9 +1690,6 @@ def get_materials_esp_det(
 
     TIMESTAMP_EARLY = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
     TIMESTAMP_LATE  = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
-
-    lift_level     = LiftLevel(lift_level)
-    lift_level_ddp = LiftLevel(lift_level_ddp)
 
     # Get data for each dataset.
     timestamps_files   = {dnm: TIMESTAMPS_FILES[dnm] for dnm in DatasetName}
@@ -1755,29 +1846,48 @@ def get_materials_esp_det(
     if verbose: print(f"\t\tvl: mal-ben  = {fmt(n_vl_mal, n_vl)} {fmt(n_vl_ben, n_vl)}")
     if verbose: print(f"\t\tts: mal-ben  = {fmt(n_ts_mal, n_ts)} {fmt(n_ts_ben, n_ts)}")
 
+    print(f"Saving materials to cache: {cache_file}.")
+    with open(cache_file, "wb") as fp:
+        pickle.dump(materials, fp)
+
     return materials
 
 
-def get_materials_esp_fam(lift_level: LiftLevel) -> Materials:
-    raise NotImplementedError()
-    # shas_and_labels = get_sorel_sha_label_map("fam")
-    # shas_and_labels = {f: l[0] for f, l in shas_and_labels.items()}
-    # return _get_materials_clf(files_and_labels, tr_size, vl_size, ts_size, **kwds)
-
-
-def get_materials_esp_beh(
+def _get_materials_esp_clf(
+    sha_label_map: dict[str, str],
+    problem_type: Literal["single_label_classification", "multi_label_classification"],
     lift_level: LiftLevel,
     tr_size: float = 0.75,
     vl_size: float = 0.25,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    verbose: bool = True,
+    **kwds,
 ) -> Materials:
+    # pylint: disable=multiple-statements
 
     lift_level     = LiftLevel(lift_level)
     lift_level_ddp = LiftLevel(lift_level_ddp)
-    dnm            = DatasetName.SOREL
 
-    sha_label_map = get_sorel_sha_label_map("beh")
+    cache_file = esp_cache_file(
+        _get_materials_esp_clf,
+        problem_type=problem_type,
+        lift_level=lift_level,
+        tr_size=tr_size,
+        vl_size=vl_size,
+        ts_size=ts_size,
+        lift_level_ddp=lift_level_ddp,
+        **kwds,
+    )
+
+    if not DISABLE_ESP_CACHE and cache_file.exists():
+        print(f"Loading materials from cache: {cache_file}.")
+        with open(cache_file, "rb") as fp:
+            return pickle.load(fp)
+
+    # Due to the way the data is distributed temporally, spacially biasing the data
+
+    dnm = DatasetName.SOREL
     directory = Path(f"./data/{dnm.value}/{lift_level.value}")
     archives  = sorted(map(Path, rglob(directory, "*.zip", True)))
 
@@ -1789,6 +1899,8 @@ def get_materials_esp_beh(
     print(f"{len(sha_label_map)=}")
 
     # Remove samples that hash to the same digest.
+    print("\tRemoving files that are duplicates.")
+    if verbose: print(f"\t\t{len(files)=} -->", end=" ")
     digests_file     = DIGESTS_FILES[dnm][lift_level_ddp]
     sha_digest_map   = get_sha_digest_map(digests_file)
     digest_label_map = defaultdict(Counter)
@@ -1801,6 +1913,7 @@ def get_materials_esp_beh(
             rm.add(i)
         digest_label_map[d].update([l])
     files = np.delete(files, list(rm))
+    if verbose: print(f"{len(files)=}")
 
     # Re-label the samples with the most popular label from other samples with the same digest.
     sha_label_map = {}
@@ -1812,15 +1925,24 @@ def get_materials_esp_beh(
 
     # Get the dataset materials.
     print("\tAcquiring raw materials.")
-    materials = _get_materials_clf_multilabel(
-        sha_label_map,
-        tr_size,
-        vl_size,
-        ts_size,
-        min_freq=10,
-        max_imbalance_ratio=100,
-        must_exist=False,
-    )
+    if problem_type == "single_label_classification":
+        materials = _get_materials_clf(
+            sha_label_map,
+            tr_size,
+            vl_size,
+            ts_size,
+            must_exist=False,
+            **kwds,
+        )
+    elif problem_type == "multi_label_classification":
+        materials = _get_materials_clf_multilabel(
+            sha_label_map,
+            tr_size,
+            vl_size,
+            ts_size,
+            must_exist=False,
+            **kwds,
+        )
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
     print("\tConverting to ArchivedFile.")
@@ -1834,4 +1956,54 @@ def get_materials_esp_beh(
             raise RuntimeError(f"Could not find the archive containing {f=} where {archives=}")
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
 
+    print(f"Saving materials to cache: {cache_file}.")
+    with open(cache_file, "wb") as fp:
+        pickle.dump(materials, fp)
+
     return materials
+
+
+def get_materials_esp_fam(
+    lift_level: LiftLevel,
+    tr_size: float = 0.75,
+    vl_size: float = 0.25,
+    ts_size: float = 0.00,
+    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    verbose: bool = True,
+) -> Materials:
+    sha_label_map = {s: l[0] for s, l in get_sorel_sha_label_map("fam").items()}
+    return _get_materials_esp_clf(
+        sha_label_map,
+        "single_label_classification",
+        lift_level,
+        tr_size,
+        vl_size,
+        ts_size,
+        lift_level_ddp,
+        verbose,
+        min_freq=10,
+        max_imbalance_ratio=100,
+    )
+
+
+def get_materials_esp_beh(
+    lift_level: LiftLevel,
+    tr_size: float = 0.75,
+    vl_size: float = 0.25,
+    ts_size: float = 0.00,
+    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    verbose: bool = True,
+) -> Materials:
+    sha_label_map = get_sorel_sha_label_map("beh")
+    return _get_materials_esp_clf(
+        sha_label_map,
+        "multi_label_classification",
+        lift_level,
+        tr_size,
+        vl_size,
+        ts_size,
+        lift_level_ddp,
+        verbose,
+        min_freq=10,
+        max_imbalance_ratio=100,
+    )
