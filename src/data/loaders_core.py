@@ -725,35 +725,24 @@ def tr_vl_ts_split_idx_guarentee(
         ts_idx = list(range(tr_size + vl_size, tr_size + vl_size + ts_size))
 
         # Ensure that the split is strict by grouping elements identical timestamps into the same set.
-        if ts_size > 0:
-            raise NotImplementedError("I have not gotten around to implementing this for the ts_set, but it should just be a copy-pasta.")
+        if ts_size != 0 or vl_size == 0:
+            raise NotImplementedError(f"Not implemented for {tr_size=} {vl_size=} {ts_size=}")
  
-        print(f"{len(tr_idx)=}")
-        print(f"{len(vl_idx)=}")
         if vl_size > 0:
             k = vl_idx[0]                     # first element idx in vl set
-            print(f"tr_vl_ts_split_idx_guarentee: {k=}")
             t = timestamps[k]                 # earliest timestamp in vl set
-            print(f"tr_vl_ts_split_idx_guarentee: {t=}")
-            i = np.where(timestamps == t)[0]  # indicies with the same timestamp
-            print(f"tr_vl_ts_split_idx_guarentee: {i=}")
-            if len(i) > 1:
+            if timestamps[tr_idx[-1]] == t:   # the last element in tr set has the same timestamp
+                i = np.where(timestamps == t)[0]  # indicies with the same timestamp
                 n_lss = len(np.where(i < k)[0])   # number of indices to the left
-                print(f"tr_vl_ts_split_idx_guarentee: {n_lss=}")
                 n_grt = len(np.where(i > k)[0])   # number of indices to the right
-                print(f"tr_vl_ts_split_idx_guarentee: {n_grt=}")
-                # More samples with this timestamp in the vl set, so move overlappers to vl
-                if n_lss < n_grt:
+                if n_lss < n_grt:  # more samples with this timestamp in the vl set
                     warnings.warn(f"Moving {len(i)} samples to the vl set because of overlapping timestamps.")
-                    tr_idx = tr_idx[:i[0]]
-                    vl_idx = i.tolist() + vl_idx
-                # More samples with this timestamp in the tr set, so move overlappers to tr
-                else:
+                    tr_idx = tr_idx[:tr_idx.index(i[0])]
+                    vl_idx = [j for j in i if j < vl_idx[0]] + vl_idx
+                else:              # more samples with this timestamp in the tr set
                     warnings.warn(f"Moving {len(i)} samples to the tr set because of overlapping timestamps.")
-                    tr_idx = tr_idx + i.tolist()
-                    vl_idx = vl_idx[i[0]:]
-        print(f"{len(tr_idx)=}")
-        print(f"{len(vl_idx)=}")
+                    tr_idx = tr_idx + [j for j in i.tolist() if j > tr_idx[-1]]
+                    vl_idx = vl_idx[vl_idx.index(i[-1]) + 1:]
 
         tr_dist = Counter(labels[tr_idx])
         vl_dist = Counter(labels[vl_idx])

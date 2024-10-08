@@ -795,6 +795,21 @@ class TestGetMaterialsClfAbsoluteTemporal(unittest.TestCase):
     def test_simple(self) -> None:
         ...
 
+    def test_failure_case(self) -> None:
+        import pandas as pd
+        df = pd.read_csv("./tmp/failure.csv")
+        timestamps = df["timestamp"].array
+        labels = df["label"].array
+        idx = tr_vl_ts_split_idx_guarentee(labels, 0.8, 0.2, 0.0, 1, self.split_mode, timestamps)
+
+        latest_tr   = max(timestamps[i] for i in idx["tr"])
+        earliest_vl = min(timestamps[i] for i in idx["vl"])
+        latest_vl   = max(timestamps[i] for i in idx["vl"])
+
+        assert latest_tr <= earliest_vl
+        assert latest_tr < earliest_vl
+        assert earliest_vl <= latest_vl
+
     def test_rearange_tr_to_vl(self) -> None:
         # The timestamps are constructed such that the algorithm should move the duplicates
         # timestamps into the vl set because there are more of the duplicates in the vl set.
@@ -805,11 +820,11 @@ class TestGetMaterialsClfAbsoluteTemporal(unittest.TestCase):
 
         idx = tr_vl_ts_split_idx_guarentee(labels, 0.5, 0.5, 0.0, 1, self.split_mode, timestamps)
 
-        latest_ts   = max(timestamps[i] for i in idx["tr"])
+        latest_tr = max(timestamps[i] for i in idx["tr"])
         earliest_vl = min(timestamps[i] for i in idx["vl"])
         latest_vl   = max(timestamps[i] for i in idx["vl"])
 
-        assert latest_ts    < earliest_vl
+        assert latest_tr < earliest_vl
         assert earliest_vl <= latest_vl
         assert 100 in [int(timestamps[i]) for i in idx["vl"]]
         assert 100 not in [int(timestamps[i]) for i in idx["tr"]]
@@ -824,11 +839,11 @@ class TestGetMaterialsClfAbsoluteTemporal(unittest.TestCase):
 
         idx = tr_vl_ts_split_idx_guarentee(labels, 0.5, 0.5, 0.0, 1, self.split_mode, timestamps)
 
-        latest_ts   = max(timestamps[i] for i in idx["tr"])
+        latest_tr = max(timestamps[i] for i in idx["tr"])
         earliest_vl = min(timestamps[i] for i in idx["vl"])
         latest_vl   = max(timestamps[i] for i in idx["vl"])
 
-        assert latest_ts    < earliest_vl
+        assert latest_tr < earliest_vl
         assert earliest_vl <= latest_vl
         assert 100 in [int(timestamps[i]) for i in idx["tr"]]
         assert 100 not in [int(timestamps[i]) for i in idx["vl"]]
