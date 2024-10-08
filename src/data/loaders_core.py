@@ -177,6 +177,9 @@ class Materials:
                 self.files[split][i] = af
         return self
 
+    # TODO: refactor the checks into the spacially_bias function.
+    # TODO: improve the error message on failures.
+    # TODO: adjust the tolerance?
     def spacially_bias(self, ratio: float, minority_class: str = "mal", splits: tuple[str] = ("tr", "vl", "ts")) -> Materials:
 
         for split in splits:
