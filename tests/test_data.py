@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import numpy as np
 import py7zr
 
+from src.enums import SplitMode
 from src.data.detect_packing_sorel import PackingMap, unpack
 from src.data.loaders_core import (
     Materials,
@@ -785,6 +786,52 @@ class TestSpacialBiasing(unittest.TestCase):
                 except Exception as err:
                     errors.append((p_mal, ratio, err))
         assert errors == [], pformat(errors)
+
+
+class TestGetMaterialsClfAbsoluteTemporal(unittest.TestCase):
+
+    split_mode = SplitMode.TEMPORAL_ABSOLUTE
+
+    def test_simple(self) -> None:
+        ...
+
+    def test_rearange_tr_to_vl(self) -> None:
+        # The timestamps are constructed such that the algorithm should move the duplicates
+        # timestamps into the vl set because there are more of the duplicates in the vl set.
+        timestamps = list(range(0, 100)) + [100 for _ in range(100)] + list(range(101, 190))
+        timestamps = np.array(timestamps)
+        labels     = [round(random.random()) for _ in range(len(timestamps))]
+        labels     = np.array(labels)
+
+        idx = tr_vl_ts_split_idx_guarentee(labels, 0.5, 0.5, 0.0, 1, self.split_mode, timestamps)
+
+        latest_ts   = max(timestamps[i] for i in idx["tr"])
+        earliest_vl = min(timestamps[i] for i in idx["vl"])
+        latest_vl   = max(timestamps[i] for i in idx["vl"])
+
+        assert latest_ts    < earliest_vl
+        assert earliest_vl <= latest_vl
+        assert 100 in [int(timestamps[i]) for i in idx["vl"]]
+        assert 100 not in [int(timestamps[i]) for i in idx["tr"]]
+
+    def test_rearange_vl_to_tr(self) -> None:
+        # The timestamps are constructed such that the algorithm should move the duplicates
+        # timestamps into the tr set because there are more of the duplicates in the tr set.
+        timestamps = list(range(0, 90)) + [100 for _ in range(100)] + list(range(101, 201))
+        timestamps = np.array(timestamps)
+        labels     = [round(random.random()) for _ in range(len(timestamps))]
+        labels     = np.array(labels)
+
+        idx = tr_vl_ts_split_idx_guarentee(labels, 0.5, 0.5, 0.0, 1, self.split_mode, timestamps)
+
+        latest_ts   = max(timestamps[i] for i in idx["tr"])
+        earliest_vl = min(timestamps[i] for i in idx["vl"])
+        latest_vl   = max(timestamps[i] for i in idx["vl"])
+
+        assert latest_ts    < earliest_vl
+        assert earliest_vl <= latest_vl
+        assert 100 in [int(timestamps[i]) for i in idx["tr"]]
+        assert 100 not in [int(timestamps[i]) for i in idx["vl"]]
 
 
 if __name__ == "__main__":

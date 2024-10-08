@@ -272,10 +272,9 @@ def spacially_bias(
     return {file: label for file, label in zip(files, labels)}
 
 
-def is_temporal_classwise(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
+def is_temporal_classwise(materials: Materials, sha_timestamp_map: dict[str, int], raise_if_not: bool = True) -> bool:
     """Checks whether the materials are split temporally within each class.
     """
-    sha_timestamp_map = get_sha_timestamp_map(timestamps_file)
     timestamps = {}
     for split, files in materials.files.items():
         t = [sha_timestamp_map[Path(f).stem] for f in files]
@@ -288,15 +287,18 @@ def is_temporal_classwise(materials: Materials, timestamps_file: Optional[Path |
             timestamps["vl"][idx["vl"]].max(),
             timestamps["ts"][idx["ts"]].min(initial=np.iinfo(np.int64).max),
         ]
-        if not bool(np.all(np.diff(cuttoffs) > 0)):
+        result = bool(np.all(np.diff(cuttoffs) > 0))
+        if not result:
+            if raise_if_not:
+                raise RuntimeError(f"Materials are not temporal (class {materials.id2label[i]}): {cuttoffs=}")
             return False
+
     return True
 
 
-def is_temporal_absolute(materials: Materials, timestamps_file: Optional[Path | list[Path]] = None) -> bool:
+def is_temporal_absolute(materials: Materials, sha_timestamp_map: dict[str, int], raise_if_not: bool = True) -> bool:
     """Checks whether the materials are split temporally over the entire datasets.
     """
-    sha_timestamp_map = get_sha_timestamp_map(timestamps_file)
     timestamps = {}
     for split, files in materials.files.items():
         t = [sha_timestamp_map[Path(f).stem] for f in files]
@@ -307,7 +309,10 @@ def is_temporal_absolute(materials: Materials, timestamps_file: Optional[Path | 
         timestamps["vl"].max(),
         timestamps["ts"].min(initial=np.iinfo(np.int64).max),
     ]
-    return bool(np.all(np.diff(cuttoffs) > 0))
+    result = bool(np.all(np.diff(cuttoffs) > 0))
+    if not result and raise_if_not:
+        raise RuntimeError(f"Materials are not absolutely temporal: {cuttoffs=}")
+    return result
 
 
 def get_tr_vl_ts_files_and_labels(
@@ -717,10 +722,42 @@ def tr_vl_ts_split_idx_guarentee(
 
 
     elif split_mode == SplitMode.TEMPORAL_ABSOLUTE:
+        timestamps = np.array(timestamps)
 
         tr_idx = list(range(0, tr_size))
         vl_idx = list(range(tr_size, tr_size + vl_size))
         ts_idx = list(range(tr_size + vl_size, tr_size + vl_size + ts_size))
+
+        # Ensure that the split is strict by grouping elements identical timestamps into the same set.
+        if ts_size > 0:
+            raise NotImplementedError("I have not gotten around to implementing this for the ts_set, but it should just be a copy-pasta.")
+ 
+        print(f"{len(tr_idx)=}")
+        print(f"{len(vl_idx)=}")
+        if vl_size > 0:
+            k = vl_idx[0]                     # first element idx in vl set
+            print(f"tr_vl_ts_split_idx_guarentee: {k=}")
+            t = timestamps[k]                 # earliest timestamp in vl set
+            print(f"tr_vl_ts_split_idx_guarentee: {t=}")
+            i = np.where(timestamps == t)[0]  # indicies with the same timestamp
+            print(f"tr_vl_ts_split_idx_guarentee: {i=}")
+            if len(i) > 1:
+                n_lss = len(np.where(i < k)[0])   # number of indices to the left
+                print(f"tr_vl_ts_split_idx_guarentee: {n_lss=}")
+                n_grt = len(np.where(i > k)[0])   # number of indices to the right
+                print(f"tr_vl_ts_split_idx_guarentee: {n_grt=}")
+                # More samples with this timestamp in the vl set, so move overlappers to vl
+                if n_lss < n_grt:
+                    warnings.warn(f"Moving {len(i)} samples to the vl set because of overlapping timestamps.")
+                    tr_idx = tr_idx[:i[0]]
+                    vl_idx = i.tolist() + vl_idx
+                # More samples with this timestamp in the tr set, so move overlappers to tr
+                else:
+                    warnings.warn(f"Moving {len(i)} samples to the tr set because of overlapping timestamps.")
+                    tr_idx = tr_idx + i.tolist()
+                    vl_idx = vl_idx[i[0]:]
+        print(f"{len(tr_idx)=}")
+        print(f"{len(vl_idx)=}")
 
         tr_dist = Counter(labels[tr_idx])
         vl_dist = Counter(labels[vl_idx])
@@ -1692,8 +1729,8 @@ def get_materials_esp_det(
 
     # Verify that the temporal split was formed correctly.
     print("\tVerifying temporal bias.")
-    if not is_temporal_absolute(materials, list(timestamps_files.values())):
-        raise RuntimeError("Materials are not absolutely-temporal.")
+    sha_timestamp_map = {k: v for d in sha_timestamp_maps.values() for k, v in d.items()}
+    is_temporal_absolute(materials, sha_timestamp_map, raise_if_not=True)
 
     # Replace the logical files with real ArchivedFile objects that can be accessed.
     if verbose: print("\tConverting to ArchivedFile.")
