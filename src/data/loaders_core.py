@@ -1570,16 +1570,10 @@ def _get_materials_esp_lm(
         with open(cache_file, "rb") as fp:
             return pickle.load(fp)
 
-    # print("\tGetting SHAs being used in finetuning tasks.")
-    # shas = set()
-    # for func in (get_materials_esp_det, get_materials_esp_fam, get_materials_esp_beh):
-    #     materials = func(lift_level, verbose=False)
-    #     shas.update((af.name for af in chain.from_iterable(materials.files.values())))
     print("\tGetting SHAs that could be used for finetuning.")
     timestamps_files = (TIMESTAMPS_FILES[DatasetName.ASSEMBLAGE], TIMESTAMPS_FILES[DatasetName.WINDOWS])
     shas = set(chain(
-        get_sorel_sha_label_map("beh").keys(),
-        get_sorel_sha_label_map("fam").keys(),
+        _get_sorel_sha_label_map().keys(),
         get_sha_timestamp_map(timestamps_files),
     ))
 
