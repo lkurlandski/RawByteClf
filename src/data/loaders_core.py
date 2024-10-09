@@ -1969,6 +1969,8 @@ def get_materials_esp_fam(
     vl_size: float = 0.25,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    min_freq: Optional[int] = 10,
+    max_imbalance_ratio: Optional[int] = 100,
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = {s: l[0] for s, l in get_sorel_sha_label_map("fam").items()}
@@ -1981,8 +1983,8 @@ def get_materials_esp_fam(
         ts_size,
         lift_level_ddp,
         verbose,
-        min_freq=10,
-        max_imbalance_ratio=100,
+        min_freq=min_freq,
+        max_imbalance_ratio=max_imbalance_ratio,
     )
 
 
@@ -1992,6 +1994,8 @@ def get_materials_esp_beh(
     vl_size: float = 0.25,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    min_freq: Optional[int] = 10,
+    max_imbalance_ratio: Optional[int] = 100,
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = get_sorel_sha_label_map("beh")
@@ -2004,6 +2008,6 @@ def get_materials_esp_beh(
         ts_size,
         lift_level_ddp,
         verbose,
-        min_freq=10,
-        max_imbalance_ratio=100,
+        min_freq=min_freq,
+        max_imbalance_ratio=max_imbalance_ratio,
     )
