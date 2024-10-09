@@ -51,8 +51,6 @@ def generator_from_zipfiles(
     max_length: Optional[int] = None,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
 
-    print("generator_from_zipfile")
-
     zp = None
 
     try:

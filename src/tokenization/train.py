@@ -30,6 +30,8 @@ from tqdm import tqdm
 from src.enums import TokenizationAlgorithm, LiftLevel
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8  # pylint: disable=no-name-in-module
 from src.data.utils import get_data_from_archives
+from src.data.loaders_core import _get_materials_esp_lm
+from src.data.loaders_hf import generator_from_zipfiles
 from src.tokenization import SPECIALS
 from src.tokenization.disassembled import get_dis_normalizer, get_dis_pretokenizer
 from src.tokenization.decompiled import get_dec_normalizer, get_dec_pretokenizer
@@ -38,7 +40,7 @@ from src.tokenization.helpers import TokenizerIOHelper
 from src.utils import batched
 
 
-RAW_WORD_SIZE = 256
+RAW_WORD_SIZE = 16
 
 
 class TokenizationTrainingIterator:
@@ -67,19 +69,11 @@ class TokenizationTrainingIterator:
         self.idx: Optional[int] = None
 
     def __call__(self) -> TokenizationTrainingIterator:
-        archives = []
-        for root, dirs, files in os.walk("./data", followlinks=True):  # pylint: disable=unused-variable
-            for file in files:
-                if file.endswith(".zip"):
-                    archives.append(os.path.join(root, file))
-        archives = [Path(archive) for archive in archives]
-        archives = [f for f in archives if f.parent.name == self.lift_level.value]
-        archives.sort()
-        random.shuffle(archives)
-        if len(archives) == 0:
-            raise FileNotFoundError(f"No archives found for {self.lift_level=}")
+        materials = _get_materials_esp_lm(self.lift_level)
+        archived_files = materials.files["tr"]
+        stream = (d["bytes"] for d in generator_from_zipfiles(archived_files))
+        documents = islice(stream, self.num_files)
 
-        documents = islice((b for _, b in get_data_from_archives(archives, False, True)), self.num_files)
         batch = []
         for document in tqdm(documents, total=self.num_files, desc="Decomposing documents..."):
             for word in self.decompose_document(document):
