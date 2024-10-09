@@ -1545,8 +1545,8 @@ def esp_cache_file(get_materials: Callable, **kwds) -> Path:
 
 def _get_materials_esp_lm(
     lift_level: LiftLevel,
-    tr_size: float = 0.75,
-    vl_size: float = 0.25,
+    tr_size: float = 0.80,
+    vl_size: float = 0.20,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
@@ -1623,8 +1623,8 @@ def _get_materials_esp_lm(
 
 def get_materials_esp_clm(
     lift_level: LiftLevel,
-    tr_size: float = 0.75,
-    vl_size: float = 0.25,
+    tr_size: float = 0.80,
+    vl_size: float = 0.20,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
@@ -1641,8 +1641,8 @@ def get_materials_esp_clm(
 
 def get_materials_esp_mlm(
     lift_level: LiftLevel,
-    tr_size: float = 0.75,
-    vl_size: float = 0.25,
+    tr_size: float = 0.80,
+    vl_size: float = 0.20,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
@@ -1659,11 +1659,11 @@ def get_materials_esp_mlm(
 
 def get_materials_esp_det(
     lift_level: LiftLevel,
-    tr_size: float = 0.75,
-    vl_size: float = 0.25,
+    tr_size: float = 0.80,
+    vl_size: float = 0.20,
     ts_size: float = 0.00,
-    ratio_pre_split: Optional[float] = None,
-    ratio_pos_split: Optional[float] = None,
+    ratio_pre_split: Optional[float] = 0.80,
+    ratio_pos_split: Optional[float] = 0.50,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
 ) -> Materials:
@@ -1865,8 +1865,8 @@ def _get_materials_esp_clf(
     sha_label_map: dict[str, str],
     problem_type: Literal["single_label_classification", "multi_label_classification"],
     lift_level: LiftLevel,
-    tr_size: float = 0.75,
-    vl_size: float = 0.25,
+    tr_size: float = 0.80,
+    vl_size: float = 0.20,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
@@ -1973,12 +1973,12 @@ def _get_materials_esp_clf(
 
 def get_materials_esp_fam(
     lift_level: LiftLevel,
-    tr_size: float = 0.75,
-    vl_size: float = 0.25,
+    tr_size: float = 0.80,
+    vl_size: float = 0.20,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
-    min_freq: Optional[int] = 10,
-    max_imbalance_ratio: Optional[int] = 100,
+    min_freq: Optional[int] = 50,
+    max_imbalance_ratio: Optional[int] = 50,
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = {s: l[0] for s, l in get_sorel_sha_label_map("fam").items()}
@@ -1998,12 +1998,12 @@ def get_materials_esp_fam(
 
 def get_materials_esp_beh(
     lift_level: LiftLevel,
-    tr_size: float = 0.75,
-    vl_size: float = 0.25,
+    tr_size: float = 0.80,
+    vl_size: float = 0.20,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
-    min_freq: Optional[int] = 10,
-    max_imbalance_ratio: Optional[int] = 100,
+    min_freq: Optional[int] = 50,
+    max_imbalance_ratio: Optional[int] = 50,
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = get_sorel_sha_label_map("beh")
