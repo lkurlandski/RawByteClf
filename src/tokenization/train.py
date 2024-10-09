@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from pprint import pformat, pprint
 import sys
+import time
 from typing import Callable, Optional
 
 # pylint: disable=wrong-import-position
@@ -67,6 +68,7 @@ class TokenizationTrainingIterator:
         self.num_files = num_files
         self.stream: list[bytes] = []
         self.idx: Optional[int] = None
+        self.num_characters = 0
 
     def __call__(self) -> TokenizationTrainingIterator:
         materials = _get_materials_esp_lm(self.lift_level)
@@ -77,6 +79,7 @@ class TokenizationTrainingIterator:
         batch = []
         for document in tqdm(documents, total=self.num_files, desc="Decomposing documents..."):
             for word in self.decompose_document(document):
+                self.num_characters += len(word)
                 batch.append(word)
                 if len(batch) == self.batch_size:
                     self.stream.append(tuple(batch))
@@ -210,6 +213,7 @@ class TrainTokenizer:
                 vocab_size=vocab_size,
                 special_tokens=special_tokens,
                 max_token_length=self.max_token_length,
+                show_progress=True,
             )
         if self.algorithm == TokenizationAlgorithm.UNIGRAM:
             return trainers.UnigramTrainer(
@@ -217,16 +221,19 @@ class TrainTokenizer:
                 special_tokens=special_tokens,
                 unk_token=SPECIALS["unk_token"],
                 max_piece_length=self.max_token_length,
+                show_progress=True,
             )
         if self.algorithm == TokenizationAlgorithm.WORDPIECE:
             return trainers.WordPieceTrainer(
                 vocab_size=vocab_size,
                 special_tokens=special_tokens,
+                show_progress=True,
             )
         if self.algorithm == TokenizationAlgorithm.WORDLEVEL:
             return trainers.WordLevelTrainer(
                 vocab_size=vocab_size,
                 special_tokens=special_tokens,
+                show_progress=True,
             )
         raise ValueError(f"{self.algorithm=}")
 
@@ -249,7 +256,12 @@ def main():
     print(f"args={pformat(args.__dict__)}")
 
     iterator = TokenizationTrainingIterator(args.lift_level, args.batch_size, args.block_size, args.num_files)()
+
+    t_i = time.time()
     tokenizer = TrainTokenizer(iterator, args.lift_level, args.algorithm, args.vocab_size, args.max_token_length)()
+    t_f = time.time()
+    print(f"Processed {iterator.num_characters} characters in {round(t_f - t_i)} seconds.")
+
     io_helper = TokenizerIOHelper(args.lift_level, args.algorithm, args.vocab_size, args.num_files)
     io_helper.save(tokenizer)
     tokenizer = io_helper.load()

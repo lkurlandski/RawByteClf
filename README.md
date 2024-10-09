@@ -142,7 +142,6 @@ lift.sh doesn't get the time correctly on job 15 of the job array.
 
 
 grep -L "analyzeHeadless returned 0" ./logs/lift-6_* | sed -n 's/.*_\([0-9]\+\)\.out/\1/p' | paste -sd,
-pip install tokenizers==0.20.0
 
 ## Set of for ESP
 
@@ -151,7 +150,17 @@ ln -s /media/lk3591/easystore/datasets/Sorel/processed/raw ./data/raw
 ln -s /media/lk3591/easystore/datasets/Sorel/processed/dec ./data/dec
 ln -s /media/lk3591/easystore/datasets/Sorel/processed/dis ./data/dis
 
+CHANGING tokenizers lib:
 
+tokenizers < 0.20 has a bug with saving/loading a tokenizer when the tokens contain spaces (fuck).
+
+https://github.com/huggingface/tokenizers/pull/909
+
+Solution is to
+
+pip install tokenizers==0.20.0
+
+Then modify the HF install because it will get broken.
 
 /home/lk3591/miniconda3/envs/RawByteClf/lib/python3.10/site-packages/transformers/dependency_versions_table.py
 "tokenizers": "tokenizers>=0.14,<0.21",
