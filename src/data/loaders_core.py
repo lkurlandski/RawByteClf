@@ -1570,11 +1570,18 @@ def _get_materials_esp_lm(
         with open(cache_file, "rb") as fp:
             return pickle.load(fp)
 
-    print("\tGetting SHAs being used in finetuning tasks.")
-    shas = set()
-    for func in (get_materials_esp_det, get_materials_esp_fam, get_materials_esp_beh):
-        materials = func(lift_level, verbose=False)
-        shas.update((af.name for af in chain.from_iterable(materials.files.values())))
+    # print("\tGetting SHAs being used in finetuning tasks.")
+    # shas = set()
+    # for func in (get_materials_esp_det, get_materials_esp_fam, get_materials_esp_beh):
+    #     materials = func(lift_level, verbose=False)
+    #     shas.update((af.name for af in chain.from_iterable(materials.files.values())))
+    print("\tGetting SHAs that could be used for finetuning.")
+    timestamps_files = (TIMESTAMPS_FILES[DatasetName.ASSEMBLAGE], TIMESTAMPS_FILES[DatasetName.WINDOWS])
+    shas = set(chain(
+        get_sorel_sha_label_map("beh").keys(),
+        get_sorel_sha_label_map("fam").keys(),
+        get_sha_timestamp_map(timestamps_files),
+    ))
 
     sha_digest_map = {}
     for dnm in DatasetName:
@@ -1688,8 +1695,9 @@ def get_materials_esp_det(
     # set, but this is probably better than having different ratios. The tr/vl/ts
     # sizes need to be tuned to see whats its going to look like after the fact.
 
-    TIMESTAMP_EARLY = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
-    TIMESTAMP_LATE  = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
+    # From the beginning of time until BODMAS stopped collecting.
+    TIMESTAMP_EARLY = int(datetime(1970,  1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
+    TIMESTAMP_LATE  = int(datetime(2020, 10, 1, 0, 0, 0, 0, timezone.utc).timestamp())
 
     # Get data for each dataset.
     timestamps_files   = {dnm: TIMESTAMPS_FILES[dnm] for dnm in DatasetName}
