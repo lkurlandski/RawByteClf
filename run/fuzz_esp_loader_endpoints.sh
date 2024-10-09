@@ -18,4 +18,4 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf2
 
 
-python -u src/data/fuzz_esp_loader_endpoints.py --task="det" --num_workers=32
+python -u src/data/fuzz_esp_loader_endpoints.py --task="beh" --num_workers=32

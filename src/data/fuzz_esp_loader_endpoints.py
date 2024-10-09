@@ -17,6 +17,7 @@ import time
 from typing import Any, Callable, Optional
 
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 #pylint: disable=wrong-import-position
@@ -37,6 +38,7 @@ from src.data.loaders_core import (
 
 SUPPRESS = True
 DEBUG    = False
+SHUFFLE  = True
 
 
 def round_2(number: float | int) -> float:
@@ -52,6 +54,22 @@ def concatenate_files(files: list[Path], outfile: Path, unlink: bool = False) ->
             fp.write(t)
             if unlink:
                 f.unlink()
+
+
+def fromoutput_extract_errors(f: Path) -> list[dict]:
+    with open(f) as fp:
+        data = [json.loads(l) for l in fp]
+    data = [d for d in data if isinstance(d["results"], str)]
+    return data
+
+
+def fromoutput_to_dataframe(f: Path) -> pd.DataFrame:
+    with open(f) as fp:
+        data = [json.loads(l) for l in fp]
+    data = [d for d in data if not isinstance(d["results"], str)]
+    columns = list(data[0]["kwds"].keys()) + list(data[0]["results"].keys())
+    flat = [d["kwds"] | d["results"] for d in data]
+    return pd.DataFrame(flat)
 
 
 def analyze(materials: Materials) -> dict[str, float]:
@@ -74,6 +92,8 @@ def analyze(materials: Materials) -> dict[str, float]:
     }
 
     if len(materials.id2label) > 2:
+        info["dist_tr"] = dict(materials.dist_tr)
+        info["dist_vl"] = dict(materials.dist_vl)
         return info
 
     n_tr_mal = np.sum(materials.labels["tr"] == materials.label2id["mal"])
@@ -101,7 +121,7 @@ def get_materials_and_log_info(kwds: dict, outdir: Path, get_materials: Callable
         materials, error = None, None
         try:
             materials = get_materials(**kwds)
-        except Exception as err:
+        except Exception as err:  # pylint: disable=broad-exception-caught
             error = err
 
     result = analyze(materials) if materials is not None else str(error)
@@ -124,7 +144,8 @@ def run(
     num_workers: Optional[int] = None,
     subset: Optional[int] = None,
 ) -> None:
-    random.shuffle(iterable)
+    if SHUFFLE:
+        random.shuffle(iterable)
     iterable = iterable[0:subset]
 
     outdir.mkdir(exist_ok=True, parents=True)
@@ -182,31 +203,40 @@ def get_det_iterable() -> list[dict[str, Any]]:
     return iterable
 
 
-def get_fam_iterable() -> list[dict[str, Any]]:
-    raise NotImplementedError()
+def _get_clf_iterable() -> list[dict[str, Any]]:
 
-
-def get_beh_iterable() -> list[dict[str, Any]]:
     lift_level     = "raw"
     lift_level_ddp = "dec"
     ts_size        = 0.00
 
-    tr_sizes         = list(map(round_2, np.arange(0.95, 0.50, -0.05).tolist()))
-    vl_sizes         = list(map(round_2, np.arange(0.05, 0.55,  0.05).tolist()))
-    sizes            = list(zip(tr_sizes, vl_sizes))
+    min_freqs            = [10, 20, 30, 40, 50]
+    max_imbalance_ratios = [2, 5, 10, 25, 50]
+    tr_sizes             = [0.90, 0.85, 0.80, 0.75, 0.70]
+    vl_sizes             = [0.10, 0.15, 0.20, 0.25, 0.30]
+    sizes                = list(zip(tr_sizes, vl_sizes))
 
     iterable = []
-    for tr_size, vl_size in sizes:
+    for (tr_size, vl_size), min_freq, max_imbalance_ratio in product(sizes, min_freqs, max_imbalance_ratios):
         kwds = {
             "lift_level": lift_level,
             "tr_size": tr_size,
             "vl_size": vl_size,
             "ts_size": ts_size,
             "lift_level_ddp": lift_level_ddp,
+            "min_freq": min_freq,
+            "max_imbalance_ratio": max_imbalance_ratio,
         }
         iterable.append(kwds)
 
     return iterable
+
+
+def get_fam_iterable() -> list[dict[str, Any]]:
+    return _get_clf_iterable()
+
+
+def get_beh_iterable() -> list[dict[str, Any]]:
+    return _get_clf_iterable()
 
 
 def main():
