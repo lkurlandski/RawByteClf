@@ -387,10 +387,14 @@ class TrainingArguments(HfTrainingArguments):
             )
 
         if self.saves_per_epoch is not None:
+            if self.saves_per_epoch > max_steps:
+                raise ValueError(f"{self.saves_per_epoch=} must be less than or equal to {max_steps=}.")
             num_evals = math.ceil(self.num_train_epochs * self.saves_per_epoch)
             save_steps = int(math.floor(max_steps / num_evals))
 
         if self.evals_per_epoch is not None:
+            if self.evals_per_epoch > max_steps:
+                raise ValueError(f"{self.evals_per_epoch=} must be less than or equal to {max_steps=}.")
             num_saves = math.ceil(self.num_train_epochs * self.evals_per_epoch)
             eval_steps = int(math.floor(max_steps / num_saves))
 
@@ -533,7 +537,7 @@ class ImbalancedClassificationTrainer(Trainer):
 
 def hp_model_init(
     trial: Optional[dict[str, Any]],
-    task: str,
+    task: Task,
     model_name_or_path: str,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
     max_length: Optional[int] = None,
@@ -909,13 +913,15 @@ def get_config(
 
 
 def get_model(
-    task: str,
+    task: Task,
     model_name_or_path: Optional[str] = None,
     config: Optional[PretrainedConfig] = None,
     **kwds,
 ) -> PreTrainedModel:
-    if (model_name_or_path is None) == (config is None):
-        raise ValueError("Must specify `model_name_or_path` xor `config`.")
+    # At one point, I didn't want to be passing in both a config and a model_name_or_path.
+    # I don't remember what the intuition behind this was...
+    # if (model_name_or_path is None) == (config is None):
+    #     raise ValueError("Must specify `model_name_or_path` xor `config`.")
 
     # PreTrainedModel doesn't like None values for num_labels id2label and label2id.
     for k in ["num_labels", "id2label", "label2id"]:
@@ -935,7 +941,7 @@ def get_model(
         # appears that loading the checkpoint like this:
         # >>> ModelNameForSequenceClassification.from_pretrained(model_name_or_path, config=config),
         # where `config` is a config for classification, prevents this from happening.
-        if task[0:3] == "clf":
+        if task in (Task.DET, Task.FAM, Task.BEH):
             if model_name == "hrrformer":
                 model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = HRRConfig.from_pretrained(model_name_or_path)
@@ -1005,13 +1011,14 @@ def get_model(
 
             return model
 
-        if task[0:3] == "mlm":
+        if task == Task.MLM:
             if model_name == "hrrformer":
                 return HRRForMaskedLM.from_pretrained(model_name_or_path, **kwds)
             if model_name == "mamba":
                 return MambaForMaskedLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForMaskedLM.from_pretrained(model_name_or_path, **kwds)
-        if task[0:3] == "clm":
+
+        if task == Task.CLM:
             if model_name == "hrrformer":
                 return HRRForCausalLM.from_pretrained(model_name_or_path, **kwds)
             if model_name == "mamba":
@@ -1021,7 +1028,7 @@ def get_model(
     # Get model from config
     if config:
         print("Creating new model.")
-        if task[0:3] == "clf":
+        if task in (Task.DET, Task.FAM, Task.BEH):
             if isinstance(config, MalConvConfig):
                 return MalConvForSequenceClassification(config)
             if isinstance(config, MalConv2Config):
@@ -1034,7 +1041,7 @@ def get_model(
                 return MambaForSequenceClassification(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForSequenceClassification.from_config(config)
-        if task[0:3] == "mlm":
+        if task == Task.MLM:
             if isinstance(config, HRRConfig):
                 return HRRForMaskedLM(config)
             if isinstance(config, RwkvConfig):
@@ -1043,7 +1050,7 @@ def get_model(
                 return MambaForMaskedLM(config)
             if isinstance(config, PretrainedConfig):
                 return AutoModelForMaskedLM.from_config(config)
-        if task[0:3] == "clm":
+        if task == Task.CLM:
             if isinstance(config, HRRConfig):
                 return HRRForCausalLM(config)
             if isinstance(config, RwkvConfig):
@@ -1129,10 +1136,10 @@ def get_processed_dataset_hf(
         kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
         dataset = dataset.map(**kwds)
 
-    if args.lift_level == LiftLevel.RAW and args.algorithm == TokenizationAlgorithm.WORDLEVEL:
+    if args.lift_level == LiftLevel.RAW and args.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL:
         func = partial(
             hf_bytes_to_input_ids,
-            bits_in_byte=args.representation,
+            bits_in_byte=args.bits_in_byte,
             num_special_ids=len(tokenizer.all_special_ids),
             max_length=args.max_length,
             bos_token_id=tokenizer.bos_token_id,
@@ -1171,10 +1178,10 @@ def get_processed_dataset_pt(
     if args.encryption_algorithm is not None:
         func = partial(encrypt, encryption_type=args.encryption_algorithm, key=None)
         preprocess_fns.append(func)
-    if args.lift_level == LiftLevel.RAW and args.algorithm == TokenizationAlgorithm.WORDLEVEL:
+    if args.lift_level == LiftLevel.RAW and args.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL:
         func = partial(
             bytes_to_input_ids,
-            bits_in_byte=args.representation,
+            bits_in_byte=args.bits_in_byte,
             num_special_ids=len(tokenizer.all_special_ids),
             max_length=args.max_length,
             bos_token_id=tokenizer.bos_token_id,
@@ -1227,7 +1234,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
         pretrain_kwds = deepcopy(kwds)
         if "mlp_hidden_size" in pretrain_kwds["arch_config"]:
-            print("Removing MLP hidden size from pretraining task.")
+            print("Removing MLP hidden size nrom pretraining task.")
             pretrain_kwds["arch_config"]["mlp_hidden_size"] = -1
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
             args.pretraining_task, args.pretraining_checkpoint, **pretrain_kwds,
@@ -1238,13 +1245,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"Output Path: {oh.path}")
     print(BR)
 
-    prediction_loss_only = args.task[0:3] in ("mlm", "clm")
+    prediction_loss_only = args.task in (Task.CLM, Task.MLM)
     training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
 
     tokenizer = get_fast_tokenizer(
         lift_level=args.lift_level,
-        algorithm=args.algorithm,
-        representation=args.representation,
+        algorithm=args.tokenization_algorithm,
+        bits_in_byte=args.bits_in_byte,
         vocab_size=args.vocab_size,
         model_max_length=args.max_length,
         add_cls_token=False,
@@ -1326,14 +1333,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     #     if "attention_mask" in tokenizer.model_input_names:
     #         tokenizer.model_input_names.remove("attention_mask")
 
-    if args.Task in Task.CLM:
+    if args.task == Task.CLM:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=True,
             pad_to_multiple_of=pad_to_multiple_of,
         )
         compute_metrics = None
-    elif args.Task == Task.MLM:
+    elif args.task == Task.MLM:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=False,
@@ -1587,7 +1594,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
 
-        if args.task[0:3] == "clf":
+        if args.task in (Task.DET, Task.FAM, Task.BEH):
             single_shot_classes = [materials.label2id[l] for l in materials.dist if materials.dist[l] == 3]
             compute_metrics = partial(clf_compute_metrics, single_shot_classes=single_shot_classes)
             print("single_shot_classes=")

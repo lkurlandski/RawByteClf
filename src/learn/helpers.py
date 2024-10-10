@@ -104,6 +104,9 @@ def str_to_probable_type(s: str) -> Optional[str | int | float | bool]:
 @dataclass
 class Args:
 
+    # Custom enums will not be type-cast into the type indicated by the annotation and will remain strings.
+    # Therefore, for the possibly null enums, we need to cast them manually and allowing None.
+
     # Programmatic/implementation
     root: Path            = field(default=OUTPUT_PATH)
     streaming: bool       = field(default=False)
@@ -139,8 +142,8 @@ class Args:
     early_stopping_threshold: float                   = field(default=0.0)
 
     # Task-specific
-    task: Task                          = field(default=Task.CLM)
-    split_mode: Optional[str]           = field(default=SplitMode.RANDOM)
+    task: Task                          = field(default=None)
+    split_mode: Optional[SplitMode]     = field(default=None)
     tr_size: Optional[float]            = field(default=None)
     vl_size: Optional[float]            = field(default=None)
     ts_size: Optional[float]            = field(default=None)
@@ -154,6 +157,18 @@ class Args:
     pretraining_checkpoint: str               = field(default="-1")   # We use str to allow for an index or a path
 
     def __post_init__(self) -> None:
+
+        self.lift_level             = LiftLevel(self.lift_level)
+        self.tokenization_algorithm = TokenizationAlgorithm(self.tokenization_algorithm)
+        self.packing_protocol       = PackingProtocol(self.packing_protocol)
+        self.bits_in_byte           = BitsInByte(self.bits_in_byte)
+        self.compression_algorithm  = str_to_type(self.compression_algorithm, CompressionAlgorithm)
+        self.encryption_algorithm   = str_to_type(self.encryption_algorithm, EncryptionAlgorithm)
+
+        self.weighted_loss = str_to_type(self.weighted_loss, WeightedLossAlgorithm)
+
+        self.task                 = Task(self.task)
+        self.split_mode           = str_to_type(self.split_mode, SplitMode)
         self.top_k                = str_to_int(self.top_k)
         self.min_freq             = str_to_int(self.min_freq)
         self.tr_samples_per_class = str_to_int(self.tr_samples_per_class)
@@ -166,9 +181,8 @@ class Args:
         self.skip_eval_check = str_to_bool(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
 
-        self.pretraining_task       = str_to_str(self.pretraining_task)
+        self.pretraining_task       = str_to_type(self.pretraining_task, Task)
         self.pretraining_checkpoint = int(self.pretraining_checkpoint) if self.pretraining_checkpoint.strip().lstrip("-").isdigit() else self.pretraining_checkpoint
-        self.weighted_loss          = str_to_str(self.weighted_loss)
 
         # Parse the architecture configuration from JSON or from a file.
         if self.arch_config_file and self.arch_config:
@@ -185,10 +199,10 @@ class Args:
         self.tr_size = float_to_int(self.tr_size) if self.tr_size is not None and self.tr_size > 1 else self.tr_size
         self.vl_size = float_to_int(self.vl_size) if self.vl_size is not None and self.vl_size > 1 else self.vl_size
         self.ts_size = float_to_int(self.ts_size) if self.ts_size is not None and self.ts_size > 1 else self.ts_size
-        types = [type(x) for x in [self.tr_size, self.vl_size, self.ts_size] if x > 0]
+        types = [type(x) for x in [self.tr_size, self.vl_size, self.ts_size] if x is not None and x > 0]
         if len(set(types)) > 1:
             raise TypeError("The semantics of using both float and int is not well defined.")
-        IntOrFloat = types[0]
+        IntOrFloat = types[0] if types else None
         self.tr_size = IntOrFloat(self.tr_size) if self.tr_size == 0.0 else self.tr_size
         self.vl_size = IntOrFloat(self.vl_size) if self.vl_size == 0.0 else self.vl_size
         self.ts_size = IntOrFloat(self.ts_size) if self.ts_size == 0.0 else self.ts_size
@@ -249,7 +263,7 @@ class OutputHelper:
         model_name_or_path: str,
         arch_config: Optional[dict],
         task: Task,
-        split_mode: SplitMode,
+        split_mode: Optional[SplitMode],
         weighted_loss: Optional[WeightedLossAlgorithm],
         trainer_config: Optional[dict],
     ) -> None:
@@ -267,19 +281,23 @@ class OutputHelper:
             self.model_name = model_name_or_path
 
         self._meta_args = [
-            f"lift_level--{lift_level.value}"
+            f"lift_level--{lift_level.value}",
             f"packing_protocol--{packing_protocol.value}",
             f"bits_in_byte--{bits_in_byte.value}",
             f"tokenization_algorithm--{tokenization_algorithm.value}",
             f"vocab_size--{vocab_size}",
-            f"max_length--{max_length if max_length is not None else 'None'}",
+            f"max_length--{max_length if max_length is not None else 'none'}",
         ]
 
         self._model_args = [f"model_name--{self.model_name}"]
         self._model_args.extend([f"{k}--{v}" for k, v in arch_config.items()])
 
         # Experiment hyperparameters
-        self._task_args = [f"task--{task.value}", f"weighted_loss--{weighted_loss}", f"split_mode--{split_mode}"]
+        self._task_args = [
+            f"task--{task.value}",
+            f"weighted_loss--{weighted_loss.value if weighted_loss is not None else 'none'}",
+            f"split_mode--{split_mode.value if split_mode is not None else 'none'}",
+        ]
 
         if "world_size" not in trainer_config:
             raise KeyError("world_size not found in trainer_config.")
