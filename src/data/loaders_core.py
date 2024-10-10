@@ -45,6 +45,7 @@ from src.data.cfg import (
     TIMESTAMPS_FILES,
     VALID_TIMESTAMP_RANGES,
     DIGESTS_FILES,
+    LIFT_LEVEL_EXTENSIONS,
 )
 from src.data.detect_packing_sorel import universal_packing_map
 from src.data.labeling import FilterArgs, Labeler, Label
@@ -202,6 +203,34 @@ class Materials:
                 a = file_to_archive_map[f]
                 af = ArchivedFile(a, f)
                 self.files[split][i] = af
+        return self
+
+    def convert_files_suffix(self, suffix: str) -> Materials:
+        def convert_archived_file_suffix(af: ArchivedFile) -> ArchivedFile:
+            if af.name.endswith(suffix):
+                return af
+            return ArchivedFile(af.archive, af.name + suffix)
+
+        def convert_string_file_suffix(f: str) -> str:
+            if f.endswith(suffix):
+                return f
+            return f + suffix
+
+        def convert_pathlib_file_suffix(f: Path) -> Path:
+            if f.suffix == suffix:
+                return f
+            return f.with_suffix(suffix)
+
+        if isinstance(self.files["tr"][0], ArchivedFile):
+            convert = convert_archived_file_suffix
+        elif isinstance(self.files["tr"][0], Path):
+            convert = convert_pathlib_file_suffix
+        else:
+            convert = convert_string_file_suffix
+
+        for split in self.files:
+            self.files[split] = [convert(f) for f in self.files[split]]
+
         return self
 
     def spacially_bias(self, ratio: float, minority_class: str = "mal", splits: tuple[str] = ("tr", "vl", "ts")) -> Materials:
@@ -1568,13 +1597,13 @@ def get_materials_clf_elf(
 DISABLE_ESP_CACHE = False
 
 
-def esp_cache_file(get_materials: Callable, **kwds) -> Path:
-    identifier = ",".join([f"{k}={kwds[k]}" for k in sorted(kwds)])
+def esp_cache_file(get_materials: Callable, lift_level: LiftLevel, **kwds) -> Path:
+    identifier = "--".join([f"{k}={kwds[k]}" for k in sorted(kwds)])
     b = identifier.encode("utf-8")
     h = hashlib.sha256(b).hexdigest()
     parent = Path("./cache") / "materials"
     parent.mkdir(parents=True, exist_ok=True)
-    return parent / f"{get_materials.__name__}_{h}.pkl"
+    return parent / f"{get_materials.__name__}--{lift_level.value}--{h}.pkl"
 
 
 def _get_materials_esp_lm(
@@ -1592,11 +1621,11 @@ def _get_materials_esp_lm(
 
     cache_file = esp_cache_file(
         _get_materials_esp_lm,
-        lift_level=lift_level,
+        lift_level,
         tr_size=tr_size,
         vl_size=vl_size,
         ts_size=ts_size,
-        lift_level_ddp=lift_level_ddp,
+        lift_level_ddp=lift_level_ddp.value,
     )
 
     if not DISABLE_ESP_CACHE and cache_file.exists():
@@ -1642,6 +1671,7 @@ def _get_materials_esp_lm(
     archived_files.sort(key=lambda af: af.name)
     tr_vl_ts_files = tr_vl_ts_split(archived_files, tr_size, vl_size, ts_size)
     materials = Materials(files=tr_vl_ts_files)
+    materials = materials.convert_files_suffix(LIFT_LEVEL_EXTENSIONS[lift_level])
 
     print(f"Saving materials to cache: {cache_file}.")
     with open(cache_file, "wb") as fp:
@@ -1702,13 +1732,13 @@ def get_materials_esp_det(
 
     cache_file = esp_cache_file(
         get_materials_esp_det,
-        lift_level=lift_level,
+        lift_level,
         tr_size=tr_size,
         vl_size=vl_size,
         ts_size=ts_size,
         ratio_pre_split=ratio_pre_split,
         ratio_pos_split=ratio_pos_split,
-        lift_level_ddp=lift_level_ddp,
+        lift_level_ddp=lift_level_ddp.value,
     )
 
     if not DISABLE_ESP_CACHE and cache_file.exists():
@@ -1859,6 +1889,7 @@ def get_materials_esp_det(
             else:
                 raise RuntimeError(f"Could not find the archive containing {f=} where {archives[dnm]=}")
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
+    materials = materials.convert_files_suffix(LIFT_LEVEL_EXTENSIONS[lift_level])
 
     print("\tComputing final ratios.")
     def fmt(t: float, b: float) -> str:
@@ -1907,12 +1938,12 @@ def _get_materials_esp_clf(
 
     cache_file = esp_cache_file(
         _get_materials_esp_clf,
+        lift_level,
         problem_type=problem_type,
-        lift_level=lift_level,
         tr_size=tr_size,
         vl_size=vl_size,
         ts_size=ts_size,
-        lift_level_ddp=lift_level_ddp,
+        lift_level_ddp=lift_level_ddp.value,
         **kwds,
     )
 
@@ -1991,6 +2022,7 @@ def _get_materials_esp_clf(
         else:
             raise RuntimeError(f"Could not find the archive containing {f=} where {archives=}")
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
+    materials = materials.convert_files_suffix(LIFT_LEVEL_EXTENSIONS[lift_level])
 
     print(f"Saving materials to cache: {cache_file}.")
     with open(cache_file, "wb") as fp:

@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from typing import Any, Callable, Generator, Literal, Optional
+import warnings
 import zlib
 
 from Crypto.Cipher import AES
@@ -40,8 +41,10 @@ def print_context(suppress: bool = False):
     if not suppress:
         yield
     else:
-        with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
-            yield
+        with open(os.devnull, "w") as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                yield
 
 
 def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:

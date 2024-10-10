@@ -171,3 +171,9 @@ VALID_TIMESTAMP_RANGES = {
     DatasetName.SOREL      : (0, 1554955200), # VALID=(01-01-1970 - 04-11-2019) -- PRESENT=(01-01-1970 - 02-07-2106)
     DatasetName.WINDOWS    : (0, 1672549200), # VALID=(01-01-1970 - 01-01-2023) -- PRESENT=(01-01-1970 - 02-04-2106)
 }
+
+LIFT_LEVEL_EXTENSIONS = {
+    LiftLevel.DECOMPILED:   ".c",
+    LiftLevel.DISASSEMBLED: ".asm",
+    LiftLevel.RAW:          ".exe",
+}
