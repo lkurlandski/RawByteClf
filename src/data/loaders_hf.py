@@ -56,7 +56,7 @@ def generator_from_zipfiles(
         if preserve_order:
             warnings.warn(f"Non-contiguous files will result in catostrophically slow speed.")
         else:
-            files.sort(key=lambda af: af.archive)
+            files = ArchivedFile.make_archive_list_contiguous(files)
             if not ArchivedFile.is_archive_list_contiguous(files):
                 raise RuntimeError("Non-contiguous files after sorting.")
 

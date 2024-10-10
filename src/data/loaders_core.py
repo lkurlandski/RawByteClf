@@ -95,6 +95,21 @@ class ArchivedFile:
             encountered.add(a)
         return True
 
+    @staticmethod
+    def make_archive_list_contiguous(archive_list: list[ArchivedFile | tuple]) -> list[ArchivedFile]:
+        archive_files_map = defaultdict(list)
+        for af in archive_list:
+            archive_files_map[af.archive].append(af)
+
+        archives = list(archive_files_map.keys())
+        random.shuffle(archives)
+
+        new = []
+        for archive in archives:
+            new.extend(archive_files_map[archive])
+        assert len(new) == len(archive_list)
+        return new
+
 
 @dataclass
 class Materials:
