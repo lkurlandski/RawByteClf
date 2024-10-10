@@ -2,7 +2,7 @@
 Custom options.
 """
 
-from enum import Enum
+from enum import Enum, IntEnum
 
 
 class LiftLevel(Enum):
@@ -52,7 +52,7 @@ class PackingProtocol(Enum):
     UNK = "unk"
 
 
-class BitsInByte(Enum):
+class BitsInByte(IntEnum):
     EIGHT   = 8
     TWELVE  = 12
     SIXTEEN = 16
