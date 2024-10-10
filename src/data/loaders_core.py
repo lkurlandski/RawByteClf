@@ -76,6 +76,22 @@ class ArchivedFile:
                 archived_files.append(ArchivedFile(archive, name))
         return archived_files
 
+    @staticmethod
+    def is_archive_list_contiguous(archive_list: list[ArchivedFile]) -> bool:
+        encountered = set()
+        prev_a = None
+        for i in archive_list:
+            a = i[0]
+            if prev_a is None:
+                prev_a = a
+                encountered.add(a)
+                continue
+            if a != prev_a and a in encountered:
+                return False
+            prev_a = a
+            encountered.add(a)
+        return True
+
 
 @dataclass
 class Materials:

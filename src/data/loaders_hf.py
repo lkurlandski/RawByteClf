@@ -49,7 +49,11 @@ def generator_from_zipfiles(
     files: list[ArchivedFile],
     labels: Optional[np.ndarray] = None,
     max_length: Optional[int] = None,
+    allow_non_contiguous: bool = False,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
+
+    if not ArchivedFile.is_archive_list_contiguous(files) and not allow_non_contiguous:
+        raise ValueError(f"Non-contiguous files will result in catostrophically slow speed. Set allow_non_contiguous=True to proceed.")
 
     zp = None
 
