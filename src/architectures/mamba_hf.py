@@ -69,7 +69,7 @@ class MambaConfig(PretrainedConfig):
         rescale_prenorm_residual: bool = False,
         use_cache: bool = True,
         mode: Literal["uni", "bi"] = "uni",
-        tie_directions: bool = True,
+        tie_directions: bool = False,
         **kwargs,
     ):
 
