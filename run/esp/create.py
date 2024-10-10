@@ -192,22 +192,23 @@ class Configuration:
 
     @property
     def do(self) -> bool:
-        # These configurations are simply invalid
-        if self.model_mode == ModelMode.UN:
-            if self.task == Task.MLM:
-                return False
-            if self.pretraining_task == Task.MLM:
-                return False
-        if self.model_mode == ModelMode.BI:
-            if self.task == Task.CLM:
-                return False
-            if self.pretraining_task == Task.CLM:
-                return False
+        # Unidirectional models cannot do MLM.
+        if self.model_mode == ModelMode.UN and Task.MLM in (self.task, self.pretraining_task):
+            return False
+        # Bidirectional models cannot do CLM.
+        if self.model_mode == ModelMode.BI and Task.CLM in (self.task, self.pretraining_task):
+            return False
+        # Only some tokenizers were trained.
         if self.tokenization_algorithm not in (TokenizationAlgorithm.BPE, TokenizationAlgorithm.UNIGRAM):
             return False
+        # Pretraining and detection does not required random runs.
         if self.task in (Task.CLM, Task.MLM, Task.DET) and self.seed != 0:
             return False
+        # Pretraining cannot be pretrained.
         if self.task in (Task.CLM, Task.MLM) and self.pretraining_task is not None:
+            return False
+        # At the moment, none of the ESP loaders support different seeds.
+        if self.seed != 0:
             return False
 
         # Adjust as desired
