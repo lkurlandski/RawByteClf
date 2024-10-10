@@ -80,14 +80,14 @@ def get_raw_raw_tokenizer_16() -> Tokenizer:
     return tokenizer
 
 
-def get_raw_raw_tokenizer(representation: int) -> Tokenizer:
-    if representation == 8:
+def get_raw_raw_tokenizer(bits_in_byte: int) -> Tokenizer:
+    if bits_in_byte == 8:
         return get_raw_raw_tokenizer_08()
-    if representation == 12:
+    if bits_in_byte == 12:
         return get_raw_raw_tokenizer_12()
-    if representation == 16:
+    if bits_in_byte == 16:
         return get_raw_raw_tokenizer_16()
-    raise ValueError(f"{representation=}")
+    raise ValueError(f"{bits_in_byte=}")
 
 
 def get_raw_normalizer(algorithm: TokenizationAlgorithm) -> Normalizer:  # pylint: disable=unused-argument

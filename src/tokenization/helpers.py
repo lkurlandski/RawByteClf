@@ -91,13 +91,13 @@ class TokenizerIOHelper:
         p = TOKENIZERS_OUTPUT_PATH
         if lift_level is None:
             raise ValueError("You must specify a lift_level.")
-        p /= lift_level
+        p /= LiftLevel(lift_level).value
 
         if algorithm is None:
             if not (ps := sorted(p.iterdir())):
                 raise DirectoryIsEmptyError(p)
             algorithm = ps[0].name
-        p /= algorithm
+        p /= TokenizationAlgorithm(algorithm).value
 
         if vocab_size is None:
             if not (ps := sorted(p.iterdir())):
