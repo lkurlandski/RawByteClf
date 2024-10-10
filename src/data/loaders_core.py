@@ -77,11 +77,14 @@ class ArchivedFile:
         return archived_files
 
     @staticmethod
-    def is_archive_list_contiguous(archive_list: list[ArchivedFile]) -> bool:
+    def is_archive_list_contiguous(archive_list: list[ArchivedFile | tuple]) -> bool:
         encountered = set()
         prev_a = None
         for i in archive_list:
-            a = i[0]
+            if isinstance(i, ArchivedFile):
+                a = i.archive
+            else:
+                a = i[0]
             if prev_a is None:
                 prev_a = a
                 encountered.add(a)
