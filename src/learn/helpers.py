@@ -2,7 +2,6 @@
 Utilies to help with the output of the training process.
 
 FIXME:
- - add world_size to the output path instead of multiplying with per_device_train_batch_size
  - the mutability of the OutputHelper's trainer_config is confusing; 
     refactor to contain a reference to a TrainingArguments?
 
@@ -237,6 +236,7 @@ class OutputHelper:
         "adam_epsilon",
         "max_steps",  # Training
         "num_train_epochs",
+        "world_size",
         "per_device_train_batch_size",
         "gradient_accumulation_steps",
         "tf32",  # Numeric types
@@ -483,7 +483,7 @@ class OutputHelper:
     def get_trainer_path_args(self) -> list[str]:
         d = {k: self.trainer_config.get(k, None) for k in self.TRAINER_KEYS}
         d = {k: v.value if isinstance(v, Enum) else v for k, v in d.items()}
-        d["per_device_train_batch_size"] = d["per_device_train_batch_size"] * self.trainer_config["world_size"]
+        d["per_device_train_batch_size"] = d["per_device_train_batch_size"]
         return [f"{k}--{v}" for k, v in d.items()]
 
     def update(self, **kwds) -> None:
