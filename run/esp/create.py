@@ -19,6 +19,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.enums import LiftLevel, Task, TokenizationAlgorithm
 
 
+SBATCH_SCRIPT_PATH = Path("./run/esp/sbatch")
+
+
 def bool_to_str(b: bool) -> str:
     if not isinstance(b, bool):
         raise TypeError(type(b))
@@ -359,30 +362,23 @@ class Configuration:
         return SBATCH_SCRIPT_PATH / f"{self.job}.sh"
 
 
-MAX_LENGTHS  = (4096, 16384, 65536)
-VOCAB_SIZES  = (1024, 4096, 16384)
-SEEDS        = (0, 1, 2, 3, 4)
-SBATCH_SCRIPT_PATH = Path("./run/esp/sbatch")
-
-
 def main():
 
     SBATCH_SCRIPT_PATH.mkdir(parents=True, exist_ok=True)
     for file in SBATCH_SCRIPT_PATH.iterdir():
         file.unlink()
 
-
     configurations = product(
         ModelName,
         ModelSize,
         ModelMode,
-        MAX_LENGTHS,
+        (4096, 16384, 65536),
         LiftLevel,
         TokenizationAlgorithm,
-        VOCAB_SIZES,
+        (1024, 4096, 16384),
         [None, Task.CLM, Task.MLM],
         Task,
-        SEEDS,
+        (0, 1, 2, 3, 4),
     )
     configurations = [Configuration(*config) for config in configurations]
 
