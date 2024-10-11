@@ -21,7 +21,8 @@ from src.enums import LiftLevel, Task, TokenizationAlgorithm
 
 DEBUG    = False
 ARMITAGE = False
-OUTPATH  = Path("run/esp/sbatch")
+PREP     = False
+OUTPATH  = None
 
 
 def bool_to_str(b: bool) -> str:
@@ -45,6 +46,7 @@ def get_body(
     mem: int,
     gpu: int,
     streaming: bool,
+    exit_after_map: bool,
     model_name: ModelName,
     arch_config: dict,
     max_length: int,
@@ -58,6 +60,7 @@ def get_body(
     dataloader_num_workers: int,
     learning_rate: float,
     batch_size: int,
+    tf32: bool,
     bf16: bool,
     seed: int,
 ) -> str: return (
@@ -83,6 +86,7 @@ python -u \\
 src/learn/train.py \\
 --root='./output/esp{"-test" if DEBUG else ""}' \\
 --streaming={bool_to_str(streaming)} \\
+--exit_after_map={bool_to_str(exit_after_map)} \\
 --auto_find_batch_size_and_gradient_accumulation_steps='true' \\
 --dataset_backend="HF" \\
 --model_name_or_path='{model_name.value}' \\
@@ -117,8 +121,8 @@ src/learn/train.py \\
 --gradient_accumulation_steps=1 \\
 --eval_accumulation_steps=64 \\
 --load_best_model_at_end \\
---tf32='true' \\
---bf16={'true' if bf16 else 'false'} \\
+--tf32={bool_to_str(tf32)} \\
+--bf16={bool_to_str(bf16)} \\
 --gradient_checkpointing='true'
 """.replace("\n \\", "").strip() + "\n"
 )
@@ -216,22 +220,22 @@ class Configuration:
             return False
 
         # Adjust as desired
-        # if self.model_name != ModelName.MAM:
-        #     return False
-        # if self.model_mode != ModelMode.BI:
-        #     return False
-        # if self.model_size != ModelSize.TN:
-        #     return False
-        # if self.max_length != 1024:
-        #     return False
-        # if self.lift_level != LiftLevel.RAW:
-        #     return False
-        # if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
-        #     return False
-        # if self.vocab_size != 16384:
-        #     return False
-        # if self.seed != 0:
-        #     return False
+        if self.model_name != ModelName.MAM:
+            return False
+        if self.model_mode != ModelMode.BI:
+            return False
+        if self.model_size != ModelSize.TN:
+            return False
+        if self.max_length != 65536:
+            return False
+        if self.lift_level != LiftLevel.RAW:
+            return False
+        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+            return False
+        if self.vocab_size != 16384:
+            return False
+        if self.seed != 0:
+            return False
 
         return True
 
@@ -252,6 +256,8 @@ class Configuration:
 
     @property
     def tim(self) -> str:
+        if PREP:
+            return seconds_to_slurm_time(3600)
         try:
             t = MODEL_TIME_PER_SAMPLE[self.model_name][self.model_size][self.max_length]
         except KeyError:
@@ -263,15 +269,18 @@ class Configuration:
 
     @property
     def cpu(self) -> int:
+        if PREP:
+            return 16
         if self.task in (Task.CLM, Task.MLM):
             return 8
         return 4
 
     @property
     def mem(self) -> int:
+        if PREP:
+            return 64
         if self.streaming:
             return 64
-
         if self.vocab_size not in COMPRESSION_RATIOS[self.tokenization_algorithm]:
             warnings.warn(f"Compression ratio unknown for {self.tokenization_algorithm.value} {self.vocab_size}.")
         c = COMPRESSION_RATIOS[self.tokenization_algorithm].get(self.vocab_size, 1)
@@ -282,6 +291,8 @@ class Configuration:
 
     @property
     def gpu(self) -> int:
+        if PREP:
+            return 0
         if self.task in (Task.CLM, Task.MLM):
             return 2
         return 1
@@ -289,6 +300,12 @@ class Configuration:
     @property
     def streaming(self) -> bool:
         if self.task in (Task.CLM, Task.MLM):
+            return True
+        return False
+
+    @property
+    def exit_after_map(self) -> bool:
+        if PREP:
             return True
         return False
 
@@ -329,22 +346,24 @@ class Configuration:
 
     @property
     def num_train_epochs(self) -> int:
-        if DEBUG: return 1
-
+        if DEBUG:
+            return 1
         if self.task in (Task.CLM, Task.MLM):
             return 1
         return 10
 
     @property
     def saves_and_evals_per_epochs(self) -> int:
-        if DEBUG: return 2
-
+        if DEBUG:
+            return 2
         if self.task in (Task.CLM, Task.MLM):
             return 16
         return 1
 
     @property
     def dataloader_num_workers(self) -> int:
+        if self.gpu == 0:
+            return 0
         return self.cpu // self.gpu - 1
 
     @property
@@ -358,6 +377,12 @@ class Configuration:
         if self.task in (Task.CLM, Task.MLM):
             return 1024
         return 256
+
+    @property
+    def tf32(self) -> bool:
+        if PREP:
+            return False
+        return True
 
     @property
     def bf16(self) -> bool:
@@ -374,16 +399,25 @@ def main():
 
     global DEBUG
     global ARMITAGE
+    global PREP
     global OUTPATH
 
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--armitage", action="store_true")
+    parser.add_argument("--prep", action="store_true")
     args = parser.parse_args()
 
     DEBUG    = args.debug
     ARMITAGE = args.armitage
-    OUTPATH  = Path("run/esp/test") if DEBUG else OUTPATH
+    PREP     = args.prep
+    OUTPATH  = Path("run/esp/")
+    if DEBUG:
+        OUTPATH /= "debug"
+    elif PREP:
+        OUTPATH /= "prep"
+    else:
+        OUTPATH /= "sbatch"
 
     OUTPATH.mkdir(parents=True, exist_ok=True)
     for file in OUTPATH.iterdir():
@@ -413,6 +447,7 @@ def main():
             mem=config.mem,
             gpu=config.gpu,
             streaming=config.streaming,
+            exit_after_map=config.exit_after_map,
             model_name=config.model_name,
             arch_config=config.arch_config,
             max_length=config.max_length,
@@ -426,6 +461,7 @@ def main():
             dataloader_num_workers=config.dataloader_num_workers,
             learning_rate=config.learning_rate,
             batch_size=config.batch_size,
+            tf32=config.tf32,
             bf16=config.bf16,
             seed=config.seed,
         )
