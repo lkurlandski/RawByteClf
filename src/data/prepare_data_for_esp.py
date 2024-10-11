@@ -25,15 +25,15 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
-from src.cfg import System, SYSTEM
-from src.enums import LiftLevel
+from src.cfg import SYSTEM
+from src.enums import LiftLevel, System
 from src.utils import rglob
 from src.data.utils import get_data_from_archives
 
 
-if SYSTEM == System.LAB:
+if SYSTEM == System.GCCIS:
     ROOT = Path("/media/lk3591/easystore/datasets")
-elif SYSTEM == System.RC:
+elif SYSTEM == System.SPORC:
     ROOT = Path("/shared/rc/admalware/")
 elif SYSTEM == System.ARMITAGE:
     ROOT = Path("/home/lk3591/Documents/datasets")
