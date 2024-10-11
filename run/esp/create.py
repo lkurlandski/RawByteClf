@@ -81,7 +81,7 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 
 python -u \\
 src/learn/train.py \\
---root='./output/'esp{"-test" if DEBUG else ""}' \\
+--root='./output/esp{"-test" if DEBUG else ""}' \\
 --streaming={bool_to_str(streaming)} \\
 --auto_find_batch_size_and_gradient_accumulation_steps='true' \\
 --dataset_backend="HF" \\
