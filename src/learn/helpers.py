@@ -324,11 +324,11 @@ class OutputHelper:
 
     @staticmethod
     def get_finetuning_model_name_or_path(
-        pretraining_task: str, pretraining_checkpoint: str | int = -1, **kwds,
+        pretraining_task: Task, pretraining_checkpoint: str | int = -1, **kwds,
     ) -> str:
         oh = OutputHelper(**kwds)
 
-        path = oh.model_path / f"task--{pretraining_task}"
+        path = oh.model_path / f"task--{pretraining_task.value}"
         completed = list(path.rglob(OutputHelper.FINAL_PATH))
         completed = [p for p in completed if all("checkpoint-" not in part for part in p.parts)]
 
