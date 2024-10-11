@@ -5,11 +5,16 @@ High-level loading API for huggingface datasets.
 import asyncio
 from collections.abc import Generator
 from functools import partial
+from hashlib import md5
+import multiprocessing as mp
 import os
 from pathlib import Path
 from pprint import pformat
+import shutil
 import sys
+from tempfile import NamedTemporaryFile
 from typing import Optional
+import warnings
 import zipfile
 
 # pylint: disable=wrong-import-position
@@ -28,7 +33,10 @@ from datasets import (
 )
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
+from src.cfg import SYSTEM
+from src.enums import System
 from src.data.loaders_core import (
     Materials,
     ArchivedFile,
@@ -52,9 +60,32 @@ def generator_from_zipfiles(
     preserve_order: bool = False,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
 
+    # On SPORC, copying the files to /tmp leads to a results in read speed of ~200 samples/second
+    # compared to a base read speed of ~10 samples per second.
+
+    tmppath = None
+    if SYSTEM == System.SPORC:
+        tmppath = Path("/tmp/lk3591")
+        tmppath.mkdir(exist_ok=True)
+        archives = {
+            a: tmppath / md5(str(a).encode()).hexdigest()
+            for a in sorted(set(af.archive for af in files))
+        }
+        if len(set(archives.values())) != len(archives):
+            raise RuntimeError("There was a hash collision. Fuck.")
+        num_workers = len(os.sched_getaffinity(0)) * 2
+        iterable = [(src, dst) for src, dst in archives.items() if not dst.exists()]
+        print(f"\nCopying archives. {len(iterable)=} {tmppath=} {num_workers=}.")
+        with mp.Pool(num_workers) as pool:
+            pool.starmap(shutil.copy2, iterable)
+
+        print("Finished copy. Renaming ArchivedFiles.")
+        for af in files:
+            af.archive = archives[af.archive]
+
     if not ArchivedFile.is_archive_list_contiguous(files):
         if preserve_order:
-            warnings.warn(f"Non-contiguous files will result in catostrophically slow speed.")
+            warnings.warn("Non-contiguous files will result in catostrophically slow speed.")
         else:
             files = ArchivedFile.make_archive_list_contiguous(files)
             if not ArchivedFile.is_archive_list_contiguous(files):
@@ -85,6 +116,8 @@ def generator_from_zipfiles(
     finally:
         if isinstance(zp, zipfile.ZipFile):
             zp.close()
+        if tmppath is not None:
+            shutil.rmtree(tmppath)
 
 
 def generator(
