@@ -225,7 +225,8 @@ MOVE_IN_MEMORY = False
 BATCH_SIZE: Optional[int] = 1000
 WRITER_BATCH_SIZE: Optional[int] = 1000
 CACHE_FILE_NAME: Optional[str] = None
-NUM_PROC: Optional[int] = len(os.sched_getaffinity(0)) if len(os.sched_getaffinity(0)) != 40 else 20
+# NUM_PROC: Optional[int] = len(os.sched_getaffinity(0)) if len(os.sched_getaffinity(0)) != 40 else 20
+NUM_PROC = None
 KEEP_IN_MEMORY = False
 
 # Variables for hyperparameter tuning.
