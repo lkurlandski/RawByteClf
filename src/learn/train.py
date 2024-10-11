@@ -1216,6 +1216,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     MODEL_NAME = object_to_model_name(args.model_name_or_path)
     USING_EPOCHS = training_arguments.max_steps is None or training_arguments.max_steps <= 0
 
+    if training_arguments.world_size > 1 and MODEL_NAME == "mamba":
+        if int(torch.__version__.split(".")[0]) < 2 or int(torch.__version__.split(".")[1]) < 2:
+            raise RuntimeError("Distributed mamba requires torch>=2.2.0")
+
     kwds = {
         "root": args.root,
         "packing_protocol": args.packing_protocol,
@@ -1407,6 +1411,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     if training_arguments.do_train:
+        print(f"training_arguments={pformat(training_arguments)}")
+        print(BR, flush=True)
+
         model = get_model(
             args.task,
             args.model_name_or_path,
@@ -1419,40 +1426,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
         print(BR, flush=True)
-
-        # Resize the embeddings if necessary
-        if modify_positional_embeddings_allowed(model):
-            add_positional_embeddings = args.max_length > model.config.max_position_embeddings
-
-            if add_positional_embeddings and isinstance(config, LongformerConfig):
-                max_position_embeddings = longformer_max_position_embeddings(
-                    args.max_length, config.attention_window[0]
-                )
-            elif add_positional_embeddings:
-                max_position_embeddings = args.max_length
-            else:
-                max_position_embeddings = model.config.max_position_embeddings
-
-            config.max_position_embeddings = max_position_embeddings
-
-            model = modify_positional_embeddings(
-                model,
-                max_position_embeddings=max_position_embeddings,
-                duplicate=args.ft_duplicate_positional_embeddings and add_positional_embeddings,
-                initialize=args.ft_initialize_positional_embeddings and add_positional_embeddings,
-                freeze=args.ft_freeze_positional_embeddings,
-                initalizer_range=config.initializer_range,
-            )
-            print(f"{model=}")
-            print(f"{count_parameters(model, requires_grad=False)=}")
-            print(f"{count_parameters(model, requires_grad=True)=}")
-            print(BR, flush=True)
-
-
-        # Final print-out of the training arguments, after any modifications that may have been made
-        print(f"training_arguments={pformat(training_arguments)}")
-        print(BR, flush=True)
-
 
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
         # This will also reduce the eval_batch size in the training_arguments variable.
