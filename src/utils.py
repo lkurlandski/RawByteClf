@@ -33,6 +33,11 @@ import py7zr
 import torch
 from torch import nn, ByteTensor, LongTensor, Tensor
 
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# pylint: disable=wrong-import-position
+
 from src.enums import CompressionAlgorithm, EncryptionAlgorithm
 
 
