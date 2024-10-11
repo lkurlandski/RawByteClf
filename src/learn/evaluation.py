@@ -5,11 +5,13 @@ TODO: using the object-oriented ComputeMetrics seems to cause memory leaks.
 TODO: refactor out the use of huggingface's evaluate module.
 """
 
+import sys
 import time
 from typing import Literal
 
 import numpy as np
 from sklearn import metrics
+from sklearn.utils.multiclass import type_of_target
 from scipy.special import expit, softmax  # pylint: disable=no-name-in-module
 from transformers import EvalPrediction
 import torch
@@ -99,6 +101,8 @@ def clf_compute_metrics(
     """
     Compute classification metrics.
 
+    For binary classification, it is critical that the positive label is 1!
+
     Args:
       eval_pred: EvalPrediction object.
       problem_type: Type of classification problem.
@@ -139,7 +143,14 @@ def clf_compute_metrics(
         # labels (N,)
         probabilities = softmax(probabilities, axis=1)
         predictions = np.argmax(probabilities, axis=1)
-        averages = ["macro", "weighted", "micro"]
+        if type_of_target(labels) == "binary":
+            # probabilities (N,)
+            probabilities = probabilities[:, 1]
+            averages = [None]
+            multi_class = "raise"
+        else:
+            averages = ["macro", "weighted", "micro"]
+            multi_class = "ovr"
 
     if problem_type == "multi_label_classification":
         # probabilities, predictions (N, C)
@@ -154,10 +165,10 @@ def clf_compute_metrics(
     report["hamming_loss"] = metrics.hamming_loss(labels, predictions)
 
     for average in averages:
-        precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average)
+        precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average if average else "binary")
 
         try:
-            roc_auc = metrics.roc_auc_score(labels, probabilities, multi_class="ovr", average=average)
+            roc_auc = metrics.roc_auc_score(labels, probabilities, multi_class=multi_class, average=average)
         except ValueError as err:
             if "Only one class present in y_true." in str(err):
                 roc_auc = np.nan
