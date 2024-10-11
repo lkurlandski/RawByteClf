@@ -44,7 +44,7 @@ class MambaConfig(PretrainedConfig):
     def __init__(
         self,
         vocab_size: int = 50280,
-        embedding_size: int = 768,
+        embedding_size: int = -1,
         hidden_size: int = 768,
         mlp_hidden_size: int = -1,
         state_size: int = 16,
@@ -76,7 +76,7 @@ class MambaConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.mlp_hidden_size = mlp_hidden_size
-        self.embedding_size = embedding_size
+        self.embedding_size = embedding_size if embedding_size > 0 else hidden_size
         self.state_size = state_size
         self.num_hidden_layers = num_hidden_layers
         self.layer_norm_epsilon = layer_norm_epsilon
