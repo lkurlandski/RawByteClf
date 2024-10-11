@@ -72,7 +72,6 @@ for file in "${sorted_files[@]}"; do
     CUDA_VISIBLE_DEVICES="$devices" bash "$file" &> "$logfile"
     echo "Done. Status: $?."
 
-    exit 0
 done
 
 for file in "${sorted_files[@]}"; do
