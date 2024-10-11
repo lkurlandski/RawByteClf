@@ -91,7 +91,7 @@ src/learn/train.py \\
 --pretraining_checkpoint=-1 \\
 --seed={seed} \\
 --do_train \\
---output_dir='foo/bar/baz' \\
+--output_dir='/dev/null' \\
 --save_strategy='epoch' \\
 --evaluation_strategy='epoch' \\
 --num_train_epochs={num_train_epochs} \\
