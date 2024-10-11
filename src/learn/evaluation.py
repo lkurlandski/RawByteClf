@@ -138,6 +138,9 @@ def clf_compute_metrics(
     if problem_type not in ("single_label_classification", "multi_label_classification"):
         raise ValueError(f"Invalid problem type: {problem_type=}.")
 
+
+    multi_class = "ovr"
+
     if problem_type == "single_label_classification":
         # probabilities, predictions (N, C)
         # labels (N,)
@@ -150,7 +153,6 @@ def clf_compute_metrics(
             multi_class = "raise"
         else:
             averages = ["macro", "weighted", "micro"]
-            multi_class = "ovr"
 
     if problem_type == "multi_label_classification":
         # probabilities, predictions (N, C)
