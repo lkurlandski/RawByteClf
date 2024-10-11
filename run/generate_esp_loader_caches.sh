@@ -19,4 +19,4 @@ conda activate RawByteClf
 conda activate RawByteClf2
 
 
-python -u src/data/generate_esp_loader_caches.py --num_workers=5 --suppress
+python -u src/data/generate_esp_loader_caches.py --num_workers=15 --suppress
