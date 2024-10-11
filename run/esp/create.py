@@ -19,7 +19,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.enums import LiftLevel, Task, TokenizationAlgorithm
 
 
-SBATCH_SCRIPT_PATH = Path("./run/esp/sbatch")
+DEBUG    = False
+ARMITAGE = False
+OUTPATH  = Path("run/esp/sbatch")
 
 
 def bool_to_str(b: bool) -> str:
@@ -74,12 +76,12 @@ f"""
 #SBATCH --gres=gpu:a100:{gpu}
 
 source ~/anaconda3/etc/profile.d/conda.sh
-conda activate RawByteClf2
-module unload blindfold
+conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
+{"" if ARMITAGE else "module unload blindfold"}
 
 python -u \\
 src/learn/train.py \\
---root='./output/esp' \\
+--root='./output/'esp{"-test" if DEBUG else ""}' \\
 --streaming={bool_to_str(streaming)} \\
 --auto_find_batch_size_and_gradient_accumulation_steps='true' \\
 --dataset_backend="HF" \\
@@ -214,22 +216,22 @@ class Configuration:
             return False
 
         # Adjust as desired
-        if self.model_name != ModelName.MAM:
-            return False
-        if self.model_size != ModelSize.TN:
-            return False
-        if self.model_mode != ModelMode.BI:
-            return False
-        if self.max_length != 4096:
-            return False
-        if self.lift_level != LiftLevel.RAW:
-            return False
-        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
-            return False
-        if self.vocab_size != 16384:
-            return False
-        if self.seed != 0:
-            return False
+        # if self.model_name != ModelName.MAM:
+        #     return False
+        # if self.model_mode != ModelMode.BI:
+        #     return False
+        # if self.model_size != ModelSize.TN:
+        #     return False
+        # if self.max_length != 1024:
+        #     return False
+        # if self.lift_level != LiftLevel.RAW:
+        #     return False
+        # if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+        #     return False
+        # if self.vocab_size != 16384:
+        #     return False
+        # if self.seed != 0:
+        #     return False
 
         return True
 
@@ -304,6 +306,7 @@ class Configuration:
             if self.model_size == ModelSize.HG:
                 d = {"num_hidden_layers": 16, "hidden_size": 512}
             d["mode"] = "uni" if self.model_mode == ModelMode.UN else "bi"
+            d["embedding_size"] = d["hidden_size"]
             return d
 
         if self.model_name == ModelName.HRR:
@@ -318,6 +321,7 @@ class Configuration:
             if self.model_size == ModelSize.HG:
                 d = {"num_hidden_layers": 8, "hidden_size": 512, "intermediate_size": 1024, "num_attention_heads": 8}
             d["is_decoder"] = self.model_mode == ModelMode.UN
+            d["embedding_size"] = d["hidden_size"]
             return d
 
         raise ValueError(self.model_name)
@@ -325,12 +329,16 @@ class Configuration:
 
     @property
     def num_train_epochs(self) -> int:
+        if DEBUG: return 1
+
         if self.task in (Task.CLM, Task.MLM):
             return 1
         return 10
 
     @property
     def saves_and_evals_per_epochs(self) -> int:
+        if DEBUG: return 2
+
         if self.task in (Task.CLM, Task.MLM):
             return 16
         return 1
@@ -359,20 +367,33 @@ class Configuration:
 
     @property
     def outfile(self) -> Path:
-        return SBATCH_SCRIPT_PATH / f"{self.job}.sh"
+        return OUTPATH / f"{self.job}.sh"
 
 
 def main():
 
-    SBATCH_SCRIPT_PATH.mkdir(parents=True, exist_ok=True)
-    for file in SBATCH_SCRIPT_PATH.iterdir():
+    global DEBUG
+    global ARMITAGE
+    global OUTPATH
+
+    parser = ArgumentParser()
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--armitage", action="store_true")
+    args = parser.parse_args()
+
+    DEBUG    = args.debug
+    ARMITAGE = args.armitage
+    OUTPATH  = Path("run/esp/test") if DEBUG else OUTPATH
+
+    OUTPATH.mkdir(parents=True, exist_ok=True)
+    for file in OUTPATH.iterdir():
         file.unlink()
 
     configurations = product(
         ModelName,
         ModelSize,
         ModelMode,
-        (4096, 16384, 65536),
+        (1024, 4096, 16384, 65536),
         LiftLevel,
         TokenizationAlgorithm,
         (1024, 4096, 16384),
