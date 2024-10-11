@@ -91,7 +91,7 @@ src/learn/train.py \\
 --pretraining_checkpoint=-1 \\
 --seed={seed} \\
 --do_train \\
---output_dir='/dev/null' \\
+--output_dir='/tmp' \\
 --save_strategy='epoch' \\
 --evaluation_strategy='epoch' \\
 --num_train_epochs={num_train_epochs} \\
@@ -211,22 +211,22 @@ class Configuration:
             return False
 
         # Adjust as desired
-        # if self.model_name != ModelName.MAM:
-        #     return False
-        # if self.model_size != ModelSize.TN:
-        #     return False
-        # if self.model_mode != ModelMode.BI:
-        #     return False
-        # if self.max_length != 4096:
-        #     return False
-        # if self.lift_level != LiftLevel.RAW:
-        #     return False
-        # if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
-        #     return False
-        # if self.vocab_size != 16384:
-        #     return False
-        # if self.seed != 0:
-        #     return False
+        if self.model_name != ModelName.MAM:
+            return False
+        if self.model_size != ModelSize.TN:
+            return False
+        if self.model_mode != ModelMode.BI:
+            return False
+        if self.max_length != 4096:
+            return False
+        if self.lift_level != LiftLevel.RAW:
+            return False
+        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+            return False
+        if self.vocab_size != 16384:
+            return False
+        if self.seed != 0:
+            return False
 
         return True
 
