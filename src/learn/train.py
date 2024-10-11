@@ -1312,6 +1312,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR)
     del num_shards
 
+    if args.exit_after_map:
+        print("Exiting after map.")
+        sys.exit(0)
 
     config = get_config(
         args.model_name_or_path,
