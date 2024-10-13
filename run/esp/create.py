@@ -20,9 +20,10 @@ from src.enums import LiftLevel, Task, TokenizationAlgorithm
 
 
 DEBUG    = False
-ARMITAGE = False
 PREP     = False
 TIMING   = False
+ARMITAGE = False
+PREFIX   = None
 OUTPATH  = None
 
 
@@ -71,7 +72,7 @@ def get_body(
 f"""
 #!/bin/bash -l
 
-#SBATCH --job-name={job}
+#SBATCH --job-name={PREFIX}-{job}
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -88,7 +89,7 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 
 python -u \\
 src/learn/train.py \\
---root='./output/esp{"-test" if DEBUG else ""}' \\
+--root='./output/esp{"-tmp" if any([DEBUG, PREP, TIMING]) else ""}' \\
 --streaming={bool_to_str(streaming)} \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
 --auto_find_batch_size_and_gradient_accumulation_steps='true' \\
@@ -105,15 +106,15 @@ src/learn/train.py \\
 --seed={seed} \\
 --do_train \\
 --output_dir='/tmp' \\
---save_strategy='epoch' \\
---evaluation_strategy='epoch' \\
---num_train_epochs={num_train_epochs} \\
---logging_steps=1 \\
+--save_strategy='{"epoch" if save_steps is None else "steps"}' \\
+--evaluation_strategy='{"epoch" if eval_steps is None else "steps"}' \\
 {"--max_steps=" + str(max_steps) if max_steps is not None else ""} \\
 {"--save_steps=" + str(save_steps) if save_steps is not None else ""} \\
 {"--eval_steps=" + str(eval_steps) if eval_steps is not None else ""} \\
---saves_per_epoch={saves_and_evals_per_epochs} \\
---evals_per_epoch={saves_and_evals_per_epochs} \\
+{"--num_train_epochs=" + str(num_train_epochs) if max_steps is None else ""} \\
+{"--saves_per_epoch=" + str(saves_and_evals_per_epochs) if save_steps is None else ""} \\
+{"--evals_per_epoch=" + str(saves_and_evals_per_epochs) if eval_steps is None else ""} \\
+--logging_steps=1 \\
 --dataloader_num_workers={dataloader_num_workers} \\
 --optim="adamw_torch" \\
 --learning_rate={learning_rate} \\
@@ -226,23 +227,29 @@ class Configuration:
         if self.seed != 0:
             return False
 
-        # Adjust as desired
-        if self.model_name != ModelName.MAM:
-            return False
-        if self.model_mode != ModelMode.BI:
-            return False
-        if self.model_size != ModelSize.TN:
-            return False
+        # Adjust as desired.
         if self.max_length != 65536:
-            return False
-        if self.lift_level != LiftLevel.RAW:
             return False
         if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
             return False
         if self.vocab_size != 16384:
             return False
-        if self.seed != 0:
-            return False
+
+        if PREP:
+            if self.model_size != ModelSize.SM:
+                return False
+            if self.pretraining_task is not None:
+                return False
+            if self.task == Task.CLM:
+                return False
+
+        if TIMING:
+            if self.model_size != ModelSize.SM:
+                return False
+            if self.pretraining_task is not None:
+                return False
+            if self.lift_level != LiftLevel.RAW:
+                return False
 
         return True
 
@@ -294,7 +301,7 @@ class Configuration:
             warnings.warn(f"Compression ratio unknown for {self.tokenization_algorithm.value} {self.vocab_size}.")
         c = COMPRESSION_RATIOS[self.tokenization_algorithm].get(self.vocab_size, 1)
         t = c * DATASET_SIZES[self.task] * self.max_length
-        b = t * 4
+        b = t * 8
         b = b + (16 * 1024**3)
         return b // 1024**3
 
@@ -421,32 +428,36 @@ class Configuration:
 def main():
 
     global DEBUG
-    global ARMITAGE
     global PREP
     global TIMING
+    global ARMITAGE
+    global PREFIX
     global OUTPATH
 
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--armitage", action="store_true")
     parser.add_argument("--prep", action="store_true")
     parser.add_argument("--timing", action="store_true")
+    parser.add_argument("--armitage", action="store_true")
     args = parser.parse_args()
 
     DEBUG    = args.debug
-    ARMITAGE = args.armitage
     PREP     = args.prep
     TIMING   = args.timing
-    OUTPATH  = Path("run/esp/")
-    if DEBUG:
-        OUTPATH /= "debug"
-    elif PREP:
-        OUTPATH /= "prep"
-    elif TIMING:
-        OUTPATH /= "timing"
-    else:
-        OUTPATH /= "sbatch"
+    ARMITAGE = args.armitage
 
+    assert sum([DEBUG, PREP, TIMING]) == 1
+
+    if DEBUG:
+        PREFIX = "deb"
+    elif PREP:
+        PREFIX = "pre"
+    elif TIMING:
+        PREFIX = "tim"
+    else:
+        PREFIX = "run"
+
+    OUTPATH  = Path("run/esp/") / PREFIX
     OUTPATH.mkdir(parents=True, exist_ok=True)
     for file in OUTPATH.iterdir():
         file.unlink()

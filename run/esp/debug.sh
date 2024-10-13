@@ -12,12 +12,14 @@
 #SBATCH --mem=256G
 #SBATCH --gres=gpu:a100:2
 
+# Run shortened versions of the experiments.
+
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate RawByteClf
-# conda activate RawByteClf2
-# module unload blindfold
+conda activate RawByteClf2
+module unload blindfold
 
-# rm -rf ./output/esp-test
+# rm -rf ./output/esp-tmp
 # rm -rf ./logs/test
 # mkdir -p ./logs/test
 
