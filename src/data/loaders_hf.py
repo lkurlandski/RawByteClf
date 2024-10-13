@@ -73,7 +73,7 @@ def generator_from_zipfiles(
         }
         if len(set(archives.values())) != len(archives):
             raise RuntimeError("There was a hash collision. Fuck.")
-        num_workers = len(os.sched_getaffinity(0)) * 2
+        num_workers = len(os.sched_getaffinity(0))
         iterable = [(src, dst) for src, dst in archives.items() if not dst.exists()]
         print(f"\nCopying archives. {len(iterable)=} {tmppath=} {num_workers=}.")
         with mp.Pool(num_workers) as pool:
