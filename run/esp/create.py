@@ -76,7 +76,7 @@ f"""
 #SBATCH --cpus-per-task={cpu}
 #SBATCH --ntasks=1
 #SBATCH --mem={mem}G
-#SBATCH --gres=gpu:a100:{gpu}
+{"#SBATCH --gres=gpu:a100:" + str(gpu) if gpu > 0 else ""}
 
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
@@ -386,6 +386,8 @@ class Configuration:
 
     @property
     def bf16(self) -> bool:
+        if PREP:
+            return False
         if self.model_name == ModelName.MAM:
             return True
         return False
