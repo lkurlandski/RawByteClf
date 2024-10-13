@@ -287,6 +287,8 @@ class Configuration:
     def cpu(self) -> int:
         if PREP:
             return 16
+        if TIMING:
+            return 4
         if self.task in (Task.CLM, Task.MLM):
             return 8
         return 4
@@ -301,14 +303,16 @@ class Configuration:
             warnings.warn(f"Compression ratio unknown for {self.tokenization_algorithm.value} {self.vocab_size}.")
         c = COMPRESSION_RATIOS[self.tokenization_algorithm].get(self.vocab_size, 1)
         t = c * DATASET_SIZES[self.task] * self.max_length
-        b = t * 8
-        b = b + (16 * 1024**3)
+        b = t * 8              # 8 bytes in float64
+        b = b + (16 * 1024**3) # 16 extra GB of padding
         return b // 1024**3
 
     @property
     def gpu(self) -> int:
         if PREP:
             return 0
+        if TIMING:
+            return 1
         if self.task in (Task.CLM, Task.MLM):
             return 2
         return 1
