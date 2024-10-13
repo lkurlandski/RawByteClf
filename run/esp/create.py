@@ -22,6 +22,7 @@ from src.enums import LiftLevel, Task, TokenizationAlgorithm
 DEBUG    = False
 ARMITAGE = False
 PREP     = False
+TIMING   = False
 OUTPATH  = None
 
 
@@ -56,6 +57,9 @@ def get_body(
     pretraining_task: Optional[Task],
     task: Task,
     num_train_epochs: int,
+    max_steps: Optional[int],
+    save_steps: Optional[int],
+    eval_steps: Optional[int],
     saves_and_evals_per_epochs: int,
     dataloader_num_workers: int,
     learning_rate: float,
@@ -105,6 +109,9 @@ src/learn/train.py \\
 --evaluation_strategy='epoch' \\
 --num_train_epochs={num_train_epochs} \\
 --logging_steps=1 \\
+{"--max_steps=" + str(max_steps) if max_steps is not None else ""} \\
+{"--save_steps=" + str(save_steps) if save_steps is not None else ""} \\
+{"--eval_steps=" + str(eval_steps) if eval_steps is not None else ""} \\
 --saves_per_epoch={saves_and_evals_per_epochs} \\
 --evals_per_epoch={saves_and_evals_per_epochs} \\
 --dataloader_num_workers={dataloader_num_workers} \\
@@ -257,6 +264,8 @@ class Configuration:
     @property
     def tim(self) -> str:
         if PREP:
+            return seconds_to_slurm_time(7200)
+        if TIMING:
             return seconds_to_slurm_time(3600)
         try:
             t = MODEL_TIME_PER_SAMPLE[self.model_name][self.model_size][self.max_length]
@@ -353,6 +362,18 @@ class Configuration:
         return 10
 
     @property
+    def max_steps(self) -> Optional[int]:
+        return 1 if TIMING else None
+
+    @property
+    def save_steps(self) -> Optional[int]:
+        return 1 if TIMING else None
+
+    @property
+    def eval_steps(self) -> Optional[int]:
+        return 1 if TIMING else None
+
+    @property
     def saves_and_evals_per_epochs(self) -> int:
         if DEBUG:
             return 2
@@ -402,22 +423,27 @@ def main():
     global DEBUG
     global ARMITAGE
     global PREP
+    global TIMING
     global OUTPATH
 
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--armitage", action="store_true")
     parser.add_argument("--prep", action="store_true")
+    parser.add_argument("--timing", action="store_true")
     args = parser.parse_args()
 
     DEBUG    = args.debug
     ARMITAGE = args.armitage
     PREP     = args.prep
+    TIMING   = args.timing
     OUTPATH  = Path("run/esp/")
     if DEBUG:
         OUTPATH /= "debug"
     elif PREP:
         OUTPATH /= "prep"
+    elif TIMING:
+        OUTPATH /= "timing"
     else:
         OUTPATH /= "sbatch"
 
@@ -459,6 +485,9 @@ def main():
             task=config.task,
             pretraining_task=config.pretraining_task,
             num_train_epochs=config.num_train_epochs,
+            max_steps=config.max_steps,
+            save_steps=config.save_steps,
+            eval_steps=config.eval_steps,
             saves_and_evals_per_epochs=config.saves_and_evals_per_epochs,
             dataloader_num_workers=config.dataloader_num_workers,
             learning_rate=config.learning_rate,
