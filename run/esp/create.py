@@ -236,7 +236,11 @@ class Configuration:
             return False
 
         if PREP:
+            if self.model_name != ModelName.MAM:
+                return False
             if self.model_size != ModelSize.SM:
+                return False
+            if self.model_mode != ModelMode.BI:
                 return False
             if self.pretraining_task is not None:
                 return False
@@ -271,7 +275,11 @@ class Configuration:
     @property
     def tim(self) -> str:
         if PREP:
-            return seconds_to_slurm_time(7200)
+            if self.task in (Task.CLM, Task.MLM):
+                return seconds_to_slurm_time(7200)
+            if self.task == Task.FAM:
+                return seconds_to_slurm_time(3600)
+            return seconds_to_slurm_time(1800)
         if TIMING:
             return seconds_to_slurm_time(3600)
         try:
