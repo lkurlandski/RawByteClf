@@ -107,7 +107,7 @@ src/learn/train.py \\
 --do_train \\
 --output_dir='/tmp' \\
 --save_strategy='{"epoch" if save_steps is None else "steps"}' \\
---evaluation_strategy='{"epoch" if eval_steps is None else "steps"}' \\
+--eval_strategy='{"epoch" if eval_steps is None else "steps"}' \\
 {"--max_steps=" + str(max_steps) if max_steps is not None else ""} \\
 {"--save_steps=" + str(save_steps) if save_steps is not None else ""} \\
 {"--eval_steps=" + str(eval_steps) if eval_steps is not None else ""} \\

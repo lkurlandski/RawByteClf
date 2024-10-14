@@ -458,7 +458,7 @@ class RobustEpochCallback(TrainerCallback):
         condition = True  # detect if training has occurred since last log and training will stop after this epoch.
         condition &= control.should_training_stop  # training will stop after this epoch
         condition &= args.save_strategy == IntervalStrategy.STEPS  # save strategy is steps
-        condition &= args.evaluation_strategy == IntervalStrategy.STEPS  # eval strategy is steps
+        condition &= args.eval_strategy == IntervalStrategy.STEPS  # eval strategy is steps
         # condition &= state.global_step > state._globalstep_last_logged  # _globalstep_last_logged not available
         condition &= state.global_step % args.save_steps != 0  # indicates that training has occurred since last save
 
@@ -467,7 +467,7 @@ class RobustEpochCallback(TrainerCallback):
             control.should_log = True
 
         # Evaluate
-        if condition or args.evaluation_strategy == IntervalStrategy.EPOCH and args.eval_delay <= state.epoch:
+        if condition or args.eval_strategy == IntervalStrategy.EPOCH and args.eval_delay <= state.epoch:
             control.should_evaluate = True
 
         # Save
@@ -1300,7 +1300,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if training_arguments.saves_per_epoch is not None:
         kwds.update({"save_steps": save_steps, "save_strategy": "steps"})
     if training_arguments.evals_per_epoch is not None:
-        kwds.update({"eval_steps": eval_steps, "evaluation_strategy": "steps"})
+        kwds.update({"eval_steps": eval_steps, "eval_strategy": "steps"})
     training_arguments = replace(training_arguments, **kwds)
 
 
@@ -1378,7 +1378,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR)
 
     callbacks = []
-    if training_arguments.save_strategy == IntervalStrategy.STEPS or training_arguments.evaluation_strategy == IntervalStrategy.STEPS:  # pylint: disable=consider-using-in
+    if training_arguments.save_strategy == IntervalStrategy.STEPS or training_arguments.eval_strategy == IntervalStrategy.STEPS:  # pylint: disable=consider-using-in
         callbacks.append(RobustEpochCallback())
     if args.early_stopping:
         callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
@@ -1666,7 +1666,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         training_arguments = replace(
             training_arguments,
             do_eval=True,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             fp16_full_eval=False,  # Due to bug in transformers, this must be False.
             load_best_model_at_end=False,  # Greater flexibility with eval_steps.
             disable_tqdm=torch.cuda.device_count() > 1,  # Unreadable when using multiple GPUs.

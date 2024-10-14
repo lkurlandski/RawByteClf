@@ -227,7 +227,7 @@ def get_training_arguments(output_dir: str) -> TrainingArguments:
     return TrainingArguments(
         output_dir=output_dir,
         overwrite_output_dir=True,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         save_steps=100,
         eval_steps=100,
