@@ -236,8 +236,6 @@ class Configuration:
             return False
 
         if PREP:
-            if self.model_name != ModelName.MAM:
-                return False
             if self.model_size != ModelSize.SM:
                 return False
             if self.model_mode != ModelMode.BI:
