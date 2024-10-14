@@ -158,6 +158,7 @@ DATASET_SIZES = {
     Task.BEH: 35000,
 }
 
+# dict[ModelName, dict[ModelSize, dict[VocabSize, float]]]
 MODEL_SAMPLES_PER_SECOND = {
     ModelName.HRR: {
         ModelSize.TN: {},
@@ -175,16 +176,17 @@ MODEL_SAMPLES_PER_SECOND = {
     },
 }
 
+# dict[TokenizationAlgorithm, dict[VocabSize, float]]
 COMPRESSION_RATIOS = {
     TokenizationAlgorithm.BPE: {
-        1024: 1,
-        4096: 1,
-        16384: 1,
+        1024:  1.0,
+        4096:  1.0,
+        16384: 1.0,
     },
     TokenizationAlgorithm.UNIGRAM: {
-        1024: 1,
-        4096: 1,
-        16384: 1,
+        1024:  1.0,
+        4096:  1.0,
+        16384: 1.0,
     },
 }
 
@@ -236,7 +238,7 @@ class Configuration:
             return False
 
         if PREP:
-            if self.model_size != ModelSize.SM:
+            if self.model_size != ModelSize.TN:
                 return False
             if self.model_mode != ModelMode.BI:
                 return False
@@ -246,7 +248,7 @@ class Configuration:
                 return False
 
         if TIMING:
-            if self.model_size != ModelSize.SM:
+            if self.model_size != ModelSize.MD:
                 return False
             if self.task not in (Task.CLM, Task.MLM, Task.DET):
                 return False
@@ -289,7 +291,7 @@ class Configuration:
         t_tr, t_vl = MODEL_SAMPLES_PER_SECOND \
             .get(self.model_name, {}) \
             .get(self.model_size, {}) \
-            .get(self.max_length, (None, None))
+            .get(self.vocab_size, (None, None))
 
         if t_tr is None or t_vl is None:
             warnings.warn(
@@ -328,7 +330,8 @@ class Configuration:
         t = c * DATASET_SIZES[self.task] * self.max_length
         b = t * 8              # 8 bytes in float64
         b = b + (16 * 1024**3) # 16 extra GB of padding
-        return b // 1024**3
+        b = b // 1024**3
+        return int(b)
 
     @property
     def gpu(self) -> int:
@@ -431,7 +434,7 @@ class Configuration:
     def batch_size(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
             return 1024
-        return 256
+        return 64
 
     @property
     def tf32(self) -> bool:
