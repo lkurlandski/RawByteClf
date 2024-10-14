@@ -399,15 +399,15 @@ class Configuration:
 
     @property
     def max_steps(self) -> Optional[int]:
-        return 10 if TIMING else None
+        return 16 if TIMING else None
 
     @property
     def save_steps(self) -> Optional[int]:
-        return 10 if TIMING else None
+        return 16 if TIMING else None
 
     @property
     def eval_steps(self) -> Optional[int]:
-        return 10 if TIMING else None
+        return 16 if TIMING else None
 
     @property
     def saves_and_evals_per_epochs(self) -> int:
