@@ -1654,7 +1654,7 @@ def _get_materials_esp_lm(
     archived_files: list[ArchivedFile] = []
     finetuning_digests: set[str] = set(sha_digest_map[s] for s in shas_for_finetuning if s in sha_digest_map)
     present_digests: set[str] = set()
-    for archive in tqdm(archives, leave=False, "Filtering..."):
+    for archive in tqdm(archives, leave=False, desc="Filtering..."):
         for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
             s = name.split(".")[0]
             if s in shas_for_finetuning:

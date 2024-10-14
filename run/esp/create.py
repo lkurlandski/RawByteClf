@@ -30,7 +30,7 @@ OUTPATH  = None
 def bool_to_str(b: bool) -> str:
     if not isinstance(b, bool):
         raise TypeError(type(b))
-    return 'true' if b else 'false'
+    return "true" if b else "false"
 
 def seconds_to_slurm_time(seconds: int) -> str:
     days = seconds // (24 * 3600)
@@ -64,9 +64,11 @@ def get_body(
     saves_and_evals_per_epochs: int,
     dataloader_num_workers: int,
     learning_rate: float,
-    batch_size: int,
+    tr_batch_size: int,
+    vl_batch_size: int,
     tf32: bool,
     bf16: bool,
+    bf16_full_eval: bool,
     seed: int,
 ) -> str: return (
 f"""
@@ -87,12 +89,14 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if ARMITAGE else "module unload blindfold"}
 
+# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 python -u \\
 src/learn/train.py \\
 --root='./output/esp{"-tmp" if any([DEBUG, PREP, TIMING]) else ""}' \\
 --streaming={bool_to_str(streaming)} \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
---auto_find_batch_size_and_gradient_accumulation_steps='true' \\
+--auto_find_batch_size_and_gradient_accumulation_steps=true \\
 --dataset_backend="HF" \\
 --model_name_or_path='{model_name.value}' \\
 --arch_config='{json.dumps(arch_config)}' \\
@@ -124,14 +128,15 @@ src/learn/train.py \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
 --save_total_limit=-1 \\
---per_device_train_batch_size={batch_size} \\
---per_device_eval_batch_size={batch_size} \\
+--per_device_train_batch_size={tr_batch_size} \\
+--per_device_eval_batch_size={vl_batch_size} \\
 --gradient_accumulation_steps=1 \\
 --eval_accumulation_steps=64 \\
 --load_best_model_at_end \\
 --tf32={bool_to_str(tf32)} \\
 --bf16={bool_to_str(bf16)} \\
---gradient_checkpointing='true'
+--bf16_full_eval={bool_to_str(bf16_full_eval)} \\
+--gradient_checkpointing=true
 """.replace("\n \\", "").strip() + "\n"
 )
 
@@ -284,9 +289,15 @@ class Configuration:
             return seconds_to_slurm_time(1800)
 
         if TIMING:
-            if self.task in (Task.CLM, Task.MLM):
-                return seconds_to_slurm_time(7200)
-            return seconds_to_slurm_time(1800)
+            f = {
+                ModelSize.TN: 1.0,
+                ModelSize.SM: 2.0,
+                ModelSize.MD: 3.0,
+                ModelSize.LG: 4.0,
+                ModelSize.HG: 5.0,
+            }
+            s = 1800 if self.task in (Task.CLM, Task.MLM) else 900
+            return seconds_to_slurm_time(s * f[self.model_size])
 
         t_tr, t_vl = MODEL_SAMPLES_PER_SECOND \
             .get(self.model_name, {}) \
@@ -431,10 +442,23 @@ class Configuration:
         return 1e-4
 
     @property
-    def batch_size(self) -> int:
+    def tr_batch_size(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
             return 1024
         return 64
+
+    @property
+    def vl_batch_size(self) -> int:
+        if self.model_size == ModelSize.TN:
+            return 256
+        if self.model_size == ModelSize.SM:
+            return 128
+        if self.model_size == ModelSize.MD:
+            return 64
+        if self.model_size == ModelSize.LG:
+            return 32
+        if self.model_size == ModelSize.HG:
+            return 16
 
     @property
     def tf32(self) -> bool:
@@ -447,6 +471,12 @@ class Configuration:
         if PREP:
             return False
         if self.model_name == ModelName.MAM:
+            return True
+        return False
+
+    @property
+    def bf16_full_eval(self) -> bool:
+        if self.task in (Task.CLM, Task.MLM):
             return True
         return False
 
@@ -532,9 +562,11 @@ def main():
             saves_and_evals_per_epochs=config.saves_and_evals_per_epochs,
             dataloader_num_workers=config.dataloader_num_workers,
             learning_rate=config.learning_rate,
-            batch_size=config.batch_size,
+            tr_batch_size=config.tr_batch_size,
+            vl_batch_size=config.vl_batch_size,
             tf32=config.tf32,
             bf16=config.bf16,
+            bf16_full_eval=config.bf16_full_eval,
             seed=config.seed,
         )
         if config.outfile.exists():
