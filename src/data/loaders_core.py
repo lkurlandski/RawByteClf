@@ -1608,9 +1608,9 @@ def esp_cache_file(get_materials: Callable, lift_level: LiftLevel, **kwds) -> Pa
 
 def _get_materials_esp_lm(
     lift_level: LiftLevel,
-    tr_size: float = 0.80,
-    vl_size: float = 0.20,
-    ts_size: float = 0.00,
+    tr_size: Optional[float | int] = None,
+    vl_size: float | int = 4096,
+    ts_size: float | int = 0,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
 ) -> Materials:
@@ -1635,7 +1635,7 @@ def _get_materials_esp_lm(
 
     print("\tGetting SHAs that could be used for finetuning.")
     timestamps_files = (TIMESTAMPS_FILES[DatasetName.ASSEMBLAGE], TIMESTAMPS_FILES[DatasetName.WINDOWS])
-    shas = set(chain(
+    shas_for_finetuning = set(chain(
         _get_sorel_sha_label_map().keys(),
         get_sha_timestamp_map(timestamps_files),
     ))
@@ -1643,7 +1643,6 @@ def _get_materials_esp_lm(
     sha_digest_map = {}
     for dnm in DatasetName:
         _sha_digest_map = get_sha_digest_map(DIGESTS_FILES[dnm][lift_level_ddp])
-        _sha_digest_map = {k: v for k, v in _sha_digest_map.items() if k not in shas}
         sha_digest_map.update(_sha_digest_map)
 
     archives = map(Path, rglob("./data", "*.zip", True))
@@ -1651,24 +1650,31 @@ def _get_materials_esp_lm(
 
     skipped_cause_finetuning = 0
     skipped_cause_duplicates = 0
+    skipped_cause_duplicates_finetuning = 0
     archived_files: list[ArchivedFile] = []
+    finetuning_digests: set[str] = set(sha_digest_map[s] for s in shas_for_finetuning if s in sha_digest_map)
     present_digests: set[str] = set()
-    for archive in archives:
+    for archive in tqdm(archives, leave=False, "Filtering..."):
         for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
             s = name.split(".")[0]
-            if s in shas:
+            if s in shas_for_finetuning:
                 skipped_cause_finetuning += 1
                 continue
             d = sha_digest_map[s]
+            if d in finetuning_digests:
+                skipped_cause_duplicates_finetuning += 1
+                continue
             if d in present_digests:
                 skipped_cause_duplicates += 1
                 continue
             archived_files.append(ArchivedFile(archive, name))
     print(f"\tAcquired {len(archived_files)} for pretraining.")
     if verbose: print(f"\tSkipped {skipped_cause_finetuning=} due to finetuning.")
+    if verbose: print(f"\tSkipped {skipped_cause_duplicates_finetuning=} due to duplicates with finetuning.")
     if verbose: print(f"\tSkipped {skipped_cause_duplicates=} due to duplicates.")
 
     archived_files.sort(key=lambda af: af.name)
+    tr_size = len(archived_files) - vl_size if tr_size is None else tr_size
     tr_vl_ts_files = tr_vl_ts_split(archived_files, tr_size, vl_size, ts_size)
     materials = Materials(files=tr_vl_ts_files)
     materials = materials.convert_files_suffix(LIFT_LEVEL_EXTENSIONS[lift_level])
@@ -1679,11 +1685,12 @@ def _get_materials_esp_lm(
     return materials
 
 
+
 def get_materials_esp_clm(
     lift_level: LiftLevel,
-    tr_size: float = 0.80,
-    vl_size: float = 0.20,
-    ts_size: float = 0.00,
+    tr_size: Optional[float | int] = None,
+    vl_size: float | int = 4096,
+    ts_size: float | int = 0,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
 ) -> Materials:
@@ -1699,9 +1706,9 @@ def get_materials_esp_clm(
 
 def get_materials_esp_mlm(
     lift_level: LiftLevel,
-    tr_size: float = 0.80,
-    vl_size: float = 0.20,
-    ts_size: float = 0.00,
+    tr_size: Optional[float | int] = None,
+    vl_size: float | int = 4096,
+    ts_size: float | int = 0,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     verbose: bool = True,
 ) -> Materials:
