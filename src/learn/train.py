@@ -1265,10 +1265,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         add_sep_token=False,
     )
     tokenizer.model_input_names = ["input_ids"]
-    if MODEL_NAME in REQ_ATTENTION_MASK:
-        tokenizer.model_input_names.append("attention_mask")
-    if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
-        tokenizer.model_input_names.append("token_type_ids")
+    # Using a slightly different tokenizer results in the cache files being different
+    # for different models. Although its slightly less efficient, we'll generate the
+    # attention mask dynamically when nessecary.
+    # if MODEL_NAME in REQ_ATTENTION_MASK:
+    #     tokenizer.model_input_names.append("attention_mask")
+    # if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
+    #     tokenizer.model_input_names.append("token_type_ids")
 
     print_tokenizer(tokenizer)
     print(BR, flush=True)
@@ -1312,6 +1315,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_dataset_pt(dataset)
         print(BR)
     del num_shards
+
+    if MODEL_NAME in REQ_ATTENTION_MASK:
+        tokenizer.model_input_names.append("attention_mask")
+    if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
+        tokenizer.model_input_names.append("token_type_ids")
 
     if args.exit_after_map:
         print("Exiting after map.")

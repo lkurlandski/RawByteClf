@@ -158,7 +158,7 @@ DATASET_SIZES = {
     Task.BEH: 35000,
 }
 
-MODEL_TIME_PER_SAMPLE = {
+MODEL_SAMPLES_PER_SECOND = {
     ModelName.HRR: {
         ModelSize.TN: {},
         ModelSize.SM: {},
@@ -250,6 +250,8 @@ class Configuration:
         if TIMING:
             if self.model_size != ModelSize.SM:
                 return False
+            if self.task not in (Task.CLM, Task.MLM, Task.DET):
+                return False
             if self.pretraining_task is not None:
                 return False
             if self.lift_level != LiftLevel.RAW:
@@ -280,15 +282,30 @@ class Configuration:
             if self.task == Task.FAM:
                 return seconds_to_slurm_time(3600)
             return seconds_to_slurm_time(1800)
+
         if TIMING:
-            return seconds_to_slurm_time(3600)
-        try:
-            t = MODEL_TIME_PER_SAMPLE[self.model_name][self.model_size][self.max_length]
-        except KeyError:
-            warnings.warn(f"Time/sample unknown for {self.model_name.value} {self.model_size.value} {self.max_length}.")
-            t = 0.00001
-        s = t * DATASET_SIZES[self.task] * self.num_train_epochs
-        s = s + 3600
+            if self.task in (Task.CLM, Task.MLM):
+                return seconds_to_slurm_time(7200)
+            return seconds_to_slurm_time(1800)
+
+        t_tr, t_vl = MODEL_SAMPLES_PER_SECOND \
+            .get(self.model_name, {}) \
+            .get(self.model_size, {}) \
+            .get(self.max_length, (None, None))
+
+        if t_tr is None or t_vl is None:
+            warnings.warn(
+                f"Time/sample unknown for {self.model_name.value} "
+                f"{self.model_size.value} {self.max_length}."
+            )
+            t_tr = 10 if t_tr is None else t_tr
+            t_vl = 25 if t_vl is None else t_vl
+
+        n_tr = DATASET_SIZES[self.task] * self.num_train_epochs * 0.80
+        n_vl = DATASET_SIZES[self.task] * self.num_train_epochs * 0.20
+        s_tr = n_tr / t_tr
+        s_vl = n_vl / t_vl
+        s = s_tr + s_vl + 3600
         return seconds_to_slurm_time(s)
 
     @property
@@ -382,15 +399,15 @@ class Configuration:
 
     @property
     def max_steps(self) -> Optional[int]:
-        return 1 if TIMING else None
+        return 10 if TIMING else None
 
     @property
     def save_steps(self) -> Optional[int]:
-        return 1 if TIMING else None
+        return 10 if TIMING else None
 
     @property
     def eval_steps(self) -> Optional[int]:
-        return 1 if TIMING else None
+        return 10 if TIMING else None
 
     @property
     def saves_and_evals_per_epochs(self) -> int:

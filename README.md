@@ -165,3 +165,6 @@ Then modify the HF install because it will get broken.
 /home/lk3591/miniconda3/envs/RawByteClf/lib/python3.10/site-packages/transformers/dependency_versions_table.py
 "tokenizers": "tokenizers>=0.14,<0.21",
 
+
+
+TODO: debug mamba when using ngpu > 1
