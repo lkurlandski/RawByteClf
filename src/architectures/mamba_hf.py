@@ -58,6 +58,7 @@ class MambaConfig(PretrainedConfig):
         use_cache: bool = True,
         mode: Literal["uni", "bi"] = "uni",
         tie_directions: bool = False,
+        use_mambapy: bool = False,
         **kwargs,
     ):
 
@@ -89,7 +90,28 @@ class MambaConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.mode = mode
         self.tie_directions = tie_directions
+        self.use_mambapy = use_mambapy
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
+
+
+# Monkey-patch out bugs from the cache.
+class MambaCache(MambaCache):
+
+    def update_conv_state(
+        self, layer_idx: int, new_conv_state: torch.Tensor, cache_position: torch.LongTensor
+    ) -> torch.Tensor:
+        # The HF implementation does not work if new_conv_state is a different dtype
+        new_conv_state = new_conv_state.to(self.conv_states[layer_idx].dtype)
+        conv_state = self.conv_states[layer_idx]
+        cache_position = cache_position.clamp(0, self.conv_kernel_size - 1)
+        conv_state = conv_state.roll(shifts=-1, dims=-1)
+        conv_state[:, :, cache_position] = new_conv_state.to(conv_state.device)
+        self.conv_states[layer_idx].zero_()
+        self.conv_states[layer_idx] += conv_state
+        return self.conv_states[layer_idx]
+
+import transformers
+transformers.cache_utils.MambaCache = MambaCache
 
 
 class MambaModel(MambaPreTrainedModel):
