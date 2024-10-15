@@ -242,6 +242,16 @@ class Configuration:
         if self.vocab_size != 16384:
             return False
 
+        if DEBUG:
+            if self.model_name != ModelName.HRR:
+                return False
+            if self.model_size != ModelSize.TN:
+                return False
+            if self.pretraining_task is not None:
+                return False
+            if self.lift_level != LiftLevel.RAW:
+                return False
+
         if PREP:
             if self.model_size != ModelSize.TN:
                 return False
@@ -379,11 +389,8 @@ class Configuration:
                 d = {"num_hidden_layers": 12, "hidden_size": 384}
             if self.model_size == ModelSize.HG:
                 d = {"num_hidden_layers": 16, "hidden_size": 512}
-            d["mode"] = "uni" if self.model_mode == ModelMode.UN else "bi"
-            d["embedding_size"] = d["hidden_size"]
-            return d
 
-        if self.model_name == ModelName.HRR:
+        elif self.model_name == ModelName.HRR:
             if self.model_size == ModelSize.TN:
                 d = {"num_hidden_layers": 1, "hidden_size": 64,  "intermediate_size": 128,  "num_attention_heads": 1}
             if self.model_size == ModelSize.SM:
@@ -394,12 +401,12 @@ class Configuration:
                 d = {"num_hidden_layers": 6, "hidden_size": 384, "intermediate_size": 768, "num_attention_heads": 6}
             if self.model_size == ModelSize.HG:
                 d = {"num_hidden_layers": 8, "hidden_size": 512, "intermediate_size": 1024, "num_attention_heads": 8}
-            d["is_decoder"] = self.model_mode == ModelMode.UN
-            d["embedding_size"] = d["hidden_size"]
-            return d
 
-        raise ValueError(self.model_name)
-
+        d["is_decoder"] = self.model_mode == ModelMode.UN
+        d["head_hidden_size"] = -1
+        d["head_num_hidden_layers"] = 0
+        d["embedding_size"] = d["hidden_size"]
+        return d
 
     @property
     def num_train_epochs(self) -> int:
@@ -506,7 +513,7 @@ def main():
     TIMING   = args.timing
     ARMITAGE = args.armitage
 
-    assert sum([DEBUG, PREP, TIMING]) == 1
+    assert sum([DEBUG, PREP, TIMING]) <= 1
 
     if DEBUG:
         PREFIX = "deb"
