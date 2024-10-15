@@ -1437,6 +1437,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
+        if hasattr(model, "get_input_embeddings") and hasattr(model, "get_output_embeddings") and model.get_input_embeddings() is not None and model.get_output_embed     dings() is not None:
+            print(f"{model.get_input_embeddings().weight is model.get_output_embeddings().weight=}")
         print(BR, flush=True)
 
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
@@ -1578,6 +1580,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
+        if hasattr(model, "get_input_embeddings") and hasattr(model, "get_output_embeddings") and model.get_input_embeddings() is not None and model.get_output_embeddings() is not None:
+            print(f"{model.get_input_embeddings().weight is model.get_output_embeddings().weight=}")
+        print(BR, flush=True)
 
         if args.task in (Task.DET, Task.FAM, Task.BEH):
             single_shot_classes = [materials.label2id[l] for l in materials.dist if materials.dist[l] == 3]
