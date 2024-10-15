@@ -1391,7 +1391,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     # needs to be last from the MRO to work properly, therefore, must be the last list element.
     model_trainer_base_classes = [Trainer]
 
-    if (isinstance(config, MambaConfig) and config.mode == "bi" and config.tie_directions
+    if (isinstance(config, MambaConfig) and not config.is_decoder and config.tie_directions
         and training_arguments.parallel_mode == ParallelMode.DISTRIBUTED):
         model_trainer_base_classes.insert(0, StaticGraphTrainer)
 
