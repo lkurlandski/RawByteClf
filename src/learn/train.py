@@ -294,7 +294,7 @@ class TrainingArguments(HfTrainingArguments):
         # If resume_from_checkpoint is passed as a flag without an argument, it is not set to True
         # by the transformers.TrainingArguments. This let's us pass in "true" from the command line,
         # and have the flag be set to True, i.e., resume training from the last checkpoint.
-        if isinstance(self.resume_from_checkpoint, str) and self.resume_from_checkpoint.lower() == "true":
+        if isinstance(self.resume_from_checkpoint, str) and self.resume_from_checkpoint.lower() == "true":  # pylint: disable=no-member
             self.resume_from_checkpoint = True
 
         # If no metric is supplied, eval_loss is a good one :)
@@ -1437,7 +1437,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{model=}")
         print(f"{count_parameters(model, requires_grad=False)=}")
         print(f"{count_parameters(model, requires_grad=True)=}")
-        if hasattr(model, "get_input_embeddings") and hasattr(model, "get_output_embeddings") and model.get_input_embeddings() is not None and model.get_output_embed     dings() is not None:
+        if hasattr(model, "get_input_embeddings") and hasattr(model, "get_output_embeddings") and model.get_input_embeddings() is not None and model.get_output_embeddings() is not None:
             print(f"{model.get_input_embeddings().weight is model.get_output_embeddings().weight=}")
         print(BR, flush=True)
 
