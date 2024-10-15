@@ -15,6 +15,8 @@ import sys
 from typing import Any, Optional
 import warnings
 
+from tqdm import tqdm
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))  #pylint: disable=wrong-import-position
 from src.enums import LiftLevel, Task, TokenizationAlgorithm
 
@@ -378,34 +380,36 @@ class Configuration:
 
     @property
     def arch_config(self) -> dict:
+
+        d = {"is_decoder": self.model_mode == ModelMode.UN}
+
         if self.model_name == ModelName.MAM:
             if self.model_size == ModelSize.TN:
-                d = {"num_hidden_layers": 2,  "hidden_size": 64 }
+                d |= {"num_hidden_layers": 2,  "hidden_size": 64 }
             if self.model_size == ModelSize.SM:
-                d = {"num_hidden_layers": 4,  "hidden_size": 128}
+                d |= {"num_hidden_layers": 4,  "hidden_size": 128}
             if self.model_size == ModelSize.MD:
-                d = {"num_hidden_layers": 8,  "hidden_size": 256}
+                d |= {"num_hidden_layers": 8,  "hidden_size": 256}
             if self.model_size == ModelSize.LG:
-                d = {"num_hidden_layers": 12, "hidden_size": 384}
+                d |= {"num_hidden_layers": 12, "hidden_size": 384}
             if self.model_size == ModelSize.HG:
-                d = {"num_hidden_layers": 16, "hidden_size": 512}
+                d |= {"num_hidden_layers": 16, "hidden_size": 512}
 
         elif self.model_name == ModelName.HRR:
             if self.model_size == ModelSize.TN:
-                d = {"num_hidden_layers": 1, "hidden_size": 64,  "intermediate_size": 128,  "num_attention_heads": 1}
+                d |= {"num_hidden_layers": 1, "hidden_size": 64,  "intermediate_size": 128,  "num_attention_heads": 1}
             if self.model_size == ModelSize.SM:
-                d = {"num_hidden_layers": 2, "hidden_size": 128, "intermediate_size": 256,  "num_attention_heads": 2}
+                d |= {"num_hidden_layers": 2, "hidden_size": 128, "intermediate_size": 256,  "num_attention_heads": 2}
             if self.model_size == ModelSize.MD:
-                d = {"num_hidden_layers": 4, "hidden_size": 256, "intermediate_size": 512, "num_attention_heads": 4}
+                d |= {"num_hidden_layers": 4, "hidden_size": 256, "intermediate_size": 512, "num_attention_heads": 4}
             if self.model_size == ModelSize.LG:
-                d = {"num_hidden_layers": 6, "hidden_size": 384, "intermediate_size": 768, "num_attention_heads": 6}
+                d |= {"num_hidden_layers": 6, "hidden_size": 384, "intermediate_size": 768, "num_attention_heads": 6}
             if self.model_size == ModelSize.HG:
-                d = {"num_hidden_layers": 8, "hidden_size": 512, "intermediate_size": 1024, "num_attention_heads": 8}
+                d |= {"num_hidden_layers": 8, "hidden_size": 512, "intermediate_size": 1024, "num_attention_heads": 8}
 
-        d["is_decoder"] = self.model_mode == ModelMode.UN
-        d["head_hidden_size"] = -1
-        d["head_num_hidden_layers"] = 0
         d["embedding_size"] = d["hidden_size"]
+        d["head_hidden_size"] = 0
+        d["head_num_hidden_layers"] = 0
         return d
 
     @property
@@ -543,7 +547,7 @@ def main():
     )
     configurations = [Configuration(*config) for config in configurations]
 
-    for config in configurations:
+    for config in tqdm(configurations):
         if not config.do:
             continue
         body = get_body(
