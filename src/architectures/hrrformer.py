@@ -689,7 +689,7 @@ class HRRForCausalLM(HRRPreTrainedModel):
         if labels is not None:
             use_cache = False
 
-        outputs = self.backbone.forward(
+        outputs: BaseModelOutputWithPastAndCrossAttentions = self.backbone.forward(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -763,7 +763,7 @@ class HRRForMaskedLM(HRRPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
     ) -> MaskedLMOutput:
 
-        outputs = self.backbone.forward(
+        outputs: BaseModelOutputWithPastAndCrossAttentions = self.backbone.forward(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -815,7 +815,7 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
     ) -> SequenceClassifierOutput:
 
-        outputs = self.backbone.forward(
+        outputs: BaseModelOutputWithPastAndCrossAttentions = self.backbone.forward(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,

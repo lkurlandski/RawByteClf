@@ -571,7 +571,7 @@ class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
             cache_position=cache_position,
             attention_mask=attention_mask,
         )
-        logits = self.head_clm(outputs.hidden_states)
+        logits = self.head_clm(outputs.last_hidden_state)
         logits = pool_logits("none", logits, input_ids, self.config.pad_token_id)
         loss = get_clm_loss(logits, labels, self.config.vocab_size) if labels is not None else None
 
@@ -646,7 +646,7 @@ class MambaForMaskedLM(MambaPreTrainedModel):
             cache_position=cache_position,
             attention_mask=attention_mask,
         )
-        logits = self.head_mlm(outputs.hidden_states)
+        logits = self.head_mlm(outputs.last_hidden_state)
         logits = pool_logits("none", logits, input_ids, self.config.pad_token_id)
         loss = get_mlm_loss(logits, labels, self.config.vocab_size) if labels is not None else None
 
