@@ -671,7 +671,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
         self.backbone = MambaModel(config) if config.is_decoder else BiMambaModel(config)
         self.head_clf = Head(
             config.hidden_size,
-            config.vocab_size,
+            config.num_labels,
             config.head_hidden_size,
             config.head_num_hidden_layers,
             config.head_dropout,
