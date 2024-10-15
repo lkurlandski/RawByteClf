@@ -93,6 +93,7 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 
 # export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+{"# " if gpu <= 1 else ""}torchrun --no-python --nnodes=1 --nproc_per_node={gpu} \\
 python -u \\
 src/learn/train.py \\
 --root='./output/esp{"-tmp" if any([DEBUG, PREP, TIMING]) else ""}' \\
