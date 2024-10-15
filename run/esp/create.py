@@ -488,6 +488,8 @@ class Configuration:
 
     @property
     def bf16_full_eval(self) -> bool:
+        if not self.bf16:
+            return False
         if self.task in (Task.CLM, Task.MLM):
             return True
         return False
