@@ -1,29 +1,31 @@
 """PyTorch MAMBA model."""
 
 import math
-from dataclasses import dataclass
-import time
-from typing import Any, Dict, Optional, Tuple, Union, Literal
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, functional as F
 
+import transformers
 from transformers.generation import GenerationMixin
-from transformers.models.mamba.modeling_mamba import (
+from transformers.models.mamba.modeling_mamba import (  # pylint: disable=no-name-in-module
     MambaRMSNorm,
     MambaBlock,
     MambaPreTrainedModel,
-    MambaCache,
+    MambaCache as MambaCacheHF,
     MambaOutput,
     MambaCausalLMOutput,
 )
 from transformers.configuration_utils import PretrainedConfig
 
+from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss
 
-# Overrridden to include the keys_to_ignore_at_inference attribute which is used
-# to filter out the MambaCache object and prevent it from causing problems in accelerate.
+
+ARG_REQUIRED = -1
+ARG_INFERRED = -1
+
+
 class MambaConfig(PretrainedConfig):
 
     model_type = "mamba"
@@ -31,10 +33,12 @@ class MambaConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size: int = 50280,
-        embedding_size: int = -1,
-        hidden_size: int = 768,
-        mlp_hidden_size: int = -1,
+        vocab_size: int = ARG_REQUIRED,
+        hidden_size: int = ARG_REQUIRED,
+        embedding_size: int = ARG_INFERRED,
+        head_hidden_size: int = 0,
+        head_num_hidden_layers: int = 0,
+        head_dropout: float = 0.1,
         state_size: int = 16,
         num_hidden_layers: int = 32,
         layer_norm_epsilon: float = 1e-5,
@@ -56,7 +60,6 @@ class MambaConfig(PretrainedConfig):
         time_step_floor: float = 1e-4,
         rescale_prenorm_residual: bool = False,
         use_cache: bool = True,
-        mode: Literal["uni", "bi"] = "uni",
         tie_directions: bool = False,
         use_mambapy: bool = False,
         **kwargs,
@@ -64,8 +67,13 @@ class MambaConfig(PretrainedConfig):
 
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
-        self.mlp_hidden_size = mlp_hidden_size
-        self.embedding_size = embedding_size if embedding_size > 0 else hidden_size
+
+        self.embedding_size = hidden_size if embedding_size == ARG_INFERRED else embedding_size
+
+        self.head_hidden_size = head_hidden_size
+        self.head_num_hidden_layers = head_num_hidden_layers
+        self.head_dropout = head_dropout
+
         self.state_size = state_size
         self.num_hidden_layers = num_hidden_layers
         self.layer_norm_epsilon = layer_norm_epsilon
@@ -88,14 +96,13 @@ class MambaConfig(PretrainedConfig):
         self.rescale_prenorm_residual = rescale_prenorm_residual
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
-        self.mode = mode
         self.tie_directions = tie_directions
         self.use_mambapy = use_mambapy
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
 
 
 # Monkey-patch out bugs from the cache.
-class MambaCache(MambaCache):
+class MambaCache(MambaCacheHF):
 
     def update_conv_state(
         self, layer_idx: int, new_conv_state: torch.Tensor, cache_position: torch.LongTensor
@@ -110,11 +117,12 @@ class MambaCache(MambaCache):
         self.conv_states[layer_idx] += conv_state
         return self.conv_states[layer_idx]
 
-import transformers
-transformers.cache_utils.MambaCache = MambaCache
+
+transformers.cache_utils.MambaCache = MambaCache  # pylint: disable=no-member
 
 
 class MambaModel(MambaPreTrainedModel):
+
     def __init__(self, config: MambaConfig):
         super().__init__(config)
         self.config: MambaConfig
@@ -129,7 +137,7 @@ class MambaModel(MambaPreTrainedModel):
         self._register_load_state_dict_pre_hook(self.load_hook)
         self.post_init()
 
-    def load_hook(self, state_dict, prefix, *args):
+    def load_hook(self, state_dict, prefix, *args):  # pylint: disable=unused-argument
         for k in state_dict:
             if "embedding." in k:
                 state_dict[k.replace("embedding.", "embeddings.")] = state_dict.pop(k)
@@ -219,6 +227,7 @@ class MambaModel(MambaPreTrainedModel):
 
 
 class BiMambaModel(MambaPreTrainedModel):
+
     def __init__(self, config: MambaConfig):
         super().__init__(config)
         self.config: MambaConfig
@@ -237,7 +246,7 @@ class BiMambaModel(MambaPreTrainedModel):
         self._register_load_state_dict_pre_hook(self.load_hook)
         self.post_init()
 
-    def load_hook(self, state_dict, prefix, *args):
+    def load_hook(self, state_dict, prefix, *args):  # pylint: disable=unused-argument
         for k in state_dict:
             if "embedding." in k:
                 state_dict[k.replace("embedding.", "embeddings.")] = state_dict.pop(k)
@@ -431,35 +440,41 @@ class BiMambaModel(MambaPreTrainedModel):
 
 
 class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
-    _tied_weights_keys = ["lm_head.weight"]
+
+    _tied_weights_keys = ["head_clm.weight_to_tie"]
 
     def __init__(self, config: MambaConfig):
-        if config.mode == "bi":
+        if not config.is_decoder:
             raise ValueError("MambaForCausalLM does not support bidirectional models.")
 
         super().__init__(config)
         self.config: MambaConfig
 
         self.backbone = MambaModel(config)
-        self.embedding_out_projection = nn.Linear(config.hidden_size, config.embedding_size) if self.config.hidden_size != self.config.embedding_size else nn.Identity()
-        self.lm_head = nn.Linear(config.embedding_size, config.vocab_size, bias=False)
+        self.head_clm = Head(
+            config.hidden_size,
+            config.vocab_size,
+            config.head_hidden_size,
+            config.head_num_hidden_layers,
+            config.head_dropout,
+        )
 
         self.post_init()
 
-    def get_output_embeddings(self):
-        return self.lm_head
+    def get_output_embeddings(self) -> nn.Linear:
+        return self.head_clm.get_output_embeddings()
 
-    def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
+    def set_output_embeddings(self, new_embeddings: nn.Linear) -> None:
+        self.head_clm.set_output_embeddings(new_embeddings)
 
-    def get_input_embeddings(self):
+    def get_input_embeddings(self) -> nn.Embedding:
         return self.backbone.get_input_embeddings()
 
-    def set_input_embeddings(self, new_embeddings):
+    def set_input_embeddings(self, new_embeddings: nn.Embedding):
         return self.backbone.set_input_embeddings(new_embeddings)
 
     def _update_model_kwargs_for_generation(
-        self, outputs: MambaOutput, model_kwargs: Dict[str, Any], num_new_tokens: int = 1, **kwargs
+        self, outputs: MambaOutput, model_kwargs: Dict[str, Any], num_new_tokens: int = 1, **kwargs  # pylint: disable=unused-argument
     ) -> Dict[str, Any]:
         model_kwargs["cache_params"] = outputs.get("cache_params", None)
         if (
@@ -536,7 +551,7 @@ class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
         return_dict: Optional[bool] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.Tensor] = None,
-        **kwargs,  # for now we need this for generation
+        **kwargs,  # pylint: disable=unused-argument
     ) -> Union[Tuple, MambaCausalLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -546,7 +561,7 @@ class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        mamba_outputs = self.backbone(
+        outputs: MambaOutput = self.backbone(
             input_ids,
             cache_params=cache_params,
             inputs_embeds=inputs_embeds,
@@ -556,55 +571,49 @@ class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
             cache_position=cache_position,
             attention_mask=attention_mask,
         )
-
-        hidden_states = mamba_outputs[0]
-        hidden_states = self.embedding_out_projection(hidden_states)
-        logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
-
-        loss = None
-        if labels is not None:
-            # move labels to correct device to enable model parallelism
-            labels = labels.to(logits.device)
-            # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        logits = self.head_clm(outputs.hidden_states)
+        logits = pool_logits("none", logits, input_ids, self.config.pad_token_id)
+        loss = get_clm_loss(logits, labels, self.config.vocab_size) if labels is not None else None
 
         if not return_dict:
-            output = (logits,) + mamba_outputs[1:]
+            output = (logits,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
         return MambaCausalLMOutput(
             loss=loss,
             logits=logits,
-            cache_params=mamba_outputs.cache_params,
-            hidden_states=mamba_outputs.hidden_states,
+            cache_params=outputs.cache_params,
+            hidden_states=outputs.hidden_states,
         )
 
 
 class MambaForMaskedLM(MambaPreTrainedModel):
-    _tied_weights_keys = ["lm_head.weight"]
+
+    _tied_weights_keys = ["head_mlm.weight_to_tie"]
 
     def __init__(self, config: MambaConfig):
-        if config.mode == "uni":
+        if config.is_decoder:
             raise ValueError("MambaForCausalLM does not support unidirectional models.")
 
         super().__init__(config)
         self.config: MambaConfig
 
         self.backbone = BiMambaModel(config)
-        self.embedding_out_projection = nn.Linear(config.hidden_size, config.embedding_size) if self.config.hidden_size != self.config.embedding_size else nn.Identity()
-        self.lm_head = nn.Linear(config.embedding_size, config.vocab_size, bias=False)
+        self.head_mlm = Head(
+            config.hidden_size,
+            config.vocab_size,
+            config.head_hidden_size,
+            config.head_num_hidden_layers,
+            config.head_dropout,
+        )
 
         self.post_init()
 
-    def get_output_embeddings(self):
-        return self.lm_head
+    def get_output_embeddings(self) -> nn.Linear:
+        return self.head_mlm.get_output_embeddings()
 
-    def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
+    def set_output_embeddings(self, new_embeddings: nn.Linear) -> None:
+        self.head_mlm.set_output_embeddings(new_embeddings)
 
     def get_input_embeddings(self):
         return self.backbone.get_input_embeddings()
@@ -623,11 +632,11 @@ class MambaForMaskedLM(MambaPreTrainedModel):
         return_dict: Optional[bool] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.Tensor] = None,
-        **kwargs,  # for now we need this for generation
+        **kwargs,  # pylint: disable=unused-argument
     ) -> Union[Tuple, MambaCausalLMOutput]:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        mamba_outputs = self.backbone(
+        outputs: MambaOutput = self.backbone(
             input_ids,
             cache_params=cache_params,
             inputs_embeds=inputs_embeds,
@@ -637,25 +646,19 @@ class MambaForMaskedLM(MambaPreTrainedModel):
             cache_position=cache_position,
             attention_mask=attention_mask,
         )
-
-        hidden_states = mamba_outputs[0]
-        hidden_states = self.embedding_out_projection(hidden_states)
-        logits = self.lm_head(hidden_states.to(self.lm_head.weight.dtype)).float()
-
-        loss = None
-        if labels is not None:
-            loss_fct = CrossEntropyLoss()  # -100 index = padding token
-            loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
+        logits = self.head_mlm(outputs.hidden_states)
+        logits = pool_logits("none", logits, input_ids, self.config.pad_token_id)
+        loss = get_mlm_loss(logits, labels, self.config.vocab_size) if labels is not None else None
 
         if not return_dict:
-            output = (logits,) + mamba_outputs[1:]
+            output = (logits,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
         return MambaCausalLMOutput(
             loss=loss,
             logits=logits,
-            cache_params=mamba_outputs.cache_params,
-            hidden_states=mamba_outputs.hidden_states,
+            cache_params=outputs.cache_params,
+            hidden_states=outputs.hidden_states,
         )
 
 
@@ -665,21 +668,14 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
         super().__init__(config)
         self.config: MambaConfig
 
-        if self.config.mode == "uni":
-            self.backbone = MambaModel(config)
-        elif self.config.mode == "bi":
-            self.backbone = BiMambaModel(config)
-        else:
-            raise ValueError(f"Invalid mode: {self.config.mode}")
-
-        if self.config.mlp_hidden_size > 0:
-            self.clf_neck = nn.Linear(config.hidden_size, config.mlp_hidden_size)
-            self.clf_actv = F.leaky_relu
-            self.clf_head = nn.Linear(config.mlp_hidden_size, config.num_labels)
-        else:
-            self.clf_neck = nn.Identity()
-            self.clf_actv = nn.Identity()
-            self.clf_head = nn.Linear(config.hidden_size, config.num_labels)
+        self.backbone = MambaModel(config) if config.is_decoder else BiMambaModel(config)
+        self.head_clf = Head(
+            config.hidden_size,
+            config.vocab_size,
+            config.head_hidden_size,
+            config.head_num_hidden_layers,
+            config.head_dropout,
+        )
 
         self.post_init()
 
@@ -700,7 +696,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
         return_dict: Optional[bool] = None,
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.Tensor] = None,
-        **kwargs,  # for now we need this for generation
+        **kwargs,  # pylint: disable=unused-argument
     ) -> Union[Tuple, MambaCausalLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -710,7 +706,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        mamba_outputs = self.backbone(
+        outputs: MambaOutput = self.backbone(
             input_ids,
             cache_params=cache_params,
             inputs_embeds=inputs_embeds,
@@ -720,48 +716,17 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             cache_position=cache_position,
             attention_mask=attention_mask,
         )
-
-        hidden_states = mamba_outputs[0]
-
-        logits = self.clf_neck(hidden_states)
-        logits = self.clf_actv(logits)
-        logits = self.clf_head(logits)
-
-        batch_size = input_ids.shape[0]
-        sequence_lengths = torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
-        sequence_lengths = sequence_lengths % input_ids.shape[-1]
-        sequence_lengths = sequence_lengths.to(logits.device)
-        clf_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
-
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.config.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.config.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.config.num_labels == 1:
-                    loss = loss_fct(clf_logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(clf_logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(clf_logits.view(-1, self.config.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(clf_logits, labels)
+        logits = self.head_clf.forward(outputs.last_hidden_state)
+        logits = pool_logits("last" if self.config.is_decoder else "mean", logits, input_ids, self.config.pad_token_id)
+        loss = get_clf_loss(logits, labels, self.config.num_labels, self.config.problem_type) if labels is not None else None
 
         if not return_dict:
-            output = (logits,) + mamba_outputs[1:]
+            output = (logits,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
         return MambaCausalLMOutput(
             loss=loss,
-            logits=clf_logits,
-            cache_params=mamba_outputs.cache_params,
-            hidden_states=mamba_outputs.hidden_states,
+            logits=logits,
+            cache_params=outputs.cache_params,
+            hidden_states=outputs.hidden_states,
         )
