@@ -59,6 +59,8 @@ class HRRConfig(PretrainedConfig):
         initializer_range: float = 0.02,
         layer_norm_eps: float = 1e-12,
         pad_token_id: int = 0,
+        bos_token_id: int = 0,
+        eos_token_id: int = 0,
         position_embedding_type: str = "absolute",
         use_cache: bool = True,
         fft_norm: Literal["forward", "backward", "ortho"] = "backward",
@@ -76,6 +78,7 @@ class HRRConfig(PretrainedConfig):
         self.head_hidden_size = head_hidden_size
         self.head_num_hidden_layers = head_num_hidden_layers
         self.head_dropout = head_dropout
+
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
@@ -87,7 +90,7 @@ class HRRConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.fft_norm = fft_norm
 
-        super().__init__(pad_token_id=pad_token_id, **kwargs)
+        super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
 
 class HRRFormerEmbeddings(BertEmbeddings):
 
