@@ -68,6 +68,16 @@ class Head(nn.Module):
             x = layer(x)
         return x
 
+    def get_output_embeddings(self) -> nn.Linear:
+        return self.layers[-1]
+
+    def set_output_embeddings(self, new_embeddings: nn.Linear) -> None:
+        self.layers[-1] = new_embeddings
+
+    @property
+    def weight_to_tie(self) -> nn.Parameter:
+        return self.get_output_embeddings().weight
+
 
 def pool_logits(pooling: str, logits: Tensor, input_ids: Tensor, pad_token_id: int) -> Tensor:
     if logits.dim() != 3:
