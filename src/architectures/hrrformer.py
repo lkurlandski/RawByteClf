@@ -2,10 +2,7 @@
 Implementation of HRRFormer.
 """
 
-import math
-from pathlib import Path
 import warnings
-import sys
 from typing import Literal, Optional
 
 import torch
@@ -15,7 +12,6 @@ from torch import Tensor
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 import torch.nn.functional as F
 from transformers import PreTrainedModel, PretrainedConfig
-from transformers.activations import ACT2FN
 from transformers.models.bert.modeling_bert import (
     BertEmbeddings,
     BertSelfOutput,
@@ -35,18 +31,26 @@ from transformers.pytorch_utils import (
 )
 from src.utils import log_tensor
 from src.architectures.utils import binding, unbinding, cosine_similarity
+from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss
+
+
+ARG_REQUIRED = -1
+ARG_INFERRED = -1
 
 
 class HRRConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size: int = 30522,
-        hidden_size: int = 768,
-        embedding_size: int = -1,
-        num_hidden_layers: int = 12,
-        num_attention_heads: int = 12,
-        intermediate_size: int = -1,
+        vocab_size: int = ARG_REQUIRED,
+        hidden_size: int = ARG_REQUIRED,
+        num_hidden_layers: int = ARG_REQUIRED,
+        num_attention_heads: int = ARG_REQUIRED,
+        embedding_size: int = ARG_INFERRED,
+        intermediate_size: int = ARG_INFERRED,
+        head_hidden_size: int = 0,
+        head_num_hidden_layers: int = 0,
+        head_dropout: float = 0.1,
         hidden_act: str = "gelu",
         hidden_dropout_prob: float = 0.1,
         attention_probs_dropout_prob: float = 0.1,
@@ -57,19 +61,22 @@ class HRRConfig(PretrainedConfig):
         pad_token_id: int = 0,
         position_embedding_type: str = "absolute",
         use_cache: bool = True,
-        classifier_dropout: Optional[float] = None,
         fft_norm: Literal["forward", "backward", "ortho"] = "backward",
         **kwargs,
     ):
-        super().__init__(pad_token_id=pad_token_id, **kwargs)
 
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
-        self.embedding_size = embedding_size if embedding_size > 0 else hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
+
+        self.embedding_size = hidden_size if embedding_size == ARG_INFERRED else embedding_size
+        self.intermediate_size = hidden_size * 4 if intermediate_size == ARG_INFERRED else intermediate_size
+
+        self.head_hidden_size = head_hidden_size
+        self.head_num_hidden_layers = head_num_hidden_layers
+        self.head_dropout = head_dropout
         self.hidden_act = hidden_act
-        self.intermediate_size = intermediate_size if intermediate_size > 0 else hidden_size * 4
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
@@ -78,9 +85,9 @@ class HRRConfig(PretrainedConfig):
         self.layer_norm_eps = layer_norm_eps
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
-        self.classifier_dropout = classifier_dropout
         self.fft_norm = fft_norm
 
+        super().__init__(pad_token_id=pad_token_id, **kwargs)
 
 class HRRFormerEmbeddings(BertEmbeddings):
 
@@ -96,16 +103,22 @@ class HRRFormerEmbeddings(BertEmbeddings):
         self.register_buffer("token_type_ids", torch.zeros(self.position_ids.size(), dtype=torch.long), persistent=False)
 
 
-# def log(x: Tensor, label: str):
-#     d = {
-#         "label": label,
-#         "shape": str(tuple(x.shape)),
-#         "dtype": str(x.dtype).replace("torch.", ""),
-#         # "device": str(x.device),
-#         "bytes": x.element_size() * x.nelement(),
-#         "gbytes": round(x.element_size() * x.nelement() / 1e9, 2),
-#     }
-#     print(d)
+class HRROutput(BertOutput):
+    ...
+
+
+class HRRSelfOutput(BertSelfOutput):
+    ...
+
+
+class HRRIntermediate(BertIntermediate):
+    ...
+
+
+del BertEmbeddings
+del BertSelfOutput
+del BertOutput
+del BertIntermediate
 
 
 class HRRSelfAttention(nn.Module):
@@ -168,11 +181,13 @@ class HRRSelfAttention(nn.Module):
         # When used as a decoder, a causal mask is expected. This mask is not
         # applied to the attention scores as would usually be done, but rather
         # to the superpositional binding of the key and value tensors.
-    
+
+        # pylint: disable=unused-variable
         B = hidden_states.size(0)     # - batch size
         H = self.num_attention_heads  # - number of attention heads
         T = hidden_states.size(1)     # - sequence length
         D = self.attention_head_size  # - effective hidden size
+        # pylint: enable=unused-variable
 
         # If this is instantiated as a cross-attention module, the keys
         # and values come from an encoder; the attention mask needs to be
@@ -197,9 +212,9 @@ class HRRSelfAttention(nn.Module):
             key_layer = self.transpose_for_scores(self.key(hidden_states))
             value_layer = self.transpose_for_scores(self.value(hidden_states))
 
-        key_layer    # (B, H, T, D)
-        value_layer  # (B, H, T, D)
-        query_layer  # (B, H, T, D)
+        key_layer: Tensor    # (B, H, T, D)
+        value_layer: Tensor  # (B, H, T, D)
+        query_layer: Tensor  # (B, H, T, D)
 
         if self.is_decoder:
             past_key_value = (key_layer, value_layer)
@@ -277,7 +292,7 @@ class HRRAttention(nn.Module):
     def __init__(self, config: HRRConfig, position_embedding_type: Optional[str] = None) -> None:
         super().__init__()
         self.self = HRRSelfAttention(config, position_embedding_type=position_embedding_type)
-        self.output = BertSelfOutput(config)
+        self.output = HRRSelfOutput(config)
         self.pruned_heads = set()
 
     def prune_heads(self, heads):
@@ -339,8 +354,8 @@ class HRRLayer(nn.Module):
             if not self.is_decoder:
                 raise ValueError(f"{self} should be used as a decoder model if cross attention is added")
             self.crossattention = HRRAttention(config, position_embedding_type="absolute")
-        self.intermediate = BertIntermediate(config)
-        self.output = BertOutput(config)
+        self.intermediate = HRRIntermediate(config)
+        self.output = HRROutput(config)
 
     def forward(
         self,
@@ -500,9 +515,7 @@ class HRRModel(HRRPreTrainedModel):
         super().__init__(config)
         self.config = config
         self.embeddings = HRRFormerEmbeddings(config)
-        self.embedding_projection = nn.Identity()
-        if self.config.hidden_size != self.config.embedding_size:
-            self.embedding_projection = nn.Linear(config.embedding_size, config.hidden_size)
+        self.embedding_projection = nn.Linear(config.embedding_size, config.hidden_size) if config.embedding_size != config.hidden_size else nn.Identity()
         self.encoder = HRREncoder(config)
         self.post_init()
 
@@ -624,21 +637,34 @@ class HRRModel(HRRPreTrainedModel):
 
 class HRRForCausalLM(HRRPreTrainedModel):
 
-    _tied_weights_keys = ["head.weight"]
+    _tied_weights_keys = ["head_clm.weight_to_tie"]
 
     def __init__(self, config: HRRConfig) -> None:
         if not config.is_decoder:
             raise ValueError(f"{config.is_decoder=} (expected True)")
         super().__init__(config)
+        self.config: HRRConfig
         self.backbone = HRRModel(config)
-        self.head = nn.Linear(config.hidden_size, config.vocab_size)
+        self.head_clm = Head(
+            config.hidden_size,
+            config.vocab_size,
+            config.head_hidden_size,
+            config.head_num_hidden_layers,
+            config.head_dropout,
+        )
         self.post_init()
 
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.backbone.get_input_embeddings()
+
+    def set_input_embeddings(self, new_embeddings: nn.Embedding) -> None:
+        return self.backbone.set_input_embeddings(new_embeddings)
+
     def get_output_embeddings(self) -> nn.Linear:
-        return self.head
+        return self.head_clm.get_output_embeddings()
 
     def set_output_embeddings(self, new_embeddings: nn.Linear) -> None:
-        self.head = new_embeddings
+        self.head_clm.set_output_embeddings(new_embeddings)
 
     def forward(
         self,
@@ -674,18 +700,13 @@ class HRRForCausalLM(HRRPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
         )
-        prediction_scores = self.head.forward(outputs.last_hidden_state)
-
-        lm_loss = None
-        if labels is not None:
-            shifted_prediction_scores = prediction_scores[:, :-1, :].contiguous()
-            labels = labels[:, 1:].contiguous()
-            loss_fct = CrossEntropyLoss()
-            lm_loss = loss_fct(shifted_prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+        logits = self.head_clm(outputs.last_hidden_state)
+        logits = pool_logits("none", logits, input_ids, self.config.pad_token_id)
+        loss = get_clm_loss(logits, labels, self.config.vocab_size) if labels is not None else None
 
         return CausalLMOutputWithCrossAttentions(
-            loss=lm_loss,
-            logits=prediction_scores,
+            loss=loss,
+            logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
@@ -695,22 +716,34 @@ class HRRForCausalLM(HRRPreTrainedModel):
 
 class HRRForMaskedLM(HRRPreTrainedModel):
 
-    _tied_weights_keys = ["head.weight"]
+    _tied_weights_keys = ["head_mlm.weight_to_tie"]
 
     def __init__(self, config: HRRConfig):
         if config.is_decoder:
             raise ValueError(f"{config.is_decoder=} (expected False)")
         super().__init__(config)
+        self.config: HRRConfig
         self.backbone = HRRModel(config)
-        self.head = nn.Linear(config.hidden_size, config.vocab_size)
+        self.head_mlm = Head(
+            config.hidden_size,
+            config.vocab_size,
+            config.head_hidden_size,
+            config.head_num_hidden_layers,
+            config.head_dropout,
+        )
         self.post_init()
-        print()
+
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.backbone.get_input_embeddings()
+
+    def set_input_embeddings(self, new_embeddings: nn.Embedding) -> None:
+        return self.backbone.set_input_embeddings(new_embeddings)
 
     def get_output_embeddings(self) -> nn.Linear:
-        return self.head
+        return self.head_mlm.get_output_embeddings()
 
-    def set_output_embeddings(self, new_embeddings: nn.Linear):
-        self.head = new_embeddings
+    def set_output_embeddings(self, new_embeddings: nn.Linear) -> None:
+        self.head_mlm.set_output_embeddings(new_embeddings)
 
     def forward(
         self,
@@ -739,12 +772,9 @@ class HRRForMaskedLM(HRRPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
         )
-        logits = self.head.forward(outputs.last_hidden_state)
-
-        loss = None
-        if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.config.vocab_size), labels.view(-1))
+        logits = self.head_mlm.forward(outputs.last_hidden_state)
+        logits = pool_logits("none", logits, input_ids, self.config.pad_token_id)
+        loss = get_mlm_loss(logits, labels, self.config.vocab_size) if labels is not None else None
 
         return MaskedLMOutput(
             loss=loss,
@@ -758,8 +788,15 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
 
     def __init__(self, config: HRRConfig):
         super().__init__(config)
+        self.config: HRRConfig
         self.backbone = HRRModel(config)
-        self.clf_head = nn.Linear(config.hidden_size, config.num_labels)
+        self.head_clf = Head(
+            config.hidden_size,
+            config.num_labels,
+            config.head_hidden_size,
+            config.head_num_hidden_layers,
+            config.head_dropout,
+        )
         self.post_init()
 
     def forward(
@@ -785,34 +822,12 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
         )
-        logits = self.clf_head.forward(outputs.last_hidden_state)
-        logits = logits.mean(dim=1)  # Mean pooling along the sequence length.
+        logits = self.head_clf.forward(outputs.last_hidden_state)
+        logits = pool_logits("last" if self.config.is_decoder else "mean", logits, input_ids, self.config.pad_token_id)
+        loss = get_clf_loss(logits, labels, self.config.num_labels, self.config.problem_type) if labels is not None else None
 
-        loss = None
-        if labels is not None:
-            if self.config.problem_type is None:
-                if self.config.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.config.num_labels > 1 and labels.dtype == torch.long or labels.dtype == torch.int:
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-            if self.config.problem_type == "regression":
-                loss_fct = MSELoss()
-                if self.config.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
-                loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
-
-        # Returning hidden_states can cause excessive memory build-up during evaluation
-        # use TrainingArguments.prediction_loss_only to prevent OOMs is insufficient because
-        # we need the logits.
+        # Returning hidden_states can cause excessive memory build-up during evaluation.
+        # Using TrainingArguments.prediction_loss_only is insufficient because we need the logits.
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
