@@ -6,11 +6,12 @@ from __future__ import annotations
 from argparse import ArgumentParser
 from dataclasses import dataclass
 import datetime
-from itertools import product
 from enum import Enum
+from itertools import product
 import json
 from pathlib import Path
 import os
+import shutil
 import sys
 from typing import Any, Optional
 import warnings
@@ -21,18 +22,27 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.enums import LiftLevel, Task, TokenizationAlgorithm
 
 
-DEBUG    = False
-PREP     = False
-TIMING   = False
+ACTION   = None
 ARMITAGE = False
-PREFIX   = None
-OUTPATH  = None
+
+
+class Action(Enum):
+    DEBUG   = "dbg"
+    PREPARE = "pre"
+    TIME    = "tim"
+    EXECUTE = "exe"
+
+
+def outpath() -> Path:
+    root = os.path.dirname(os.path.realpath(__file__))
+    return Path(root) / "sbatch" / ACTION.value
 
 
 def bool_to_str(b: bool) -> str:
     if not isinstance(b, bool):
         raise TypeError(type(b))
     return "true" if b else "false"
+
 
 def seconds_to_slurm_time(seconds: int) -> str:
     days = seconds // (24 * 3600)
@@ -42,6 +52,7 @@ def seconds_to_slurm_time(seconds: int) -> str:
     minutes = seconds // 60
     seconds %= 60
     return f"{int(days):02d}-{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
 
 def get_body(
     job: str,
@@ -76,7 +87,7 @@ def get_body(
 f"""
 #!/bin/bash -l
 
-#SBATCH --job-name={PREFIX}-{job}
+#SBATCH --job-name={ACTION.value}-{job}
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -96,7 +107,7 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"# " if gpu <= 1 else ""}torchrun --no-python --nnodes=1 --nproc_per_node={gpu} \\
 python -u \\
 src/learn/train.py \\
---root='./output/esp{"-tmp" if any([DEBUG, PREP, TIMING]) else ""}' \\
+--root='./output/esp-{ACTION.value}' \\
 --streaming={bool_to_str(streaming)} \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
 --auto_find_batch_size_and_gradient_accumulation_steps=true \\
@@ -143,9 +154,11 @@ src/learn/train.py \\
 """.replace("\n \\", "").strip() + "\n"
 )
 
+
 class ModelName(Enum):
     HRR = "hrrformer"
     MAM = "mamba"
+
 
 class ModelSize(Enum):
     TN = "tn"
@@ -154,48 +167,35 @@ class ModelSize(Enum):
     LG = "lg"
     HG = "hg"
 
+
 class ModelMode(Enum):
     UN = "un"
     BI = "bi"
 
+
 DATASET_SIZES = {
     Task.CLM: 1000000,
     Task.MLM: 1000000,
-    Task.DET: 40000,
+    Task.DET: 45000,
     Task.FAM: 80000,
     Task.BEH: 35000,
 }
 
-# dict[ModelName, dict[ModelSize, dict[VocabSize, float]]]
-MODEL_SAMPLES_PER_SECOND = {
-    ModelName.HRR: {
-        ModelSize.TN: {},
-        ModelSize.SM: {},
-        ModelSize.MD: {},
-        ModelSize.LG: {},
-        ModelSize.HG: {},
-    },
-    ModelName.MAM: {
-        ModelSize.TN: {},
-        ModelSize.SM: {},
-        ModelSize.MD: {},
-        ModelSize.LG: {},
-        ModelSize.HG: {},
-    },
+
+MODEL_SAMPLES_PER_SECOND: dict[tuple, tuple[float, float]] = {
+    (ModelName.HRR, ModelSize.MD, ModelMode.BI, 16384, "cf"): (2.443, 41.315),
+    (ModelName.HRR, ModelSize.MD, ModelMode.BI, 16384, "lm"): (0.757, 13.339), # est tr
+    (ModelName.HRR, ModelSize.MD, ModelMode.UN, 16384, "cf"): (1.971, 34.166),
+    (ModelName.HRR, ModelSize.MD, ModelMode.UN, 16384, "lm"): (0.448, 07.884), # est tr
+    (ModelName.MAM, ModelSize.MD, ModelMode.BI, 16384, "cf"): (0.918, 16.834),
+    (ModelName.MAM, ModelSize.MD, ModelMode.BI, 16384, "lm"): (0.221, 03.885), # est tr, vl
+    (ModelName.MAM, ModelSize.MD, ModelMode.UN, 16384, "cf"): (1.533, 27.511),
+    (ModelName.MAM, ModelSize.MD, ModelMode.UN, 16384, "lm"): (0.360, 06.349), # est tr, vl
 }
 
-# dict[TokenizationAlgorithm, dict[VocabSize, float]]
-COMPRESSION_RATIOS = {
-    TokenizationAlgorithm.BPE: {
-        1024:  1.0,
-        4096:  1.0,
-        16384: 1.0,
-    },
-    TokenizationAlgorithm.UNIGRAM: {
-        1024:  1.0,
-        4096:  1.0,
-        16384: 1.0,
-    },
+
+COMPRESSION_RATIOS: dict[tuple[TokenizationAlgorithm, int], float] = {
+
 }
 
 
@@ -245,7 +245,7 @@ class Configuration:
         if self.vocab_size != 16384:
             return False
 
-        if DEBUG:
+        if ACTION == Action.DEBUG:
             if self.model_name != ModelName.HRR:
                 return False
             if self.model_size != ModelSize.TN:
@@ -255,7 +255,7 @@ class Configuration:
             if self.lift_level != LiftLevel.RAW:
                 return False
 
-        if PREP:
+        if ACTION == Action.PREPARE:
             if self.model_size != ModelSize.TN:
                 return False
             if self.model_mode != ModelMode.BI:
@@ -265,7 +265,7 @@ class Configuration:
             if self.task == Task.CLM:
                 return False
 
-        if TIMING:
+        if ACTION == Action.TIME:
             if self.model_size != ModelSize.MD:
                 return False
             if self.task not in (Task.CLM, Task.MLM, Task.DET):
@@ -273,6 +273,10 @@ class Configuration:
             if self.pretraining_task is not None:
                 return False
             if self.lift_level != LiftLevel.RAW:
+                return False
+
+        if ACTION == Action.EXECUTE:
+            if self.model_size != ModelSize.MD:
                 return False
 
         return True
@@ -294,14 +298,14 @@ class Configuration:
 
     @property
     def tim(self) -> str:
-        if PREP:
+        if ACTION == Action.PREPARE:
             if self.task in (Task.CLM, Task.MLM):
                 return seconds_to_slurm_time(7200)
             if self.task == Task.FAM:
                 return seconds_to_slurm_time(3600)
             return seconds_to_slurm_time(1800)
 
-        if TIMING:
+        if ACTION == Action.TIME:
             f = {
                 ModelSize.TN: 1.0,
                 ModelSize.SM: 2.0,
@@ -312,18 +316,14 @@ class Configuration:
             s = 1800 if self.task in (Task.CLM, Task.MLM) else 900
             return seconds_to_slurm_time(s * f[self.model_size])
 
-        t_tr, t_vl = MODEL_SAMPLES_PER_SECOND \
-            .get(self.model_name, {}) \
-            .get(self.model_size, {}) \
-            .get(self.vocab_size, (None, None))
-
-        if t_tr is None or t_vl is None:
-            warnings.warn(
-                f"Time/sample unknown for {self.model_name.value} "
-                f"{self.model_size.value} {self.max_length}."
-            )
-            t_tr = 10 if t_tr is None else t_tr
-            t_vl = 25 if t_vl is None else t_vl
+        t = "lm" if self.task in (Task.CLM, Task.MLM) else "cf"
+        k = (self.model_name, self.model_size, self.model_mode, self.vocab_size, t)
+        if k in MODEL_SAMPLES_PER_SECOND:
+            t_tr, t_vl = MODEL_SAMPLES_PER_SECOND[k]
+        else:
+            warnings.warn(f"Samples/second unknown for {k=}.")
+            t_tr = 10
+            t_vl = 25
 
         n_tr = DATASET_SIZES[self.task] * self.num_train_epochs * 0.80
         n_vl = DATASET_SIZES[self.task] * self.num_train_epochs * 0.20
@@ -334,9 +334,9 @@ class Configuration:
 
     @property
     def cpu(self) -> int:
-        if PREP:
+        if ACTION == Action.PREPARE:
             return 16
-        if TIMING:
+        if ACTION == Action.TIME:
             return 4
         if self.task in (Task.CLM, Task.MLM):
             return 8
@@ -344,13 +344,18 @@ class Configuration:
 
     @property
     def mem(self) -> int:
-        if PREP:
+        if ACTION == Action.PREPARE:
             return 64
         if self.streaming:
-            return 64
-        if self.vocab_size not in COMPRESSION_RATIOS[self.tokenization_algorithm]:
-            warnings.warn(f"Compression ratio unknown for {self.tokenization_algorithm.value} {self.vocab_size}.")
-        c = COMPRESSION_RATIOS[self.tokenization_algorithm].get(self.vocab_size, 1)
+            return 96
+
+        k = (self.tokenization_algorithm, self.vocab_size)
+        if k in COMPRESSION_RATIOS:
+            c = COMPRESSION_RATIOS[k]
+        else:
+            warnings.warn(f"Compression ratio unknown for {k=}.")
+            c = 1.0
+
         t = c * DATASET_SIZES[self.task] * self.max_length
         b = t * 8              # 8 bytes in float64
         b = b + (16 * 1024**3) # 16 extra GB of padding
@@ -359,9 +364,9 @@ class Configuration:
 
     @property
     def gpu(self) -> int:
-        if PREP:
+        if ACTION == Action.PREPARE:
             return 0
-        if TIMING:
+        if ACTION == Action.TIME:
             return 1
         if self.task in (Task.CLM, Task.MLM):
             return 2
@@ -375,7 +380,7 @@ class Configuration:
 
     @property
     def exit_after_map(self) -> bool:
-        if PREP:
+        if ACTION == Action.PREPARE:
             return True
         return False
 
@@ -415,7 +420,7 @@ class Configuration:
 
     @property
     def num_train_epochs(self) -> int:
-        if DEBUG:
+        if ACTION == Action.DEBUG:
             return 1
         if self.task in (Task.CLM, Task.MLM):
             return 1
@@ -423,19 +428,19 @@ class Configuration:
 
     @property
     def max_steps(self) -> Optional[int]:
-        return 16 if TIMING else None
+        return 16 if ACTION == Action.TIME else None
 
     @property
     def save_steps(self) -> Optional[int]:
-        return 16 if TIMING else None
+        return 16 if ACTION == Action.TIME else None
 
     @property
     def eval_steps(self) -> Optional[int]:
-        return 16 if TIMING else None
+        return 16 if ACTION == Action.TIME else None
 
     @property
     def saves_and_evals_per_epochs(self) -> int:
-        if DEBUG:
+        if ACTION == Action.DEBUG:
             return 2
         if self.task in (Task.CLM, Task.MLM):
             return 16
@@ -471,16 +476,17 @@ class Configuration:
             return 32
         if self.model_size == ModelSize.HG:
             return 16
+        raise RuntimeError()
 
     @property
     def tf32(self) -> bool:
-        if PREP:
+        if ACTION == Action.PREPARE:
             return False
         return True
 
     @property
     def bf16(self) -> bool:
-        if PREP:
+        if ACTION == Action.PREPARE:
             return False
         if self.model_name == ModelName.MAM:
             return True
@@ -496,45 +502,24 @@ class Configuration:
 
     @property
     def outfile(self) -> Path:
-        return OUTPATH / f"{self.job}.sh"
+        return outpath() / f"{self.job}.sh"
 
 
 def main():
 
-    global DEBUG
-    global PREP
-    global TIMING
+    global ACTION
     global ARMITAGE
-    global PREFIX
-    global OUTPATH
 
     parser = ArgumentParser()
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--prep", action="store_true")
-    parser.add_argument("--timing", action="store_true")
+    parser.add_argument("--action", type=Action)
     parser.add_argument("--armitage", action="store_true")
     args = parser.parse_args()
 
-    DEBUG    = args.debug
-    PREP     = args.prep
-    TIMING   = args.timing
+    ACTION   = args.action
     ARMITAGE = args.armitage
 
-    assert sum([DEBUG, PREP, TIMING]) <= 1
-
-    if DEBUG:
-        PREFIX = "deb"
-    elif PREP:
-        PREFIX = "pre"
-    elif TIMING:
-        PREFIX = "tim"
-    else:
-        PREFIX = "run"
-
-    OUTPATH  = Path("run/esp/") / PREFIX
-    OUTPATH.mkdir(parents=True, exist_ok=True)
-    for file in OUTPATH.iterdir():
-        file.unlink()
+    shutil.rmtree(outpath(), ignore_errors=True)
+    outpath().mkdir(parents=True, exist_ok=True)
 
     configurations = product(
         ModelName,
