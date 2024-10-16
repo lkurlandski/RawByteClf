@@ -101,8 +101,18 @@ class MambaConfig(PretrainedConfig):
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
 
 
-# Monkey-patch out bugs from the cache.
 class MambaCache(MambaCacheHF):
+
+    """Overridden Mamba cache fit for monkey patch.
+
+      - The original implementation will raise an error when training in mixed precision
+        because new_conv_state will always be float32. This is patched to convert the
+        dtype of new_conv_state to whatever dtype is currently in use.
+      - The original implementation will also raise errors when training with accelerate
+        because of it tries to cast the object as a float and change its device to the cpu.
+        This is patched to provide these methods and appear to manipulate the object, but
+        actually does nothing.
+    """
 
     def update_conv_state(
         self, layer_idx: int, new_conv_state: torch.Tensor, cache_position: torch.LongTensor
@@ -116,6 +126,18 @@ class MambaCache(MambaCacheHF):
         self.conv_states[layer_idx].zero_()
         self.conv_states[layer_idx] += conv_state
         return self.conv_states[layer_idx]
+
+    def float(self):
+        self.dtype = torch.float32
+        # self.conv_states = {k: v.float() for k, v in self.conv_states.items()}
+        # self.ssm_states = {k: v.float() for k, v in self.ssm_states.items()}
+        return self
+
+    def detach(self):
+        self.device = "cpu"
+        # self.conv_states = {k: v.detach() for k, v in self.conv_states.items()}
+        # self.ssm_states = {k: v.detach() for k, v in self.ssm_states.items()}
+        return self
 
 
 transformers.cache_utils.MambaCache = MambaCache  # pylint: disable=no-member
