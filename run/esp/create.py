@@ -268,7 +268,7 @@ class Configuration:
                 return False
 
         if ACTION == Action.TIME:
-            if self.model_size != ModelSize.MD:
+            if self.model_size != ModelSize.SM:
                 return False
             if self.task not in (Task.CLM, Task.MLM, Task.DET):
                 return False
@@ -404,13 +404,13 @@ class Configuration:
 
         elif self.model_name == ModelName.HRR:
             if self.model_size == ModelSize.TN:
-                d |= {"num_hidden_layers": 1, "hidden_size": 64,  "intermediate_size": 128,  "num_attention_heads": 1}
+                d |= {"num_hidden_layers": 1, "hidden_size": 64,  "intermediate_size": 128,  "num_attention_heads": 8}
             if self.model_size == ModelSize.SM:
-                d |= {"num_hidden_layers": 2, "hidden_size": 128, "intermediate_size": 256,  "num_attention_heads": 2}
+                d |= {"num_hidden_layers": 2, "hidden_size": 128, "intermediate_size": 256,  "num_attention_heads": 8}
             if self.model_size == ModelSize.MD:
-                d |= {"num_hidden_layers": 4, "hidden_size": 256, "intermediate_size": 512, "num_attention_heads": 4}
+                d |= {"num_hidden_layers": 4, "hidden_size": 256, "intermediate_size": 512,  "num_attention_heads": 8}
             if self.model_size == ModelSize.LG:
-                d |= {"num_hidden_layers": 6, "hidden_size": 384, "intermediate_size": 768, "num_attention_heads": 6}
+                d |= {"num_hidden_layers": 6, "hidden_size": 384, "intermediate_size": 768,  "num_attention_heads": 8}
             if self.model_size == ModelSize.HG:
                 d |= {"num_hidden_layers": 8, "hidden_size": 512, "intermediate_size": 1024, "num_attention_heads": 8}
 
