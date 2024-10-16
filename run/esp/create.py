@@ -268,9 +268,9 @@ class Configuration:
                 return False
 
         if ACTION == Action.TIME:
-            if self.model_size != ModelSize.SM:
+            if self.model_size != ModelSize.TN:
                 return False
-            if self.task not in (Task.CLM, Task.MLM, Task.DET):
+            if self.task not in (Task.CLM, Task.MLM, Task.BEH):
                 return False
             if self.pretraining_task is not None:
                 return False
@@ -278,7 +278,7 @@ class Configuration:
                 return False
 
         if ACTION == Action.EXECUTE:
-            if self.model_size != ModelSize.MD:
+            if self.model_size != ModelSize.TN:
                 return False
 
         return True
@@ -315,7 +315,7 @@ class Configuration:
                 ModelSize.LG: 4.0,
                 ModelSize.HG: 5.0,
             }
-            s = 1800 if self.task in (Task.CLM, Task.MLM) else 900
+            s = 3600 if self.task in (Task.CLM, Task.MLM) else 1800
             return seconds_to_slurm_time(s * f[self.model_size])
 
         t = "lm" if self.task in (Task.CLM, Task.MLM) else "cf"
