@@ -9,6 +9,7 @@ import datetime
 from enum import Enum
 from itertools import product
 import json
+import math
 from pathlib import Path
 import os
 import shutil
@@ -45,6 +46,7 @@ def bool_to_str(b: bool) -> str:
 
 
 def seconds_to_slurm_time(seconds: int) -> str:
+    seconds = math.ceil(seconds)
     days = seconds // (24 * 3600)
     seconds %= (24 * 3600)
     hours = seconds // 3600
@@ -173,12 +175,12 @@ class ModelMode(Enum):
     BI = "bi"
 
 
-DATASET_SIZES = {
-    Task.CLM: 1000000,
-    Task.MLM: 1000000,
-    Task.DET: 45000,
-    Task.FAM: 80000,
-    Task.BEH: 35000,
+DATASET_SIZES: dict[Task, tuple[int, int]] = {
+    Task.CLM: (820000, 4096),
+    Task.MLM: (820000, 4096),
+    Task.DET: (29000, 14000),
+    Task.FAM: (64000, 16000),
+    Task.BEH: (28000, 7000),
 }
 
 
@@ -325,10 +327,9 @@ class Configuration:
             t_tr = 10
             t_vl = 25
 
-        n_tr = DATASET_SIZES[self.task] * self.num_train_epochs * 0.80
-        n_vl = DATASET_SIZES[self.task] * self.num_train_epochs * 0.20
-        s_tr = n_tr / t_tr
-        s_vl = n_vl / t_vl
+        n_tr, n_vl = DATASET_SIZES[self.task]
+        s_tr = n_tr * self.num_train_epochs / t_tr / self.gpu
+        s_vl = n_vl * self.num_train_epochs / t_vl / self.gpu
         s = s_tr + s_vl + 3600
         return seconds_to_slurm_time(s)
 
@@ -356,7 +357,7 @@ class Configuration:
             warnings.warn(f"Compression ratio unknown for {k=}.")
             c = 1.0
 
-        t = c * DATASET_SIZES[self.task] * self.max_length
+        t = c * sum(DATASET_SIZES[self.task]) * self.max_length
         b = t * 8              # 8 bytes in float64
         b = b + (16 * 1024**3) # 16 extra GB of padding
         b = b // 1024**3
