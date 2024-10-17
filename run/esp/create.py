@@ -348,7 +348,7 @@ class Configuration:
         if ACTION == Action.PREPARE:
             return 64
         if self.streaming:
-            return 96
+            return self.gpu * 64
 
         k = (self.tokenization_algorithm, self.vocab_size)
         if k in COMPRESSION_RATIOS:
@@ -450,6 +450,10 @@ class Configuration:
     @property
     def dataloader_num_workers(self) -> int:
         if self.gpu == 0:
+            return 0
+        # If we're streaming, we rely on thread-based parallelism,
+        # so let there only be a single process for each GPU.
+        if self.streaming:
             return 0
         return self.cpu // self.gpu - 1
 
