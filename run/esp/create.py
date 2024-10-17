@@ -25,6 +25,7 @@ from src.enums import LiftLevel, Task, TokenizationAlgorithm
 
 ACTION   = None
 ARMITAGE = False
+ROOT     = Path(os.path.dirname(os.path.realpath(__file__)))
 
 
 class Action(Enum):
@@ -35,8 +36,7 @@ class Action(Enum):
 
 
 def outpath() -> Path:
-    root = os.path.dirname(os.path.realpath(__file__))
-    return Path(root) / "sbatch" / ACTION.value
+    return ROOT / "sbatch" / ACTION.value
 
 
 def bool_to_str(b: bool) -> str:
@@ -523,6 +523,28 @@ class Configuration:
         return outpath() / f"{self.job}.sh"
 
 
+def sort_configurations(configurations: list[Configuration]) -> list[Configuration]:
+    configurations = sorted(configurations, key=lambda c: c.job)
+
+    cfg = configurations
+    # cfg = []
+    # cfg.extend([c for c in configurations if c.task in (Task.CLM, Task.MLM)])
+    # cfg.extend([c for c in configurations if c.task not in (Task.CLM, Task.MLM) and c.pretraining_task is None])
+    # cfg.extend([c for c in configurations if c.task not in (Task.CLM, Task.MLM) and c.pretraining_task is not None])
+
+    if len(cfg) != len(configurations):
+        raise RuntimeError()
+    return cfg
+
+
+def sort_configurations_key(c: Configuration) -> tuple:
+    return (
+        c.lift_level.value,
+        "" if c.pretraining_task is None else c.pretraining_task.value,
+        "a" + c.task.value if c.task in (Task.CLM, Task.MLM) else "z" + c.task.value,
+    )
+
+
 def main():
 
     global ACTION
@@ -552,10 +574,11 @@ def main():
         (0, 1, 2, 3, 4),
     )
     configurations = [Configuration(*config) for config in configurations]
+    configurations = [config for config in configurations if config.do]
+    configurations = sorted(configurations, key=sort_configurations_key)
+    # configurations = sort_configurations(configurations)
 
     for config in tqdm(configurations):
-        if not config.do:
-            continue
         body = get_body(
             job=config.job,
             tim=config.tim,
@@ -589,6 +612,11 @@ def main():
         if config.outfile.exists():
             raise FileExistsError(config.outfile)
         config.outfile.write_text(body)
+
+    if ACTION == Action.EXECUTE:
+        with open(ROOT / "execute.sh", "w") as fp:
+            for config in configurations:
+                fp.write(f"sbatch {config.outfile.as_posix().replace('/home/lk3591/Documents/code/RawByteClf', '.')}\n")
 
 
 if __name__ == "__main__":
