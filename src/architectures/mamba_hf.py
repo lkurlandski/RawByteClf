@@ -19,7 +19,7 @@ from transformers.models.mamba.modeling_mamba import (  # pylint: disable=no-nam
 )
 from transformers.configuration_utils import PretrainedConfig
 
-from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss
+from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss, check_for_anomalous_weights
 
 
 ARG_REQUIRED = -1
@@ -480,6 +480,7 @@ class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
             config.head_num_hidden_layers,
             config.head_dropout,
         )
+        check_for_anomalous_weights(self.head_clm, "warn")
 
         self.post_init()
 
@@ -628,6 +629,7 @@ class MambaForMaskedLM(MambaPreTrainedModel):
             config.head_num_hidden_layers,
             config.head_dropout,
         )
+        check_for_anomalous_weights(self.head_mlm, "warn")
 
         self.post_init()
 
@@ -698,6 +700,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             config.head_num_hidden_layers,
             config.head_dropout,
         )
+        check_for_anomalous_weights(self.head_clf, "warn")
 
         self.post_init()
 
