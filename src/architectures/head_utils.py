@@ -95,6 +95,17 @@ class Head(nn.Module):
         x = self.final_layer(x)
         return x
 
+    def init_weights_(self, initializer_range: float) -> None:
+        for module in self.layers:
+            if isinstance(module, nn.Linear):
+                module.weight.data.normal_(mean=0.0, std=initializer_range)
+                if module.bias is not None:
+                    module.bias.data.zero_()
+
+        self.final_layer.weight.data.normal_(mean=0.0, std=initializer_range)
+        if self.final_layer.bias is not None:
+            self.final_layer.bias.data.zero_()
+
     def get_output_embeddings(self) -> nn.Linear:
         return self.final_layer
 

@@ -139,6 +139,7 @@ from src.utils import (
     compose_functions,
     remove_empty_directories,
 )
+from src.architectures.head_utils import Head, check_for_anomalous_weights
 from src.architectures.malconv_hf import (
     MalConvConfig,
     MalConvForSequenceClassification,
@@ -946,30 +947,28 @@ def get_model(
             if model_name == "hrrformer":
                 model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = HRRConfig.from_pretrained(model_name_or_path)
-                _head_names = ["clf_head"]
+                _head_names = ["head_clf"]
             elif model_name == "rwkv":
                 model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = RwkvConfig.from_pretrained(model_name_or_path)
-                _head_names = ["classifier"]
-                raise NotImplementedError("Need to check the head weights.")
+                _head_names = ["head_clf"]
             elif model_name == "mamba":
                 model = MambaForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MambaConfig.from_pretrained(model_name_or_path)
-                _head_names = ["clf_neck", "clf_head"]
+                _head_names = ["head_clf"]
             elif model_name == "malconv":
                 model = MalConvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MalConvConfig.from_pretrained(model_name_or_path)
-                _head_names = ["clf_head"]
-                raise NotImplementedError("Need to check the head weights.")
+                _head_names = ["head_clf"]
             elif model_name == "malconv2":
                 model = MalConv2ForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MalConv2Config.from_pretrained(model_name_or_path)
-                _head_names = ["malconv.malconv.fc_2"]
+                _head_names = ["head_clf"]
             elif get_model_type(model_name_or_path) == "HF":
                 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = AutoConfig.from_pretrained(model_name_or_path)
                 _head_names = []
-                raise NotImplementedError("Need to check the head weights.")
+                raise NotImplementedError(f"The head name for {model_name=} is unknown and cannot be checked.")
             else:
                 raise ValueError(f"Invalid model name: {model_name}")
 
@@ -978,6 +977,8 @@ def get_model(
             # of, but whatever. When loading the config of a language model, the config automatically
             # get populated with some placeholder id2label values and stuff. We can use some crude
             # heuristics to determine if we're loading a classification model from a pretrained LM.
+            # Obviously, we don't need to check a classification head for having unusual weights as
+            # these have presumably been updated during training.
             _config: PretrainedConfig
             is_not_for_classification = all([
                 _config.num_labels == 2,
@@ -986,29 +987,17 @@ def get_model(
                 not any("ForClassification" in a for a in _config.architectures),
             ])
             if is_not_for_classification:
-                print(f"Checking the following classification heads for anamalous weights: {_head_names}")
-                for h in _head_names:
-                    l: Optional[torch.nn.Linear] = getattr_recursively(model, h)
-                    if l is None:
-                        continue
-                    if not isinstance(l, torch.nn.Linear):
-                        raise TypeError(f"Expected torch.nn.Linear, got {type(l)}")
-                    w: Tensor = l.weight.to(torch.float64)
-                    m: float = w.mean().cpu().item()
-                    s: float = w.std().cpu().item()
-                    anomalous_mean = any([math.isnan(m), math.isinf(m), m <= -1, m >= 1])
-                    anomalous_std = any([math.isnan(s), math.isinf(s), s <= 0, s >= 2 * _config.initializer_range])
-                    if anomalous_mean or anomalous_std:
-                        warnings.warn(
-                            f"Detected anamalous weights in {h}. "
-                            #f"Since we're creating a new classification head, we expect the "
-                            #f"weights to be Guassian with N(0, {_config.initializer_range}) but "
-                            f"The weights have a mean of {m} and a std of {s}. "
-                            f"Reinitializing the weights accordingly."
-                        )
-                        l.weight.data.normal_(mean=0.0, std=_config.initializer_range)
-            else:
-                print("Pretrained model is for classification, so we shouldn't check the classification head.")
+                # for h in _head_names:
+                #     check_for_anomalous_weights(getattr_recursively(model, h), errors="warn")
+
+                # Wow. I am so done with this stupid bug. Let's not even bother dealing with it.
+                # In all fairness, its literally not even consistent. It seems to randomly pop up.
+                # We'll just manually seed the head weights every time we load something from disk.
+                # This is only going to work if the model is using my custom classification head,
+                # so using anything without this head is going to break (for now).
+                # Since we're hard-coding this, we can comment out the warnings above.
+                model.head_clf.init_weights_(config.initializer_range)
+                check_for_anomalous_weights(model.head_clf, errors="raise")
 
             return model
 
