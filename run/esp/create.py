@@ -383,7 +383,7 @@ class Configuration:
         if ACTION == Action.TIME:
             return 1
         if self.task in (Task.CLM, Task.MLM):
-            return 2
+            return 1
         return 1
 
     @property
@@ -438,7 +438,7 @@ class Configuration:
             return 1
         if self.task in (Task.CLM, Task.MLM):
             return 1
-        return 10
+        return 5
 
     @property
     def max_steps(self) -> Optional[int]:
