@@ -8,6 +8,7 @@ from transformers import (
     DefaultDataCollator,
     PreTrainedTokenizerFast,
     PretrainedConfig,
+    PreTrainedModel,
 )
 
 
@@ -68,3 +69,7 @@ def print_config(config: PretrainedConfig) -> None:
     s = simplify_ids_and_labels(s, '"id2label": ')
     s = simplify_ids_and_labels(s, '"label2id": ')
     print(s)
+
+
+def print_model(model: PreTrainedModel) -> None:
+    print(model)
