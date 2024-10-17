@@ -185,6 +185,18 @@ DATASET_SIZES: dict[Task, tuple[int, int]] = {
 
 
 MODEL_SAMPLES_PER_SECOND: dict[tuple, tuple[float, float]] = {
+
+    (ModelName.HRR, ModelSize.TN, ModelMode.BI, 16384, "cf"): (06.075, 045.082),
+    (ModelName.HRR, ModelSize.TN, ModelMode.BI, 16384, "lm"): (14.721, 016.544),
+    (ModelName.HRR, ModelSize.TN, ModelMode.UN, 16384, "cf"): (06.574, 043.032),
+    (ModelName.HRR, ModelSize.TN, ModelMode.UN, 16384, "lm"): (09.022, 013.255),
+    (ModelName.MAM, ModelSize.TN, ModelMode.BI, 16384, "cf"): (13.481, 117.289),
+    (ModelName.MAM, ModelSize.TN, ModelMode.BI, 16384, "lm"): (13.873, 022.896),
+    (ModelName.MAM, ModelSize.TN, ModelMode.UN, 16384, "cf"): (17.266, 090.022),
+    (ModelName.MAM, ModelSize.TN, ModelMode.UN, 16384, "lm"): (12.384, 019.876),
+
+    # TODO: these A) contian some (unreliable) estimates and B) computed the
+    # cf times for Task.DET not Task.BEH.
     (ModelName.HRR, ModelSize.MD, ModelMode.BI, 16384, "cf"): (2.443, 41.315),
     (ModelName.HRR, ModelSize.MD, ModelMode.BI, 16384, "lm"): (0.757, 13.339), # est tr
     (ModelName.HRR, ModelSize.MD, ModelMode.UN, 16384, "cf"): (1.971, 34.166),
@@ -193,6 +205,7 @@ MODEL_SAMPLES_PER_SECOND: dict[tuple, tuple[float, float]] = {
     (ModelName.MAM, ModelSize.MD, ModelMode.BI, 16384, "lm"): (0.221, 03.885), # est tr, vl
     (ModelName.MAM, ModelSize.MD, ModelMode.UN, 16384, "cf"): (1.533, 27.511),
     (ModelName.MAM, ModelSize.MD, ModelMode.UN, 16384, "lm"): (0.360, 06.349), # est tr, vl
+
 }
 
 
