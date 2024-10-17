@@ -1,11 +1,11 @@
 """
 Utilities for the classification and language modeling heads.
-
-TODO:
- - figure out how to tie weights for language modeling tasks.
 """
 
-from typing import Optional
+from __future__ import annotations
+import math
+from typing import Literal, Optional
+import warnings
 
 import torch
 from torch import nn, Tensor
@@ -17,6 +17,32 @@ class ShapeError(ValueError):
         self.expected_shape = tuple(expected_shape)
         self.actual_shape = tuple(actual_shape) if actual_shape else None
         super().__init__(f"Recieved: {self.actual_shape}. Expected: {self.expected_shape}")
+
+
+def check_for_anomalous_weights(
+    module: nn.Linear | nn.Embedding | Head,
+    errors: Literal["raise", "ignore", "warn"] = "raise",
+) -> None:
+    if not isinstance(module, (nn.Linear, nn.Embedding, Head)):
+        raise TypeError(f"{type(module)=}")
+
+    if isinstance(module, Head):
+        modules = [l for l in module.layers if isinstance(l, nn.Linear)]
+    else:
+        modules = [module]
+
+    for l in modules:
+        w: Tensor = l.weight.to(torch.float64)
+        m: float  = w.mean().cpu().item()
+        s: float  = w.std().cpu().item()
+        anomalous_mean = any([math.isnan(m), math.isinf(m), m <= -1, m >= 1])
+        anomalous_std  = any([math.isnan(s), math.isinf(s), s <= 0, s >= 0.1])
+        if anomalous_mean or anomalous_std:
+            message = f"Detected anamalous weights (mean={m}, std={s})"
+            if errors == "raise":
+                raise RuntimeError(message)
+            if errors == "warn":
+                warnings.warn(message)
 
 
 class Head(nn.Module):
@@ -46,13 +72,13 @@ class Head(nn.Module):
         self.layers = nn.ModuleList()
 
         if num_hidden_layers == 0:
-            self.layers.append(nn.Linear(in_size, out_size))
+            self.final_layer = nn.Linear(in_size, out_size)
             return
 
-        self.layers.append(nn.Linear(in_size, hidden_size, dropout_rate))
+        self.add_layer(in_size, hidden_size, dropout_rate)
         for _ in range(1, num_hidden_layers):
             self.add_layer(hidden_size, hidden_size, dropout_rate)
-        self.layers.append(nn.Linear(hidden_size, out_size))
+        self.final_layer = nn.Linear(hidden_size, out_size)
 
     def add_layer(self, in_size: int, out_size: int, dropout_rate: float) -> list[nn.Module]:
         self.layers.append(nn.Linear(in_size, out_size))
@@ -66,17 +92,14 @@ class Head(nn.Module):
         x = last_hidden_state
         for layer in self.layers:
             x = layer(x)
+        x = self.final_layer(x)
         return x
 
     def get_output_embeddings(self) -> nn.Linear:
-        return self.layers[-1]
+        return self.final_layer
 
     def set_output_embeddings(self, new_embeddings: nn.Linear) -> None:
-        self.layers[-1] = new_embeddings
-
-    @property
-    def weight_to_tie(self) -> nn.Parameter:
-        return self.get_output_embeddings().weight
+        self.final_layer = new_embeddings
 
 
 def pool_logits(pooling: str, logits: Tensor, input_ids: Tensor, pad_token_id: int) -> Tensor:

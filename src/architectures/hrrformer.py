@@ -640,7 +640,7 @@ class HRRModel(HRRPreTrainedModel):
 
 class HRRForCausalLM(HRRPreTrainedModel):
 
-    _tied_weights_keys = ["head_clm.weight_to_tie"]
+    _tied_weights_keys = ["head_clm.final_layer.weight", "head_clm.final_layer.bias"]
 
     def __init__(self, config: HRRConfig) -> None:
         if not config.is_decoder:
@@ -719,7 +719,7 @@ class HRRForCausalLM(HRRPreTrainedModel):
 
 class HRRForMaskedLM(HRRPreTrainedModel):
 
-    _tied_weights_keys = ["head_mlm.weight_to_tie"]
+    _tied_weights_keys = ["head_mlm.final_layer.weight", "head_mlm.final_layer.bias"]
 
     def __init__(self, config: HRRConfig):
         if config.is_decoder:

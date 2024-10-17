@@ -463,7 +463,7 @@ class BiMambaModel(MambaPreTrainedModel):
 
 class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
 
-    _tied_weights_keys = ["head_clm.weight_to_tie"]
+    _tied_weights_keys = ["head_clm.final_layer.weight", "head_clm.final_layer.bias"]
 
     def __init__(self, config: MambaConfig):
         if not config.is_decoder:
@@ -611,7 +611,7 @@ class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
 
 class MambaForMaskedLM(MambaPreTrainedModel):
 
-    _tied_weights_keys = ["head_mlm.weight_to_tie"]
+    _tied_weights_keys = ["head_mlm.final_layer.weight", "head_mlm.final_layer.bias"]
 
     def __init__(self, config: MambaConfig):
         if config.is_decoder:
