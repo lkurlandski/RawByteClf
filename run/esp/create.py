@@ -618,7 +618,7 @@ def main():
                 if config.pretraining_task is None:
                     var = f"j_{config.task.value[0]}"
                 if config.pretraining_task is not None:
-                    dep = f"-d=afterok:$j_{config.pretraining_task.value[0]}:$j_{config.task.value[0]}"
+                    dep = f"--dependency=\"afterok:$j_{config.pretraining_task.value[0]}:$j_{config.task.value[0]}\""
 
                 f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
                 awk = "awk '{print $4}'"
