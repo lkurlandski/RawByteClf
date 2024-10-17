@@ -27,7 +27,7 @@ def check_for_anomalous_weights(
         raise TypeError(f"{type(module)=}")
 
     if isinstance(module, Head):
-        modules = [l for l in module.layers if isinstance(l, nn.Linear)]
+        modules = [l for l in module.layers if isinstance(l, nn.Linear)] + [module.final_layer]
     else:
         modules = [module]
 
