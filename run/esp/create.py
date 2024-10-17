@@ -45,22 +45,28 @@ def bool_to_str(b: bool) -> str:
     return "true" if b else "false"
 
 
-def seconds_to_slurm_time(seconds: int) -> str:
-    seconds = math.ceil(seconds)
-    days = seconds // (24 * 3600)
-    seconds %= (24 * 3600)
-    hours = seconds // 3600
-    seconds %= 3600
-    minutes = seconds // 60
-    seconds %= 60
-    return f"{int(days):02d}-{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+def seconds_to_slurm_time(s: int, r: int = 3600) -> str:
+    s = int(math.ceil(s / r) * r)
+    days = s // (24 * 3600)
+    s %= (24 * 3600)
+    hours = s // 3600
+    s %= 3600
+    minutes = s // 60
+    s %= 60
+    return f"{int(days):02d}-{int(hours):02d}:{int(minutes):02d}:{int(s):02d}"
+
+
+def bytes_to_slurm_mem(b: int, r: int = 4 * 1024**3) -> str:
+    b = int(math.ceil(b / r) * r)
+    g = int(b // 1024**3)
+    return f"{g}G"
 
 
 def get_body(
     job: str,
     tim: str,
     cpu: int,
-    mem: int,
+    mem: str,
     gpu: int,
     streaming: bool,
     exit_after_map: bool,
@@ -97,7 +103,7 @@ f"""
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task={cpu}
 #SBATCH --ntasks=1
-#SBATCH --mem={mem}G
+#SBATCH --mem={mem}
 {"#SBATCH --gres=gpu:a100:" + str(gpu) if gpu > 0 else ""}
 
 source ~/anaconda3/etc/profile.d/conda.sh
@@ -373,8 +379,7 @@ class Configuration:
         t = c * sum(DATASET_SIZES[self.task]) * self.max_length
         b = t * 8              # 8 bytes in float64
         b = b + (16 * 1024**3) # 16 extra GB of padding
-        b = b // 1024**3
-        return int(b)
+        return bytes_to_slurm_mem(b)
 
     @property
     def gpu(self) -> int:
