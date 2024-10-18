@@ -50,8 +50,8 @@ if __name__ == "__main__":
 from accelerate.utils import DistributedDataParallelKwargs
 try:
     from captum.attr import KernelShap
-except (ModuleNotFoundError, ImportError):
-    print("ModuleNotFound: captum")
+except (ModuleNotFoundError, ImportError) as _err:
+    print(f"{_err.__class__.__name__}: captum")
 import datasets
 from datasets import (
     DatasetDict,
@@ -117,8 +117,8 @@ try:
     from ray import tune
     from ray.tune.search.hyperopt import HyperOptSearch
     from ray.tune import TuneError
-except (ModuleNotFoundError, ImportError):
-    print("ModuleNotFound: ray")
+except (ModuleNotFoundError, ImportError) as _err:
+    print(f"{_err.__class__.__name__}: ray")
 
 from src.cfg import BR, System, SYSTEM
 from src.enums import (
