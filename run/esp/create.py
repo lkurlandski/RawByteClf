@@ -299,7 +299,7 @@ class Configuration:
                 return False
 
         if ACTION == Action.EXECUTE:
-            if self.model_size != ModelSize.TN:
+            if self.model_size != ModelSize.MD:
                 return False
 
         return True
@@ -481,7 +481,7 @@ class Configuration:
     def learning_rate(self) -> float:
         if self.task in (Task.CLM, Task.MLM):
             return 1e-3
-        return 1e-4
+        return 1e-3
 
     @property
     def tr_batch_size(self) -> int:
