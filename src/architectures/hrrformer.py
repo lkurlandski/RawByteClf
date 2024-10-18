@@ -45,7 +45,7 @@ class HRRConfig(PretrainedConfig):
         vocab_size: int = ARG_REQUIRED,
         hidden_size: int = ARG_REQUIRED,
         num_hidden_layers: int = ARG_REQUIRED,
-        num_attention_heads: int = ARG_REQUIRED,
+        num_attention_heads: int = ARG_INFERRED,
         embedding_size: int = ARG_INFERRED,
         intermediate_size: int = ARG_INFERRED,
         head_hidden_size: int = 0,
@@ -70,8 +70,8 @@ class HRRConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
-        self.num_attention_heads = num_attention_heads
 
+        self.num_attention_heads = hidden_size // 64 if num_attention_heads == ARG_INFERRED else num_attention_heads
         self.embedding_size = hidden_size if embedding_size == ARG_INFERRED else embedding_size
         self.intermediate_size = hidden_size * 4 if intermediate_size == ARG_INFERRED else intermediate_size
 
@@ -91,6 +91,7 @@ class HRRConfig(PretrainedConfig):
         self.fft_norm = fft_norm
 
         super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
+
 
 class HRRFormerEmbeddings(BertEmbeddings):
 
