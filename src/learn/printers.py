@@ -11,6 +11,8 @@ from transformers import (
     PreTrainedModel,
 )
 
+from src.utils import count_parameters
+
 
 def print_tokenizer(tokenizer: PreTrainedTokenizerFast) -> None:
     keys = [
@@ -72,4 +74,29 @@ def print_config(config: PretrainedConfig) -> None:
 
 
 def print_model(model: PreTrainedModel) -> None:
+    print(f"Model: {model.__class__.__name__}")
     print(model)
+    print("\tNumber of parameters:")
+    print(f"\t\tTotal:     {count_parameters(model)}")
+    try:
+        c_embd = count_parameters(model.backbone.embeddings)
+        c_back = count_parameters(model.backbone) - c_embd
+        for h in ["head_clm", "head_mlm", "head_clf"]:
+            if hasattr(model, h):
+                c_head = count_parameters(getattr(model, h))
+                break
+        else:
+            raise AttributeError()
+        print(f"\t\tEmbedding: {c_embd}")
+        print(f"\t\tBackbone:  {c_back}")
+        print(f"\t\tHead:      {c_head}")
+    except AttributeError:
+        pass
+
+    try:
+        inp = model.get_input_embeddings()
+        out = model.get_output_embeddings()
+        print(f"\tEmbedding weights the same: {inp.weight is out.weight}")
+        print(f"\tEmbedding biases the same:  {inp.bias is out.bias}")
+    except AttributeError:
+        pass
