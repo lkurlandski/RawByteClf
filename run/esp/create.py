@@ -27,6 +27,8 @@ ACTION   = None
 ARMITAGE = False
 ROOT     = Path(os.path.dirname(os.path.realpath(__file__)))
 
+GB = 1024 ** 3
+
 
 class Action(Enum):
     DEBUG   = "dbg"
@@ -56,9 +58,9 @@ def seconds_to_slurm_time(s: int, r: int = 3600) -> str:
     return f"{int(days):02d}-{int(hours):02d}:{int(minutes):02d}:{int(s):02d}"
 
 
-def bytes_to_slurm_mem(b: int, r: int = 4 * 1024**3) -> str:
+def bytes_to_slurm_mem(b: int, r: int = 4 * GB) -> str:
     b = int(math.ceil(b / r) * r)
-    g = int(b // 1024**3)
+    g = int(b // GB)
     return f"{g}G"
 
 
@@ -365,9 +367,9 @@ class Configuration:
     @property
     def mem(self) -> int:
         if ACTION == Action.PREPARE:
-            return 64
+            return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
-            return self.gpu * 64
+            return bytes_to_slurm_mem(self.gpu * 64 * GB)
 
         k = (self.tokenization_algorithm, self.vocab_size)
         if k in COMPRESSION_RATIOS:
@@ -377,8 +379,8 @@ class Configuration:
             c = 1.0
 
         t = c * sum(DATASET_SIZES[self.task]) * self.max_length
-        b = t * 8              # 8 bytes in float64
-        b = b + (16 * 1024**3) # 16 extra GB of padding
+        b = t * 8
+        b = b + (16 * GB)
         return bytes_to_slurm_mem(b)
 
     @property
