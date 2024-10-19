@@ -55,6 +55,8 @@ def check_tie_embeddings_will_work(
 def check_for_anomalous_weights(
     module: nn.Linear | nn.Embedding | Head,
     errors: Literal["raise", "ignore", "warn"] = "raise",
+    mean_tolerance: float = 0.5,
+    std_tolerance: float = 0.2,
 ) -> None:
     if not isinstance(module, (nn.Linear, nn.Embedding, Head)):
         raise TypeError(f"{type(module)=}")
@@ -68,8 +70,8 @@ def check_for_anomalous_weights(
         w: Tensor = l.weight.to(torch.float64)
         m: float  = w.mean().cpu().item()
         s: float  = w.std().cpu().item()
-        anomalous_mean = any([math.isnan(m), math.isinf(m), m <= -1, m >= 1])
-        anomalous_std  = any([math.isnan(s), math.isinf(s), s <= 0, s >= 0.1])
+        anomalous_mean = any([math.isnan(m), math.isinf(m), abs(m) > mean_tolerance])
+        anomalous_std  = any([math.isnan(s), math.isinf(s), abs(s) > std_tolerance])
         if anomalous_mean or anomalous_std:
             message = f"Detected anamalous weights (mean={m}, std={s})"
             if errors == "raise":

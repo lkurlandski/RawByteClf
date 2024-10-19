@@ -996,8 +996,9 @@ def get_model(
                 # This is only going to work if the model is using my custom classification head,
                 # so using anything without this head is going to break (for now).
                 # Since we're hard-coding this, we can comment out the warnings above.
+                print("Initializing head weights...")
                 model.head_clf.init_weights_(config.initializer_range)
-                check_for_anomalous_weights(model.head_clf, errors="raise")
+                check_for_anomalous_weights(model.head_clf, errors="raise", std_tolerance=2 * config.initializer_range)
 
             return model
 
