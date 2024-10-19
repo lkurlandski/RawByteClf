@@ -523,6 +523,8 @@ class Configuration:
 
     @property
     def tr_batch_size(self) -> int:
+        if ACTION == Action.DEBUG:
+            return 64
         if self.task in (Task.CLM, Task.MLM):
             return 1024
         return 64
