@@ -31,7 +31,7 @@ from transformers.pytorch_utils import (
 )
 from src.utils import log_tensor
 from src.architectures.utils import binding, unbinding, cosine_similarity
-from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss
+from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss, check_tie_embeddings_will_work
 
 
 ARG_REQUIRED = -1
@@ -66,19 +66,17 @@ class HRRConfig(PretrainedConfig):
         fft_norm: Literal["forward", "backward", "ortho"] = "backward",
         **kwargs,
     ):
+        super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
 
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
-
         self.num_attention_heads = hidden_size // 64 if num_attention_heads == ARG_INFERRED else num_attention_heads
         self.embedding_size = hidden_size if embedding_size == ARG_INFERRED else embedding_size
         self.intermediate_size = hidden_size * 4 if intermediate_size == ARG_INFERRED else intermediate_size
-
         self.head_hidden_size = head_hidden_size
         self.head_num_hidden_layers = head_num_hidden_layers
         self.head_dropout = head_dropout
-
         self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
@@ -90,7 +88,14 @@ class HRRConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.fft_norm = fft_norm
 
-        super().__init__(pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
+        check_tie_embeddings_will_work(
+            self.tie_word_embeddings,
+            kwargs.get("num_labels"),
+            self.hidden_size,
+            self.embedding_size,
+            self.head_hidden_size,
+            self.head_num_hidden_layers,
+        )
 
 
 class HRRFormerEmbeddings(BertEmbeddings):

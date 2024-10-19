@@ -7,7 +7,24 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 
+
 import transformers
+
+# pylint: disable=wrong-import-position
+try:
+    from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
+except (ImportError, ModuleNotFoundError) as _err:
+    transformers.utils.import_utils.is_causal_conv1d_available = lambda: False
+    print(f"{_err.__class__.__name__}: causal_conv1d")
+
+try:
+    from mamba_ssm.ops.selective_scan_interface import mamba_inner_fn, selective_scan_fn
+    from mamba_ssm.ops.triton.selective_state_update import selective_state_update
+except (ImportError, ModuleNotFoundError) as _err:
+    transformers.utils.import_utils.is_mamba_ssm_available = lambda: False
+    print(f"{_err.__class__.__name__}: mamba_ssm")
+# pylint: enable=wrong-import-position
+
 from transformers.generation import GenerationMixin
 from transformers.models.mamba.modeling_mamba import (  # pylint: disable=no-name-in-module
     MambaRMSNorm,
@@ -19,7 +36,7 @@ from transformers.models.mamba.modeling_mamba import (  # pylint: disable=no-nam
 )
 from transformers.configuration_utils import PretrainedConfig
 
-from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss
+from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss, check_tie_embeddings_will_work
 
 
 ARG_REQUIRED = -1
@@ -64,16 +81,14 @@ class MambaConfig(PretrainedConfig):
         use_mambapy: bool = False,
         **kwargs,
     ):
+        super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
 
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
-
         self.embedding_size = hidden_size if embedding_size == ARG_INFERRED else embedding_size
-
         self.head_hidden_size = head_hidden_size
         self.head_num_hidden_layers = head_num_hidden_layers
         self.head_dropout = head_dropout
-
         self.state_size = state_size
         self.num_hidden_layers = num_hidden_layers
         self.layer_norm_epsilon = layer_norm_epsilon
@@ -98,7 +113,15 @@ class MambaConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.tie_directions = tie_directions
         self.use_mambapy = use_mambapy
-        super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
+
+        check_tie_embeddings_will_work(
+            self.tie_word_embeddings,
+            kwargs.get("num_labels"),
+            self.hidden_size,
+            self.embedding_size,
+            self.head_hidden_size,
+            self.head_num_hidden_layers,
+        )
 
 
 class MambaCache(MambaCacheHF):

@@ -19,6 +19,39 @@ class ShapeError(ValueError):
         super().__init__(f"Recieved: {self.actual_shape}. Expected: {self.expected_shape}")
 
 
+def check_tie_embeddings_will_work(
+    tie_word_embeddings: Optional[bool],
+    num_labels: Optional[dict],
+    hidden_size: int,
+    embedding_size: int,
+    head_hidden_size: int,
+    head_num_hidden_layers: int,
+):
+    # Not tying the embeddings.
+    if not tie_word_embeddings:
+        return
+
+    # For classification task.
+    if bool(num_labels):
+        return
+
+    # When the embedding size is different from the hidden size.
+    if embedding_size != hidden_size:
+        if head_num_hidden_layers <= 0 or embedding_size != head_hidden_size:
+            raise ValueError(
+                f"Attempting to tie word embeddings when {embedding_size=} != {hidden_size=}. "
+                f"{head_num_hidden_layers=} must be > 0 and {head_hidden_size=} must match {embedding_size=}."
+            )
+        return
+
+    # When the embedding size is the same as the hidden size.
+    if head_num_hidden_layers > 0 and embedding_size != head_hidden_size:
+        raise ValueError(
+            f"Attempting to tie word embeddings when {embedding_size=} == {hidden_size=}. "
+            f"If {head_num_hidden_layers=} > 0 then {head_hidden_size=} must match {embedding_size=}."
+        )
+
+
 def check_for_anomalous_weights(
     module: nn.Linear | nn.Embedding | Head,
     errors: Literal["raise", "ignore", "warn"] = "raise",
