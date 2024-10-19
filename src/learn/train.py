@@ -190,7 +190,7 @@ from src.learn.preprocessing import (
     hf_compress_bytes,
     hf_encrypt_bytes,
 )
-from src.learn.printers import print_tokenizer, print_data_collator, print_config
+from src.learn.printers import print_tokenizer, print_data_collator, print_config, print_model
 from src.learn.utils import (
     pad_to_multiple_of_fn,
     find_two_largest_factors,
@@ -1423,11 +1423,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             id2label=materials.id2label,
             label2id=materials.label2id,
         )
-        print(f"{model=}")
-        print(f"{count_parameters(model, requires_grad=False)=}")
-        print(f"{count_parameters(model, requires_grad=True)=}")
-        if hasattr(model, "get_input_embeddings") and hasattr(model, "get_output_embeddings") and model.get_input_embeddings() is not None and model.get_output_embeddings() is not None:
-            print(f"{model.get_input_embeddings().weight is model.get_output_embeddings().weight=}")
+        print_model(model)
         print(BR, flush=True)
 
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
@@ -1565,12 +1561,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 id2label=materials.id2label,
                 label2id=materials.label2id,
             )
-
-        print(f"{model=}")
-        print(f"{count_parameters(model, requires_grad=False)=}")
-        print(f"{count_parameters(model, requires_grad=True)=}")
-        if hasattr(model, "get_input_embeddings") and hasattr(model, "get_output_embeddings") and model.get_input_embeddings() is not None and model.get_output_embeddings() is not None:
-            print(f"{model.get_input_embeddings().weight is model.get_output_embeddings().weight=}")
+        print_model(model)
         print(BR, flush=True)
 
         if args.task in (Task.DET, Task.FAM, Task.BEH):
