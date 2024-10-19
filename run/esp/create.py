@@ -64,6 +64,20 @@ def bytes_to_slurm_mem(b: int, r: int = 4 * GB) -> str:
     return f"{g}G"
 
 
+def torchrun_str(cpu: int, gpu: int) -> str:
+    return (
+f"""
+OMP_NUM_THREADS={cpu // gpu} \\
+torchrun \\
+--no-python \\
+--nnodes=1 \\
+--nproc_per_node={gpu} \\
+--rdzv-backend=c10d \\
+--rdzv-endpoint=localhost:0 \\
+""".replace("\n \\", "").strip()
+)
+
+
 def get_body(
     job: str,
     tim: str,
@@ -114,7 +128,8 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 
 # export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-{"# " if gpu <= 1 else ""}torchrun --no-python --nnodes=1 --nproc_per_node={gpu} \\
+
+{"" if gpu <= 1 else torchrun_str(cpu, gpu)}
 python -u \\
 src/learn/train.py \\
 --root='./output/esp-{ACTION.value}' \\
@@ -261,21 +276,22 @@ class Configuration:
             return False
 
         # Adjust as desired.
-        if self.max_length != 65536:
-            return False
         if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
             return False
         if self.vocab_size != 16384:
             return False
 
         if ACTION == Action.DEBUG:
-            if self.model_name != ModelName.HRR:
+            if self.task in (Task.DET, Task.FAM):
                 return False
             if self.model_size != ModelSize.TN:
                 return False
-            if self.pretraining_task is not None:
-                return False
             if self.lift_level != LiftLevel.RAW:
+                return False
+            if self.max_length != 1024:
+                return False
+        else:
+            if self.max_length != 65536:
                 return False
 
         if ACTION == Action.PREPARE:
@@ -389,12 +405,16 @@ class Configuration:
             return 0
         if ACTION == Action.TIME:
             return 1
+        if ACTION == Action.DEBUG:
+            return 1 if ARMITAGE else 2  # multi GPU seems to hang on armitage
         if self.task in (Task.CLM, Task.MLM):
             return 1
         return 1
 
     @property
     def streaming(self) -> bool:
+        if ACTION == Action.DEBUG:  # FIXME: remove
+            return False
         if self.task in (Task.CLM, Task.MLM):
             return True
         return False
@@ -412,7 +432,7 @@ class Configuration:
 
         if self.model_name == ModelName.MAM:
             if self.model_size == ModelSize.TN:
-                d |= {"num_hidden_layers": 2,  "hidden_size": 64 }
+                d |= {"num_hidden_layers": 2,  "hidden_size":  64}
             if self.model_size == ModelSize.SM:
                 d |= {"num_hidden_layers": 4,  "hidden_size": 128}
             if self.model_size == ModelSize.MD:
@@ -424,45 +444,63 @@ class Configuration:
 
         elif self.model_name == ModelName.HRR:
             if self.model_size == ModelSize.TN:
-                d |= {"num_hidden_layers": 1, "hidden_size": 64,  "intermediate_size": 128,  "num_attention_heads": 8}
+                d |= {"num_hidden_layers": 1, "hidden_size":  64}
             if self.model_size == ModelSize.SM:
-                d |= {"num_hidden_layers": 2, "hidden_size": 128, "intermediate_size": 256,  "num_attention_heads": 8}
+                d |= {"num_hidden_layers": 2, "hidden_size": 128}
             if self.model_size == ModelSize.MD:
-                d |= {"num_hidden_layers": 4, "hidden_size": 256, "intermediate_size": 512,  "num_attention_heads": 8}
+                d |= {"num_hidden_layers": 4, "hidden_size": 256}
             if self.model_size == ModelSize.LG:
-                d |= {"num_hidden_layers": 6, "hidden_size": 384, "intermediate_size": 768,  "num_attention_heads": 8}
+                d |= {"num_hidden_layers": 6, "hidden_size": 384}
             if self.model_size == ModelSize.HG:
-                d |= {"num_hidden_layers": 8, "hidden_size": 512, "intermediate_size": 1024, "num_attention_heads": 8}
+                d |= {"num_hidden_layers": 8, "hidden_size": 512}
 
-        d["embedding_size"] = d["hidden_size"]
-        d["head_hidden_size"] = 0
-        d["head_num_hidden_layers"] = 0
+        d |= {"embedding_size": 64, "head_num_hidden_layers": 1}
+
+        if ACTION == Action.DEBUG:
+            # Check the multiheaded attention.
+            if self.model_name == ModelName.HRR:
+                d["num_attention_heads"] = d.get("num_attention_heads", 2)
+            # Check the weight-tying with embedding projection.
+            d["embedding_size"]   = d["hidden_size"] // 2
+
+        d["head_hidden_size"] = d["embedding_size"]
+
         return d
 
     @property
     def num_train_epochs(self) -> int:
-        if ACTION == Action.DEBUG:
-            return 1
         if self.task in (Task.CLM, Task.MLM):
             return 1
         return 5
 
     @property
     def max_steps(self) -> Optional[int]:
-        return 16 if ACTION == Action.TIME else None
+        if ACTION == Action.TIME:
+            return 16
+        if ACTION == Action.DEBUG:
+            return 2
+        return None
 
     @property
     def save_steps(self) -> Optional[int]:
-        return 16 if ACTION == Action.TIME else None
+        if ACTION == Action.TIME:
+            return 16
+        if ACTION == Action.DEBUG:
+            return 1
+        return None
 
     @property
     def eval_steps(self) -> Optional[int]:
-        return 16 if ACTION == Action.TIME else None
+        if ACTION == Action.TIME:
+            return 16
+        if ACTION == Action.DEBUG:
+            return 1
+        return None
 
     @property
     def saves_and_evals_per_epochs(self) -> int:
         if ACTION == Action.DEBUG:
-            return 2
+            return 1
         if self.task in (Task.CLM, Task.MLM):
             return 16
         return 1
