@@ -35,6 +35,7 @@ class Action(Enum):
     PREPARE = "pre"
     TIME    = "tim"
     EXECUTE = "exe"
+    OVERFIT = "oft"
 
 
 def outpath() -> Path:
@@ -282,19 +283,18 @@ class Configuration:
             return False
 
         if ACTION == Action.DEBUG:
+            if self.max_length != 1024:
+                return False
             if self.task in (Task.DET, Task.FAM):
                 return False
             if self.model_size != ModelSize.TN:
                 return False
             if self.lift_level != LiftLevel.RAW:
                 return False
-            if self.max_length != 1024:
-                return False
-        else:
-            if self.max_length != 65536:
-                return False
 
         if ACTION == Action.PREPARE:
+            if self.max_length != 65536:
+                return False
             if self.model_size != ModelSize.TN:
                 return False
             if self.model_mode != ModelMode.BI:
@@ -305,6 +305,8 @@ class Configuration:
                 return False
 
         if ACTION == Action.TIME:
+            if self.max_length != 65536:
+                return False
             if self.model_size != ModelSize.TN:
                 return False
             if self.task not in (Task.CLM, Task.MLM, Task.BEH):
@@ -315,7 +317,25 @@ class Configuration:
                 return False
 
         if ACTION == Action.EXECUTE:
+            if self.max_length != 65536:
+                return False
             if self.model_size != ModelSize.MD:
+                return False
+
+        if ACTION == Action.OVERFIT:
+            if self.max_length != 1024:
+                return False
+            if self.lift_level != LiftLevel.RAW:
+                return False
+            if self.model_name != ModelName.HRR:
+                return False
+            if self.model_mode != ModelMode.BI:
+                return False
+            if self.model_size not in (ModelSize.TN, ModelSize.SM, ModelSize.MD):
+                return False
+            if self.task != Task.DET:
+                return False
+            if self.pretraining_task is not None:
                 return False
 
         return True
@@ -333,6 +353,7 @@ class Configuration:
             f"{self.pretraining_task.value if self.pretraining_task else 'nop'}",
             f"{self.task.value}",
             f"{self.seed}",
+            f"{self.num_train_epochs if ACTION == Action.OVERFIT else ''}",
         ])
 
     @property
@@ -469,6 +490,8 @@ class Configuration:
 
     @property
     def num_train_epochs(self) -> int:
+        if ACTION == Action.OVERFIT:
+            return int(os.environ["NUM_TRAIN_EPOCHS"])
         if self.task in (Task.CLM, Task.MLM):
             return 1
         return 5
@@ -487,6 +510,8 @@ class Configuration:
             return 16
         if ACTION == Action.DEBUG:
             return 1
+        if ACTION == Action.OVERFIT:
+            return 32
         return None
 
     @property
@@ -495,6 +520,8 @@ class Configuration:
             return 16
         if ACTION == Action.DEBUG:
             return 1
+        if ACTION == Action.OVERFIT:
+            return 32
         return None
 
     @property
@@ -590,12 +617,14 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--action", type=Action)
     parser.add_argument("--armitage", action="store_true")
+    parser.add_argument("--no_remove", action="store_true")
     args = parser.parse_args()
 
     ACTION   = args.action
     ARMITAGE = args.armitage
 
-    shutil.rmtree(outpath(), ignore_errors=True)
+    if not args.no_remove:
+        shutil.rmtree(outpath(), ignore_errors=True)
     outpath().mkdir(parents=True, exist_ok=True)
 
     configurations = product(
