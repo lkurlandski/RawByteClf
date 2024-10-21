@@ -30,7 +30,7 @@ from transformers.generation import GenerationMixin
 from transformers.models.mamba.modeling_mamba import (  # pylint: disable=no-name-in-module
     MambaRMSNorm,
     MambaBlock,
-    MambaPreTrainedModel,
+    MambaPreTrainedModel as MambaPreTrainedModelHF,
     MambaCache as MambaCacheHF,
     MambaOutput,
     MambaCausalLMOutput,
@@ -188,6 +188,27 @@ class MambaSequenceClassificationOutput(ModelOutput):
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
 
 
+class MambaPreTrainedModel(MambaPreTrainedModelHF):
+
+    def save_pretrained(self, *args, **kwargs) -> None:
+        if self.config.is_decoder or not self.config.bi_tie_directions:
+            super().save_pretrained(*args, **kwargs)
+            return
+
+        if not hasattr(self, self.base_model_prefix):
+            super().save_pretrained(*args, **kwargs)
+            return
+
+        print("Temporarily removing weight-tying to save model.")
+        self.backbone.tie_forward_and_backward_weights(tie=False, clone=True)
+        super().save_pretrained(*args, **kwargs)
+        self.backbone.tie_forward_and_backward_weights(tie=True, clone=False)
+        self.backbone.check_shared_weights()
+
+
+transformers.models.mamba.modeling_mamba.MambaPreTrainedModel = MambaPreTrainedModel  # pylint: disable=no-member
+
+
 class MambaModel(MambaPreTrainedModel):
 
     def __init__(self, config: MambaConfig):
@@ -308,10 +329,12 @@ class BiMambaModel(MambaPreTrainedModel):
         self.norm_f = MambaRMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
 
         if config.bi_tie_directions:
-            self.tie_forward_and_backward_weights()
+            self.tie_forward_and_backward_weights(tie=True, clone=False)
 
         self._register_load_state_dict_pre_hook(self.load_hook)
         self.post_init()
+        self.check_shared_weights()
+        self._weights_checked = False
 
     def load_hook(self, state_dict, prefix, *args):  # pylint: disable=unused-argument
         for k in state_dict:
@@ -319,11 +342,22 @@ class BiMambaModel(MambaPreTrainedModel):
                 state_dict[k.replace("embedding.", "embeddings.")] = state_dict.pop(k)
                 break
 
-    def tie_forward_and_backward_weights(self):
+    @staticmethod
+    def tie_or_clone_projections(src: nn.Linear, dst: nn.Linear, *, tie: bool = None, clone: bool = None) -> None:
+        if bool(tie) == bool(clone):
+            raise ValueError("Exactly one of `tie` or `clone` must be True.")
+        if tie:
+            dst.weight = src.weight
+            dst.bias   = src.bias
+        elif clone:
+            dst.weight = nn.Parameter(src.weight.clone())
+            dst.bias   = nn.Parameter(src.bias.clone()) if src.bias is not None else None
+
+    def tie_forward_and_backward_weights(self, tie: bool = None, clone: bool = None) -> None:
         for i in range(self.config.num_hidden_layers):
-            self._tie_or_clone_weights(self.layers_forw[i].mixer.in_proj, self.layers_back[i].mixer.in_proj)
-            self._tie_or_clone_weights(self.layers_forw[i].mixer.out_proj, self.layers_back[i].mixer.out_proj)
-            self._tie_or_clone_weights(self.layers_forw[i].mixer.x_proj, self.layers_back[i].mixer.x_proj)
+            BiMambaModel.tie_or_clone_projections(self.layers_forw[i].mixer.in_proj, self.layers_back[i].mixer.in_proj, tie=tie, clone=clone)
+            BiMambaModel.tie_or_clone_projections(self.layers_forw[i].mixer.out_proj, self.layers_back[i].mixer.out_proj, tie=tie, clone=clone)
+            BiMambaModel.tie_or_clone_projections(self.layers_forw[i].mixer.x_proj, self.layers_back[i].mixer.x_proj, tie=tie, clone=clone)
 
     def check_shared_weights(self):
         if not self.config.bi_tie_directions:
@@ -398,6 +432,11 @@ class BiMambaModel(MambaPreTrainedModel):
         cache_position: Optional[tuple[torch.LongTensor, torch.LongTensor]] = None,
         attention_mask: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, MambaOutput]:
+        # Check the shared weights.
+        if not self._weights_checked:
+            self.check_shared_weights()
+            self._weights_checked = True
+
         if attention_mask is not None:
             raise NotImplementedError("Attention mask is not implemented for the backward models.")
 

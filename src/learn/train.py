@@ -954,6 +954,8 @@ def get_model(
                 _head_names = ["head_clf"]
             elif model_name == "mamba":
                 model = MambaForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                if not config.is_decoder and config.bi_tie_directions:
+                    model.backbone.tie_forward_and_backward_weights(tie=True, clone=False)
                 _config = MambaConfig.from_pretrained(model_name_or_path)
                 _head_names = ["head_clf"]
             elif model_name == "malconv":
