@@ -164,7 +164,7 @@ src/learn/train.py \\
 --learning_rate={learning_rate} \\
 --lr_scheduler_type="linear" \\
 --weight_decay=0.01 \\
---adam_beta1=0.950 \\
+--adam_beta1=0.900 \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
 --save_total_limit=-1 \\
