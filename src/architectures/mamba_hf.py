@@ -1,5 +1,6 @@
 """PyTorch MAMBA model."""
 
+from dataclasses import dataclass
 import math
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -35,6 +36,7 @@ from transformers.models.mamba.modeling_mamba import (  # pylint: disable=no-nam
     MambaCausalLMOutput,
 )
 from transformers.configuration_utils import PretrainedConfig
+from transformers.utils import ModelOutput
 
 from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss, check_tie_embeddings_will_work
 
@@ -77,7 +79,9 @@ class MambaConfig(PretrainedConfig):
         time_step_floor: float = 1e-4,
         rescale_prenorm_residual: bool = False,
         use_cache: bool = True,
-        tie_directions: bool = False,
+        bi_tie_directions: bool = False,
+        bi_mix_directions: bool = False,
+        bi_add_directions: bool = False,
         use_mambapy: bool = False,
         **kwargs,
     ):
@@ -111,7 +115,9 @@ class MambaConfig(PretrainedConfig):
         self.rescale_prenorm_residual = rescale_prenorm_residual
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
-        self.tie_directions = tie_directions
+        self.bi_tie_directions = bi_tie_directions
+        self.bi_mix_directions = bi_mix_directions
+        self.bi_add_directions = bi_add_directions
         self.use_mambapy = use_mambapy
 
         check_tie_embeddings_will_work(
@@ -151,19 +157,35 @@ class MambaCache(MambaCacheHF):
         return self.conv_states[layer_idx]
 
     def float(self):
-        self.dtype = torch.float32
+        self.dtype = torch.float32  # pylint: disable=attribute-defined-outside-init
         # self.conv_states = {k: v.float() for k, v in self.conv_states.items()}
         # self.ssm_states = {k: v.float() for k, v in self.ssm_states.items()}
         return self
 
     def detach(self):
-        self.device = "cpu"
+        self.device = "cpu"  # pylint: disable=attribute-defined-outside-init
         # self.conv_states = {k: v.detach() for k, v in self.conv_states.items()}
         # self.ssm_states = {k: v.detach() for k, v in self.ssm_states.items()}
         return self
 
 
 transformers.cache_utils.MambaCache = MambaCache  # pylint: disable=no-member
+
+
+@dataclass
+class MambaMaskedLMOutput(ModelOutput):
+    loss: Optional[torch.FloatTensor] = None
+    logits: Optional[torch.FloatTensor] = None
+    cache_params: Optional[MambaCache] = None
+    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
+
+
+@dataclass
+class MambaSequenceClassificationOutput(ModelOutput):
+    loss: Optional[torch.FloatTensor] = None
+    logits: Optional[torch.FloatTensor] = None
+    cache_params: Optional[MambaCache] = None
+    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
 
 
 class MambaModel(MambaPreTrainedModel):
@@ -285,7 +307,7 @@ class BiMambaModel(MambaPreTrainedModel):
         self.gradient_checkpointing = False
         self.norm_f = MambaRMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
 
-        if config.tie_directions:
+        if config.bi_tie_directions:
             self.tie_forward_and_backward_weights()
 
         self._register_load_state_dict_pre_hook(self.load_hook)
@@ -304,7 +326,7 @@ class BiMambaModel(MambaPreTrainedModel):
             self._tie_or_clone_weights(self.layers_forw[i].mixer.x_proj, self.layers_back[i].mixer.x_proj)
 
     def check_shared_weights(self):
-        if not self.config.tie_directions:
+        if not self.config.bi_tie_directions:
             return
 
         for i in range(self.config.num_hidden_layers):
@@ -431,7 +453,8 @@ class BiMambaModel(MambaPreTrainedModel):
 
         hidden_states_forw: torch.Tensor = self.embedding_projection(inputs_embeds_forw)
         hidden_states_back: torch.Tensor = self.embedding_projection(inputs_embeds_back)
-        all_hidden_states = () if output_hidden_states else None
+        all_hidden_states_forw = () if output_hidden_states else None
+        all_hidden_states_back = () if output_hidden_states else None
         for mixer_block_forw, mixer_block_back in zip(self.layers_forw, self.layers_back):
             cache_params_forw = cache_params[0] if cache_params is not None else None
             cache_params_back = cache_params[1] if cache_params is not None else None
@@ -463,24 +486,33 @@ class BiMambaModel(MambaPreTrainedModel):
                 )
 
             # Flipping the backward hidden states aligns them with the forward ones.
-            hidden_states = hidden_states_forw + hidden_states_back.flip(1)
-            hidden_states_forw = hidden_states
-            hidden_states_back = hidden_states
+            if self.config.bi_mix_directions:
+                hidden_states = hidden_states_forw + hidden_states_back.flip(1)
+                hidden_states_forw = hidden_states
+                hidden_states_back = hidden_states
 
             if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
+                all_hidden_states_forw = all_hidden_states_forw + (hidden_states_forw,)
+                all_hidden_states_back = all_hidden_states_back + (hidden_states_back,)
 
-        hidden_states = self.norm_f(hidden_states)
+        hidden_states_forw = self.norm_f(hidden_states_forw)  # (B, T, H)
+        hidden_states_back = self.norm_f(hidden_states_back)  # (B, T, H)
+
         if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
+            all_hidden_states_forw = all_hidden_states_forw + (hidden_states_forw,)
+            all_hidden_states_back = all_hidden_states_back + (hidden_states_back,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, cache_params, all_hidden_states] if v is not None)
+            return (
+                (hidden_states_forw, hidden_states_back),
+                (cache_params_forw, cache_params_back) if use_cache else None,
+                (all_hidden_states_forw, all_hidden_states_back) if output_hidden_states else None,
+            )
 
         return MambaOutput(
-            last_hidden_state=hidden_states,
-            cache_params=cache_params if use_cache else None,
-            hidden_states=all_hidden_states,
+            last_hidden_state=(hidden_states_forw, hidden_states_back),
+            cache_params=(cache_params_forw, cache_params_back) if use_cache else None,
+            hidden_states=(all_hidden_states_forw, all_hidden_states_back) if output_hidden_states else None,
         )
 
 
@@ -624,12 +656,7 @@ class MambaForCausalLM(MambaPreTrainedModel, GenerationMixin):
             output = (logits,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return MambaCausalLMOutput(
-            loss=loss,
-            logits=logits,
-            cache_params=outputs.cache_params,
-            hidden_states=outputs.hidden_states,
-        )
+        return MambaCausalLMOutput(loss=loss, logits=logits)
 
 
 class MambaForMaskedLM(MambaPreTrainedModel):
@@ -645,7 +672,7 @@ class MambaForMaskedLM(MambaPreTrainedModel):
 
         self.backbone = BiMambaModel(config)
         self.head_mlm = Head(
-            config.hidden_size,
+            config.hidden_size if (config.is_decoder or config.bi_add_directions) else config.hidden_size * 2,
             config.vocab_size,
             config.head_hidden_size,
             config.head_num_hidden_layers,
@@ -678,7 +705,7 @@ class MambaForMaskedLM(MambaPreTrainedModel):
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.Tensor] = None,
         **kwargs,  # pylint: disable=unused-argument
-    ) -> Union[Tuple, MambaCausalLMOutput]:
+    ) -> Union[Tuple, MambaMaskedLMOutput]:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         outputs: MambaOutput = self.backbone(
@@ -691,7 +718,19 @@ class MambaForMaskedLM(MambaPreTrainedModel):
             cache_position=cache_position,
             attention_mask=attention_mask,
         )
-        logits = self.head_mlm(outputs.last_hidden_state)
+
+        # For classification, we want the hidden states corresponding to each token,
+        # which is why this code DOES flip the backward hidden states along the sequence axis.
+        if isinstance(self.backbone, BiMambaModel):
+            hidden_states_forw, hidden_states_back = outputs.last_hidden_state
+            if self.config.bi_add_directions:
+                hidden_states = hidden_states_forw + hidden_states_back.flip(1)
+            else:
+                hidden_states = torch.cat([hidden_states_forw, hidden_states_back.flip(1)], dim=2)
+        else:
+            hidden_states = outputs.last_hidden_state
+
+        logits = self.head_mlm(hidden_states)
         logits = pool_logits("none", logits, input_ids, self.config.pad_token_id)
         loss = get_mlm_loss(logits, labels, self.config.vocab_size) if labels is not None else None
 
@@ -699,12 +738,7 @@ class MambaForMaskedLM(MambaPreTrainedModel):
             output = (logits,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return MambaCausalLMOutput(
-            loss=loss,
-            logits=logits,
-            cache_params=outputs.cache_params,
-            hidden_states=outputs.hidden_states,
-        )
+        return MambaMaskedLMOutput(loss=loss, logits=logits)
 
 
 class MambaForSequenceClassification(MambaPreTrainedModel):
@@ -715,7 +749,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
 
         self.backbone = MambaModel(config) if config.is_decoder else BiMambaModel(config)
         self.head_clf = Head(
-            config.hidden_size,
+            config.hidden_size if (config.is_decoder or config.bi_add_directions) else config.hidden_size * 2,
             config.num_labels,
             config.head_hidden_size,
             config.head_num_hidden_layers,
@@ -742,7 +776,7 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.Tensor] = None,
         **kwargs,  # pylint: disable=unused-argument
-    ) -> Union[Tuple, MambaCausalLMOutput]:
+    ) -> Union[Tuple, MambaSequenceClassificationOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
@@ -761,17 +795,24 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             cache_position=cache_position,
             attention_mask=attention_mask,
         )
-        logits = self.head_clf.forward(outputs.last_hidden_state)
-        logits = pool_logits("last" if self.config.is_decoder else "mean", logits, input_ids, self.config.pad_token_id)
+
+        # For classification, we want the final hidden states for the forward and backward models,
+        # which is why this code DOES NOT flip the backward hidden states along the sequence axis.
+        if isinstance(self.backbone, BiMambaModel):
+            hidden_states_forw, hidden_states_back = outputs.last_hidden_state
+            if self.config.bi_add_directions:
+                hidden_states = hidden_states_forw + hidden_states_back
+            else:
+                hidden_states = torch.cat([hidden_states_forw, hidden_states_back], dim=2)
+        else:
+            hidden_states = outputs.last_hidden_state
+
+        logits = self.head_clf.forward(hidden_states)
+        logits = pool_logits("last", logits, input_ids, self.config.pad_token_id)
         loss = get_clf_loss(logits, labels, self.config.num_labels, self.config.problem_type) if labels is not None else None
 
         if not return_dict:
             output = (logits,) + outputs[1:]
             return ((loss,) + output) if loss is not None else output
 
-        return MambaCausalLMOutput(
-            loss=loss,
-            logits=logits,
-            cache_params=outputs.cache_params,
-            hidden_states=outputs.hidden_states,
-        )
+        return MambaSequenceClassificationOutput(loss=loss, logits=logits)
