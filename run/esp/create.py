@@ -323,13 +323,9 @@ class Configuration:
                 return False
 
         if ACTION == Action.OVERFIT:
-            if self.max_length != 1024:
+            if self.max_length != 4096:
                 return False
             if self.lift_level != LiftLevel.RAW:
-                return False
-            if self.model_name != ModelName.HRR:
-                return False
-            if self.model_mode != ModelMode.BI:
                 return False
             if self.model_size not in (ModelSize.TN, ModelSize.SM, ModelSize.MD):
                 return False
@@ -510,8 +506,6 @@ class Configuration:
             return 16
         if ACTION == Action.DEBUG:
             return 1
-        if ACTION == Action.OVERFIT:
-            return 32
         return None
 
     @property
@@ -520,8 +514,6 @@ class Configuration:
             return 16
         if ACTION == Action.DEBUG:
             return 1
-        if ACTION == Action.OVERFIT:
-            return 32
         return None
 
     @property
