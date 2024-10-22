@@ -125,6 +125,9 @@ def generator_from_zipfiles(
             # If we're using the copy-system, we get the next archive location from the archive_path_map.
             # If we've got contiguous files, we can delete the temporary archive because we won't need it.
             if archive_path_map[af.archive] != archive:
+                if isinstance(zp, zipfile.ZipFile):
+                    zp.close()
+
                 if shdcopy:
                     if os.path.isfile(archive) and os.path.exists(archive) and contiguous:
                         if os.path.dirname(archive) != str(tmppath):
@@ -135,6 +138,7 @@ def generator_from_zipfiles(
                         shutil.copy2(af.archive, archive)
                 else:
                     archive = af.archive
+
                 zp = zipfile.ZipFile(archive, "r")  # pylint: disable=consider-using-with
 
             b = zp.read(af.name)[0:max_length]
