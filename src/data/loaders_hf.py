@@ -61,6 +61,7 @@ def generator_from_zipfiles(
     labels: Optional[np.ndarray] = None,
     max_length: Optional[int] = None,
     preserve_order: bool = False,
+    use_fast_storage: bool = USE_FAST_STORAGE,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     # If we're on SPORC, we can copy archives to /tmp before reading for decreased IO latency.
     # If all the archives fit comfortably in /tmp, we can just copy them all at once.
@@ -84,7 +85,7 @@ def generator_from_zipfiles(
     archive_path_map = {a: a for a in archives}
 
     # Figure out what we're going to do and set things up.
-    shdcopy = SYSTEM == System.SPORC and all(s <= HTB for s in sizes) and USE_FAST_STORAGE
+    shdcopy = SYSTEM == System.SPORC and all(s <= HTB for s in sizes) and use_fast_storage
     precopy = None
     tmppath = None
     if shdcopy:
