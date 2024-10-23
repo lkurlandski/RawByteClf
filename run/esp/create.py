@@ -36,6 +36,7 @@ class Action(Enum):
     TIME    = "tim"
     EXECUTE = "exe"
     OVERFIT = "oft"
+    BASIC   = "bas"
 
 
 def outpath() -> Path:
@@ -107,6 +108,7 @@ def get_body(
     tf32: bool,
     bf16: bool,
     bf16_full_eval: bool,
+    gradient_checkpointing: bool,
     seed: int,
 ) -> str: return (
 f"""
@@ -173,10 +175,11 @@ src/learn/train.py \\
 --gradient_accumulation_steps=1 \\
 --eval_accumulation_steps=64 \\
 --load_best_model_at_end \\
+{"--use_cpu" if gpu <= 0 else ""} \\
 --tf32={bool_to_str(tf32)} \\
 --bf16={bool_to_str(bf16)} \\
 --bf16_full_eval={bool_to_str(bf16_full_eval)} \\
---gradient_checkpointing=true
+--gradient_checkpointing={bool_to_str(gradient_checkpointing)} \\
 """.replace("\n \\", "").strip() + "\n"
 )
 
@@ -184,6 +187,7 @@ src/learn/train.py \\
 class ModelName(Enum):
     HRR = "hrrformer"
     MAM = "mamba"
+    MAL = "malconv2"
 
 
 class ModelSize(Enum):
@@ -265,7 +269,8 @@ class Configuration:
             return False
         # Only some tokenizers were trained.
         if self.tokenization_algorithm not in (TokenizationAlgorithm.BPE, TokenizationAlgorithm.UNIGRAM):
-            return False
+            if self.lift_level != LiftLevel.RAW:
+                return False
         # Pretraining and detection does not required random runs.
         if self.task in (Task.CLM, Task.MLM, Task.DET) and self.seed != 0:
             return False
@@ -276,11 +281,21 @@ class Configuration:
         if self.seed != 0:
             return False
 
+        if self.model_name == ModelName.MAL:
+            if self.task not in (Task.BEH, Task.DET, Task.FAM):
+                return False
+            if self.pretraining_task is not None:
+                return False
+            if self.model_mode != ModelMode.BI:
+                return False
+            if self.model_size != ModelSize.TN:
+                return False
+
         # Adjust as desired.
-        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
-            return False
-        if self.vocab_size != 16384:
-            return False
+        # if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+        #     return False
+        # if self.vocab_size != 16384:
+        #     return False
 
         if ACTION == Action.DEBUG:
             if self.max_length != 1024:
@@ -334,6 +349,34 @@ class Configuration:
             if self.pretraining_task is not None:
                 return False
 
+        if ACTION == Action.BASIC:
+            if self.tokenization_algorithm not in (TokenizationAlgorithm.BPE, TokenizationAlgorithm.WORDLEVEL):
+                return False
+            if self.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL and self.vocab_size != 256:
+                return False
+            if self.vocab_size == 256 and self.tokenization_algorithm != TokenizationAlgorithm.WORDLEVEL:
+                return False
+            if self.max_length != 16384:
+                return False
+            if self.lift_level != LiftLevel.RAW:
+                return False
+            if self.model_name == ModelName.MAM:
+                if self.model_mode != ModelMode.UN:
+                    return False
+                if self.model_size != ModelSize.MD:
+                    return False
+            elif self.model_name == ModelName.MAL:
+                if self.model_mode != ModelMode.BI:
+                    return False
+                if self.model_size != ModelSize.TN:
+                    return False
+            else:
+                return False
+            if self.task not in (Task.FAM, Task.DET):
+                return False
+            if self.pretraining_task is not None:
+                return False
+
         return True
 
     @property
@@ -350,7 +393,7 @@ class Configuration:
             f"{self.task.value}",
             f"{self.seed}",
             f"{self.num_train_epochs if ACTION == Action.OVERFIT else ''}",
-        ])
+        ]).replace("--", "-").rstrip("-")
 
     @property
     def tim(self) -> str:
@@ -382,8 +425,8 @@ class Configuration:
             t_vl = 25
 
         n_tr, n_vl = DATASET_SIZES[self.task]
-        s_tr = n_tr * self.num_train_epochs / t_tr / self.gpu
-        s_vl = n_vl * self.num_train_epochs / t_vl / self.gpu
+        s_tr = n_tr * self.num_train_epochs / t_tr / max(1, self.gpu)
+        s_vl = n_vl * self.num_train_epochs / t_vl / max(1, self.gpu)
         s = s_tr + s_vl + 3600
         return seconds_to_slurm_time(s)
 
@@ -430,8 +473,6 @@ class Configuration:
 
     @property
     def streaming(self) -> bool:
-        if ACTION == Action.DEBUG:  # FIXME: remove
-            return False
         if self.task in (Task.CLM, Task.MLM):
             return True
         return False
@@ -444,6 +485,8 @@ class Configuration:
 
     @property
     def arch_config(self) -> dict:
+        if self.model_name == ModelName.MAL:
+            return {"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}
 
         d = {"is_decoder": self.model_mode == ModelMode.UN}
 
@@ -481,6 +524,13 @@ class Configuration:
             d["embedding_size"]   = d["hidden_size"] // 2
 
         d["head_hidden_size"] = d["embedding_size"]
+
+        if ACTION == ACTION.BASIC:
+            d.update({
+                "embedding_size": d["hidden_size"],
+                "head_num_hidden_layers": 0,
+                "head_hidden_size": 0,
+            })
 
         return d
 
@@ -572,7 +622,7 @@ class Configuration:
     def bf16(self) -> bool:
         if ACTION == Action.PREPARE:
             return False
-        if self.model_name == ModelName.MAM:
+        if self.model_name in (ModelName.MAM, ModelName.MAL):
             return True
         return False
 
@@ -583,6 +633,12 @@ class Configuration:
         if self.task in (Task.CLM, Task.MLM):
             return True
         return False
+
+    @property
+    def gradient_checkpointing(self) -> bool:
+        if self.model_name == ModelName.MAL:
+            return False
+        return True
 
     @property
     def outfile(self) -> Path:
@@ -626,7 +682,7 @@ def main():
         (1024, 4096, 16384, 65536),
         LiftLevel,
         TokenizationAlgorithm,
-        (1024, 4096, 16384),
+        (256, 1024, 4096, 16384),
         [None, Task.CLM, Task.MLM],
         Task,
         (0, 1, 2, 3, 4),
@@ -664,6 +720,7 @@ def main():
             tf32=config.tf32,
             bf16=config.bf16,
             bf16_full_eval=config.bf16_full_eval,
+            gradient_checkpointing=config.gradient_checkpointing,
             seed=config.seed,
         )
         if config.outfile.exists():
