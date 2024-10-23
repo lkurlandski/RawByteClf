@@ -310,7 +310,6 @@ class MambaModel(MambaPreTrainedModel):
         return MambaOutput(
             last_hidden_state=hidden_states,
             cache_params=cache_params if use_cache else None,
-            hidden_states=all_hidden_states,
         )
 
 
@@ -551,7 +550,6 @@ class BiMambaModel(MambaPreTrainedModel):
         return MambaOutput(
             last_hidden_state=(hidden_states_forw, hidden_states_back),
             cache_params=(cache_params_forw, cache_params_back) if use_cache else None,
-            hidden_states=(all_hidden_states_forw, all_hidden_states_back) if output_hidden_states else None,
         )
 
 
