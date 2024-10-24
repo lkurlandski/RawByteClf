@@ -106,6 +106,8 @@ def get_body(
     tr_batch_size: int,
     vl_batch_size: int,
     tf32: bool,
+    fp16: bool,
+    fp16_full_eval: bool,
     bf16: bool,
     bf16_full_eval: bool,
     gradient_checkpointing: bool,
@@ -177,6 +179,8 @@ src/learn/train.py \\
 --load_best_model_at_end \\
 {"--use_cpu" if gpu <= 0 else ""} \\
 --tf32={bool_to_str(tf32)} \\
+--fp16={bool_to_str(fp16)} \\
+--fp16_full_eval={bool_to_str(fp16_full_eval)} \\
 --bf16={bool_to_str(bf16)} \\
 --bf16_full_eval={bool_to_str(bf16_full_eval)} \\
 --gradient_checkpointing={bool_to_str(gradient_checkpointing)} \\
@@ -392,7 +396,6 @@ class Configuration:
             f"{self.pretraining_task.value if self.pretraining_task else 'nop'}",
             f"{self.task.value}",
             f"{self.seed}",
-            f"{self.num_train_epochs if ACTION == Action.OVERFIT else ''}",
         ]).replace("--", "-").rstrip("-")
 
     @property
@@ -578,8 +581,6 @@ class Configuration:
     def dataloader_num_workers(self) -> int:
         if self.gpu == 0:
             return 0
-        # If we're streaming, we rely on thread-based parallelism,
-        # so let there only be a single process for each GPU.
         if self.streaming:
             return 0
         return self.cpu // self.gpu - 1
@@ -614,15 +615,27 @@ class Configuration:
 
     @property
     def tf32(self) -> bool:
-        if ACTION == Action.PREPARE:
+        if self.gpu == 0:
             return False
         return True
 
     @property
-    def bf16(self) -> bool:
-        if ACTION == Action.PREPARE:
+    def fp16(self) -> bool:
+        if self.gpu == 0:
             return False
-        if self.model_name in (ModelName.MAM, ModelName.MAL):
+        if self.model_name == ModelName.MAL:
+            return True
+        return False
+
+    @property
+    def fp16_full_eval(self) -> bool:
+        return False
+
+    @property
+    def bf16(self) -> bool:
+        if self.gpu == 0:
+            return False
+        if self.model_name == ModelName.MAM:
             return True
         return False
 
@@ -636,6 +649,8 @@ class Configuration:
 
     @property
     def gradient_checkpointing(self) -> bool:
+        if self.gpu == 0:
+            return False
         if self.model_name == ModelName.MAL:
             return False
         return True
@@ -650,7 +665,6 @@ def sort_configurations_key(c: Configuration) -> tuple:
         c.lift_level.value,
         c.model_name.value,
         c.model_size.value,
-        # "a" + c.model_mode.value if c.task in (Task.CLM, Task.MLM) else "z" + c.model_mode.value,
         c.model_mode.value,
         "" if c.pretraining_task is None else c.pretraining_task.value,
         "a" + c.task.value if c.task in (Task.CLM, Task.MLM) else "z" + c.task.value,
@@ -718,6 +732,8 @@ def main():
             tr_batch_size=config.tr_batch_size,
             vl_batch_size=config.vl_batch_size,
             tf32=config.tf32,
+            fp16=config.fp16,
+            fp16_full_eval=config.fp16_full_eval,
             bf16=config.bf16,
             bf16_full_eval=config.bf16_full_eval,
             gradient_checkpointing=config.gradient_checkpointing,
