@@ -102,7 +102,7 @@ def generator_from_zipfiles(
 
     # Perform the pre-copying.
     if shdcopy and precopy:
-        iterable = [(src, dst) for src, dst in archives.items() if not dst.exists()]
+        iterable = [(src, dst) for src, dst in archive_path_map.items() if not dst.exists()]
         with mp.Pool(min(16, len(os.sched_getaffinity(0)))) as pool:
             pool.starmap(shutil.copy2, iterable)
 
