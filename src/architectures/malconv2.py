@@ -92,7 +92,7 @@ class CatMod(torch.nn.Module):
 
 
 class LowMemConvBase(nn.Module):
-    def __init__(self, chunk_size: int = 65536, overlap: int = 512, min_chunk_size: int = 1024):
+    def __init__(self, chunk_size: int = 65536, overlap: int = 512, min_chunk_size: int = 1024, pad_token_id: int = 0):
         """
         Args:
           chunk_size: how many bytes at a time to process. Increasing may improve compute efficent,
@@ -104,6 +104,7 @@ class LowMemConvBase(nn.Module):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.min_chunk_size = min_chunk_size
+        self.pad_token_id = pad_token_id
 
         # Used for pooling over time in a meory efficent way
         self.pooling = nn.AdaptiveMaxPool1d(1)
@@ -244,7 +245,7 @@ class MalConvML(LowMemConvBase):
         layers: int = 1,
         pad_token_id: int = 0,
     ) -> None:
-        super(MalConvML, self).__init__()
+        super(MalConvML, self).__init__(pad_token_id=pad_token_id)
         self.embd = nn.Embedding(vocab_size, embedding_size, padding_idx=pad_token_id)
         self.convs = nn.ModuleList(
             [nn.Conv1d(embedding_size, channels * 2, kernel_size, stride=stride, bias=True)]
@@ -280,7 +281,7 @@ class MalConvGCT(LowMemConvBase):
         layers: int = 1,
         pad_token_id: int = 0,
     ) -> None:
-        super(MalConvGCT, self).__init__()
+        super(MalConvGCT, self).__init__(pad_token_id=pad_token_id)
         self.embd = nn.Embedding(vocab_size, embedding_size, padding_idx=pad_token_id)
         self.context_net = MalConvML(
             vocab_size=vocab_size,
