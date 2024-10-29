@@ -103,6 +103,8 @@ def get_body(
     saves_and_evals_per_epochs: int,
     dataloader_num_workers: int,
     learning_rate: float,
+    weight_decay: float,
+    warmup_ratio: float,
     tr_batch_size: int,
     vl_batch_size: int,
     tf32: bool,
@@ -167,8 +169,9 @@ src/learn/train.py \\
 --dataloader_num_workers={dataloader_num_workers} \\
 --optim="adamw_torch" \\
 --learning_rate={learning_rate} \\
+--weight_decay={weight_decay} \\
+--warmup_ratio={warmup_ratio} \\
 --lr_scheduler_type="linear" \\
---weight_decay=0.01 \\
 --adam_beta1=0.900 \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
@@ -340,6 +343,12 @@ class Configuration:
                 return False
             if self.model_size != ModelSize.MD:
                 return False
+            if self.task not in (Task.CLM, Task.MLM):
+                return False
+            if self.vocab_size != 16384:
+                return False
+            if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+                return False
 
         if ACTION == Action.OVERFIT:
             if self.max_length != 4096:
@@ -471,7 +480,7 @@ class Configuration:
         if ACTION == Action.DEBUG:
             return 1 if ARMITAGE else 2  # multi GPU seems to hang on armitage
         if self.task in (Task.CLM, Task.MLM):
-            return 1
+            return 4
         return 1
 
     @property
@@ -579,6 +588,7 @@ class Configuration:
 
     @property
     def dataloader_num_workers(self) -> int:
+        return 1
         if self.gpu == 0:
             return 0
         if self.streaming:
@@ -590,6 +600,18 @@ class Configuration:
         if self.task in (Task.CLM, Task.MLM):
             return 1e-3
         return 1e-3
+
+    @property
+    def weight_decay(self) -> float:
+        if self.task in (Task.CLM, Task.MLM):
+            return 0.10
+        return 0.01
+
+    @property
+    def warmup_ratio(self) -> float:
+        if self.task in (Task.CLM, Task.MLM):
+            return 0.10
+        return 0.05
 
     @property
     def tr_batch_size(self) -> int:
@@ -729,6 +751,8 @@ def main():
             saves_and_evals_per_epochs=config.saves_and_evals_per_epochs,
             dataloader_num_workers=config.dataloader_num_workers,
             learning_rate=config.learning_rate,
+            weight_decay=config.weight_decay,
+            warmup_ratio=config.warmup_ratio,
             tr_batch_size=config.tr_batch_size,
             vl_batch_size=config.vl_batch_size,
             tf32=config.tf32,
