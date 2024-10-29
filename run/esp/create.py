@@ -139,6 +139,7 @@ python -u \\
 src/learn/train.py \\
 --root='./output/esp-{ACTION.value}' \\
 --streaming={bool_to_str(streaming)} \\
+--sync_batch_size=true \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
 --auto_find_batch_size_and_gradient_accumulation_steps=true \\
 --dataset_backend="HF" \\
@@ -176,7 +177,6 @@ src/learn/train.py \\
 --per_device_eval_batch_size={vl_batch_size} \\
 --gradient_accumulation_steps=1 \\
 --eval_accumulation_steps=64 \\
---load_best_model_at_end \\
 {"--use_cpu" if gpu <= 0 else ""} \\
 --tf32={bool_to_str(tf32)} \\
 --fp16={bool_to_str(fp16)} \\
