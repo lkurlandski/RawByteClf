@@ -202,6 +202,7 @@ from src.learn.utils import (
     find_executable_batch_size_and_gradient_accumulation_steps,
     interpret_bytes_as_integers,
     chunk_mask,
+    optimizer_to_,
 )
 from src.tokenization.api import get_fast_tokenizer
 
@@ -1267,6 +1268,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print_tokenizer(tokenizer)
     print(BR, flush=True)
 
+    # min_freq            = int(os.environ.get("min_freq", "50"))             # FIXME: remove
+    # max_imbalance_ratio = int(os.environ.get("max_imbalance_ratio", "50"))  # FIXME: remove
+    # print(f"{min_freq=}")                                                   # FIXME: remove
+    # print(f"{max_imbalance_ratio=}")                                        # FIXME: remove
+
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
     if args.task == Task.CLM:
         materials = get_materials_esp_clm(args.lift_level)
@@ -1485,11 +1491,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             except OSError:
                 pass
 
-            # TODO: if the OOM error arises during the evaluation loop while training, this could
-            # cause irresponsible and unessecary reduction of the training batch size when we really
-            # should be decrementing the evaluation batch size.
+            # If the OOM error arises during the evaluation loop while training, this could
+            # cause unessecary reduction of the training batch size when we really
+            # should be decrementing the evaluation batch size. However, after several months
+            # of using this code, this never really seemed to happen, so I think we can just ignore it.
+            # Anyway, considering the GPU fragmentation issues that randomly arise if we let
+            # the train and validation batch sizes differ, I don't think its all that relevant.
             per_device_eval_batch_size = batch_size
-            if max_per_device_eval_batch_size is not None:
+            if max_per_device_eval_batch_size is not None and not args.sync_batch_size:
                 per_device_eval_batch_size = max_per_device_eval_batch_size
 
             training_arguments = replace(
@@ -1516,7 +1525,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
-            return trainer.train(training_arguments.resume_from_checkpoint)
+            try:
+                return trainer.train(training_arguments.resume_from_checkpoint)
+            except Exception:
+                # Cleaning up references to the optimizer states might help memory fragmentation issues.
+                if hasattr(trainer, "optimizer"):
+                    optimizer_to_(trainer.optimizer, "cpu")
+                    trainer.optimizer = None
+                trainer = None
+                del trainer
+                gc.collect()
+                raise
+
 
         print("Training...", flush=True)
         if args.auto_find_batch_size_and_gradient_accumulation_steps:
