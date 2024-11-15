@@ -393,13 +393,13 @@ class TrainingArguments(HfTrainingArguments):
             if self.saves_per_epoch > max_steps:
                 raise ValueError(f"{self.saves_per_epoch=} must be less than or equal to {max_steps=}.")
             num_evals = math.ceil(self.num_train_epochs * self.saves_per_epoch)
-            save_steps = int(math.floor(max_steps / num_evals))
+            save_steps = max(int(math.floor(max_steps / num_evals)), 1)
 
         if self.evals_per_epoch is not None:
             if self.evals_per_epoch > max_steps:
                 raise ValueError(f"{self.evals_per_epoch=} must be less than or equal to {max_steps=}.")
             num_saves = math.ceil(self.num_train_epochs * self.evals_per_epoch)
-            eval_steps = int(math.floor(max_steps / num_saves))
+            eval_steps = max(int(math.floor(max_steps / num_saves)), 1)
 
         return max_steps, save_steps, eval_steps
 
