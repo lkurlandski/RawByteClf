@@ -257,8 +257,8 @@ def clear_cuda_caches(synchronize: bool = True, no_grad: bool = False, verbose: 
         _clear_cuda_caches()
 
     if verbose:
-        print(f"Memory reserved: {torch.cuda.memory_reserved() / 1e9:.2f}")
-        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f}")
+        print(f"Memory reserved: {torch.cuda.memory_reserved() / 1e9:.2f}G")
+        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f}G")
 
 
 def optimizer_to_(optimizer: torch.optim.Optimizer, device: torch.device | str):
