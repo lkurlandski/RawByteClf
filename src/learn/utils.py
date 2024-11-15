@@ -145,103 +145,6 @@ def should_reduce_batch_size(exception: Exception) -> bool:
     return False
 
 
-def find_executable_batch_size(function: callable = None, starting_batch_size: int = 128):
-    if function is None:
-        return functools.partial(find_executable_batch_size, starting_batch_size=starting_batch_size)
-
-    batch_size = starting_batch_size
-
-    def decorator(*args, **kwargs):
-        nonlocal batch_size
-        gc.collect()
-        if is_xpu_available():
-            torch.xpu.empty_cache()
-        elif is_npu_available():
-            torch.npu.empty_cache()
-        else:
-            torch.cuda.empty_cache()
-        params = list(inspect.signature(function).parameters.keys())
-        # Guard against user error
-        if len(params) < (len(args) + 1):
-            arg_str = ", ".join([f"{arg}={value}" for arg, value in zip(params[1:], args[1:])])
-            raise TypeError(
-                f"Batch size was passed into `{function.__name__}` as the first argument when called."
-                f"Remove this as the decorator already does so: `{function.__name__}({arg_str})`"
-            )
-        while True:
-            if batch_size == 0:
-                raise RuntimeError("No executable batch size found, reached zero.")
-            try:
-                return function(batch_size, *args, **kwargs)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                if should_reduce_batch_size(e):
-                    print(f"HANDLING --- {e}", flush=True)
-                    gc.collect()
-                    if is_xpu_available():
-                        torch.xpu.empty_cache()
-                    elif is_npu_available():
-                        torch.npu.empty_cache()
-                    else:
-                        torch.cuda.empty_cache()
-                    batch_size //= 2
-                else:
-                    print(f"RAISING --- {e}", flush=True)
-                    raise
-
-    return decorator
-
-
-def find_executable_batch_size_sub(
-    function: callable = None,
-    starting_batch_size: int = 128,
-    subtract: int = 8,
-):
-
-    if function is None:
-        return functools.partial(
-            find_executable_batch_size_sub,
-            starting_batch_size=starting_batch_size,
-            subtract=subtract,
-        )
-
-    batch_size = starting_batch_size
-
-    def decorator(*args, **kwargs):
-        nonlocal batch_size
-        gc.collect()
-        if not is_xpu_available():
-            torch.cuda.empty_cache()
-        else:
-            torch.xpu.empty_cache()
-        params = list(inspect.signature(function).parameters.keys())
-        # Guard against user error
-        if len(params) < (len(args) + 1):
-            arg_str = ", ".join([f"{arg}={value}" for arg, value in zip(params[1:], args[1:])])
-            raise TypeError(
-                f"Batch size was passed into `{function.__name__}` as the first argument when called."
-                f"Remove this as the decorator already does so: `{function.__name__}({arg_str})`"
-            )
-        while True:
-            if batch_size == 0:
-                raise RuntimeError("No executable batch size found, reached zero.")
-            try:
-                return function(batch_size, *args, **kwargs)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                if should_reduce_batch_size(e):
-                    print(f"HANDLING --- {e}", flush=True)
-                    gc.collect()
-                    if not is_xpu_available():
-                        torch.cuda.empty_cache()
-                    else:
-                        torch.xpu.empty_cache()
-                    batch_size -= subtract
-                else:
-                    print(f"RAISING --- {e}", flush=True)
-                    raise
-
-    return decorator
-
-
 def clear_cuda_caches(synchronize: bool = True, no_grad: bool = False, verbose: bool = False):
 
     def _clear_cuda_caches():
@@ -318,6 +221,49 @@ def find_executable_batch_size_and_gradient_accumulation_steps(
                     clear_cuda_caches(verbose=True)
                     batch_size //= 2
                     gradient_accumulation_steps *= 2
+                else:
+                    print("Exception not related to CUDA OOM. Raising.")
+                    raise e
+
+    return decorator
+
+
+def find_executable_batch_size(
+    function: callable = None,
+    starting_batch_size: int = 128
+) -> None:
+    if function is None:
+        return functools.partial(
+            find_executable_batch_size,
+            starting_batch_size=starting_batch_size,
+        )
+
+    batch_size = starting_batch_size
+
+    def decorator(*args, **kwargs):
+        nonlocal batch_size
+
+        clear_cuda_caches(verbose=True)
+
+        params = list(inspect.signature(function).parameters.keys())
+        if len(params) < (len(args) + 1):
+            arg_str = ", ".join([f"{arg}={value}" for arg, value in zip(params[1:], args[1:])])
+            raise TypeError(
+                f"Batch size was passed into `{function.__name__}` as the first argument when called."
+                f"Remove this as the decorator already does so: `{function.__name__}({arg_str})`"
+            )
+
+        while True:
+            if batch_size == 0:
+                raise RuntimeError("No executable batch size found, reached zero.")
+
+            try:
+                return function(batch_size, *args, **kwargs)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if should_reduce_batch_size(e):
+                    print(f"Exception related to CUDA OOM. Handling.\n{e}")
+                    clear_cuda_caches(verbose=True)
+                    batch_size //= 2
                 else:
                     print("Exception not related to CUDA OOM. Raising.")
                     raise e
