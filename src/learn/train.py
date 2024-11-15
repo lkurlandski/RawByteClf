@@ -184,6 +184,7 @@ from src.learn.evaluation import clf_compute_metrics
 from src.learn.preprocessing import (
     hf_bytes_to_input_ids,
     hf_tokenize_bytes,
+    hf_tokenize_str,
     hf_multilabel_encode,
     bytes_to_input_ids,
     tokenize_bytes,
@@ -1130,6 +1131,8 @@ def get_processed_dataset_hf(
         kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
         dataset = dataset.map(**kwds)
 
+    # If we're mapping bytes to integers, we can do it in a more efficient way.
+    # Otherwise, we need to use the tokenizer.
     if args.lift_level == LiftLevel.RAW and args.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL:
         func = partial(
             hf_bytes_to_input_ids,
@@ -1143,7 +1146,9 @@ def get_processed_dataset_hf(
         kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, remove_columns=["name", "bytes"], num_proc=NUM_PROC)
         dataset = dataset.map(**kwds)
     else:
-        func = partial(hf_tokenize_bytes, tokenizer=tokenizer, max_length=args.max_length)
+        # The RAW level contains raw-bytes whereas DIS and DEC contains encoded strings.
+        hf_tokenize = hf_tokenize_bytes if args.lift_level == LiftLevel.RAW else hf_tokenize_str
+        func = partial(hf_tokenize, tokenizer=tokenizer, max_length=args.max_length)
         desc = "Tokenizing bytes..."
         kwds = get_map_kwds_for_hf_datasets(function=func, dataset=dataset, desc=desc, remove_columns=["name", "bytes"], num_proc=None)
         dataset = dataset.map(**kwds)
@@ -1285,6 +1290,21 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif args.task == Task.BEH:
         materials = get_materials_esp_beh(args.lift_level)
 
+    # FIXME: remove
+    if os.environ.get("DEBUG", "0") == "1":
+        _tr_size = min(int(os.environ.get("TR_SIZE", 4096)), len(materials.files["tr"]))
+        _vl_size = min(int(os.environ.get("VL_SIZE", 4096)), len(materials.files["vl"]))
+        # tr_idx = np.random.choice(len(materials.files["tr"]), size=_tr_size, len(materials.files["tr"])), replace=False)
+        # vl_idx = np.random.choice(len(materials.files["vl"]), size=_vl_size, len(materials.files["vl"])), replace=False)
+        tr_idx = np.argsort([af.name for af in materials.files["tr"]])[0:_tr_size]
+        vl_idx = np.argsort([af.name for af in materials.files["vl"]])[0:_vl_size]
+        materials.files["tr"] = [materials.files["tr"][i] for i in tr_idx]
+        materials.files["vl"] = [materials.files["vl"][i] for i in vl_idx]
+        if materials.labels is not None:
+            materials.labels["tr"] = materials.labels["tr"][tr_idx]
+            materials.labels["vl"] = materials.labels["vl"][vl_idx]
+
+
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
 
@@ -1312,6 +1332,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_dataset_pt(dataset)
         print(BR)
     del num_shards
+
+    # FIXME: remove
+    # lengths = []
+    # for d in dataset.values():
+    #     lengths.extend([len(x["input_ids"]) for x in d])
+    # print(np.min(lengths), np.max(lengths), np.mean(lengths), np.median(lengths), np.std(lengths))
+    # sys.exit(0)
 
     # TODO: should we add masks after mapping or before?
     # if MODEL_NAME in REQ_ATTENTION_MASK:

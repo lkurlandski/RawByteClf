@@ -126,17 +126,15 @@ def hf_encrypt_bytes(examples: dict[str, list], encryption_type: str, key: Optio
     return {"bytes": [encrypt(bs, encryption_type, key) for bs in examples["bytes"]]}
 
 
-def hf_tokenize_bytes(
-    examples: dict[str, list],
+def _hf_tokenize_text(
+    text: list[list[str]],
     tokenizer: PreTrainedTokenizerFast,
-    bytes_to_str: Callable[[bytes], str] = bytes_to_str_utf8,
     truncation: bool = True,
     max_length: Optional[int] = None,
     return_overflowing_tokens: bool = False,
     add_special_tokens: bool = True,
     **kwds,
 ) -> dict[str, list]:
-    text = [bytes_to_str(b) for b in examples["bytes"]]
     return tokenizer(
         text,
         truncation=truncation,
@@ -145,6 +143,16 @@ def hf_tokenize_bytes(
         add_special_tokens=add_special_tokens,
         **kwds,
     )
+
+
+def hf_tokenize_str(examples: dict[str, list], tokenizer: PreTrainedTokenizerFast, **kwds) -> dict[str, list]:
+    text = [b.decode("utf-8") for b in examples["bytes"]]
+    return _hf_tokenize_text(text, tokenizer, **kwds)
+
+
+def hf_tokenize_bytes(examples: dict[str, list], tokenizer: PreTrainedTokenizerFast, **kwds) -> dict[str, list]:
+    text = [bytes_to_str(b) for b in examples["bytes"]]
+    return _hf_tokenize_text(text, tokenizer, **kwds)
 
 
 def hf_bytes_to_input_ids(
