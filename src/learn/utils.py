@@ -242,6 +242,42 @@ def find_executable_batch_size_sub(
     return decorator
 
 
+def clear_cuda_caches(synchronize: bool = True, no_grad: bool = False, verbose: bool = False):
+
+    def _clear_cuda_caches():
+        gc.collect()
+        torch.cuda.empty_cache()
+        if synchronize:
+            torch.cuda.synchronize()
+
+    if no_grad:
+        with torch.no_grad():
+            _clear_cuda_caches()
+    else:
+        _clear_cuda_caches()
+
+    if verbose:
+        print(f"Memory reserved: {torch.cuda.memory_reserved() / 1e9:.2f}")
+        print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f}")
+
+
+def optimizer_to_(optimizer: torch.optim.Optimizer, device: torch.device | str):
+    # pylint: disable=protected-access
+    for param in optimizer.state.values():
+        # Not sure there are any global tensors in the state dict
+        if isinstance(param, torch.Tensor):
+            param.data = param.data.to(device)
+            if param._grad is not None:
+                param._grad.data = param._grad.data.to(device)
+        elif isinstance(param, dict):
+            for subparam in param.values():
+                if isinstance(subparam, torch.Tensor):
+                    subparam.data = subparam.data.to(device)
+                    if subparam._grad is not None:
+                        subparam._grad.data = subparam._grad.data.to(device)
+    # pylint: enable=protected-access
+
+
 def find_executable_batch_size_and_gradient_accumulation_steps(
     function: callable = None,
     starting_batch_size: int = 128,
@@ -259,31 +295,32 @@ def find_executable_batch_size_and_gradient_accumulation_steps(
 
     def decorator(*args, **kwargs):
         nonlocal batch_size, gradient_accumulation_steps
-        gc.collect()
-        torch.cuda.empty_cache()
+
+        clear_cuda_caches(verbose=True)
+
         params = list(inspect.signature(function).parameters.keys())
-        # Guard against user error
         if len(params) < (len(args) + 1):
             arg_str = ", ".join([f"{arg}={value}" for arg, value in zip(params[1:], args[1:])])
             raise TypeError(
                 f"Batch size was passed into `{function.__name__}` as the first argument when called."
                 f"Remove this as the decorator already does so: `{function.__name__}({arg_str})`"
             )
+
         while True:
             if batch_size == 0:
                 raise RuntimeError("No executable batch size found, reached zero.")
+
             try:
                 return function(batch_size, gradient_accumulation_steps, *args, **kwargs)
             except Exception as e:  # pylint: disable=broad-exception-caught
                 if should_reduce_batch_size(e):
-                    print(f"HANDLING --- {e}", flush=True)
-                    gc.collect()
-                    torch.cuda.empty_cache()
+                    print(f"Exception related to CUDA OOM. Handling.\n{e}")
+                    clear_cuda_caches(verbose=True)
                     batch_size //= 2
                     gradient_accumulation_steps *= 2
                 else:
-                    print(f"RAISING --- {e}", flush=True)
-                    raise
+                    print("Exception not related to CUDA OOM. Raising.")
+                    raise e
 
     return decorator
 
