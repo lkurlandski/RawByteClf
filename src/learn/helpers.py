@@ -113,6 +113,7 @@ class Args:
     do_tune: bool         = field(default=False)
     do_attribute: bool    = field(default=False)
     skip_eval_check: bool = field(default=False)
+    sync_batch_size: bool = field(default=False)
     dataset_backend: str  = field(default="PT")
     auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
 
@@ -177,6 +178,7 @@ class Args:
         self.exit_after_map  = str_to_bool(self.exit_after_map)
         self.do_tune         = str_to_bool(self.do_tune)
         self.do_attribute    = str_to_bool(self.do_attribute)
+        self.sync_batch_size = str_to_bool(self.sync_batch_size)
         self.skip_eval_check = str_to_bool(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
 
