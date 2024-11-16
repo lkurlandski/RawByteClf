@@ -1504,6 +1504,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             gc.collect()
             print(f"{initial_output.metrics=}", flush=True)
 
+            if args.sync_batch_size:
+                # Set the train batch size to the same size as the eval one and adjust gradient accumulation to keep same logical batch size.
+                training_arguments = replace(training_arguments, gradient_accumulation_steps=(
+                    training_arguments.per_device_batch_size
+                    * training_arguments.gradient_accumulation_steps
+                    // max_per_device_eval_batch_size)
+                )
+                training_arguments = replace(training_arguments, per_device_train_batch_size=max_per_device_eval_batch_size)
+
 
         @find_executable_batch_size_and_gradient_accumulation_steps(
             starting_batch_size=training_arguments.per_device_train_batch_size,
