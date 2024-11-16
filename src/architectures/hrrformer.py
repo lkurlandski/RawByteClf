@@ -8,7 +8,7 @@ from typing import Literal, Optional
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch import Tensor
+from torch import Tensor, LongTensor, FloatTensor
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 import torch.nn.functional as F
 from transformers import PreTrainedModel, PretrainedConfig
@@ -102,14 +102,48 @@ class HRRFormerEmbeddings(BertEmbeddings):
 
     def __init__(self, config: HRRConfig) -> None:
         super().__init__(config)
+        self.position_embedding_type = self.config.position_embedding_type
         self.word_embeddings = nn.Embedding(config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id)
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.embedding_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.embedding_size)
-        self.LayerNorm = nn.LayerNorm(config.embedding_size, eps=config.layer_norm_eps)
+        self.position_embeddings = nn.Identity()
+        if self.position_embedding_type == "absolute":
+            self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.embedding_size)
+        self.layer_norm = nn.LayerNorm(config.embedding_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
         self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False)
         self.register_buffer("token_type_ids", torch.zeros(self.position_ids.size(), dtype=torch.long), persistent=False)
+
+    def forward(
+        self,
+        input_ids: Optional[LongTensor] = None,
+        token_type_ids: Optional[LongTensor] = None,
+        position_ids: Optional[LongTensor] = None,
+        inputs_embeds: Optional[FloatTensor] = None,
+        past_key_values_length: int = 0,
+    ) -> Tensor:
+        input_shape = input_ids.size() if input_ids is not None else inputs_embeds.size()[:-1]
+        seq_length  = input_shape[1]
+
+        if position_ids is None:
+            position_ids = self.position_ids[:, past_key_values_length : seq_length + past_key_values_length]
+
+        if token_type_ids is None:
+            if hasattr(self, "token_type_ids"):
+                buffered_token_type_ids = self.token_type_ids[:, :seq_length]
+                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(input_shape[0], seq_length)
+                token_type_ids = buffered_token_type_ids_expanded
+            else:
+                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=self.position_ids.device)
+
+        inputs_embeds = self.word_embeddings(input_ids) if inputs_embeds is None else inputs_embeds
+        token_type_embeddings = self.token_type_embeddings(token_type_ids)
+
+        embeddings = inputs_embeds + token_type_embeddings
+        if self.position_embedding_type == "absolute":
+            embeddings += self.position_embeddings(position_ids)
+        embeddings = self.layer_norm(embeddings)
+        embeddings = self.dropout(embeddings)
+        return embeddings
 
 
 class HRROutput(BertOutput):
@@ -140,6 +174,8 @@ class HRRSelfAttention(nn.Module):
                 f"heads ({config.num_attention_heads})"
             )
 
+        self.position_embedding_type = position_embedding_type or config.position_embedding_type
+        self.max_position_embeddings = config.max_position_embeddings
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
@@ -149,10 +185,9 @@ class HRRSelfAttention(nn.Module):
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.position_embedding_type = position_embedding_type or getattr(config, "position_embedding_type", "absolute")
-        if self.position_embedding_type in ("relative_key", "relative_key_query"):
-            self.max_position_embeddings = config.max_position_embeddings
-            self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
+        self.distance_embedding = None
+        if self.position_embedding_type == "relative":
+            raise NotImplementedError()
 
         self.is_decoder = config.is_decoder
         self.fft_norm = config.fft_norm
@@ -250,6 +285,10 @@ class HRRSelfAttention(nn.Module):
         # log(superposition, "superposition")
         # log(value_approx, "value_approx")
         # log(attention_scores, "attention_scores")
+
+        # Add relative position embeddings.
+        if self.position_embedding_type == "relative":
+            raise NotImplementedError()
 
         # Attention mask, scores, and probabilities
         if attention_mask is not None:
