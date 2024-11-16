@@ -81,10 +81,13 @@ class MambaConfig(PretrainedConfig):
         use_cache: bool = True,
         bi_tie_directions: bool = False,
         bi_mix_directions: bool = False,
-        bi_add_directions: bool = False,
+        bi_add_directions: bool = True,
         use_mambapy: bool = False,
         **kwargs,
     ):
+        # bi_tie_directions can cause issues with multi-GPU computing.
+        # bi_mix_directions mixes the forward and backward states in every layer.
+        # bi_add_directions adds the hidden states at the end, rather than concat them, which keeps the output dimensions the same.
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, pad_token_id=pad_token_id, **kwargs)
 
         self.vocab_size = vocab_size
