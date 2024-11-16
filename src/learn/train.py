@@ -1322,7 +1322,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 
     if args.dataset_backend == "HF":
-        dataset = get_processed_dataset_hf(materials, args, max(training_arguments.world_size, 1), tokenizer)
+        num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
+        dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
         print_dataset_hf(dataset)
         print(BR)
     else:
