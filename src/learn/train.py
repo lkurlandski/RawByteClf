@@ -1322,16 +1322,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 
     if args.dataset_backend == "HF":
-        num_shards=training_arguments.world_size*training_arguments.dataloader_num_workers
-        dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
+        dataset = get_processed_dataset_hf(materials, args, max(training_arguments.world_size, 1), tokenizer)
         print_dataset_hf(dataset)
         print(BR)
     else:
-        num_shards = None
-        dataset = get_processed_dataset_pt(materials, args, num_shards, tokenizer)
+        dataset = get_processed_dataset_pt(materials, args, None, tokenizer)
         print_dataset_pt(dataset)
         print(BR)
-    del num_shards
 
     # FIXME: remove
     # lengths = []
@@ -1507,7 +1504,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             if args.sync_batch_size:
                 # Set the train batch size to the same size as the eval one and adjust gradient accumulation to keep same logical batch size.
                 training_arguments = replace(training_arguments, gradient_accumulation_steps=(
-                    training_arguments.per_device_batch_size
+                    training_arguments.per_device_train_batch_size
                     * training_arguments.gradient_accumulation_steps
                     // max_per_device_eval_batch_size)
                 )
