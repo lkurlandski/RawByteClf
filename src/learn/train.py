@@ -225,9 +225,11 @@ PAD_TO = 8
 MOVE_IN_MEMORY = False
 
 # Default variables for the datasets.Dataset.map() and datasets.IterableDataset.map()
-BATCH_SIZE: Optional[int] = 1000
+BATCH_SIZE_MAP: Optional[int] = 1024
+BATCH_SIZE_ITR: Optional[int] = 128
 WRITER_BATCH_SIZE: Optional[int] = 1000
 CACHE_FILE_NAME: Optional[str] = None
+# NOTE: if this is None, the map from bytes directly to integers will not be parallelized at all.
 # NUM_PROC: Optional[int] = len(os.sched_getaffinity(0)) if len(os.sched_getaffinity(0)) != 40 else 20
 NUM_PROC = None
 KEEP_IN_MEMORY = False
@@ -1064,7 +1066,7 @@ def get_map_kwds_for_hf_datasets(
     **kwds,
 ) -> dict[str, Any]:
     either_style_kwds = {
-        "batch_size": BATCH_SIZE,
+        "batch_size": None,
     }
     map_style_kwds = {
         "keep_in_memory": KEEP_IN_MEMORY,
@@ -1082,9 +1084,11 @@ def get_map_kwds_for_hf_datasets(
     if isinstance(dataset, (Dataset, DatasetDict)):
         for k in iterable_style_kwds:
             kwds.pop(k)
+        kwds["batch_size"] = BATCH_SIZE_MAP
     if isinstance(dataset, (IterableDataset, IterableDatasetDict)):
         for k in map_style_kwds:
             kwds.pop(k)
+        kwds["batch_size"] = BATCH_SIZE_ITR
 
     kwds.update({
         "function": function,
