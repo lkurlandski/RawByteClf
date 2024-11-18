@@ -98,11 +98,11 @@ class HRRConfig(PretrainedConfig):
         )
 
 
-class HRRFormerEmbeddings(BertEmbeddings):
+class HRRFormerEmbeddings(nn.Module):
 
     def __init__(self, config: HRRConfig) -> None:
-        super().__init__(config)
-        self.position_embedding_type = self.config.position_embedding_type
+        super().__init__()
+        self.position_embedding_type = config.position_embedding_type
         self.word_embeddings = nn.Embedding(config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.embedding_size)
         self.position_embeddings = nn.Identity()
