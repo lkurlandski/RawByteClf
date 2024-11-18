@@ -69,7 +69,7 @@ def bytes_to_slurm_mem(b: int, r: int = 4 * GB) -> str:
 def torchrun_str(cpu: int, gpu: int) -> str:
     return (
 f"""
-OMP_NUM_THREADS={cpu // gpu} \\
+OMP_NUM_THREADS=1 \\
 torchrun \\
 --no-python \\
 --nnodes=1 \\
@@ -105,8 +105,10 @@ def get_body(
     learning_rate: float,
     weight_decay: float,
     warmup_ratio: float,
-    tr_batch_size: int,
-    vl_batch_size: int,
+    tr_per_device_batch_size: int,
+    vl_per_device_batch_size: int,
+    gradient_accumulation_steps: int,
+    eval_accumulation_steps: int,
     tf32: bool,
     fp16: bool,
     fp16_full_eval: bool,
@@ -132,7 +134,6 @@ f"""
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if ARMITAGE else "module unload blindfold"}
-
 # export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -176,10 +177,10 @@ src/learn/train.py \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
 --save_total_limit=-1 \\
---per_device_train_batch_size={tr_batch_size} \\
---per_device_eval_batch_size={vl_batch_size} \\
---gradient_accumulation_steps=1 \\
---eval_accumulation_steps=64 \\
+--per_device_train_batch_size={tr_per_device_batch_size} \\
+--per_device_eval_batch_size={vl_per_device_batch_size} \\
+--gradient_accumulation_steps={gradient_accumulation_steps} \\
+--eval_accumulation_steps={eval_accumulation_steps} \\
 {"--use_cpu" if gpu <= 0 else ""} \\
 --tf32={bool_to_str(tf32)} \\
 --fp16={bool_to_str(fp16)} \\
@@ -245,6 +246,17 @@ MODEL_SAMPLES_PER_SECOND: dict[tuple, tuple[float, float]] = {
 
 
 COMPRESSION_RATIOS: dict[tuple[TokenizationAlgorithm, int], float] = {
+
+}
+
+# Unfortunately, we simply have to accept the fact that we cannot
+# handle CUDA memory errors gracefully without experiencing side-effects.
+PER_DEVICE_BATCH_SIZE: dict[tuple, int] = {
+
+    (ModelName.HRR, ModelSize.SM, ModelMode.BI, 65536): 2,
+    (ModelName.HRR, ModelSize.SM, ModelMode.UN, 65536): 2,
+    (ModelName.MAM, ModelSize.SM, ModelMode.BI, 65536): 4,
+    (ModelName.MAM, ModelSize.SM, ModelMode.UN, 65536): 4,
 
 }
 
@@ -341,7 +353,7 @@ class Configuration:
         if ACTION == Action.EXECUTE:
             if self.max_length != 65536:
                 return False
-            if self.model_size != ModelSize.MD:
+            if self.model_size != ModelSize.SM:
                 return False
             if self.task not in (Task.CLM, Task.MLM):
                 return False
@@ -409,6 +421,8 @@ class Configuration:
 
     @property
     def tim(self) -> str:
+        return seconds_to_slurm_time(2 * 24 * 60 * 60)
+        # FIXME
         if ACTION == Action.PREPARE:
             if self.task in (Task.CLM, Task.MLM):
                 return seconds_to_slurm_time(7200)
@@ -449,7 +463,7 @@ class Configuration:
         if ACTION == Action.TIME:
             return 4
         if self.task in (Task.CLM, Task.MLM):
-            return 8
+            return 12
         return 4
 
     @property
@@ -457,7 +471,7 @@ class Configuration:
         if ACTION == Action.PREPARE:
             return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
-            return bytes_to_slurm_mem(self.gpu * 64 * GB)
+            return bytes_to_slurm_mem(self.gpu * 128 * GB)
 
         k = (self.tokenization_algorithm, self.vocab_size)
         if k in COMPRESSION_RATIOS:
@@ -480,7 +494,7 @@ class Configuration:
         if ACTION == Action.DEBUG:
             return 1 if ARMITAGE else 2  # multi GPU seems to hang on armitage
         if self.task in (Task.CLM, Task.MLM):
-            return 4
+            return 1
         return 1
 
     @property
@@ -526,23 +540,9 @@ class Configuration:
             if self.model_size == ModelSize.HG:
                 d |= {"num_hidden_layers": 8, "hidden_size": 512}
 
-        d |= {"embedding_size": 64, "head_num_hidden_layers": 1}
-
-        if ACTION == Action.DEBUG:
-            # Check the multiheaded attention.
-            if self.model_name == ModelName.HRR:
-                d["num_attention_heads"] = d.get("num_attention_heads", 2)
-            # Check the weight-tying with embedding projection.
-            d["embedding_size"]   = d["hidden_size"] // 2
-
-        d["head_hidden_size"] = d["embedding_size"]
-
-        if ACTION == ACTION.BASIC:
-            d.update({
-                "embedding_size": d["hidden_size"],
-                "head_num_hidden_layers": 0,
-                "head_hidden_size": 0,
-            })
+        d["embedding_size"]         = d["hidden_size"]
+        d["head_num_hidden_layers"] = 0
+        d["head_hidden_size"]       = 0
 
         return d
 
@@ -588,11 +588,10 @@ class Configuration:
 
     @property
     def dataloader_num_workers(self) -> int:
-        return 1
         if self.gpu == 0:
             return 0
         if self.streaming:
-            return 0
+            return 2
         return self.cpu // self.gpu - 1
 
     @property
@@ -622,18 +621,28 @@ class Configuration:
         return 64
 
     @property
-    def vl_batch_size(self) -> int:
-        if self.model_size == ModelSize.TN:
-            return 256
-        if self.model_size == ModelSize.SM:
-            return 128
-        if self.model_size == ModelSize.MD:
-            return 64
-        if self.model_size == ModelSize.LG:
-            return 32
-        if self.model_size == ModelSize.HG:
-            return 16
-        raise RuntimeError()
+    def per_device_batch_size(self) -> int:
+        key = (self.model_name, self.model_size, self.model_mode, self.max_length)
+        return PER_DEVICE_BATCH_SIZE[key]
+
+    @property
+    def tr_per_device_batch_size(self) -> int:
+        return self.per_device_batch_size
+        # if self.tr_batch_size % self.gpu != 0:
+        #     raise RunTimeError(f"{self.tr_batch_size=} % {self.gpu=} != 0")
+        # return int(self.tr_batch_size / self.gpu)
+
+    @property
+    def vl_per_device_batch_size(self) -> int:
+        return self.per_device_batch_size
+
+    @property
+    def gradient_accumulation_steps(self) -> int:
+        return self.tr_batch_size // self.tr_per_device_batch_size
+
+    @property
+    def eval_accumulation_steps(self) -> int:
+        return 256 // self.vl_per_device_batch_size
 
     @property
     def tf32(self) -> bool:
@@ -753,8 +762,10 @@ def main():
             learning_rate=config.learning_rate,
             weight_decay=config.weight_decay,
             warmup_ratio=config.warmup_ratio,
-            tr_batch_size=config.tr_batch_size,
-            vl_batch_size=config.vl_batch_size,
+            tr_per_device_batch_size=config.tr_per_device_batch_size,
+            vl_per_device_batch_size=config.vl_per_device_batch_size,
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
+            eval_accumulation_steps=config.eval_accumulation_steps,
             tf32=config.tf32,
             fp16=config.fp16,
             fp16_full_eval=config.fp16_full_eval,
