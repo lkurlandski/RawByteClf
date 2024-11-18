@@ -150,7 +150,7 @@ def hf_tokenize_str(examples: dict[str, list], tokenizer: PreTrainedTokenizerFas
     return _hf_tokenize_text(text, tokenizer, **kwds)
 
 
-def hf_tokenize_bytes(examples: dict[str, list], tokenizer: PreTrainedTokenizerFast, **kwds) -> dict[str, list]:
+def hf_tokenize_bytes(examples: dict[str, list], tokenizer: PreTrainedTokenizerFast, bytes_to_str: Callable[[bytes], str] = bytes_to_str_utf8, **kwds) -> dict[str, list]:
     text = [bytes_to_str(b) for b in examples["bytes"]]
     return _hf_tokenize_text(text, tokenizer, **kwds)
 
