@@ -32,6 +32,7 @@ from transformers.pytorch_utils import (
 from src.utils import log_tensor
 from src.architectures.utils import binding, unbinding, cosine_similarity
 from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss, check_tie_embeddings_will_work
+from src.architectures.rotary import RotaryEmbedding
 
 
 ARG_REQUIRED = -1
@@ -61,7 +62,7 @@ class HRRConfig(PretrainedConfig):
         pad_token_id: int = 0,
         bos_token_id: int = 0,
         eos_token_id: int = 0,
-        position_embedding_type: str = "absolute",
+        position_embedding_type: Literal["absolute", "relative", "rotary"] = "absolute",
         use_cache: bool = True,
         fft_norm: Literal["forward", "backward", "ortho"] = "backward",
         **kwargs,
@@ -185,9 +186,12 @@ class HRRSelfAttention(nn.Module):
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.distance_embedding = None
+
+        self.position_embeddings: nn.Identity | RotaryEmbedding = nn.Identity()
         if self.position_embedding_type == "relative":
             raise NotImplementedError()
+        elif self.position_embedding_type == "rotary":
+            self.position_embeddings = RotaryEmbedding(self.attention_head_size)
 
         self.is_decoder = config.is_decoder
         self.fft_norm = config.fft_norm
@@ -255,6 +259,9 @@ class HRRSelfAttention(nn.Module):
         else:
             key_layer = self.transpose_for_scores(self.key(hidden_states))
             value_layer = self.transpose_for_scores(self.value(hidden_states))
+
+        if self.position_embedding_type == "rotary":
+            query_layer, key_layer = self.position_embeddings(query_layer, key_layer)
 
         key_layer: Tensor    # (B, H, T, D)
         value_layer: Tensor  # (B, H, T, D)
