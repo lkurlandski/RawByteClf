@@ -195,6 +195,21 @@ def generator(
         yield r
 
 
+def is_dataset_empty(dataset: Dataset | IterableDataset) -> bool:
+    if isinstance(dataset, Dataset):
+        return dataset.num_rows == 0
+    elif isinstance(dataset, IterableDataset):
+        try:
+            next(iter(dataset))
+            return False
+        except StopIteration:
+            return True
+    elif dataset is None:
+        return True
+
+    raise TypeError(type(dataset))
+
+
 def print_dataset_hf(dataset: DatasetDict | IterableDatasetDict, n_samples: int = 0):
 
     print(f"Dataset: {dataset.__class__.__name__}")
