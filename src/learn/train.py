@@ -48,10 +48,6 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from accelerate.utils import DistributedDataParallelKwargs
-try:
-    from captum.attr import KernelShap
-except (ModuleNotFoundError, ImportError) as _err:
-    print(f"{_err.__class__.__name__}: captum")
 import datasets
 from datasets import (
     DatasetDict,
@@ -176,11 +172,11 @@ from src.data.loaders_core import (
     get_materials_esp_fam,
     get_materials_esp_beh,
 )
-from src.data.loaders_hf import get_dataset_hf, print_dataset_hf
+from src.data.loaders_hf import get_dataset_hf, print_dataset_hf, is_dataset_empty
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
 from src.learn.class_weighting import sample_reweighting
 from src.learn.helpers import Args, OutputHelper
-from src.learn.evaluation import clf_compute_metrics
+from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics, clm_compute_metrics
 from src.learn.preprocessing import (
     hf_bytes_to_input_ids,
     hf_tokenize_bytes,
@@ -204,6 +200,7 @@ from src.learn.utils import (
     interpret_bytes_as_integers,
     chunk_mask,
     optimizer_to_,
+    clear_cuda_caches,
 )
 from src.tokenization.api import get_fast_tokenizer
 
@@ -1382,14 +1379,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             mlm=True,
             pad_to_multiple_of=pad_to_multiple_of,
         )
-        compute_metrics = None
     elif args.task == Task.MLM:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
             mlm=False,
             pad_to_multiple_of=pad_to_multiple_of,
         )
-        compute_metrics = None
     else:
         data_collator = DataCollatorWithPadding(
             tokenizer=tokenizer,
@@ -1397,13 +1392,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             pad_to_multiple_of=pad_to_multiple_of,
             max_length=args.max_length,
         )
-        compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
-
     print_data_collator(data_collator)
     print(BR)
+
+    # Running compute metrics during training loop is egregiously expensive for the LM
+    # tasks because they each token has a probability distribution over the entire vocab, i.e.,
+    # we need to collect M x T x V floating point values...
+    if args.task in (Task.DET, Task.FAM, Task.BEH):
+        compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
+    else:
+        compute_metrics = None
     print(f"{compute_metrics=}")
     print(BR)
 
+    # We need to add some special callbacks if we're implementing new evaluation frequencies.
     callbacks = []
     if training_arguments.save_strategy == IntervalStrategy.STEPS or training_arguments.eval_strategy == IntervalStrategy.STEPS:  # pylint: disable=consider-using-in
         callbacks.append(RobustEpochCallback())
@@ -1411,7 +1413,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         callbacks.append(EarlyStoppingCallback(args.early_stopping_patience, args.early_stopping_threshold))
     print(f"{callbacks=}")
     print(BR)
-
 
     # This lovely bit of logic creates a custom types that inherits from transformers.Trainer
     # based upon several requirements, e.g., the weighted loss function. Note that the Trainer
@@ -1606,60 +1607,24 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 
     if training_arguments.do_eval:
-        if not (training_arguments.do_train and training_arguments.load_best_model_at_end):
-            print("Getting model from disk for evaluation.")
-            if training_arguments.do_train:
-                print("Deleting current model from memory.")
-                model.to("cpu")
-                del model
-                torch.cuda.empty_cache()
-                gc.collect()
-            model = get_model(
-                args.task,
-                oh.best_model_dir,
-                None,
-                num_labels=materials.num_classes,
-                id2label=materials.id2label,
-                label2id=materials.label2id,
-            )
-        print_model(model)
-        print(BR, flush=True)
 
-        if args.task in (Task.DET, Task.FAM, Task.BEH):
-            single_shot_classes = [materials.label2id[l] for l in materials.dist if materials.dist[l] == 3]
-            compute_metrics = partial(clf_compute_metrics, single_shot_classes=single_shot_classes)
-            print("single_shot_classes=")
-            pprint(single_shot_classes)
-
-        trainer = ModelTrainer(
-            model=model,
-            args=training_arguments,
-            data_collator=data_collator,
-            tokenizer=tokenizer,
-            callbacks=callbacks,
-            compute_metrics=compute_metrics,
-        )
-
-        oh.test_results_dir.mkdir(exist_ok=True, parents=False)
-        print("Evaluating...")
-        output: PredictionOutput = trainer.predict(dataset["ts"])
-
-        results = output.metrics
-        with open(oh.test_results_file, "w") as fp:
-            json.dump(results, fp, indent=4)
+        # Clean up any residual references to model and optimizer from training.
+        if training_arguments.do_train:
+            model = model.to("cpu")
+            model = None
+            try:
+                optimizer_to_(trainer.optimizer, "cpu")
+                trainer.optimizer = None
+                trainer = None
+            except AttributeError:
+                pass
+            clear_cuda_caches()
 
 
-    if args.do_attribute:
-        # Updates the output helper in case the batch size was decremented.
-        oh = oh.infer_path_and_mutate(batch_size=True, dtypes=True)
-        if not oh.best_model_dir.exists():  # DELTE
-            print(oh.path)
-            print(oh.best_model_dir)
-            raise FileNotFoundError()
+        training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
+        include_for_metrics = ["inputs"]
 
-        attribution_chunk_size = 256
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+        # Get a fresh model from disk. Here we pass the config although I've forgotten why.
         model = get_model(
             args.task,
             oh.best_model_dir,
@@ -1667,45 +1632,32 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             num_labels=materials.num_classes,
             id2label=materials.id2label,
             label2id=materials.label2id,
-        ).to("cpu").to(torch.float32).to(device)
+        )
+        print_model(model)
+        print(BR, flush=True)
 
-        alg = KernelShap(lambda x: F.softmax(model.forward(x).logits, dim=1))
+        if args.task == Task.CLM:
+            compute_metrics = partial(compute_metrics_clm)
+        elif args.task == Task.MLM:
+            compute_metrics = partial(compute_metrics_mlm, mask_token_id=tokenizer.mask_token_id)
+        else:
+            compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
+        print(f"{compute_metrics=}")
+        print(BR)
 
-        @find_executable_batch_size(starting_batch_size=1)  # Kernel SHAP recommends a batch size of 1.
-        def _attribute(batch_size: int) -> list[Tensor]:
-            nonlocal training_arguments  # access variables outside of this function.
-            training_arguments = replace(training_arguments, per_device_eval_batch_size=batch_size)
-            print(f"Attributing with {batch_size=}...", flush=True)
-            trainer = ModelTrainer(
-                model=model,
-                args=training_arguments,
-                train_dataset=dataset["tr"],
-                eval_dataset=dataset["vl"],
-                data_collator=data_collator,
-                tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
-                callbacks=callbacks,
-                compute_metrics=compute_metrics,
-            )
-
-            dataloader = trainer.get_eval_dataloader(dataset["vl"])
-            attributions = []
-            for i, inputs in enumerate(tqdm(dataloader)):
-                if i == 1024:
-                    break
-                inputs: transformers.tokenization_utils_base.BatchEncoding
-                input_ids: Tensor = inputs["input_ids"].to(model.device)
-                labels: Tensor = inputs["labels"].to(model.device)
-                feature_mask = chunk_mask(input_ids.size(1), attribution_chunk_size).to(device)
-                attr = alg.attribute(input_ids, baselines=tokenizer.pad_token_id, target=labels, feature_mask=feature_mask)
-                idx = torch.arange(0, input_ids.size(1), attribution_chunk_size)
-                attr = attr[:, idx].to("cpu")
-                attributions.append(attr)
-
-            return attributions
-
-        attributions: list[Tensor] = _attribute()  # pylint: disable=no-value-for-parameter
-        with open(oh.attribution_results_file, "wb") as fp:
-            torch.save(attributions, fp)
+        split = "vl" if is_dataset_empty(dataset.get("ts")) else "ts"
+        print(f"Evaluating {split}...")
+        output: PredictionOutput = ModelTrainer(
+            model=model,
+            args=training_arguments,
+            data_collator=data_collator,
+            tokenizer=tokenizer,
+            callbacks=callbacks,
+            compute_metrics=compute_metrics,
+        ).predict(dataset[split])
+        oh.test_results_dir.mkdir(exist_ok=True, parents=False)
+        with open(oh.test_results_file, "w") as fp:
+            json.dump(output.metrics, fp, indent=4)
 
 
     if args.do_tune:
