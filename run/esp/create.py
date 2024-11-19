@@ -529,6 +529,7 @@ class Configuration:
                 d |= {"num_hidden_layers": 16, "hidden_size": 512}
 
         elif self.model_name == ModelName.HRR:
+            d["position_embedding_type"] = "rotary"
             if self.model_size == ModelSize.TN:
                 d |= {"num_hidden_layers": 1, "hidden_size":  64}
             if self.model_size == ModelSize.SM:
