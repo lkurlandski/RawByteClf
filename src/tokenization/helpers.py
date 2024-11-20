@@ -3,6 +3,7 @@ Helpers for the module.
 """
 
 from __future__ import annotations
+import json
 import os
 from pathlib import Path
 import shutil
@@ -47,6 +48,10 @@ class TokenizerIOHelper:
     def outfile(self) -> Path:
         return self.path / "tokenizer.json"
 
+    @property
+    def unigrams(self) -> Path:
+        return self.path / "unigrams.json"
+
     def save(self, tokenizer: Tokenizer) -> None:
 
         shutil.rmtree(self.path, ignore_errors=True)
@@ -79,6 +84,14 @@ class TokenizerIOHelper:
             raise ValueError(f"{self.lift_level=}")
 
         return tokenizer
+
+    def save_unigrams(self, unigrams: dict[str, float]) -> None:
+        with open(self.unigrams, "w") as fp:
+            json.dump(unigrams, fp)
+
+    def load_unigrams(self) -> dict[str, float]:
+        with open(self.unigrams, "r") as fp:
+            return json.load(fp)
 
     @classmethod
     def fromdisk(
