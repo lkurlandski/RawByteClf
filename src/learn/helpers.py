@@ -116,6 +116,7 @@ class Args:
     sync_batch_size: bool = field(default=False)
     dataset_backend: str  = field(default="PT")
     auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
+    do_compute_unigram_probabilities = field(default=False)
 
     # Architecture
     model_name_or_path: str          = field(default="mamba")
@@ -181,6 +182,7 @@ class Args:
         self.sync_batch_size = str_to_bool(self.sync_batch_size)
         self.skip_eval_check = str_to_bool(self.skip_eval_check)
         self.auto_find_batch_size_and_gradient_accumulation_steps = str_to_bool(self.auto_find_batch_size_and_gradient_accumulation_steps)
+        self.do_compute_unigram_probabilities = str_to_bool(self.do_compute_unigram_probabilities)
 
         self.pretraining_task       = str_to_type(self.pretraining_task, Task)
         self.pretraining_checkpoint = int(self.pretraining_checkpoint) if self.pretraining_checkpoint.strip().lstrip("-").isdigit() else self.pretraining_checkpoint
