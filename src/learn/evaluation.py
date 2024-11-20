@@ -241,39 +241,54 @@ class LMComputeMetrics(ComputeMetrics):
 
     include_for_metrics = ["losses"]
 
-    def __init__(self, unigrams: Optional[np.ndarray] = None, raise_if_loss_not_present: bool = True) -> None:
+    def __init__(self,
+        unigrams: Optional[np.ndarray] = None,
+        raise_if_loss_not_present: bool = True,
+        basic_metrics: bool = True,
+    ) -> None:
         super().__init__()
         self.unigrams = unigrams
         self.raise_if_loss_not_present = raise_if_loss_not_present
+        self.basic_metrics = basic_metrics
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
 
-        y_true, y_pred = LMComputeMetrics.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
         support = eval_pred.label_ids[eval_pred.label_ids != -100].size
 
+        # Perplexity
         if getattr(eval_pred, "losses", None) is None:
             if self.raise_if_loss_not_present:
-                raise ValueError("Expected loss to be present.")
+                raise ValueError("Expected losses to be present.")
             ppl = compute_perplexity(eval_pred.predictions, eval_pred.label_ids)
         else:
             if eval_pred.losses.ndim != 0:
                 raise ValueError(f"Expected scalar loss. Got {eval_pred.losses.shape}.")
             ppl = np.exp(eval_pred.losses)
+        report = {"ppl": ppl}
 
-        report = {
-            "ppl": ppl,
-            "accuracy": metrics.accuracy_score(y_true, y_pred),
-            "f1-macro": metrics.f1_score(y_true, y_pred, average="macro"),
-        }
+        # Normalized Perplexity
         if self.unigrams is not None:
             labels = eval_pred.label_ids[eval_pred.label_ids != -100]
-            scale = np.mean(np.log(self.unigrams[labels]))
+            word_probs = self.unigrams[labels]
+            if np.any(word_probs > 1) or np.any(word_probs < 0):
+                raise ValueError(f"Expected probabilities in [0, 1]. Got {word_probs}.")
+            scale = np.mean(np.log(word_probs))
             report["nppl"] = report["ppl"] - scale
+
+        # Basic metrics
+        if self.basic_metrics:
+            y_true, y_pred = LMComputeMetrics.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
+            report |= {
+                "accuracy": metrics.accuracy_score(y_true, y_pred),
+                "f1-macro": metrics.f1_score(y_true, y_pred, average="macro"),
+            }
 
         return self.update_and_return(report, support, compute_result)
 
     @staticmethod
     def get_y_true_y_pred(predictions: np.ndarray, label_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        # TODO: this is a bit of an abomination of torch and numpy and should probably get cleaned up.
+        # There are also some issues with tensors on the GPU when integrated into the real training loop.
 
         assert predictions.ndim == 3, f"Got shape={tuple(predictions.shape)}. Expected (B, T, V)."
         assert label_ids.ndim == 2, f"Got shape={tuple(label_ids.shape)}. Expected (B, T)."
