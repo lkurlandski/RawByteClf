@@ -264,10 +264,13 @@ class LMComputeMetrics(ComputeMetrics):
         self.basic_metrics = basic_metrics
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
-        if isinstance(eval_pred.label_ids, Tensor):
+        if isinstance(eval_pred.label_ids, Tensor) and isinstance(self.unigrams, np.ndarray):
             self.unigrams = torch.from_numpy(self.unigrams).to(eval_pred.label_ids.device)
+        elif isinstance(eval_pred.label_ids, np.ndarray) and isinstance(self.unigrams, Tensor):
+            self.unigrams = self.unigrams.numpy(force=True)
 
-        support = eval_pred.label_ids[eval_pred.label_ids != -100].size
+        labels = eval_pred.label_ids[eval_pred.label_ids != -100]
+        support = labels.size if isinstance(labels, np.ndarray) else labels.numel()
 
         # Perplexity
         if getattr(eval_pred, "losses", None) is None:
@@ -282,7 +285,6 @@ class LMComputeMetrics(ComputeMetrics):
 
         # Normalized Perplexity
         if self.unigrams is not None:
-            labels = eval_pred.label_ids[eval_pred.label_ids != -100]
             word_probs = self.unigrams[labels]
             if bool((word_probs > 1).any()) or bool((word_probs < 0).any()):
                 raise ValueError(f"Expected probabilities in [0, 1]. Got {word_probs}.")
