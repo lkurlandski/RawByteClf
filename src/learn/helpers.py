@@ -116,7 +116,7 @@ class Args:
     sync_batch_size: bool = field(default=False)
     dataset_backend: str  = field(default="PT")
     auto_find_batch_size_and_gradient_accumulation_steps: bool = field(default=False)
-    do_compute_unigram_probabilities = field(default=False)
+    do_compute_unigram_probabilities: bool = field(default=False)
 
     # Architecture
     model_name_or_path: str          = field(default="mamba")
