@@ -176,7 +176,13 @@ from src.data.loaders_hf import get_dataset_hf, print_dataset_hf, is_dataset_emp
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
 from src.learn.class_weighting import sample_reweighting
 from src.learn.helpers import Args, OutputHelper
-from src.learn.evaluation import clf_compute_metrics, mlm_compute_metrics, clm_compute_metrics
+from src.learn.evaluation import (
+    CLMComputeMetrics,
+    MLMComputeMetrics,
+    CLFComputeMetricsBinary,
+    CLFComputeMetricsSingleLabel,
+    CLFComputeMetricsMultiLabel,
+)
 from src.learn.preprocessing import (
     hf_bytes_to_input_ids,
     hf_tokenize_bytes,
@@ -202,7 +208,7 @@ from src.learn.utils import (
     optimizer_to_,
     clear_cuda_caches,
 )
-from src.tokenization.api import get_fast_tokenizer
+from src.tokenization.api import get_fast_tokenizer, load_unigrams, save_unigrams
 
 
 random.seed(0)
@@ -1201,6 +1207,24 @@ def get_processed_dataset_pt(
     return dataset
 
 
+def compute_unigram_probabilities(dataset: Dataset | IterableDataset, tokenizer: PreTrainedTokenizerFast) -> dict[str, float]:
+    counts = {i: 0 for i in range(0, len(tokenizer))}
+    total = 0
+    for data in tqdm(dataset.iter(1024), desc="Computing unigram probabilities..."):
+        ids = np.concatenate(data["input_ids"])
+        val, cnt = np.unique(ids, return_counts=True)
+        for v, c in zip(val, cnt):
+            counts[int(v)] += c
+        total += int(np.sum(cnt))
+
+    # Remove the special tokens from the counts and remove them from the total.
+    for i in tokenizer.all_special_ids:
+        total -= counts.pop(i)
+
+    probs = {i: v / total for i, v in counts.items()}
+    return {tokenizer.convert_ids_to_tokens(i): p for i, p in probs.items()}
+
+
 def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     random.seed(training_arguments.seed)
@@ -1249,8 +1273,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"Output Path: {oh.path}")
     print(BR)
 
-    prediction_loss_only = args.task in (Task.CLM, Task.MLM)
-    training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
+    # The logits for the CLM/MLM tasks have shape N x T x V, so we need to either
+    # skip the evaluate entirely, or metrics need to computed every batch.
+    if args.task in (Task.CLM, Task.MLM):
+        # training_arguments = replace(training_arguments, prediction_loss_only=True)
+        if not (training_arguments.prediction_loss_only or training_arguments.batch_eval_metrics):
+            warnings.warn(
+                "Cannot have `prediction_loss_only` and `batch_eval_metrics` both set to False for CLM/MLM task. "
+                "Setting `batch_eval_metrics` to True to avoid CUDA OOM errors."
+            )
+            training_arguments = replace(training_arguments, batch_eval_metrics=True)
 
     tokenizer = get_fast_tokenizer(
         lift_level=args.lift_level,
@@ -1274,10 +1306,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print_tokenizer(tokenizer)
     print(BR, flush=True)
 
-    # min_freq            = int(os.environ.get("min_freq", "50"))             # FIXME: remove
-    # max_imbalance_ratio = int(os.environ.get("max_imbalance_ratio", "50"))  # FIXME: remove
-    # print(f"{min_freq=}")                                                   # FIXME: remove
-    # print(f"{max_imbalance_ratio=}")                                        # FIXME: remove
 
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
     if args.task == Task.CLM:
@@ -1291,12 +1319,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif args.task == Task.BEH:
         materials = get_materials_esp_beh(args.lift_level)
 
+
     # FIXME: remove
     if os.environ.get("DEBUG", "0") == "1":
         _tr_size = min(int(os.environ.get("TR_SIZE", 4096)), len(materials.files["tr"]))
         _vl_size = min(int(os.environ.get("VL_SIZE", 4096)), len(materials.files["vl"]))
-        # tr_idx = np.random.choice(len(materials.files["tr"]), size=_tr_size, len(materials.files["tr"])), replace=False)
-        # vl_idx = np.random.choice(len(materials.files["vl"]), size=_vl_size, len(materials.files["vl"])), replace=False)
         tr_idx = np.argsort([af.name for af in materials.files["tr"]])[0:_tr_size]
         vl_idx = np.argsort([af.name for af in materials.files["vl"]])[0:_vl_size]
         materials.files["tr"] = [materials.files["tr"][i] for i in tr_idx]
@@ -1332,13 +1359,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_dataset_pt(dataset)
         print(BR)
 
-    # FIXME: remove
-    # lengths = []
-    # for d in dataset.values():
-    #     lengths.extend([len(x["input_ids"]) for x in d])
-    # print(np.min(lengths), np.max(lengths), np.mean(lengths), np.median(lengths), np.std(lengths))
-    # sys.exit(0)
-
     # TODO: should we add masks after mapping or before?
     # if MODEL_NAME in REQ_ATTENTION_MASK:
     #     tokenizer.model_input_names.append("attention_mask")
@@ -1348,6 +1368,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.exit_after_map:
         print("Exiting after map.")
         sys.exit(0)
+
+    if args.do_compute_unigram_probabilities:
+        print("Computing unigram probabilities.")
+        unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer)
+        print(f"Unigrams:\n{pformat(unigrams)}")
+        save_unigrams(unigrams, args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
+        sys.exit(0)
+
 
     config = get_config(
         args.model_name_or_path,
@@ -1366,6 +1394,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if isinstance(config, transformers.ReformerConfig):
         pad_to_multiple_of = _get_least_common_mult_chunk_len(config)
 
+    # TODO: should we add masks after mapping or before?
     # Change the tokenizer's attributes for the data_collator to use correctly.
     # This let's us use the previously generated cache files then drop the
     # attention_mask before passing the inputs to the model.
@@ -1395,13 +1424,30 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print_data_collator(data_collator)
     print(BR)
 
-    # Running compute metrics during training loop is egregiously expensive for the LM
-    # tasks because they each token has a probability distribution over the entire vocab, i.e.,
-    # we need to collect M x T x V floating point values...
-    if args.task in (Task.DET, Task.FAM, Task.BEH):
-        compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
-    else:
-        compute_metrics = None
+    unigrams = None
+    if args.task in (Task.CLM, Task.MLM):
+        # Need an array that matches the orientation of the output layer for MLM tasks.
+        # NOTE: This sets the unigram probabilities of the special tokens to NaN.
+        unigrams = load_unigrams(args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
+        unigrams = {tokenizer.convert_tokens_to_ids(k): v for k, v in unigrams.items()}
+        unigrams = np.array([unigrams.get(i, float("nan")) for i in range(len(tokenizer))], dtype=np.float32)
+
+    # TODO: maybe we should just be doing the really fast perplexity normalization during training?
+    # Then we wouldn't need the logits during evaluation at all and could theoretically compute
+    # the evaluation on the entire eval dataset at once instead of in batches.
+    if args.task == Task.DET:
+        compute_metrics = CLFComputeMetricsBinary()
+    if args.task == Task.FAM:
+        compute_metrics = CLFComputeMetricsSingleLabel()
+    if args.task == Task.BEH:
+        compute_metrics = CLFComputeMetricsMultiLabel()
+    if args.task == Task.CLM:
+        compute_metrics = CLMComputeMetrics(unigrams, True, False)
+    if args.task == Task.MLM:
+        compute_metrics = MLMComputeMetrics(unigrams, True, False)
+
+    training_arguments = replace(training_arguments, include_for_metrics=compute_metrics.include_for_metrics)
+
     print(f"{compute_metrics=}")
     print(BR)
 
@@ -1468,7 +1514,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
         # This will also reduce the eval_batch size in the training_arguments variable.
         @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
-        def _eval(batch_size: int) -> tuple[PredictionOutput, int]:
+        def _eval(batch_size: int) -> tuple[dict[str, float], int]:
             nonlocal training_arguments  # access variables outside of this function.
             training_arguments = replace(training_arguments, per_device_eval_batch_size=batch_size)
             print(f"Evaluating with {batch_size=}...", flush=True)
@@ -1482,14 +1528,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
             )
-            return trainer.predict(dataset["vl"]), batch_size
+            return trainer.evaluate(dataset["vl"]), batch_size
 
-        initial_output: PredictionOutput = None
+        initial_metrics: dict[str, float]  = {}
         max_per_device_eval_batch_size: int = None
         if not args.skip_eval_check:
             print("Initial Evaluation...", flush=True)
+
             if args.auto_find_batch_size_and_gradient_accumulation_steps:
-                initial_output, max_per_device_eval_batch_size = _eval()  # pylint: disable=no-value-for-parameter
+                initial_metrics, max_per_device_eval_batch_size = _eval()  # pylint: disable=no-value-for-parameter
             else:
                 trainer = ModelTrainer(
                     model=model,
@@ -1501,11 +1548,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     callbacks=callbacks,
                     compute_metrics=compute_metrics,
                 )
-                initial_output, max_per_device_eval_batch_size = trainer.predict(dataset["vl"]), training_arguments.per_device_eval_batch_size
+                initial_metrics = trainer.evaluate(dataset["vl"])
+                max_per_device_eval_batch_size = training_arguments.per_device_eval_batch_size
+
             model = model.to(torch.float32).to("cpu")
-            torch.cuda.empty_cache()
-            gc.collect()
-            print(f"{initial_output.metrics=}", flush=True)
+            clear_cuda_caches()
 
             if args.sync_batch_size:
                 # Set the train batch size to the same size as the eval one and adjust gradient accumulation to keep same logical batch size.
@@ -1515,6 +1562,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     // max_per_device_eval_batch_size)
                 )
                 training_arguments = replace(training_arguments, per_device_train_batch_size=max_per_device_eval_batch_size)
+
+            print(f"{initial_metrics=}", flush=True)
 
 
         @find_executable_batch_size_and_gradient_accumulation_steps(
@@ -1536,9 +1585,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             # of using this code, this never really seemed to happen, so I think we can just ignore it.
             # Anyway, considering the GPU fragmentation issues that randomly arise if we let
             # the train and validation batch sizes differ, I don't think its all that relevant.
-            per_device_eval_batch_size = batch_size
-            if max_per_device_eval_batch_size is not None and not args.sync_batch_size:
-                per_device_eval_batch_size = max_per_device_eval_batch_size
+            per_device_eval_batch_size = max_per_device_eval_batch_size
+            if args.sync_batch_size or max_per_device_eval_batch_size is None:
+                per_device_eval_batch_size = batch_size
 
             training_arguments = replace(
                 training_arguments,
@@ -1599,9 +1648,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             trainer_output: TrainOutput = trainer.train(training_arguments.resume_from_checkpoint)
 
-        if not args.skip_eval_check:
-            with open(oh.initial_validation_results_file, "w") as fp:
-                json.dump(initial_output.metrics, fp, indent=4)
+        # In case the output path has chnaged, we wait until the very end to save outputs.
+        with open(oh.initial_validation_results_file, "w") as fp:
+            json.dump(initial_metrics, fp, indent=4)
         with open(oh.trainer_output_file, "w") as fp:
             json.dump(trainer_output.metrics, fp, indent=4)
 
@@ -1620,10 +1669,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 pass
             clear_cuda_caches()
 
-
-        training_arguments = replace(training_arguments, prediction_loss_only=prediction_loss_only)
-        include_for_metrics = ["inputs"]
-
         # Get a fresh model from disk. Here we pass the config although I've forgotten why.
         model = get_model(
             args.task,
@@ -1636,14 +1681,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_model(model)
         print(BR, flush=True)
 
-        if args.task == Task.CLM:
-            compute_metrics = partial(compute_metrics_clm)
-        elif args.task == Task.MLM:
-            compute_metrics = partial(compute_metrics_mlm, mask_token_id=tokenizer.mask_token_id)
-        else:
-            compute_metrics = partial(clf_compute_metrics, problem_type=materials.problem_type)
-        print(f"{compute_metrics=}")
-        print(BR)
+        # Update the compute_metrics ComputeMetrics's settings (optional)
+        # compute_metrics.update({})
 
         split = "vl" if is_dataset_empty(dataset.get("ts")) else "ts"
         print(f"Evaluating {split}...")
