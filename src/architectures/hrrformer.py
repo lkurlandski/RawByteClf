@@ -886,6 +886,6 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
-            hidden_states=None,
-            attentions=None,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
