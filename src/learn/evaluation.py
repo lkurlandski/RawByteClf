@@ -94,7 +94,7 @@ class ComputeMetrics(ABC):
         for k in self.results[0].keys():
             a = np.array([d[k] for d in self.results])
             if a.ndim > 1:
-                raise ValueError(f"Expected 1D array. Got {a.dim()=}.")
+                raise ValueError(f"Expected 1D array. Got {a.ndim=}.")
             m = np.isnan(a) | np.isinf(a)
             if len(a) == 0 or np.all(m):
                 v = np.nan
