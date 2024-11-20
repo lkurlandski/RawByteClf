@@ -3,9 +3,10 @@ Evaluation of models.
 """
 
 from abc import ABC, abstractmethod
+import math
 import sys
 import time
-from typing import Literal
+from typing import Literal, Optional
 
 import numpy as np
 from sklearn import metrics
@@ -23,6 +24,13 @@ def compute_roc_auc(labels: np.ndarray, probabilities: np.ndarray, multi_class: 
         if "Only one class present in y_true." in str(err):
             return np.nan
         raise err
+
+
+def compute_softmax(z: np.ndarray, axis: int) -> np.ndarray:
+    # torch is about twice as fast as numpy.
+    if z.size < 100_000:
+        return softmax(z, axis=axis)
+    return torch.nn.functional.softmax(torch.from_numpy(z), dim=axis).numpy()
 
 
 def compute_perplexity(logits: np.ndarray, labels: np.ndarray) -> float:
@@ -46,37 +54,14 @@ def compute_perplexity(logits: np.ndarray, labels: np.ndarray) -> float:
     logits = logits[mask]
     labels = labels[mask]
 
-    probs = softmax(logits, axis=1)
-    loss  = log_loss(labels, probs, labels=np.array(list(range(vocab_size))), normalize=True)
-    ppl   = np.exp(loss)
+    probs = compute_softmax(logits, axis=1)
 
-    return float(ppl)
+    x = probs[np.arange(probs.shape[0]), labels]
+    x = np.log(x)
+    x = -np.mean(x)
+    x = np.exp(x)
 
-
-def compute_pseudo_perplexity(logits: np.ndarray, labels: np.ndarray, inputs: np.ndarray, mask_token_id: int) -> float:
-    """
-    This is basically perplexity, except only for the tokens that were masked.
-    The context is already factored in since the logits were computed under this context.
-    """
-
-    assert logits.ndim == 3, "Logits must have shape (B, T, V)."
-    assert labels.ndim == 2, "Labels must have shape (B, T)."
-
-    V = logits.shape[2]
-
-    logits = logits.reshape(-1, V)  # (B * T, V)
-    labels = labels.reshape(-1)     # (B * T,)
-    inputs = inputs.reshape(-1)     # (B * T,)
-
-    mask   = (labels != -100) & (inputs == mask_token_id)
-    logits = logits[mask]
-    labels = labels[mask]
-
-    probs = softmax(logits, axis=1)
-    loss  = log_loss(labels, probs, labels=np.array(list(range(vocab_size))), normalize=True)
-    ppl   = np.exp(loss)
-
-    return float(ppl)
+    return float(x)
 
 
 class ComputeMetrics(ABC):
@@ -108,9 +93,14 @@ class ComputeMetrics(ABC):
         w = np.array(self.weights)
         for k in self.results[0].keys():
             a = np.array([d[k] for d in self.results])
+            if a.ndim > 1:
+                raise ValueError(f"Expected 1D array. Got {a.dim()=}.")
             m = np.isnan(a) | np.isinf(a)
-            v = float(np.average(a[~m], weights=w[~m]))
-            r[k] = v
+            if len(a) == 0 or np.all(m):
+                v = np.nan
+            else:
+                v = np.average(a[~m], weights=w[~m])
+            r[k] = float(v)
 
         return r
 
@@ -123,40 +113,76 @@ class ComputeMetrics(ABC):
         return result
 
 
-class CLFSingleLabelCompute(ComputeMetrics):
+class CLFComputeMetrics(ComputeMetrics):
     """
     Compute classification metrics.
     """
 
-    def __init__(self, threshold: float = 0.5, pos_label: int = 1) -> None:
-        self.threshold = threshold
+    def __init__(self, pos_label: int = 1, threshold: float = 0.5) -> None:
         self.pos_label = pos_label
+        self.threshold = threshold
         super().__init__()
 
-    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[str, float]:
-        report  = {}
-        support = eval_pred.label_ids.shape[0]
 
-        labels        = eval_pred.label_ids               # (N,)
-        probabilities = eval_pred.predictions             # (N, C) 
+class CLFComputeMetricsBinary(CLFComputeMetrics):
+    """
+    Compute binary classification metrics.
+    """
+
+    averages    = ["binary"]
+    multi_class = "raise"
+
+    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[str, float]:
+
+        labels  = eval_pred.label_ids  # (N,)
+        support = labels.shape[0]
+        if type_of_target(labels) != "binary":
+            raise TypeError(f"Expected binary labels. Got {type_of_target(labels)}.")
+
+        probabilities = eval_pred.predictions             # (N, 2)
+        probabilities = softmax(probabilities, axis=1)    # (N, 2)
+        predictions   = np.argmax(probabilities, axis=1)  # (N,)
+        probabilities = probabilities[:, 1]               # (N,)
+
+        precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average="binary", pos_label=self.pos_label)
+        report = {
+            "accuracy": metrics.accuracy_score(labels, predictions),
+            "hamming_loss": metrics.hamming_loss(labels, predictions),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "roc-auc": compute_roc_auc(labels, probabilities, self.multi_class, None),
+        }
+
+        return self.update_and_return(report, support, compute_result)
+
+
+class CLFComputeMetricsSingleLabel(CLFComputeMetrics):
+    """
+    Compute multiclass classification metrics.
+    """
+
+    averages = ["macro", "weighted", "micro"]
+    multi_class = "ovr"
+
+    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[str, float]:
+
+        labels  = eval_pred.label_ids  # (N,)
+        support = labels.shape[0]
+        if type_of_target(labels) != "multiclass":
+            raise TypeError(f"Expected binary labels. Got {type_of_target(labels)}.")
+
+        probabilities = eval_pred.predictions             # (N, C)
         probabilities = softmax(probabilities, axis=1)    # (N, C) | (N,)
         predictions   = np.argmax(probabilities, axis=1)  # (N,)
- 
-        if type_of_target(labels) == "binary":
-            probabilities = probabilities[:, 1]
-            averages = [None]
-            multi_class = "raise"
-        else:
-            averages = ["macro", "weighted", "micro"]
-            multi_class = "ovr"
 
-        report["accuracy"]     = metrics.accuracy_score(labels, predictions)
-        report["hamming_loss"] = metrics.hamming_loss(labels, predictions)
-
-        for average in averages:
-            _average = "binary" if average is None else average
-            precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=_average, pos_label=self.pos_label)
-            roc_auc = compute_roc_auc(labels, probabilities, multi_class, average)
+        report = {
+            "accuracy": metrics.accuracy_score(labels, predictions),
+            "hamming_loss": metrics.hamming_loss(labels, predictions),
+        }
+        for average in self.averages:
+            precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average, pos_label=self.pos_label)
+            roc_auc = compute_roc_auc(labels, probabilities, self.multi_class, average)
             report |= {
                 f"precision-{average}": precision,
                 f"recall-{average}": recall,
@@ -167,34 +193,31 @@ class CLFSingleLabelCompute(ComputeMetrics):
         return self.update_and_return(report, support, compute_result)
 
 
-class CLFComputeMetricsMultiLabel(ComputeMetrics):
+class CLFComputeMetricsMultiLabel(CLFComputeMetrics):
     """
-    Compute classification metrics.
+    Compute multilabel classification metrics.
     """
 
-    def __init__(self, threshold: float = 0.5, pos_label: int = 1) -> None:
-        self.threshold = threshold
-        self.pos_label = pos_label
-        super().__init__()
+    averages = ["macro", "weighted", "micro"]
+    multi_class = "ovr"
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[str, float]:
-        report  = {}
-        support = eval_pred.label_ids.shape[0]
 
-        labels        = eval_pred.label_ids               # (N, C)
-        probabilities = eval_pred.predictions             # (N, C)
-        probabilities = expit(probabilities)              # (N, C)
-        predictions   = probabilities > self.threshold    # (N, C)
+        labels  = eval_pred.label_ids  # (N, C)
+        support = labels.shape[0]
+        if type_of_target(labels) != "multilabel-indicator":
+            raise TypeError(f"Expected binary labels. Got {type_of_target(labels)}.")
+        probabilities = expit(eval_pred.predictions)                           # (N, C)
+        predictions   = (probabilities > self.threshold).astype(labels.dtype)  # (N, C)
 
-        averages = ["macro", "weighted", "micro", "samples"]
-        multi_class = "ovr"
+        report = {
+            "accuracy": metrics.accuracy_score(labels, predictions),
+            "hamming_loss": metrics.hamming_loss(labels, predictions),
+        }
 
-        report["accuracy"]     = metrics.accuracy_score(labels, predictions)
-        report["hamming_loss"] = metrics.hamming_loss(labels, predictions)
-
-        for average in averages:
+        for average in self.averages:
             precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average, pos_label=self.pos_label)
-            roc_auc = compute_roc_auc(labels, probabilities, multi_class, average)
+            roc_auc = compute_roc_auc(labels, probabilities, self.multi_class, average)
             avg_precision = metrics.average_precision_score(labels, probabilities, average=average, pos_label=self.pos_label)
             report |= {
                 f"precision-{average}": precision,
@@ -211,73 +234,76 @@ class CLFComputeMetricsMultiLabel(ComputeMetrics):
         return self.update_and_return(report, support, compute_result)
 
 
-def get_y_true_y_pred(predictions: np.ndarray, label_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+class LMComputeMetrics(ComputeMetrics):
+    """
+    Compute language modeling metrics.
+    """
 
-    assert predictions.ndim == 3, f"Got shape={tuple(predictions.shape)}. Expected (B, T, V)."
-    assert label_ids.ndim == 3, f"Got shape={tuple(label_ids.shape)}. Expected (B, T, V)."
+    include_for_metrics = ["losses"]
 
-    def get_y_pred(predictions: np.ndarray) -> np.ndarray:
-        predictions = tensor(predictions, dtype=torch.float32)
-        predictions = predictions.view(-1, predictions.shape[2])  # (B * L, M)
-        probas = torch.softmax(predictions, dim=1).numpy()
-        y_pred = np.argmax(probas, axis=1).astype(np.int32)
-        return y_pred
+    def __init__(self, unigrams: Optional[np.ndarray] = None, raise_if_loss_not_present: bool = True) -> None:
+        super().__init__()
+        self.unigrams = unigrams
+        self.raise_if_loss_not_present = raise_if_loss_not_present
 
-    def get_y_true(label_ids: np.ndarray) -> np.ndarray:
-        y_true = tensor(label_ids, dtype=torch.float32).view(-1)  # (B * L,)
-        return y_true.numpy().astype(np.int32)
+    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
 
-    y_pred = get_y_pred(predictions)
-    y_true = get_y_true(label_ids)
-    mask = y_true == -100
-    y_pred = y_pred[~mask]
-    y_true = y_true[~mask]
-    return y_true, y_pred
+        y_true, y_pred = LMComputeMetrics.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
+        support = eval_pred.label_ids[eval_pred.label_ids != -100].size
+
+        if getattr(eval_pred, "losses", None) is None:
+            if self.raise_if_loss_not_present:
+                raise ValueError("Expected loss to be present.")
+            ppl = compute_perplexity(eval_pred.predictions, eval_pred.label_ids)
+        else:
+            if eval_pred.losses.ndim != 0:
+                raise ValueError(f"Expected scalar loss. Got {eval_pred.losses.shape}.")
+            ppl = np.exp(eval_pred.losses)
+
+        report = {
+            "ppl": ppl,
+            "accuracy": metrics.accuracy_score(y_true, y_pred),
+            "f1-macro": metrics.f1_score(y_true, y_pred, average="macro"),
+        }
+        if self.unigrams is not None:
+            labels = eval_pred.label_ids[eval_pred.label_ids != -100]
+            scale = np.mean(np.log(self.unigrams[labels]))
+            report["nppl"] = report["ppl"] - scale
+
+        return self.update_and_return(report, support, compute_result)
+
+    @staticmethod
+    def get_y_true_y_pred(predictions: np.ndarray, label_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+
+        assert predictions.ndim == 3, f"Got shape={tuple(predictions.shape)}. Expected (B, T, V)."
+        assert label_ids.ndim == 2, f"Got shape={tuple(label_ids.shape)}. Expected (B, T)."
+
+        def get_y_pred(predictions: np.ndarray) -> np.ndarray:
+            predictions = tensor(predictions, dtype=torch.float32)
+            predictions = predictions.view(-1, predictions.shape[2])  # (B * L, M)
+            probas = torch.softmax(predictions, dim=1).numpy()
+            y_pred = np.argmax(probas, axis=1).astype(np.int32)
+            return y_pred
+
+        def get_y_true(label_ids: np.ndarray) -> np.ndarray:
+            y_true = tensor(label_ids, dtype=torch.float32).view(-1)  # (B * L,)
+            return y_true.numpy().astype(np.int32)
+
+        y_pred = get_y_pred(predictions)
+        y_true = get_y_true(label_ids)
+        mask = y_true == -100
+        y_pred = y_pred[~mask]
+        y_true = y_true[~mask]
+        return y_true, y_pred
 
 
-class MLMComputeMetrics(ComputeMetrics):
+class MLMComputeMetrics(LMComputeMetrics):
     """
     Compute masked language model metrics.
     """
 
-    include_for_metrics = ["inputs"]
 
-    def __init__(self, mask_token_id: int) -> None:
-        super().__init__()
-
-    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
-        report  = {}
-        support = eval_pred.label_ids.shape[0]
-
-        pseudo_perplexity = compute_pseudo_perplexity(eval_pred.predictions, eval_pred.label_ids, eval_pred.inputs, mask_token_id)
-        y_true, y_pred = get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
-        accuracy = metrics.accuracy_score(y_true, y_pred)
-        f1_macro = metrics.f1_score(y_true, y_pred, average="macro")
-
-        report |= {
-            "pseudo_perplexity": pseudo_perplexity,
-            "accuracy": accuracy,
-            "f1-macro": f1_macro,
-        }
-
-        return self.update_and_return(report, support, compute_result)
-
-
-class CLMComputeMetrics(ComputeMetrics):
-
-    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
-        report  = {}
-        support = eval_pred.label_ids.shape[0]
-
-        perplexity = compute_perplexity(eval_pred.predictions, eval_pred.label_ids)
-        y_true, y_pred = get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
-        accuracy = metrics.accuracy_score(y_true, y_pred)
-        f1_macro = metrics.f1_score(y_true, y_pred, average="macro")
-
-        report |= {
-            "perplexity": perplexity,
-            "accuracy": accuracy,
-            "f1-macro": f1_macro,
-        }
-
-        return self.update_and_return(report, support, compute_result)
+class CLMComputeMetrics(LMComputeMetrics):
+    """
+    Compute causal language model metrics.
+    """
