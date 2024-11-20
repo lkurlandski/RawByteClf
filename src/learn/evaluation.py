@@ -14,7 +14,7 @@ from sklearn.utils.multiclass import type_of_target
 from scipy.special import expit, softmax  # pylint: disable=no-name-in-module
 from transformers import EvalPrediction
 import torch
-from torch import tensor
+from torch import tensor, Tensor
 
 
 def compute_roc_auc(labels: np.ndarray, probabilities: np.ndarray, multi_class: str, average: str) -> float:
@@ -62,6 +62,17 @@ def compute_perplexity(logits: np.ndarray, labels: np.ndarray) -> float:
     x = np.exp(x)
 
     return float(x)
+
+
+def numpify_eval_prediction(eval_pred: EvalPrediction) -> EvalPrediction:
+    d = {}
+    for k in ["predictions", "label_ids", "inputs", "losses"]:
+        if (v := getattr(eval_pred, k, None)) is None:
+            continue
+        if isinstance(v, Tensor):
+            v = v.numpy(force=True)
+        d[k] = v
+    return EvalPrediction(**d)
 
 
 class ComputeMetrics(ABC):
@@ -239,7 +250,8 @@ class LMComputeMetrics(ComputeMetrics):
     Compute language modeling metrics.
     """
 
-    include_for_metrics = ["losses"]
+    # The value here needs to be "loss" while the name in EvalPrediction is "losses".
+    include_for_metrics = ["loss"]
 
     def __init__(self,
         unigrams: Optional[np.ndarray] = None,
@@ -252,6 +264,8 @@ class LMComputeMetrics(ComputeMetrics):
         self.basic_metrics = basic_metrics
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
+        if isinstance(eval_pred.label_ids, Tensor):
+            self.unigrams = torch.from_numpy(self.unigrams).to(eval_pred.label_ids.device)
 
         support = eval_pred.label_ids[eval_pred.label_ids != -100].size
 
@@ -261,18 +275,20 @@ class LMComputeMetrics(ComputeMetrics):
                 raise ValueError("Expected losses to be present.")
             ppl = compute_perplexity(eval_pred.predictions, eval_pred.label_ids)
         else:
-            if eval_pred.losses.ndim != 0:
-                raise ValueError(f"Expected scalar loss. Got {eval_pred.losses.shape}.")
-            ppl = np.exp(eval_pred.losses)
+            loss = eval_pred.losses.mean()
+            loss = loss.detach().cpu().item() if isinstance(loss, Tensor) else float(loss)
+            ppl = math.exp(loss)
         report = {"ppl": ppl}
 
         # Normalized Perplexity
         if self.unigrams is not None:
             labels = eval_pred.label_ids[eval_pred.label_ids != -100]
             word_probs = self.unigrams[labels]
-            if np.any(word_probs > 1) or np.any(word_probs < 0):
+            if bool((word_probs > 1).any()) or bool((word_probs < 0).any()):
                 raise ValueError(f"Expected probabilities in [0, 1]. Got {word_probs}.")
-            scale = np.mean(np.log(word_probs))
+            log_word_probs = np.log(word_probs) if isinstance(word_probs, np.ndarray) else torch.log(word_probs)
+            scale = log_word_probs.mean()
+            scale = scale.detach().cpu().item() if isinstance(scale, Tensor) else float(scale)
             report["nppl"] = report["ppl"] - scale
 
         # Basic metrics
