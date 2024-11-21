@@ -1207,10 +1207,16 @@ def get_processed_dataset_pt(
     return dataset
 
 
-def compute_unigram_probabilities(dataset: Dataset | IterableDataset, tokenizer: PreTrainedTokenizerFast) -> dict[str, float]:
+def compute_unigram_probabilities(
+    dataset: Dataset | IterableDataset,
+    tokenizer: PreTrainedTokenizerFast,
+    num_samples: Optional[int] = None,
+    batch_size: int = 1024,
+) -> dict[str, float]:
     counts = {i: 0 for i in range(0, len(tokenizer))}
     total = 0
-    for data in tqdm(dataset.iter(1024), desc="Computing unigram probabilities..."):
+    num_iterations = None if num_samples is None else num_samples // batch_size + 1
+    for data in tqdm(dataset.iter(batch_size), desc="Computing unigram probabilities...", total=num_iterations):
         ids = np.concatenate(data["input_ids"])
         val, cnt = np.unique(ids, return_counts=True)
         for v, c in zip(val, cnt):
@@ -1371,9 +1377,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.do_compute_unigram_probabilities:
         print("Computing unigram probabilities.")
-        unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer)
+        unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer, len(materials.files["tr"]), 4096)
         print(f"Unigrams:\n{pformat(unigrams)}")
         save_unigrams(unigrams, args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
+        print("Exiting after unigram computation.")
         sys.exit(0)
 
 

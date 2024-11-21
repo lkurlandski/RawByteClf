@@ -87,7 +87,7 @@ class TokenizerIOHelper:
 
     def save_unigrams(self, unigrams: dict[str, float]) -> None:
         with open(self.unigrams, "w") as fp:
-            json.dump(unigrams, fp)
+            json.dump(unigrams, fp, indent=4)
 
     def load_unigrams(self) -> dict[str, float]:
         with open(self.unigrams, "r") as fp:
