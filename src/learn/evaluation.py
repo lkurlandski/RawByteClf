@@ -157,6 +157,7 @@ class CLFComputeMetricsBinary(CLFComputeMetrics):
 
         precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average="binary", pos_label=self.pos_label)
         report = {
+            "balanced_accuracy": metrics.balanced_accuracy_score(labels, predictions),
             "accuracy": metrics.accuracy_score(labels, predictions),
             "hamming_loss": metrics.hamming_loss(labels, predictions),
             "precision": precision,
@@ -188,6 +189,7 @@ class CLFComputeMetricsSingleLabel(CLFComputeMetrics):
         predictions   = np.argmax(probabilities, axis=1)  # (N,)
 
         report = {
+            "balanced_accuracy": metrics.balanced_accuracy_score(labels, predictions),
             "accuracy": metrics.accuracy_score(labels, predictions),
             "hamming_loss": metrics.hamming_loss(labels, predictions),
         }
