@@ -1959,8 +1959,6 @@ def _get_materials_esp_clf(
         with open(cache_file, "rb") as fp:
             return pickle.load(fp)
 
-    # Due to the way the data is distributed temporally, spacially biasing the data
-
     dnm = DatasetName.SOREL
     directory = Path(f"./data/{dnm.value}/{lift_level.value}")
     archives  = sorted(map(Path, rglob(directory, "*.zip", True)))
@@ -1972,29 +1970,44 @@ def _get_materials_esp_clf(
     print(f"{len(files)=}")
     print(f"{len(sha_label_map)=}")
 
-    # Remove samples that hash to the same digest.
-    print("\tRemoving files that are duplicates.")
-    if verbose: print(f"\t\t{len(files)=} -->", end=" ")
+    # Generate a map containing the most popular label for each digest.
+    # When selecting one sample for each digest, we'll ensure it has this label.
+    print("\tComputing the most popular label for each digest.")
     digests_file     = DIGESTS_FILES[dnm][lift_level_ddp]
     sha_digest_map   = get_sha_digest_map(digests_file)
     digest_label_map = defaultdict(Counter)
+    for s, l in sha_label_map.items():
+        d = sha_digest_map[s]
+        digest_label_map[d].update([l])
+    digest_label_map = {d: c.most_common(1)[0][0] for d, c in digest_label_map.items()}
+
+    # Remove samples that hash to the same digest.
+    # Keep a random sample with the most popular label.
+    print("\tRemoving files that are duplicates.")
+    if verbose: print(f"\t\t{len(files)=} -->", end=" ")
     rm = set()
+    digests_added = set()
     for i, f in enumerate(files):
         s = Path(f).stem
         d = sha_digest_map[s]
         l = sha_label_map[s]
-        if d in digest_label_map:
+        if d in digests_added:
             rm.add(i)
-        digest_label_map[d].update([l])
+            continue
+        if l != digest_label_map[d]:
+            rm.add(i)
+            continue
+        digests_added.add(d)
     files = np.delete(files, list(rm))
     if verbose: print(f"{len(files)=}")
 
-    # Re-label the samples with the most popular label from other samples with the same digest.
+    # Re-create the sha_label_map
+    print("\tRe-creating the sha_label_map.")
     sha_label_map = {}
     for f in files:
         s = Path(f).stem
         d = sha_digest_map[s]
-        l = max(digest_label_map[d], key=digest_label_map[d].get)
+        l = digest_label_map[d]
         sha_label_map[s] = l
 
     # Get the dataset materials.
