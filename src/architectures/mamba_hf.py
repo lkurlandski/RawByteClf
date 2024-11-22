@@ -360,6 +360,7 @@ class BiMambaModel(MambaPreTrainedModel):
             BiMambaModel.tie_or_clone_projections(self.layers_forw[i].mixer.in_proj, self.layers_back[i].mixer.in_proj, tie=tie, clone=clone)
             BiMambaModel.tie_or_clone_projections(self.layers_forw[i].mixer.out_proj, self.layers_back[i].mixer.out_proj, tie=tie, clone=clone)
             BiMambaModel.tie_or_clone_projections(self.layers_forw[i].mixer.x_proj, self.layers_back[i].mixer.x_proj, tie=tie, clone=clone)
+            BiMambaModel.tie_or_clone_projections(self.layers_forw[i].mixer.dt_proj, self.layers_back[i].mixer.dt_proj, tie=tie, clone=clone)
 
     def check_shared_weights(self):
         if not self.config.bi_tie_directions:
@@ -372,6 +373,8 @@ class BiMambaModel(MambaPreTrainedModel):
                 raise ValueError(f"Layer {i} out_proj weights are not shared")
             if not self.layers_forw[i].mixer.x_proj.weight.data_ptr() == self.layers_back[i].mixer.x_proj.weight.data_ptr():
                 raise ValueError(f"Layer {i} x_proj weights are not shared")
+            if not self.layers_forw[i].mixer.dt_proj.weight.data_ptr() == self.layers_back[i].mixer.dt_proj.weight.data_ptr():
+                raise ValueError(f"Layer {i} dt_proj weights are not shared")
 
     def prepare_input_for_backward_model(self, input_ids: torch.LongTensor) -> torch.LongTensor:
         """
