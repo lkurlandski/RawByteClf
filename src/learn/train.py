@@ -1360,8 +1360,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
 
         # TODO: remove debugging statements.
-        # if os.environ.get("DEBUG", "0") == "1":
-        #     dataset["vl"] = dataset["vl"].take(64)
+        if os.environ.get("DEBUG", "0") == "1":
+            dataset["vl"] = dataset["vl"].take(64)
 
         print_dataset_hf(dataset)
         print(BR)
@@ -1442,9 +1442,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.task in (Task.CLM, Task.MLM):
         # Need an array that matches the orientation of the output layer for MLM tasks.
         # NOTE: This sets the unigram probabilities of the special tokens to NaN.
-        unigrams = load_unigrams(args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
-        unigrams = {tokenizer.convert_tokens_to_ids(k): v for k, v in unigrams.items()}
-        unigrams = np.array([unigrams.get(i, float("nan")) for i in range(len(tokenizer))], dtype=np.float32)
+        unigrams_map = load_unigrams(args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
+        unigrams_map = {tokenizer.convert_tokens_to_ids(k): v for k, v in unigrams_map.items()}
+        unigrams = []
+        for i in range(len(tokenizer)):
+            if i in unigrams:
+                unigrams.append(unigrams_map[i])
+            elif i in tokenizer.all_special_ids:
+                unigrams.append(float("nan"))
+            else:
+                unigrams.append(0.0)
+        unigrams = np.array(unigrams, dtype=np.float32)
 
     # TODO: maybe we should just be doing the really fast perplexity normalization during training?
     # Then we wouldn't need the logits during evaluation at all and could theoretically compute
@@ -1456,9 +1464,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.task == Task.BEH:
         compute_metrics = CLFComputeMetricsMultiLabel()
     if args.task == Task.CLM:
-        compute_metrics = CLMComputeMetrics(unigrams, True, False)
+        compute_metrics = CLMComputeMetrics(unigrams, True, False, check=True)
     if args.task == Task.MLM:
-        compute_metrics = MLMComputeMetrics(unigrams, True, False)
+        compute_metrics = MLMComputeMetrics(unigrams, True, False, check=True)
 
     training_arguments = replace(training_arguments, include_for_metrics=compute_metrics.include_for_metrics)
 
