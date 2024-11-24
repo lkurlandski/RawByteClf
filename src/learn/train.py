@@ -1326,17 +1326,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         materials = get_materials_esp_beh(args.lift_level)
 
 
-    # FIXME: remove
-    if os.environ.get("DEBUG", "0") == "1":
-        _tr_size = min(int(os.environ.get("TR_SIZE", 4096)), len(materials.files["tr"]))
-        _vl_size = min(int(os.environ.get("VL_SIZE", 4096)), len(materials.files["vl"]))
-        tr_idx = np.argsort([af.name for af in materials.files["tr"]])[0:_tr_size]
-        vl_idx = np.argsort([af.name for af in materials.files["vl"]])[0:_vl_size]
-        materials.files["tr"] = [materials.files["tr"][i] for i in tr_idx]
-        materials.files["vl"] = [materials.files["vl"][i] for i in vl_idx]
-        if materials.labels is not None:
-            materials.labels["tr"] = materials.labels["tr"][tr_idx]
-            materials.labels["vl"] = materials.labels["vl"][vl_idx]
+    # TODO: remove debugging statements.
+    # if os.environ.get("DEBUG", "0") == "1":
+    #     tr_size = min(int(os.environ.get("TR_SIZE", 4096)), len(materials.files["tr"]))
+    #     _vl_size = min(int(os.environ.get("VL_SIZE", 4096)), len(materials.files["vl"]))
+    #     tr_idx = np.argsort([af.name for af in materials.files["tr"]])[0:_tr_size]
+    #     vl_idx = np.argsort([af.name for af in materials.files["vl"]])[0:_vl_size]
+    #     materials.files["tr"] = [materials.files["tr"][i] for i in tr_idx]
+    #     materials.files["vl"] = [materials.files["vl"][i] for i in vl_idx]
+    #     if materials.labels is not None:
+    #         materials.labels["tr"] = materials.labels["tr"][tr_idx]
+    #         materials.labels["vl"] = materials.labels["vl"][vl_idx]
 
 
     print(f"Dataset Materials:\n{materials}")
@@ -1358,12 +1358,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.dataset_backend == "HF":
         num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
         dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
+
+        # TODO: remove debugging statements.
+        # if os.environ.get("DEBUG", "0") == "1":
+        #     dataset["vl"] = dataset["vl"].take(64)
+
         print_dataset_hf(dataset)
         print(BR)
     else:
         dataset = get_processed_dataset_pt(materials, args, None, tokenizer)
         print_dataset_pt(dataset)
         print(BR)
+
 
     # TODO: should we add masks after mapping or before?
     # if MODEL_NAME in REQ_ATTENTION_MASK:
@@ -1412,13 +1418,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.task == Task.CLM:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
-            mlm=True,
+            mlm=False,
             pad_to_multiple_of=pad_to_multiple_of,
         )
     elif args.task == Task.MLM:
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=tokenizer,
-            mlm=False,
+            mlm=True,
+            mlm_probability=0.25,
             pad_to_multiple_of=pad_to_multiple_of,
         )
     else:
