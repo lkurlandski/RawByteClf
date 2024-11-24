@@ -277,16 +277,23 @@ class HRRSelfAttention(nn.Module):
         # log(query_layer, "query_layer")
 
         # Binding and unbinding
-        superpositions = binding(key_layer, value_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
+        # We perform the computations in fp32 aid stability because torch.fft cannot take bf16
+        superpositions = binding(
+            key_layer.to(torch.float32),
+            value_layer.to(torch.float32),
+            dim=-1,
+            norm=self.fft_norm,
+            n=pad_to
+        )[:,:,:,0:D]  # (B, H, T, D)
         if self.is_decoder and attention_mask is not None:
             # Causal masking needs to take place within the superposition.
             # We create T superpositions using interactions from the preceeding tokens.
             # This ensures that the `superposition` and `value_approx` preserves causality.
-            superposition = torch.cumsum(superpositions, dim=-2)                                               # (B, H, T, D)
+            superposition = torch.cumsum(superpositions, dim=-2)                                                   # (B, H, T, D)
         else:
-            superposition = torch.sum(superpositions, dim=-2, keepdims=True)                                   # (B, H, 1, D)
-        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]  # (B, H, T, D)
-        attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True)                  # (B, H, T, 1)
+            superposition = torch.sum(superpositions, dim=-2, keepdims=True)                                       # (B, H, 1, D)
+        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
+        attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True).to(key_layer.dtype)  # (B, H, T, 1)
 
         # log(superpositions, "superpositions")
         # log(superposition, "superposition")
