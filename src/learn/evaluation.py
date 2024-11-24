@@ -247,6 +247,18 @@ class CLFComputeMetricsMultiLabel(CLFComputeMetrics):
         return self.update_and_return(report, support, compute_result)
 
 
+def are_any_nan(x: Tensor | np.ndarray) -> bool:
+    if isinstance(x, Tensor):
+        return bool(torch.isnan(x).any())
+    return bool(np.isnan(x).any())
+
+
+def are_any_inf(x: Tensor | np.ndarray) -> bool:
+    if isinstance(x, Tensor):
+        return bool(torch.isinf(x).any())
+    return bool(np.isinf(x).any())
+
+
 class LMComputeMetrics(ComputeMetrics):
     """
     Compute language modeling metrics.
@@ -259,11 +271,13 @@ class LMComputeMetrics(ComputeMetrics):
         unigrams: Optional[np.ndarray] = None,
         raise_if_loss_not_present: bool = True,
         basic_metrics: bool = True,
+        check: bool = True,
     ) -> None:
         super().__init__()
         self.unigrams = unigrams
         self.raise_if_loss_not_present = raise_if_loss_not_present
         self.basic_metrics = basic_metrics
+        self.check = check
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
         if isinstance(eval_pred.label_ids, Tensor) and isinstance(self.unigrams, np.ndarray):
@@ -288,10 +302,24 @@ class LMComputeMetrics(ComputeMetrics):
         # Normalized Perplexity
         if self.unigrams is not None:
             word_probs = self.unigrams[labels]
-            if bool((word_probs > 1).any()) or bool((word_probs < 0).any()):
-                raise ValueError(f"Expected probabilities in [0, 1]. Got {word_probs}.")
-            log_word_probs = np.log(word_probs) if isinstance(word_probs, np.ndarray) else torch.log(word_probs)
-            scale = log_word_probs.mean()
+            if self.check:
+                if are_any_nan(word_probs):
+                    raise ValueError("Detected NAN in word_probs.")
+                if are_any_inf(word_probs):
+                    raise ValueError("Detected INF in word_probs.")
+                if bool((word_probs > 1.0).any()):
+                    raise ValueError("Detected value > 1.0 in word_probs.")
+                if bool((word_probs < 0.0).any()):
+                    raise ValueError("Detected value < 0.0 in word_probs.")
+
+            if isinstance(word_probs, np.ndarray):
+                word_probs = np.clip(word_probs, a_min=1e-10)
+                word_probs = np.log(word_probs)
+            else:
+                word_probs = torch.clamp(word_probs, min=1e-10)
+                word_probs = torch.log(word_probs)
+
+            scale = word_probs.mean()
             scale = scale.detach().cpu().item() if isinstance(scale, Tensor) else float(scale)
             report["nppl"] = report["ppl"] - scale
 
