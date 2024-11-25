@@ -66,7 +66,7 @@ def bytes_to_slurm_mem(b: int, r: int = 4 * GB) -> str:
     return f"{g}G"
 
 
-def torchrun_str(cpu: int, gpu: int) -> str:
+def torchrun_str(gpu: int) -> str:
     return (
 f"""
 OMP_NUM_THREADS=1 \\
@@ -88,6 +88,7 @@ def get_body(
     gpu: int,
     streaming: bool,
     exit_after_map: bool,
+    skip_eval_check: bool,
     model_name: ModelName,
     arch_config: dict,
     max_length: int,
@@ -134,17 +135,16 @@ f"""
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if ARMITAGE else "module unload blindfold"}
-# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+{"" if ARMITAGE else "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"}
 
-
-{"" if gpu <= 1 else torchrun_str(cpu, gpu)}
+{"" if gpu <= 1 else torchrun_str(gpu)}
 python -u \\
 src/learn/train.py \\
 --root='./output/esp-{ACTION.value}' \\
 --streaming={bool_to_str(streaming)} \\
 --sync_batch_size=true \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
---auto_find_batch_size_and_gradient_accumulation_steps=true \\
+--skip_eval_check={bool_to_str(skip_eval_check)} \\
 --dataset_backend="HF" \\
 --model_name_or_path='{model_name.value}' \\
 --arch_config='{json.dumps(arch_config)}' \\
@@ -199,11 +199,12 @@ class ModelName(Enum):
 
 
 class ModelSize(Enum):
-    TN = "tn"
-    SM = "sm"
-    MD = "md"
-    LG = "lg"
-    HG = "hg"
+    TN = "tn"  # tiny
+    SM = "sm"  # small
+    MD = "md"  # medium
+    LG = "lg"  # large
+    HG = "hg"  # huge
+    CO = "co"  # colossal
 
 
 class ModelMode(Enum):
@@ -249,17 +250,6 @@ COMPRESSION_RATIOS: dict[tuple[TokenizationAlgorithm, int], float] = {
 
 }
 
-# Unfortunately, we simply have to accept the fact that we cannot
-# handle CUDA memory errors gracefully without experiencing side-effects.
-PER_DEVICE_BATCH_SIZE: dict[tuple, int] = {
-
-    (ModelName.HRR, ModelSize.SM, ModelMode.BI, 65536): 2,
-    (ModelName.HRR, ModelSize.SM, ModelMode.UN, 65536): 2,
-    (ModelName.MAM, ModelSize.SM, ModelMode.BI, 65536): 4,
-    (ModelName.MAM, ModelSize.SM, ModelMode.UN, 65536): 4,
-
-}
-
 
 @dataclass
 class Configuration:
@@ -300,6 +290,12 @@ class Configuration:
         if self.seed != 0:
             return False
 
+        # Adjust as desired.
+        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+            return False
+        if self.vocab_size != 16384:
+            return False
+
         if self.model_name == ModelName.MAL:
             if self.task not in (Task.BEH, Task.DET, Task.FAM):
                 return False
@@ -309,12 +305,6 @@ class Configuration:
                 return False
             if self.model_size != ModelSize.TN:
                 return False
-
-        # Adjust as desired.
-        # if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
-        #     return False
-        # if self.vocab_size != 16384:
-        #     return False
 
         if ACTION == Action.DEBUG:
             if self.max_length != 1024:
@@ -338,68 +328,12 @@ class Configuration:
             if self.task == Task.CLM:
                 return False
 
-        if ACTION == Action.TIME:
-            if self.max_length != 65536:
-                return False
-            if self.model_size != ModelSize.TN:
-                return False
-            if self.task not in (Task.CLM, Task.MLM, Task.BEH):
-                return False
-            if self.pretraining_task is not None:
-                return False
-            if self.lift_level != LiftLevel.RAW:
-                return False
-
         if ACTION == Action.EXECUTE:
             if self.max_length != 65536:
                 return False
-            if self.model_size != ModelSize.SM:
-                return False
             if self.task not in (Task.CLM, Task.MLM):
                 return False
-            if self.vocab_size != 16384:
-                return False
-            if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
-                return False
-
-        if ACTION == Action.OVERFIT:
-            if self.max_length != 4096:
-                return False
-            if self.lift_level != LiftLevel.RAW:
-                return False
-            if self.model_size not in (ModelSize.TN, ModelSize.SM, ModelSize.MD):
-                return False
-            if self.task != Task.DET:
-                return False
-            if self.pretraining_task is not None:
-                return False
-
-        if ACTION == Action.BASIC:
-            if self.tokenization_algorithm not in (TokenizationAlgorithm.BPE, TokenizationAlgorithm.WORDLEVEL):
-                return False
-            if self.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL and self.vocab_size != 256:
-                return False
-            if self.vocab_size == 256 and self.tokenization_algorithm != TokenizationAlgorithm.WORDLEVEL:
-                return False
-            if self.max_length != 16384:
-                return False
-            if self.lift_level != LiftLevel.RAW:
-                return False
-            if self.model_name == ModelName.MAM:
-                if self.model_mode != ModelMode.UN:
-                    return False
-                if self.model_size != ModelSize.MD:
-                    return False
-            elif self.model_name == ModelName.MAL:
-                if self.model_mode != ModelMode.BI:
-                    return False
-                if self.model_size != ModelSize.TN:
-                    return False
-            else:
-                return False
-            if self.task not in (Task.FAM, Task.DET):
-                return False
-            if self.pretraining_task is not None:
+            if self.model_size != ModelSize.CO:
                 return False
 
         return True
@@ -421,8 +355,7 @@ class Configuration:
 
     @property
     def tim(self) -> str:
-        return seconds_to_slurm_time(2 * 24 * 60 * 60)
-        # FIXME
+        return "05-00:00:00"  # FIXME
         if ACTION == Action.PREPARE:
             if self.task in (Task.CLM, Task.MLM):
                 return seconds_to_slurm_time(7200)
@@ -430,56 +363,55 @@ class Configuration:
                 return seconds_to_slurm_time(3600)
             return seconds_to_slurm_time(1800)
 
-        if ACTION == Action.TIME:
-            f = {
-                ModelSize.TN: 1.0,
-                ModelSize.SM: 2.0,
-                ModelSize.MD: 3.0,
-                ModelSize.LG: 4.0,
-                ModelSize.HG: 5.0,
-            }
-            s = 3600 if self.task in (Task.CLM, Task.MLM) else 1800
-            return seconds_to_slurm_time(s * f[self.model_size])
+        SCALES = {
+            (ModelName.MAM, ModelMode.UN): 1.0,
+            (ModelName.MAM, ModelMode.BI): 1.0,
+            (ModelName.HRR, ModelMode.UN): 1.0,
+            (ModelName.HRR, ModelMode.BI): 1.0,
+        }
+        f1 = SCALES[(self.model_name, self.model_mode)]
 
-        t = "lm" if self.task in (Task.CLM, Task.MLM) else "cf"
-        k = (self.model_name, self.model_size, self.model_mode, self.vocab_size, t)
-        if k in MODEL_SAMPLES_PER_SECOND:
-            t_tr, t_vl = MODEL_SAMPLES_PER_SECOND[k]
-        else:
-            warnings.warn(f"Samples/second unknown for {k=}.")
-            t_tr = 10
-            t_vl = 25
+        SIZES = {
+            ModelSize.TN:  1.0,
+            ModelSize.SM:  2.0,
+            ModelSize.MD:  4.0,
+            ModelSize.LG:  8.0,
+            ModelSize.HG: 16.0,
+            ModelSize.CO: 32.0,
+        }
+        f2 = SIZES[self.model_size]
+
+        tr_samples_per_second = 16
+        vl_samples_per_second = 32
 
         n_tr, n_vl = DATASET_SIZES[self.task]
-        s_tr = n_tr * self.num_train_epochs / t_tr / max(1, self.gpu)
-        s_vl = n_vl * self.num_train_epochs / t_vl / max(1, self.gpu)
-        s = s_tr + s_vl + 3600
-        return seconds_to_slurm_time(s)
+        n_tr *= self.num_train_epochs / max(self.gpu, 1)
+        n_vl *= self.num_train_epochs / max(self.gpu, 1)
+
+        s_tr = n_tr / tr_samples_per_second * f1 * f2
+        s_vl = n_vl / vl_samples_per_second * f1 * f2
+
+        return seconds_to_slurm_time(s_tr + s_vl + 3600)
 
     @property
     def cpu(self) -> int:
         if ACTION == Action.PREPARE:
             return 16
-        if ACTION == Action.TIME:
-            return 4
-        if self.task in (Task.CLM, Task.MLM):
-            return 12
-        return 4
+        if self.streaming:
+            return 4 * self.gpu
+        return 2 * self.gpu
 
     @property
     def mem(self) -> int:
+        return "380G"  # FIXME
         if ACTION == Action.PREPARE:
             return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
-            return bytes_to_slurm_mem(self.gpu * 128 * GB)
+            return bytes_to_slurm_mem(64 * self.gpu * GB)
 
+        # The memory required for the classification tasks can be estimated.
         k = (self.tokenization_algorithm, self.vocab_size)
-        if k in COMPRESSION_RATIOS:
-            c = COMPRESSION_RATIOS[k]
-        else:
-            warnings.warn(f"Compression ratio unknown for {k=}.")
-            c = 1.0
-
+        c = COMPRESSION_RATIOS.get(k, 1.0)
         t = c * sum(DATASET_SIZES[self.task]) * self.max_length
         b = t * 8
         b = b + (16 * GB)
@@ -489,12 +421,8 @@ class Configuration:
     def gpu(self) -> int:
         if ACTION == Action.PREPARE:
             return 0
-        if ACTION == Action.TIME:
-            return 1
-        if ACTION == Action.DEBUG:
-            return 1 if ARMITAGE else 2  # multi GPU seems to hang on armitage
         if self.task in (Task.CLM, Task.MLM):
-            return 1
+            return 4
         return 1
 
     @property
@@ -510,89 +438,90 @@ class Configuration:
         return False
 
     @property
+    def skip_eval_check(self) -> bool:
+        return False
+
+    @property
     def arch_config(self) -> dict:
+
+        # Unfortunately, tie-ing the forward and backward directions is really
+        # not going to work without substantial refactoring when doing DDP.
+
+        # Baseline MalConv2 from original authors.
         if self.model_name == ModelName.MAL:
             return {"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}
 
-        d = {"is_decoder": self.model_mode == ModelMode.UN}
+        # When using gradient checkpointing, the hidden_size is much more impactful
+        # for causing CUDA OOM errors, hence the increasing depth of these architectures.
+        NUM_BLOCKS = {
+            ModelSize.TN:  2,
+            ModelSize.SM:  4,
+            ModelSize.MD:  8,
+            ModelSize.LG: 12,
+            ModelSize.HG: 16,
+            ModelSize.CO: 32,
+        }
 
-        if self.model_name == ModelName.MAM:
-            if self.model_size == ModelSize.TN:
-                d |= {"num_hidden_layers": 2,  "hidden_size":  64}
-            if self.model_size == ModelSize.SM:
-                d |= {"num_hidden_layers": 4,  "hidden_size": 128}
-            if self.model_size == ModelSize.MD:
-                d |= {"num_hidden_layers": 8,  "hidden_size": 256}
-            if self.model_size == ModelSize.LG:
-                d |= {"num_hidden_layers": 12, "hidden_size": 384}
-            if self.model_size == ModelSize.HG:
-                d |= {"num_hidden_layers": 16, "hidden_size": 512}
+        d = {
+            "is_decoder": self.model_mode == ModelMode.UN,
+            "num_hidden_layers": NUM_BLOCKS[self.model_size],
+            "embedding_size": 384,
+            "hidden_size": 384,
+            "head_num_hidden_layers": 0,
+            "head_hidden_size": 0,
+        }
 
-        elif self.model_name == ModelName.HRR:
+        if self.model_name == ModelName.HRR:
             d["position_embedding_type"] = "rotary"
-            if self.model_size == ModelSize.TN:
-                d |= {"num_hidden_layers": 1, "hidden_size":  64}
-            if self.model_size == ModelSize.SM:
-                d |= {"num_hidden_layers": 2, "hidden_size": 128}
-            if self.model_size == ModelSize.MD:
-                d |= {"num_hidden_layers": 4, "hidden_size": 256}
-            if self.model_size == ModelSize.LG:
-                d |= {"num_hidden_layers": 6, "hidden_size": 384}
-            if self.model_size == ModelSize.HG:
-                d |= {"num_hidden_layers": 8, "hidden_size": 512}
+        elif self.model_name == ModelName.MAM:
+            d["bi_tie_directions"] = False
+            if self.model_mode == ModelMode.UN:
+                d["num_hidden_layers"] *= 2
 
-        d["embedding_size"]         = d["hidden_size"]
-        d["head_num_hidden_layers"] = 0
-        d["head_hidden_size"]       = 0
-
-        return d
+        ORDER = [
+            "is_decoder",
+            "num_hidden_layers",
+            "embedding_size",
+            "hidden_size",
+            "head_num_hidden_layers",
+            "head_hidden_size",
+            "position_embedding_type",
+            "bi_tie_directions",
+        ]
+        return {k: d[k] for k in ORDER if k in d}
 
     @property
     def num_train_epochs(self) -> int:
-        if ACTION == Action.OVERFIT:
-            return int(os.environ["NUM_TRAIN_EPOCHS"])
         if self.task in (Task.CLM, Task.MLM):
             return 1
         return 5
 
     @property
     def max_steps(self) -> Optional[int]:
-        if ACTION == Action.TIME:
-            return 16
-        if ACTION == Action.DEBUG:
-            return 2
         return None
 
     @property
     def save_steps(self) -> Optional[int]:
-        if ACTION == Action.TIME:
-            return 16
-        if ACTION == Action.DEBUG:
-            return 1
         return None
 
     @property
     def eval_steps(self) -> Optional[int]:
-        if ACTION == Action.TIME:
-            return 16
-        if ACTION == Action.DEBUG:
-            return 1
         return None
 
     @property
     def saves_and_evals_per_epochs(self) -> int:
-        if ACTION == Action.DEBUG:
-            return 1
         if self.task in (Task.CLM, Task.MLM):
             return 16
         return 1
 
     @property
     def dataloader_num_workers(self) -> int:
+        # One additional process will engage the prefetching.
+        # When streaming, we can rely on tokenizers' parallelization for speed.
         if self.gpu == 0:
             return 0
         if self.streaming:
-            return 2
+            return 1
         return self.cpu // self.gpu - 1
 
     @property
@@ -605,45 +534,39 @@ class Configuration:
     def weight_decay(self) -> float:
         if self.task in (Task.CLM, Task.MLM):
             return 0.10
-        return 0.01
+        return 0.02
 
     @property
     def warmup_ratio(self) -> float:
         if self.task in (Task.CLM, Task.MLM):
-            return 0.10
-        return 0.05
+            return 0.05
+        return 0.01
 
     @property
     def tr_batch_size(self) -> int:
-        if ACTION == Action.DEBUG:
-            return 64
         if self.task in (Task.CLM, Task.MLM):
             return 1024
         return 64
 
-    @property
-    def per_device_batch_size(self) -> int:
-        key = (self.model_name, self.model_size, self.model_mode, self.max_length)
-        return PER_DEVICE_BATCH_SIZE[key]
+    # @property
+    # def per_device_batch_size(self) -> int:
+    #     return 2
 
     @property
     def tr_per_device_batch_size(self) -> int:
-        return self.per_device_batch_size
-        # if self.tr_batch_size % self.gpu != 0:
-        #     raise RunTimeError(f"{self.tr_batch_size=} % {self.gpu=} != 0")
-        # return int(self.tr_batch_size / self.gpu)
+        return 2
 
     @property
     def vl_per_device_batch_size(self) -> int:
-        return self.per_device_batch_size
+        return 4
 
     @property
     def gradient_accumulation_steps(self) -> int:
-        return self.tr_batch_size // self.tr_per_device_batch_size
+        return self.tr_batch_size // (self.tr_per_device_batch_size * self.gpu)
 
     @property
     def eval_accumulation_steps(self) -> int:
-        return 256 // self.vl_per_device_batch_size
+        return 64 // self.vl_per_device_batch_size
 
     @property
     def tf32(self) -> bool:
@@ -661,23 +584,19 @@ class Configuration:
 
     @property
     def fp16_full_eval(self) -> bool:
-        return False
+        return self.fp16
 
     @property
     def bf16(self) -> bool:
         if self.gpu == 0:
             return False
-        if self.model_name == ModelName.MAM:
-            return True
-        return False
+        if self.model_name == ModelName.MAL:
+            return False
+        return True
 
     @property
     def bf16_full_eval(self) -> bool:
-        if not self.bf16:
-            return False
-        if self.task in (Task.CLM, Task.MLM):
-            return True
-        return False
+        return self.bf16
 
     @property
     def gradient_checkpointing(self) -> bool:
@@ -746,6 +665,7 @@ def main():
             gpu=config.gpu,
             streaming=config.streaming,
             exit_after_map=config.exit_after_map,
+            skip_eval_check=config.skip_eval_check,
             model_name=config.model_name,
             arch_config=config.arch_config,
             max_length=config.max_length,
