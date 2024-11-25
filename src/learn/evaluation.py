@@ -33,6 +33,8 @@ def compute_softmax(z: np.ndarray, axis: int) -> np.ndarray:
     return torch.nn.functional.softmax(torch.from_numpy(z), dim=axis).numpy()
 
 
+# TODO: filtering out labels whose value is -100 is not sufficient.
+# Modify to simply expect the nessecary perprocessing to take place before hand.
 def compute_perplexity(logits: np.ndarray, labels: np.ndarray) -> float:
     """
     e^(
@@ -272,27 +274,39 @@ class LMComputeMetrics(ComputeMetrics):
         raise_if_loss_not_present: bool = True,
         basic_metrics: bool = True,
         check: bool = True,
+        special_token_ids: tuple[int] = (-100,),
     ) -> None:
         super().__init__()
         self.unigrams = unigrams
         self.raise_if_loss_not_present = raise_if_loss_not_present
         self.basic_metrics = basic_metrics
         self.check = check
+        self.special_token_ids = np.array(special_token_ids, dtype=np.int64)
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
         if isinstance(eval_pred.label_ids, Tensor) and isinstance(self.unigrams, np.ndarray):
             self.unigrams = torch.from_numpy(self.unigrams).to(eval_pred.label_ids.device)
+            self.special_token_ids = torch.from_numpy(self.special_token_ids).to(eval_pred.label_ids.device)
         elif isinstance(eval_pred.label_ids, np.ndarray) and isinstance(self.unigrams, Tensor):
             self.unigrams = self.unigrams.numpy(force=True)
+            self.special_token_ids = self.special_token_ids.numpy(force=True)
 
-        labels = eval_pred.label_ids[eval_pred.label_ids != -100]
+        # Determine the indices corresponding to special tokens.
+        if isinstance(eval_pred.label_ids, np.ndarray):
+            ignore = np.isin(eval_pred.label_ids, self.special_token_ids)
+        elif isinstance(eval_pred.label_ids, Tensor):
+            ignore = torch.isin(eval_pred.label_ids, self.special_token_ids)
+
+        # Get the relevant data from the EvalPrediction.
+        labels      = eval_pred.label_ids[~ignore]
+        predictions = eval_pred.predictions[~ignore]
         support = labels.size if isinstance(labels, np.ndarray) else labels.numel()
 
         # Perplexity
         if getattr(eval_pred, "losses", None) is None:
             if self.raise_if_loss_not_present:
                 raise ValueError("Expected losses to be present.")
-            ppl = compute_perplexity(eval_pred.predictions, eval_pred.label_ids)
+            ppl = compute_perplexity(predictions, labels)
         else:
             loss = eval_pred.losses.mean()
             loss = loss.detach().cpu().item() if isinstance(loss, Tensor) else float(loss)
@@ -301,9 +315,7 @@ class LMComputeMetrics(ComputeMetrics):
 
         # Normalized Perplexity
         if self.unigrams is not None:
-            # The labels begin and end with start and end of sequence tokens respectively.
-            # These will have unigram probabilities of NaN, so we get rid of them.
-            word_probs = self.unigrams[labels[1:-1]]
+            word_probs = self.unigrams[labels]
             if self.check:
                 if are_any_nan(word_probs):
                     raise ValueError(f"Detected NAN in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
@@ -327,39 +339,14 @@ class LMComputeMetrics(ComputeMetrics):
 
         # Basic metrics
         if self.basic_metrics:
-            y_true, y_pred = LMComputeMetrics.get_y_true_y_pred(eval_pred.predictions, eval_pred.label_ids)
+            y_true = labels.numpy(force=True) if isinstance(labels, Tensor) else labels
+            y_pred = predictions.numpy(force=True) if isinstance(predictions, Tensor) else labels
             report |= {
                 "accuracy": metrics.accuracy_score(y_true, y_pred),
                 "f1-macro": metrics.f1_score(y_true, y_pred, average="macro"),
             }
 
         return self.update_and_return(report, support, compute_result)
-
-    @staticmethod
-    def get_y_true_y_pred(predictions: np.ndarray, label_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        # TODO: this is a bit of an abomination of torch and numpy and should probably get cleaned up.
-        # There are also some issues with tensors on the GPU when integrated into the real training loop.
-
-        assert predictions.ndim == 3, f"Got shape={tuple(predictions.shape)}. Expected (B, T, V)."
-        assert label_ids.ndim == 2, f"Got shape={tuple(label_ids.shape)}. Expected (B, T)."
-
-        def get_y_pred(predictions: np.ndarray) -> np.ndarray:
-            predictions = tensor(predictions, dtype=torch.float32)
-            predictions = predictions.view(-1, predictions.shape[2])  # (B * L, M)
-            probas = torch.softmax(predictions, dim=1).numpy()
-            y_pred = np.argmax(probas, axis=1).astype(np.int32)
-            return y_pred
-
-        def get_y_true(label_ids: np.ndarray) -> np.ndarray:
-            y_true = tensor(label_ids, dtype=torch.float32).view(-1)  # (B * L,)
-            return y_true.numpy().astype(np.int32)
-
-        y_pred = get_y_pred(predictions)
-        y_true = get_y_true(label_ids)
-        mask = y_true == -100
-        y_pred = y_pred[~mask]
-        y_true = y_true[~mask]
-        return y_true, y_pred
 
 
 class MLMComputeMetrics(LMComputeMetrics):

@@ -1464,9 +1464,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.task == Task.BEH:
         compute_metrics = CLFComputeMetricsMultiLabel()
     if args.task == Task.CLM:
-        compute_metrics = CLMComputeMetrics(unigrams, True, False, check=True)
+        compute_metrics = CLMComputeMetrics(unigrams, True, False, True, tokenizer.all_special_ids + [-100])
     if args.task == Task.MLM:
-        compute_metrics = MLMComputeMetrics(unigrams, True, False, check=True)
+        compute_metrics = MLMComputeMetrics(unigrams, True, False, True, tokenizer.all_special_ids + [-100])
 
     training_arguments = replace(training_arguments, include_for_metrics=compute_metrics.include_for_metrics)
 
