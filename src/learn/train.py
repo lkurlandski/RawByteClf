@@ -1446,7 +1446,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         unigrams_map = {tokenizer.convert_tokens_to_ids(k): v for k, v in unigrams_map.items()}
         unigrams = []
         for i in range(len(tokenizer)):
-            if i in unigrams:
+            if i in unigrams_map:
                 unigrams.append(unigrams_map[i])
             elif i in tokenizer.all_special_ids:
                 unigrams.append(float("nan"))

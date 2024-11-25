@@ -304,13 +304,13 @@ class LMComputeMetrics(ComputeMetrics):
             word_probs = self.unigrams[labels]
             if self.check:
                 if are_any_nan(word_probs):
-                    raise ValueError("Detected NAN in word_probs.")
+                    raise ValueError(f"Detected NAN in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
                 if are_any_inf(word_probs):
-                    raise ValueError("Detected INF in word_probs.")
+                    raise ValueError(f"Detected INF in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
                 if bool((word_probs > 1.0).any()):
-                    raise ValueError("Detected value > 1.0 in word_probs.")
+                    raise ValueError(f"Detected value > 1.0 in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
                 if bool((word_probs < 0.0).any()):
-                    raise ValueError("Detected value < 0.0 in word_probs.")
+                    raise ValueError(f"Detected value < 0.0 in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
 
             if isinstance(word_probs, np.ndarray):
                 word_probs = np.clip(word_probs, a_min=1e-10)
