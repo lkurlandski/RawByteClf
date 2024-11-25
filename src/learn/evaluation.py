@@ -301,7 +301,9 @@ class LMComputeMetrics(ComputeMetrics):
 
         # Normalized Perplexity
         if self.unigrams is not None:
-            word_probs = self.unigrams[labels]
+            # The labels begin and end with start and end of sequence tokens respectively.
+            # These will have unigram probabilities of NaN, so we get rid of them.
+            word_probs = self.unigrams[labels[1:-1]]
             if self.check:
                 if are_any_nan(word_probs):
                     raise ValueError(f"Detected NAN in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
