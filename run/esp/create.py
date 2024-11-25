@@ -101,7 +101,8 @@ def get_body(
     max_steps: Optional[int],
     save_steps: Optional[int],
     eval_steps: Optional[int],
-    saves_and_evals_per_epochs: int,
+    saves_per_epoch: int,
+    evals_per_epoch: int,
     dataloader_num_workers: int,
     learning_rate: float,
     weight_decay: float,
@@ -164,8 +165,8 @@ src/learn/train.py \\
 {"--save_steps=" + str(save_steps) if save_steps is not None else ""} \\
 {"--eval_steps=" + str(eval_steps) if eval_steps is not None else ""} \\
 {"--num_train_epochs=" + str(num_train_epochs) if max_steps is None else ""} \\
-{"--saves_per_epoch=" + str(saves_and_evals_per_epochs) if save_steps is None else ""} \\
-{"--evals_per_epoch=" + str(saves_and_evals_per_epochs) if eval_steps is None else ""} \\
+{"--saves_per_epoch=" + str(saves_per_epoch) if save_steps is None else ""} \\
+{"--evals_per_epoch=" + str(evals_per_epoch) if eval_steps is None else ""} \\
 --logging_steps=1 \\
 --dataloader_num_workers={dataloader_num_workers} \\
 --optim="adamw_torch" \\
@@ -221,27 +222,8 @@ DATASET_SIZES: dict[Task, tuple[int, int]] = {
 }
 
 
+# This is a nice idea, but I've found that this can be very unreliable.
 MODEL_SAMPLES_PER_SECOND: dict[tuple, tuple[float, float]] = {
-
-    (ModelName.HRR, ModelSize.TN, ModelMode.BI, 16384, "cf"): (06.075, 045.082),
-    (ModelName.HRR, ModelSize.TN, ModelMode.BI, 16384, "lm"): (14.721, 016.544),
-    (ModelName.HRR, ModelSize.TN, ModelMode.UN, 16384, "cf"): (06.574, 043.032),
-    (ModelName.HRR, ModelSize.TN, ModelMode.UN, 16384, "lm"): (09.022, 013.255),
-    (ModelName.MAM, ModelSize.TN, ModelMode.BI, 16384, "cf"): (13.481, 117.289),
-    (ModelName.MAM, ModelSize.TN, ModelMode.BI, 16384, "lm"): (13.873, 022.896),
-    (ModelName.MAM, ModelSize.TN, ModelMode.UN, 16384, "cf"): (17.266, 090.022),
-    (ModelName.MAM, ModelSize.TN, ModelMode.UN, 16384, "lm"): (12.384, 019.876),
-
-    # TODO: these A) contian some (unreliable) estimates and B) computed the
-    # cf times for Task.DET not Task.BEH.
-    (ModelName.HRR, ModelSize.MD, ModelMode.BI, 16384, "cf"): (2.443, 41.315),
-    (ModelName.HRR, ModelSize.MD, ModelMode.BI, 16384, "lm"): (0.757, 13.339), # est tr
-    (ModelName.HRR, ModelSize.MD, ModelMode.UN, 16384, "cf"): (1.971, 34.166),
-    (ModelName.HRR, ModelSize.MD, ModelMode.UN, 16384, "lm"): (0.448, 07.884), # est tr
-    (ModelName.MAM, ModelSize.MD, ModelMode.BI, 16384, "cf"): (0.918, 16.834),
-    (ModelName.MAM, ModelSize.MD, ModelMode.BI, 16384, "lm"): (0.221, 03.885), # est tr, vl
-    (ModelName.MAM, ModelSize.MD, ModelMode.UN, 16384, "cf"): (1.533, 27.511),
-    (ModelName.MAM, ModelSize.MD, ModelMode.UN, 16384, "lm"): (0.360, 06.349), # est tr, vl
 
 }
 
@@ -403,7 +385,7 @@ class Configuration:
 
     @property
     def mem(self) -> int:
-        return "380G"  # FIXME
+        return "360G"  # FIXME
         if ACTION == Action.PREPARE:
             return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
@@ -509,9 +491,15 @@ class Configuration:
         return None
 
     @property
-    def saves_and_evals_per_epochs(self) -> int:
+    def saves_per_epoch(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
-            return 16
+            return 32
+        return 1
+
+    @property
+    def evals_per_epoch(self) -> int:
+        if self.task in (Task.CLM, Task.MLM):
+            return 8
         return 1
 
     @property
@@ -554,11 +542,17 @@ class Configuration:
 
     @property
     def tr_per_device_batch_size(self) -> int:
-        return 2
+        if self.model_name == ModelName.HRR:
+            return 2
+        if self.model_name == ModelName.MAM:
+            return 1
+        if self.model_name == ModelName.MAL:
+            return 256
+        raise NotImplementedError(f"{self.model_name=}")
 
     @property
     def vl_per_device_batch_size(self) -> int:
-        return 4
+        return 2
 
     @property
     def gradient_accumulation_steps(self) -> int:
@@ -678,7 +672,8 @@ def main():
             max_steps=config.max_steps,
             save_steps=config.save_steps,
             eval_steps=config.eval_steps,
-            saves_and_evals_per_epochs=config.saves_and_evals_per_epochs,
+            saves_per_epoch=config.saves_per_epoch,
+            evals_per_epoch=config.evals_per_epoch,
             dataloader_num_workers=config.dataloader_num_workers,
             learning_rate=config.learning_rate,
             weight_decay=config.weight_decay,
