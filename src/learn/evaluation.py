@@ -77,6 +77,19 @@ def numpify_eval_prediction(eval_pred: EvalPrediction) -> EvalPrediction:
     return EvalPrediction(**d)
 
 
+def eval_prediction_to_cpu(eval_pred: EvalPrediction) -> EvalPrediction:
+    d = {}
+    for k in ["predictions", "label_ids", "inputs", "losses"]:
+        if (v := getattr(eval_pred, k, None)) is None:
+            continue
+        if isinstance(v, Tensor) and v.device.type != "cpu":
+            v = v.to("cpu")
+        elif isinstance(v, np.ndarray):
+            v = torch.from_numpy(v).to("cpu")
+        d[k] = v
+    return EvalPrediction(**d)
+
+
 class ComputeMetrics(ABC):
     """
     Compute metrics.
@@ -275,6 +288,7 @@ class LMComputeMetrics(ComputeMetrics):
         basic_metrics: bool = True,
         check: bool = True,
         special_token_ids: tuple[int] = (-100,),
+        cpu: bool = True,
     ) -> None:
         super().__init__()
         self.unigrams = unigrams
@@ -282,8 +296,12 @@ class LMComputeMetrics(ComputeMetrics):
         self.basic_metrics = basic_metrics
         self.check = check
         self.special_token_ids = np.array(special_token_ids, dtype=np.int64)
+        self.cpu = cpu
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
+        if self.cpu:
+            eval_pred = eval_prediction_to_cpu(eval_pred)
+
         if isinstance(eval_pred.label_ids, Tensor) and isinstance(self.unigrams, np.ndarray):
             self.unigrams = torch.from_numpy(self.unigrams).to(eval_pred.label_ids.device)
             self.special_token_ids = torch.from_numpy(self.special_token_ids).to(eval_pred.label_ids.device)
@@ -327,7 +345,7 @@ class LMComputeMetrics(ComputeMetrics):
                     raise ValueError(f"Detected value < 0.0 in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
 
             if isinstance(word_probs, np.ndarray):
-                word_probs = np.clip(word_probs, a_min=1e-10)
+                word_probs = np.clip(word_probs, a_min=1e-10, a_max=None)
                 word_probs = np.log(word_probs)
             else:
                 word_probs = torch.clamp(word_probs, min=1e-10)
