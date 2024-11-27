@@ -135,7 +135,10 @@ class ComputeMetrics(ABC):
         self.results.append(result)
         self.weights.append(weight)
         if compute_result:
-            return self.compute_result()
+            results = self.compute_result()
+            self.results = []
+            self.weights = []
+            return results
         return result
 
 
@@ -353,7 +356,7 @@ class LMComputeMetrics(ComputeMetrics):
 
             scale = word_probs.mean()
             scale = scale.detach().cpu().item() if isinstance(scale, Tensor) else float(scale)
-            report["nppl"] = report["ppl"] - scale
+            report["nppl"] = report["ppl"] + scale
 
         # Basic metrics
         if self.basic_metrics:
@@ -367,13 +370,106 @@ class LMComputeMetrics(ComputeMetrics):
         return self.update_and_return(report, support, compute_result)
 
 
-class MLMComputeMetrics(LMComputeMetrics):
+class LMComputeMetrics2(ComputeMetrics):
+    """
+    Compute language modeling metrics.
+    """
+
+    # The value here needs to be "loss" while the name in EvalPrediction is "losses".
+    include_for_metrics = ["loss"]
+
+    def __init__(self,
+        unigrams: Optional[np.ndarray] = None,
+        raise_if_loss_not_present: bool = True,
+        basic_metrics: bool = True,
+        check: bool = True,
+        special_token_ids: tuple[int] = (-100,),
+        cpu: bool = True,
+    ) -> None:
+        super().__init__()
+        self.unigrams = unigrams
+        self.raise_if_loss_not_present = raise_if_loss_not_present
+        self.basic_metrics = basic_metrics
+        self.check = check
+        self.special_token_ids = np.array(special_token_ids, dtype=np.int64)
+        self.cpu = cpu
+
+        if self.basic_metrics:
+            raise NotImplementedError("Basic metrics are not yet implemented.")
+
+    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
+        if self.cpu:
+            eval_pred = eval_prediction_to_cpu(eval_pred)
+
+        if isinstance(eval_pred.label_ids, Tensor) and isinstance(self.unigrams, np.ndarray):
+            self.unigrams = torch.from_numpy(self.unigrams).to(eval_pred.label_ids.device)
+            self.special_token_ids = torch.from_numpy(self.special_token_ids).to(eval_pred.label_ids.device)
+        elif isinstance(eval_pred.label_ids, np.ndarray) and isinstance(self.unigrams, Tensor):
+            self.unigrams = self.unigrams.numpy(force=True)
+            self.special_token_ids = self.special_token_ids.numpy(force=True)
+
+        # Determine the indices corresponding to special tokens.
+        if isinstance(eval_pred.label_ids, np.ndarray):
+            ignore = np.isin(eval_pred.label_ids, self.special_token_ids)
+        elif isinstance(eval_pred.label_ids, Tensor):
+            ignore = torch.isin(eval_pred.label_ids, self.special_token_ids)
+
+        # Get the relevant data from the EvalPrediction.
+        labels  = eval_pred.label_ids[~ignore]
+        support = labels.size if isinstance(labels, np.ndarray) else labels.numel()
+
+        report = {}
+
+        # Losses
+        losses = getattr(eval_pred, "losses", None)
+        if losses is None and self.raise_if_loss_not_present:
+            raise ValueError("Expected losses to be present.")
+        if losses is not None:
+            loss = eval_pred.losses.mean()
+            loss = loss.detach().cpu().item() if isinstance(loss, Tensor) else float(loss)
+            report["loss"] = loss
+
+        # Normalization factor
+        if self.unigrams is not None:
+            word_probs = self.unigrams[labels]
+            if self.check:
+                if are_any_nan(word_probs):
+                    raise ValueError(f"Detected NAN in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
+                if are_any_inf(word_probs):
+                    raise ValueError(f"Detected INF in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
+                if bool((word_probs > 1.0).any()):
+                    raise ValueError(f"Detected value > 1.0 in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
+                if bool((word_probs < 0.0).any()):
+                    raise ValueError(f"Detected value < 0.0 in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
+
+            if isinstance(word_probs, np.ndarray):
+                word_probs = np.clip(word_probs, a_min=1e-10, a_max=None)
+                word_probs = np.log(word_probs)
+            else:
+                word_probs = torch.clamp(word_probs, min=1e-10)
+                word_probs = torch.log(word_probs)
+
+            scale = word_probs.mean()
+            scale = scale.detach().cpu().item() if isinstance(scale, Tensor) else float(scale)
+            report["scale"] = scale
+
+        return self.update_and_return(report, support, compute_result)
+
+    def compute_result(self) -> dict[str, float]:
+        results = super().compute_result()
+        results["ext_loss"] = results.pop("loss")
+        results["ppl"]  = math.exp(results["ext_loss"])
+        results["nppl"] = results["ppl"] + results.pop("scale")
+        return results
+
+
+class MLMComputeMetrics(LMComputeMetrics2):
     """
     Compute masked language model metrics.
     """
 
 
-class CLMComputeMetrics(LMComputeMetrics):
+class CLMComputeMetrics(LMComputeMetrics2):
     """
     Compute causal language model metrics.
     """
