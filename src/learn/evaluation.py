@@ -356,7 +356,7 @@ class LMComputeMetrics(ComputeMetrics):
 
             scale = word_probs.mean()
             scale = scale.detach().cpu().item() if isinstance(scale, Tensor) else float(scale)
-            report["nppl"] = report["ppl"] + scale
+            report["nppl"] = report["ppl"] * math.exp(scale)
 
         # Basic metrics
         if self.basic_metrics:
@@ -459,7 +459,7 @@ class LMComputeMetrics2(ComputeMetrics):
         results = super().compute_result()
         results["ext_loss"] = results.pop("loss")
         results["ppl"]  = math.exp(results["ext_loss"])
-        results["nppl"] = results["ppl"] + results.pop("scale")
+        results["nppl"] = results["ppl"] * math.exp(results.pop("scale"))
         return results
 
 
