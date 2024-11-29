@@ -337,13 +337,19 @@ class Configuration:
 
     @property
     def tim(self) -> str:
-        return "05-00:00:00"  # FIXME
         if ACTION == Action.PREPARE:
             if self.task in (Task.CLM, Task.MLM):
                 return seconds_to_slurm_time(7200)
             if self.task == Task.FAM:
                 return seconds_to_slurm_time(3600)
             return seconds_to_slurm_time(1800)
+
+        if self.task in (Task.CLM, Task.MLM):
+            if self.gpu != 4:
+                raise RuntimeError(f"Timing unknown.")
+            if self.lift_level == LiftLevel.RAW:
+                return "05-00:00:00"
+            return "02-00:00:00"
 
         SCALES = {
             (ModelName.MAM, ModelMode.UN): 1.0,
