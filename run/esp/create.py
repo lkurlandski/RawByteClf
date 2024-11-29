@@ -540,6 +540,9 @@ class Configuration:
     # def per_device_batch_size(self) -> int:
     #     return 2
 
+    # No idea why, but Mamba can handle two samples during eval, but only one during training
+    # while the opposite appears to be the case concerning HRRFormer.
+
     @property
     def tr_per_device_batch_size(self) -> int:
         if self.model_name == ModelName.HRR:
@@ -552,7 +555,13 @@ class Configuration:
 
     @property
     def vl_per_device_batch_size(self) -> int:
-        return 2
+        if self.model_name == ModelName.HRR:
+            return 1
+        if self.model_name == ModelName.MAM:
+            return 2
+        if self.model_name == ModelName.MAL:
+            return 256
+        raise NotImplementedError(f"{self.model_name=}")
 
     @property
     def gradient_accumulation_steps(self) -> int:
