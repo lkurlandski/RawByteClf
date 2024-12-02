@@ -41,6 +41,26 @@ if __name__ == "__main__":
 from src.enums import CompressionAlgorithm, EncryptionAlgorithm
 
 
+def check_model_parameters(model: nn.Module) -> list[tuple[str, tuple[Literal["nan", "inf", ">", "<"]]]]:
+    max_float32 = torch.finfo(torch.float32).max
+    min_float32 = -max_float32
+    all_issues = []
+    for name, param in model.named_parameters():
+        param_data = param.data
+        issues = []
+        if torch.isnan(param_data).any():
+            issues.append("NaN")
+        if torch.isinf(param_data).any():
+            issues.append("Inf")
+        if (param_data > max_float32).any():
+            issues.append(">")
+        if (param_data < min_float32).any():
+            issues.append("<")
+        if issues:
+            all_issues.append((name, tuple(issues)))
+    return all_issues
+
+
 @contextlib.contextmanager
 def print_context(suppress: bool = False):
     if not suppress:
