@@ -20,7 +20,7 @@ import warnings
 from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))  #pylint: disable=wrong-import-position
-from src.enums import LiftLevel, Task, TokenizationAlgorithm
+from src.enums import LiftLevel, Task, TokenizationAlgorithm, WeightedLossAlgorithm
 
 
 ACTION   = None
@@ -95,8 +95,10 @@ def get_body(
     lift_level: LiftLevel,
     tokenization_algorithm: TokenizationAlgorithm,
     vocab_size: int,
-    pretraining_task: Optional[Task],
     task: Task,
+    pretraining_task: Optional[Task],
+    weighted_loss: Optional[WeightedLossAlgorithm],
+    beta: Optiona[float],
     num_train_epochs: int,
     max_steps: Optional[int],
     save_steps: Optional[int],
@@ -154,7 +156,9 @@ src/learn/train.py \\
 --tokenization_algorithm='{tokenization_algorithm.value}' \\
 --vocab_size={vocab_size} \\
 --task='{task.value}' \\
-{"--pretraining_task='" + pretraining_task.value + "'" if pretraining_task else ""} \\
+{"--pretraining_task='" + pretraining_task.value + "'" if pretraining_task is not None else ""} \\
+{"--weighted_loss='" + weighted_loss.value + "'" if weighted_loss is not None else ""} \\
+{f"--beta={beta}" if beta is not None else ""} \\
 --pretraining_checkpoint=-1 \\
 --seed={seed} \\
 --do_train \\
@@ -242,8 +246,8 @@ class Configuration:
     lift_level: LiftLevel
     tokenization_algorithm: TokenizationAlgorithm
     vocab_size: int
-    pretraining_task: Optional[Task]
     task: Task
+    pretraining_task: Optional[Task]
     seed: int
 
     def __postinit__(self) -> None:
@@ -313,9 +317,11 @@ class Configuration:
         if ACTION == Action.EXECUTE:
             if self.max_length != 65536:
                 return False
-            if self.task not in (Task.CLM, Task.MLM):
-                return False
             if self.model_size != ModelSize.CO:
+                return False
+            if self.task not in (Task.FAM,):
+                return False
+            if self.pretraining_task not in (None,):
                 return False
 
         return True
@@ -391,11 +397,10 @@ class Configuration:
 
     @property
     def mem(self) -> int:
-        return "360G"  # FIXME
         if ACTION == Action.PREPARE:
             return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
-            return bytes_to_slurm_mem(64 * self.gpu * GB)
+            return bytes_to_slurm_mem(90 * self.gpu * GB)
 
         # The memory required for the classification tasks can be estimated.
         k = (self.tokenization_algorithm, self.vocab_size)
@@ -482,7 +487,12 @@ class Configuration:
     def num_train_epochs(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
             return 1
-        return 5
+        if self.task == Task.DET:
+            return 4
+        if self.task == Task.FAM:
+            return 2
+        if self.task == Task.BEH:
+            return 2
 
     @property
     def max_steps(self) -> Optional[int]:
@@ -546,8 +556,9 @@ class Configuration:
     # def per_device_batch_size(self) -> int:
     #     return 2
 
-    # No idea why, but Mamba can handle two samples during eval, but only one during training
-    # while the opposite appears to be the case concerning HRRFormer.
+    # Mamba can handle two samples during eval, but only one during training.
+    # HRRFormer can handle two samples during training, but only one during eval.
+    # Furthermore the CUDA OOMs only pop up when training in multi GPU setting.
 
     @property
     def tr_per_device_batch_size(self) -> int:
@@ -616,6 +627,18 @@ class Configuration:
         return True
 
     @property
+    def weighted_loss(self) -> Optional[WeightedLossAlgorithm]:
+        if self.task == Task.FAM:
+            return WeightedLossAlgorithm.SAMPLE_REWEIGHTING
+        return None
+
+    @property
+    def beta(self) -> Optional[float]:
+        if self.task == Task.FAM:
+            return 0.900
+        return None
+
+    @property
     def outfile(self) -> Path:
         return outpath() / f"{self.job}.sh"
 
@@ -657,8 +680,8 @@ def main():
         LiftLevel,
         TokenizationAlgorithm,
         (256, 1024, 4096, 16384),
-        [None, Task.CLM, Task.MLM],
         Task,
+        [None, Task.CLM, Task.MLM],
         (0, 1, 2, 3, 4),
     )
     configurations = [Configuration(*config) for config in configurations]
@@ -683,6 +706,8 @@ def main():
             vocab_size=config.vocab_size,
             task=config.task,
             pretraining_task=config.pretraining_task,
+            weighted_loss=config.weighted_loss,
+            beta=config.beta,
             num_train_epochs=config.num_train_epochs,
             max_steps=config.max_steps,
             save_steps=config.save_steps,
