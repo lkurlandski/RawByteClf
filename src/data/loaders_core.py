@@ -1594,6 +1594,10 @@ def get_materials_clf_elf(
 ################################################################################
 
 
+# FIXME: added a flag `purge_empty_samples` which should be removed at some point.
+# Instead, the empty samples should be purged from the data caches directly.
+# This flag has not been added to the caches either, so this will cause confusion.
+
 DISABLE_ESP_CACHE = False
 
 
@@ -1612,6 +1616,7 @@ def _get_materials_esp_lm(
     vl_size: float | int = 4096,
     ts_size: float | int = 0,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
     # pylint: disable=multiple-statements
@@ -1640,6 +1645,11 @@ def _get_materials_esp_lm(
         get_sha_timestamp_map(timestamps_files),
     ))
 
+    # Empty set if we aren't doing the skip empty samples.
+    shas_that_are_empty = set()
+    if purge_empty_samples:
+        shas_that_are_empty = set(Path("./cache/empty_shas.txt").read_text().split("\n"))
+
     sha_digest_map = {}
     for dnm in DatasetName:
         _sha_digest_map = get_sha_digest_map(DIGESTS_FILES[dnm][lift_level_ddp])
@@ -1648,8 +1658,9 @@ def _get_materials_esp_lm(
     archives = map(Path, rglob("./data", "*.zip", True))
     archives = sorted(a for a in archives if a.parent.name == lift_level.value)
 
-    skipped_cause_finetuning = 0
-    skipped_cause_duplicates = 0
+    skipped_cause_empty                 = 0
+    skipped_cause_finetuning            = 0
+    skipped_cause_duplicates            = 0
     skipped_cause_duplicates_finetuning = 0
     archived_files: list[ArchivedFile] = []
     finetuning_digests: set[str] = set(sha_digest_map[s] for s in shas_for_finetuning if s in sha_digest_map)
@@ -1657,6 +1668,9 @@ def _get_materials_esp_lm(
     for archive in tqdm(archives, leave=False, desc="Filtering..."):
         for name, _ in get_data_from_archives(archives=[archive], names=True, contents=False):
             s = name.split(".")[0]
+            if s in shas_that_are_empty:
+                skipped_cause_empty += 1
+                continue
             if s in shas_for_finetuning:
                 skipped_cause_finetuning += 1
                 continue
@@ -1669,6 +1683,7 @@ def _get_materials_esp_lm(
                 continue
             archived_files.append(ArchivedFile(archive, name))
     print(f"\tAcquired {len(archived_files)} for pretraining.")
+    if verbose: print(f"\tSkipped {skipped_cause_empty=} due to empty file.")
     if verbose: print(f"\tSkipped {skipped_cause_finetuning=} due to finetuning.")
     if verbose: print(f"\tSkipped {skipped_cause_duplicates_finetuning=} due to duplicates with finetuning.")
     if verbose: print(f"\tSkipped {skipped_cause_duplicates=} due to duplicates.")
@@ -1692,6 +1707,7 @@ def get_materials_esp_clm(
     vl_size: float | int = 4096,
     ts_size: float | int = 0,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
     return _get_materials_esp_lm(
@@ -1700,6 +1716,7 @@ def get_materials_esp_clm(
         vl_size,
         ts_size,
         lift_level_ddp,
+        purge_empty_samples,
         verbose,
     )
 
@@ -1710,6 +1727,7 @@ def get_materials_esp_mlm(
     vl_size: float | int = 4096,
     ts_size: float | int = 0,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
     return _get_materials_esp_lm(
@@ -1718,6 +1736,7 @@ def get_materials_esp_mlm(
         vl_size,
         ts_size,
         lift_level_ddp,
+        purge_empty_samples,
         verbose,
     )
 
@@ -1730,6 +1749,7 @@ def get_materials_esp_det(
     ratio_pre_split: Optional[float] = 0.80,
     ratio_pos_split: Optional[float] = 0.50,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    purge_empty_samples: bool = True,
     verbose: bool = True,
 ) -> Materials:
     # pylint: disable=multiple-statements
@@ -1782,7 +1802,22 @@ def get_materials_esp_det(
         if verbose: print(f"{len(fs)=} -->", end=" ")
         fs = [f for f in fs if lower <= sha_timestamp_maps[dnm].get(Path(f).stem) <= upper]
         if verbose: print(f"{len(fs)=}")
-        files[dnm] = np.array(fs)
+        files[dnm] = fs
+
+    # Remove files that turned out to be empty.
+    if purge_empty_samples:
+        print("\tRemoving files that are empty.")
+        shas_that_are_empty = set(Path("./cache/empty_shas.txt").read_text().split("\n"))
+        for dnm in DatasetName:
+            fs = files[dnm]
+            if verbose: print(f"\t\t{len(fs)=} -->", end=" ")
+            fs = [f for f in fs if f.split(".")[0] not in shas_that_are_empty]
+            if verbose: print(f"{len(fs)=}")
+            files[dnm] = fs
+
+    # Convert everything to an array.
+    for dnm in DatasetName:
+        files[dnm] = np.array(files[dnm])
 
     # Remove files that are identical.
     digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level_ddp] for dnm in DatasetName}
@@ -1935,6 +1970,7 @@ def _get_materials_esp_clf(
     vl_size: float = 0.20,
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    purge_empty_samples: bool = True,
     verbose: bool = True,
     **kwds,
 ) -> Materials:
@@ -1959,10 +1995,17 @@ def _get_materials_esp_clf(
         with open(cache_file, "rb") as fp:
             return pickle.load(fp)
 
+    if purge_empty_samples:
+        print(f"\tRemoving files that are empty ({len(sha_label_map)} --> ", end="")
+        shas_that_are_empty = set(Path("./cache/empty_shas.txt").read_text().split("\n"))
+        sha_label_map = {s: l for s, l in sha_label_map.items() if s.split(".")[0] not in shas_that_are_empty}
+        print(f"{len(sha_label_map)})")
+
     dnm = DatasetName.SOREL
     directory = Path(f"./data/{dnm.value}/{lift_level.value}")
     archives  = sorted(map(Path, rglob(directory, "*.zip", True)))
 
+    print("\tReading file names.")
     files = (f for f, _ in get_data_from_archives(archives, names=True, contents=False))
     files = (f for f in files if sha_label_map.get(Path(f).stem) is not None)
     files = np.array(list(tqdm(files, leave=False)))
@@ -2059,6 +2102,7 @@ def get_materials_esp_fam(
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     min_freq: Optional[int] = 100,
     max_imbalance_ratio: Optional[int] = 50,
+    purge_empty_samples: bool = True,
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = {s: l[0] for s, l in get_sorel_sha_label_map("fam").items()}
@@ -2070,6 +2114,7 @@ def get_materials_esp_fam(
         vl_size,
         ts_size,
         lift_level_ddp,
+        purge_empty_samples,
         verbose,
         min_freq=min_freq,
         max_imbalance_ratio=max_imbalance_ratio,
@@ -2084,6 +2129,7 @@ def get_materials_esp_beh(
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     min_freq: Optional[int] = 100,
     max_imbalance_ratio: Optional[int] = 50,
+    purge_empty_samples: bool = True,
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = get_sorel_sha_label_map("beh")
@@ -2095,6 +2141,7 @@ def get_materials_esp_beh(
         vl_size,
         ts_size,
         lift_level_ddp,
+        purge_empty_samples,
         verbose,
         min_freq=min_freq,
         max_imbalance_ratio=max_imbalance_ratio,
