@@ -35,7 +35,7 @@ from pathlib import Path
 from pprint import pformat, pprint
 import random
 import time
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional, Protocol
 import os
 import sys
 import warnings
@@ -91,6 +91,7 @@ from transformers import (
     EarlyStoppingCallback,
 )
 from transformers import TrainingArguments as HfTrainingArguments
+from transformers.modeling_outputs import SequenceClassifierOutput
 from transformers.training_args import ParallelMode
 from transformers.trainer_utils import (
     BestRun,
@@ -123,6 +124,7 @@ from src.enums import (
     LiftLevel,
     Task,
     TokenizationAlgorithm,
+    WeightedLossAlgorithm,
 )
 from src.utils import (
     getattr_recursively,
@@ -134,6 +136,7 @@ from src.utils import (
     encrypt,
     compose_functions,
     remove_empty_directories,
+    check_model_parameters,
 )
 from src.architectures.head_utils import Head, check_for_anomalous_weights
 from src.architectures.malconv_hf import (
@@ -174,7 +177,7 @@ from src.data.loaders_core import (
 )
 from src.data.loaders_hf import get_dataset_hf, print_dataset_hf, is_dataset_empty
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
-from src.learn.class_weighting import sample_reweighting
+from src.learn.class_weighting import sample_reweighting, inverse_class_frequency
 from src.learn.helpers import Args, OutputHelper
 from src.learn.evaluation import (
     CLMComputeMetrics,
@@ -485,63 +488,30 @@ class RobustEpochCallback(TrainerCallback):
         return control
 
 
-class StaticGraphTrainer(Trainer):
-    """
-    A small modification to the original Trainer class that adds
-    static_graph=True to the downstream DistributedDataParallel wrapping.
-    """
+class ComputeLossFunction(Protocol):
 
-    def _wrap_model(self, model, training=True, dataloader=None):
-        model = super()._wrap_model(model, training, dataloader)  # pylint: disable=no-member
-
-        if self.args.parallel_mode == ParallelMode.DISTRIBUTED:
-            if is_torch_neuroncore_available():
-                return model
-            kwargs = {}
-            if self.args.ddp_find_unused_parameters is not None:
-                kwargs["find_unused_parameters"] = self.args.ddp_find_unused_parameters
-            elif isinstance(model, PreTrainedModel):
-                # find_unused_parameters breaks checkpointing as per
-                # https://github.com/huggingface/transformers/pull/4659#issuecomment-643356021
-                kwargs["find_unused_parameters"] = not model.is_gradient_checkpointing
-            else:
-                kwargs["find_unused_parameters"] = True
-
-            if self.args.ddp_bucket_cap_mb is not None:
-                kwargs["bucket_cap_mb"] = self.args.ddp_bucket_cap_mb
-
-            if self.args.ddp_broadcast_buffers is not None:
-                kwargs["broadcast_buffers"] = self.args.ddp_broadcast_buffers
-
-            kwargs["static_graph"] = True
-
-            self.accelerator.ddp_handler = DistributedDataParallelKwargs(**kwargs)
-
-        return model
+    def __call__(self, outputs: tuple | dict, labels: Tensor, num_items_in_batch: Optional[int] = None) -> Tensor:
+        ...
 
 
-class ImbalancedClassificationTrainer(Trainer):
+class WeightedLossFunction:
 
-    def __init__(self, weight: Optional[Tensor] = None, **kwargs):
-        super().__init__(**kwargs)
-        self.loss_fn = CrossEntropyLoss(weight=weight)
-        self.num_labels = self.model.config.num_labels
+    def __init__(self, weight: Tensor, num_labels: int, loss_class: torch.nn.Module = CrossEntropyLoss) -> None:
+        if torch.isnan(weight).any() or torch.isinf(weight).any():
+            raise ValueError("NaN or Inf found in the weight tensor.")
+        self.weight     = weight
+        self.num_labels = num_labels
+        self.loss_class = loss_class
 
-    def compute_loss(self, model, inputs, return_outputs=False):
-        if self.label_smoother is not None or self.args.past_index >= 0:
-            raise NotImplementedError()
-
-        labels = inputs["labels"]
-        outputs = model(**inputs)
-        logits = outputs.logits
-
-        device = logits.device
-        if self.loss_fn.weight is not None and self.loss_fn.weight.device != device:
-            self.loss_fn.weight = self.loss_fn.weight.to(device)
-
-        # num_labels = unwrap_model(model).config.num_labels
-        loss = self.loss_fn(logits.view(-1, self.num_labels), labels.view(-1))
-        return (loss, outputs) if return_outputs else loss
+    def __call__(self, outputs: SequenceClassifierOutput, labels: Tensor, num_items_in_batch: Optional[int] = None) -> Tensor:
+        self.weight = self.weight.to(outputs.logits.device)
+        loss_fn     = self.loss_class(weight=self.weight)
+        loss        = loss_fn(outputs.logits.view(-1, self.num_labels), labels.view(-1))
+        if torch.isnan(loss).any():
+            raise RuntimeError("NaN loss.")
+        if torch.isinf(loss).any():
+            raise RuntimeError("Inf loss.")
+        return loss
 
 
 def hp_model_init(
@@ -1482,23 +1452,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"{callbacks=}")
     print(BR)
 
-    # This lovely bit of logic creates a custom types that inherits from transformers.Trainer
-    # based upon several requirements, e.g., the weighted loss function. Note that the Trainer
-    # needs to be last from the MRO to work properly, therefore, must be the last list element.
-    model_trainer_base_classes = [Trainer]
-
-    if (isinstance(config, MambaConfig) and not config.is_decoder and config.bi_tie_directions
-        and training_arguments.parallel_mode == ParallelMode.DISTRIBUTED):
-        model_trainer_base_classes.insert(0, StaticGraphTrainer)
-
-    if args.weighted_loss is not None and args.weighted_loss.lower() != "none":
-        model_trainer_base_classes.insert(0, ImbalancedClassificationTrainer)
+    compute_loss_func = None
+    if args.weighted_loss is not None:
         if materials.problem_type == "single_label_classification":
-            if args.weighted_loss == "sample_reweighting":
+            if args.weighted_loss == WeightedLossAlgorithm.SAMPLE_REWEIGHTING:
                 weight = sample_reweighting(materials.dist_tr, beta=args.beta)
-                weight = tensor([weight[l] for l in materials.label2id])
-            else:
-                raise ValueError(f"Unrecognized weighted loss value: {args.weighted_loss=}")
+            elif args.weighted_loss == WeightedLossAlgorithm.INVERSE_CLASS_FREQUENCY:
+                weight = inverse_class_frequency(materials.dist_tr)
+            weight = [weight[materials.id2label[i]] for i in sorted(materials.id2label.keys())]
+            compute_loss_func = WeightedLossFunction(tensor(weight), config.num_labels, CrossEntropyLoss)
         elif materials.problem_type == "multi_label_classification":
             raise NotImplementedError(f"Weighted loss not implemented for {materials.problem_type=}")
         elif materials.problem_type is None:
@@ -1506,12 +1468,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         else:
             raise ValueError(f"Unrecognized problem type: {materials.problem_type=}")
 
-    ModelTrainer = type("ModelTrainer", tuple(model_trainer_base_classes), {})
-    if ImbalancedClassificationTrainer in model_trainer_base_classes:
-        ModelTrainer = partial(ModelTrainer, weight=weight)
-
-    print(f"{model_trainer_base_classes=}")
-    print(f"{ModelTrainer=}")
+    print(f"{compute_loss_func=}")
     print(BR)
 
     os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
@@ -1533,6 +1490,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_model(model)
         print(BR, flush=True)
 
+        if ((all_issues := check_model_parameters(model, -0.999, 0.999))) > 0:
+            for name, issues in all_issues:
+                if "LayerNorm" in name:  # LayerNorm is has parameters initialized with 1s
+                    continue
+                print(f"Warning: Issue(s) detected in model: {name=} {issues=}")
+
+
         # Initial evaluation of the model on the validation set to detect OOM and CudaOOM errors.
         # This will also reduce the eval_batch size in the training_arguments variable.
         @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
@@ -1540,7 +1504,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             nonlocal training_arguments  # access variables outside of this function.
             training_arguments = replace(training_arguments, per_device_eval_batch_size=batch_size)
             print(f"Evaluating with {batch_size=}...", flush=True)
-            trainer = ModelTrainer(
+            trainer = Trainer(
                 model=model,
                 args=training_arguments,
                 train_dataset=dataset["tr"],
@@ -1549,6 +1513,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
+                compute_loss_func=compute_loss_func,
             )
             return trainer.evaluate(dataset["vl"]), batch_size
 
@@ -1560,7 +1525,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             if args.auto_find_batch_size_and_gradient_accumulation_steps:
                 initial_metrics, max_per_device_eval_batch_size = _eval()  # pylint: disable=no-value-for-parameter
             else:
-                trainer = ModelTrainer(
+                trainer = Trainer(
                     model=model,
                     args=training_arguments,
                     train_dataset=dataset["tr"],
@@ -1569,6 +1534,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                     callbacks=callbacks,
                     compute_metrics=compute_metrics,
+                    compute_loss_func=compute_loss_func,
                 )
                 initial_metrics = trainer.evaluate(dataset["vl"])
                 max_per_device_eval_batch_size = training_arguments.per_device_eval_batch_size
@@ -1625,7 +1591,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
             print(f"{training_arguments.per_device_train_batch_size=} {training_arguments.per_device_eval_batch_size=}")
-            trainer = ModelTrainer(
+            trainer = Trainer(
                 model=model,
                 args=training_arguments,
                 train_dataset=dataset["tr"],
@@ -1634,6 +1600,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
+                compute_loss_func=compute_loss_func,
             )
             try:
                 return trainer.train(training_arguments.resume_from_checkpoint)
@@ -1658,7 +1625,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             }
             oh.mkdir()
             training_arguments = replace(training_arguments, output_dir=oh.checkpoints_dir.as_posix())
-            trainer = ModelTrainer(
+            trainer = Trainer(
                 model=model,
                 args=training_arguments,
                 train_dataset=dataset["tr"],
@@ -1667,6 +1634,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 tokenizer=tokenizer if args.dataset_backend == "HF" else None,
                 callbacks=callbacks,
                 compute_metrics=compute_metrics,
+                compute_loss_func=compute_loss_func,
             )
             trainer_output: TrainOutput = trainer.train(training_arguments.resume_from_checkpoint)
 
@@ -1708,13 +1676,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         split = "vl" if is_dataset_empty(dataset.get("ts")) else "ts"
         print(f"Evaluating {split}...")
-        output: PredictionOutput = ModelTrainer(
+        output: PredictionOutput = Trainer(
             model=model,
             args=training_arguments,
             data_collator=data_collator,
             tokenizer=tokenizer,
             callbacks=callbacks,
             compute_metrics=compute_metrics,
+            compute_loss_func=compute_loss_func,
         ).predict(dataset[split])
         oh.test_results_dir.mkdir(exist_ok=True, parents=False)
         with open(oh.test_results_file, "w") as fp:
@@ -1740,7 +1709,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             id2label=materials.id2label,
             label2id=materials.label2id,
         )
-        trainer = ModelTrainer(
+        trainer = Trainer(
             model_init=model_init,
             args=training_arguments.hf_training_arguments_object(),
             train_dataset=dataset["tr"],
@@ -1749,6 +1718,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             tokenizer=tokenizer,
             callbacks=None,
             compute_metrics=compute_metrics,
+            compute_loss_func=compute_loss_func,
         )
 
         search_alg = HyperOptSearch(
@@ -1823,7 +1793,6 @@ def cli():
 
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{BR}", flush=True)
-
     print(f"{torch.backends.cudnn.enabled=}")
     cli()
     print(f"ENDING @{datetime.now()}\n{BR}", flush=True)
