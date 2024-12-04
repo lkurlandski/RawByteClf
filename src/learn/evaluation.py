@@ -206,13 +206,16 @@ class CLFComputeMetricsSingleLabel(CLFComputeMetrics):
         probabilities = softmax(probabilities, axis=1)    # (N, C) | (N,)
         predictions   = np.argmax(probabilities, axis=1)  # (N,)
 
+        if len(u := np.unique(predictions)) < 2:
+            print(f"Warning: Predictions cover only a single class ({u}).")
+
         report = {
             "balanced_accuracy": metrics.balanced_accuracy_score(labels, predictions),
             "accuracy": metrics.accuracy_score(labels, predictions),
             "hamming_loss": metrics.hamming_loss(labels, predictions),
         }
         for average in self.averages:
-            precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average, pos_label=self.pos_label)
+            precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average, pos_label=self.pos_label, zero_division=0.0)
             roc_auc = compute_roc_auc(labels, probabilities, self.multi_class, average)
             report |= {
                 f"precision-{average}": precision,
