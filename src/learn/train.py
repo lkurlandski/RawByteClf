@@ -1291,7 +1291,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif args.task == Task.DET:
         materials = get_materials_esp_det(args.lift_level)
     elif args.task == Task.FAM:
-        materials = get_materials_esp_fam(args.lift_level)
+        materials = get_materials_esp_fam(args.lift_level, min_freq=int(os.environ.get("MIN_FREQ", 100)), max_imbalance_ratio=int(os.environ.get("MAX_IMBALANCE_RATIO", 50)))
     elif args.task == Task.BEH:
         materials = get_materials_esp_beh(args.lift_level)
 
@@ -1490,7 +1490,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_model(model)
         print(BR, flush=True)
 
-        if ((all_issues := check_model_parameters(model, -0.999, 0.999))) > 0:
+        if len((all_issues := check_model_parameters(model, -0.999, 0.999))) > 0:
             for name, issues in all_issues:
                 if "LayerNorm" in name:  # LayerNorm is has parameters initialized with 1s
                     continue
