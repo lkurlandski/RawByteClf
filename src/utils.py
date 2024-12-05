@@ -52,9 +52,9 @@ def check_model_parameters(model: nn.Module, min_: float = -float("inf"), max_: 
         if torch.isinf(param_data).any():
             issues.append("Inf")
         if (param_data > max_).any():
-            issues.append(">")
+            issues.append(f"> {param_data.max().item()}")
         if (param_data < min_).any():
-            issues.append("<")
+            issues.append(f"< {param_data.min().item()}")
         if issues:
             all_issues.append((name, tuple(issues)))
     return all_issues
