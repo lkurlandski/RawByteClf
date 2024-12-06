@@ -1647,6 +1647,37 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if training_arguments.do_eval:
 
+        os.environ["TOKENIZERS_PARALLELISM"] = "true"
+        d = Dataset.from_list(list(tqdm(dataset["vl"], desc="Processing validation set...", total=len(materials.files["vl"]))))
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
+
+        for checkpoint in tqdm(args.eval_checkpoints, desc="Evaluating saved models..."):
+            model = get_model(
+                args.task,
+                checkpoint,
+                config,
+                num_labels=materials.num_classes,
+                id2label=materials.id2label,
+                label2id=materials.label2id,
+            )
+            output: PredictionOutput = Trainer(
+                model=model,
+                args=training_arguments,
+                train_dataset=dataset["tr"],
+                eval_dataset=dataset["vl"],
+                data_collator=data_collator,
+                tokenizer=tokenizer,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+                compute_loss_func=compute_loss_func,
+            ).evaluate(d)
+
+            with open(checkpoint / "vl_metrics.json", "w") as fp:
+                json.dump(output.metrics, fp, indent=4)
+
+        sys.exit(0)
+
         # Clean up any residual references to model and optimizer from training.
         if training_arguments.do_train:
             model = model.to("cpu")

@@ -157,6 +157,9 @@ class Args:
     pretraining_task: Optional[Task]          = field(default=None)
     pretraining_checkpoint: str               = field(default="-1")   # We use str to allow for an index or a path
 
+    # Other
+    eval_checkpoints: Optional[str] = field(default=None)  # A comma-separated list of checkpoints to evaluate. Either numbers or paths.
+
     def __post_init__(self) -> None:
 
         self.lift_level             = LiftLevel(self.lift_level)
@@ -186,6 +189,17 @@ class Args:
 
         self.pretraining_task       = str_to_type(self.pretraining_task, Task)
         self.pretraining_checkpoint = int(self.pretraining_checkpoint) if self.pretraining_checkpoint.strip().lstrip("-").isdigit() else self.pretraining_checkpoint
+
+        self.eval_checkpoints = str_to_type(self.eval_checkpoints, str)
+        if self.eval_checkpoints is not None:
+            if Path(self.eval_checkpoints).name == "checkpoints":
+                self.eval_checkpoints = list(Path(self.eval_checkpoints).iterdir())
+            else:
+                self.eval_checkpoints = self.eval_checkpoints.split(",")
+            self.eval_checkpoints = sorted(self.eval_checkpoints, key=lambda p: int(Path(p).name.split("-")[-1]))
+            for checkpoint in self.eval_checkpoints:
+                if not Path(checkpoint).exists():
+                    raise FileNotFoundError(f"Could not find {checkpoint}")
 
         # Parse the architecture configuration from JSON or from a file.
         if self.arch_config_file and self.arch_config:
