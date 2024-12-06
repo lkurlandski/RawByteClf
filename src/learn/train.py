@@ -1661,7 +1661,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 id2label=materials.id2label,
                 label2id=materials.label2id,
             )
-            output: PredictionOutput = Trainer(
+            output: dict = Trainer(
                 model=model,
                 args=training_arguments,
                 train_dataset=dataset["tr"],
@@ -1672,9 +1672,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 compute_metrics=compute_metrics,
                 compute_loss_func=compute_loss_func,
             ).evaluate(d)
-
-            with open(checkpoint / "vl_metrics.json", "w") as fp:
-                json.dump(output.metrics, fp, indent=4)
+            print(output)
+            outfile = Path(checkpoint) / "vl_metrics.json"
+            print(f"Saving metrics to {outfile}...")
+            with open(outfile, "w") as fp:
+                json.dump(output, fp, indent=4)
 
         sys.exit(0)
 
