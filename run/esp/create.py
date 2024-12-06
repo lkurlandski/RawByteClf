@@ -559,6 +559,8 @@ class Configuration:
     # Mamba can handle two samples during eval, but only one during training.
     # HRRFormer can handle two samples during training, but only one during eval.
     # Furthermore the CUDA OOMs only pop up when training in multi GPU setting.
+    # Wow, fuck dude you're stupid. You had sync_batch_size=True, so it was all
+    # getting set to 1 anyway.
 
     @property
     def tr_per_device_batch_size(self) -> int:
