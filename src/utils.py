@@ -332,6 +332,13 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
         r += '"'          # add quote
         return r
 
+    def isdigit(s: str) -> bool:
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
     idx = None
     for i, a in enumerate(args):
         if "--arch_config" in a:
@@ -350,7 +357,7 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
             s += encapsulate_string(k)
             s += ": "
 
-            if v in ("true", "false", "null") or v.isdigit():
+            if v in ("true", "false", "null") or isdigit(v):
                 s += v
             else:
                 s += encapsulate_string(v)
