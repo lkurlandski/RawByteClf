@@ -265,6 +265,7 @@ class MambaModel(MambaPreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embeddings(input_ids)
+        inputs_embeds = self.dropout(inputs_embeds)
 
         if self.gradient_checkpointing and self.training and use_cache:
             use_cache = False
@@ -464,6 +465,9 @@ class BiMambaModel(MambaPreTrainedModel):
 
         inputs_embeds_forw: torch.Tensor = self.embeddings(input_ids_forw)
         inputs_embeds_back: torch.Tensor = self.embeddings(input_ids_back)
+
+        inputs_embeds_forw = self.dropout(inputs_embeds_forw)
+        inputs_embeds_back = self.dropout(inputs_embeds_back)
 
         if self.gradient_checkpointing and self.training and use_cache:
             use_cache = False
