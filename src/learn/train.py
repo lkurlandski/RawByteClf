@@ -1237,9 +1237,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     }
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
         pretrain_kwds = deepcopy(kwds)
-        if "mlp_hidden_size" in pretrain_kwds["arch_config"]:
-            print("Removing MLP hidden size nrom pretraining task.")
-            pretrain_kwds["arch_config"]["mlp_hidden_size"] = -1
+        # It would be nice to remove non-critical pretraining kwds, but its just going to be too difficult.
+        # ARCH_KEYS_FROM_CHECKPOINT_TO_IGNORE_FOR_FINETUNING = (
+        #     "hidden_dropout_prob",
+        #     "attention_probs_dropout_prob",
+        #     "head_dropout",
+        #     "head_hidden_size",
+        #     "head_num_hidden_layers"
+        # )
+        # for k in ARCH_KEYS_FROM_CHECKPOINT_TO_IGNORE_FOR_FINETUNING:
+        #     if k in pretrain_kwds["arch_config"]:
+        #         pretrain_kwds["arch_config"].pop(k)
+        #         print(f"Removed {k} from the architecture configuration to look for a pretrained model.")
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
             args.pretraining_task, args.pretraining_checkpoint, **pretrain_kwds,
         )
