@@ -79,6 +79,7 @@ class MambaConfig(PretrainedConfig):
         time_step_floor: float = 1e-4,
         rescale_prenorm_residual: bool = False,
         use_cache: bool = True,
+        hidden_dropout_prob: float = 0.0,
         bi_tie_directions: bool = False,
         bi_mix_directions: bool = False,
         bi_add_directions: bool = True,
@@ -118,6 +119,7 @@ class MambaConfig(PretrainedConfig):
         self.rescale_prenorm_residual = rescale_prenorm_residual
         self.residual_in_fp32 = residual_in_fp32
         self.use_cache = use_cache
+        self.hidden_dropout_prob = hidden_dropout_prob
         self.bi_tie_directions = bi_tie_directions
         self.bi_mix_directions = bi_mix_directions
         self.bi_add_directions = bi_add_directions
@@ -224,6 +226,7 @@ class MambaModel(MambaPreTrainedModel):
 
         self.gradient_checkpointing = False
         self.norm_f = MambaRMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(self.config.hidden_dropout_prob)
 
         self._register_load_state_dict_pre_hook(self.load_hook)
         self.post_init()
@@ -298,6 +301,7 @@ class MambaModel(MambaPreTrainedModel):
                     cache_position=cache_position,
                     attention_mask=attention_mask,
                 )
+            hidden_states = self.dropout(hidden_states)
 
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -329,6 +333,7 @@ class BiMambaModel(MambaPreTrainedModel):
 
         self.gradient_checkpointing = False
         self.norm_f = MambaRMSNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(self.config.hidden_dropout_prob)
 
         if config.bi_tie_directions:
             self.tie_forward_and_backward_weights(tie=True, clone=False)
@@ -528,6 +533,9 @@ class BiMambaModel(MambaPreTrainedModel):
                     cache_position=cache_position_back,
                     attention_mask=attention_mask,
                 )
+
+            hidden_states_forw = self.dropout(hidden_states_forw)
+            hidden_states_back = self.dropout(hidden_states_back)
 
             # Flipping the backward hidden states aligns them with the forward ones.
             if self.config.bi_mix_directions:
