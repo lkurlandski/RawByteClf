@@ -52,6 +52,10 @@ class TokenizerIOHelper:
     def unigrams(self) -> Path:
         return self.path / "unigrams.json"
 
+    @property
+    def sequence_lengths(self) -> Path:
+        return self.path / "sequence_lengths.txt"
+
     def save(self, tokenizer: Tokenizer) -> None:
 
         shutil.rmtree(self.path, ignore_errors=True)
@@ -92,6 +96,15 @@ class TokenizerIOHelper:
     def load_unigrams(self) -> dict[str, float]:
         with open(self.unigrams, "r") as fp:
             return json.load(fp)
+
+    def save_sequence_lengths(self, sequence_lengths: list[int]) -> None:
+        with open(self.sequence_lengths, "w") as fp:
+            for length in sequence_lengths:
+                fp.write(f"{length}\n")
+
+    def load_sequence_lengths(self) -> list[int]:
+        with open(self.sequence_lengths, "r") as fp:
+            return [int(line) for line in fp.readlines()]
 
     @classmethod
     def fromdisk(
