@@ -106,10 +106,21 @@ def generator_from_zipfiles(
         with mp.Pool(min(16, len(os.sched_getaffinity(0)))) as pool:
             pool.starmap(shutil.copy2, iterable)
 
+    # Since we may be sorting the files, we cannot rely on the ordered nature of the arrays.
+    name_label_map = None
+    if labels is not None:
+        name_label_map: dict[str, int] = {}
+        for a, l in zip(files, labels):
+            name_label_map[a.name.split(".")[0]] = l
+        assert len(name_label_map) == len(files) == len(labels)
+        del labels
+
     # Sort the archives so we can read them in a contiguous fashion.
     if not (contiguous := ArchivedFile.is_archive_list_contiguous(files)):
-        warnings.warn(f"Non-contiguous files will result in slow reading. Sorting: {not preserve_order}.")
-        if not preserve_order:
+        if preserve_order:
+            print("Preserve order was specified, but the files are non-contiguous, so this may be slow.")
+        else:
+            print("Sorting non-contiguous files to improve read speed.")
             files = ArchivedFile.make_archive_list_contiguous(files)
             if not ArchivedFile.is_archive_list_contiguous(files):
                 raise RuntimeError("Detected non-contiguous files.")
@@ -146,8 +157,8 @@ def generator_from_zipfiles(
             n = af.name.split("/")[-1].split(".")[0]
 
             r = {"bytes": b, "name": n}
-            if labels is not None and labels[i] is not None:
-                r["labels"] = labels[i]
+            if name_label_map is not None and name_label_map[n] is not None:
+                r["labels"] = name_label_map[n]
 
             assert all(x is not None for x in r.values())
 
