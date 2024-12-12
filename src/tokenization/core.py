@@ -2,7 +2,7 @@
 Tokenization for raw, disassembled, and/or decompiled code.
 """
 
-from tokenizers import Regex
+from tokenizers import models, Regex, Tokenizer
 from tokenizers import normalizers
 from tokenizers import pre_tokenizers
 from tokenizers import processors
@@ -47,3 +47,13 @@ def get_postprocessor(
         pair=f"{start} $A {end} {SPECIALS['sep_token']} {start} $B:1 {end}",
         special_tokens=tuple((s, i) for i, s in enumerate(SPECIALS.values())),
     )
+
+
+def get_character_tokenizer() -> Tokenizer:
+    # ASCII characters only go to 127, but we'll use 256 cause who cares.
+    alphabet = [chr(i) for i in range(256)]
+    vocab = {v: i for i, v in enumerate(SPECIALS.values())} | {
+        v: i for i, v in enumerate(alphabet, start=len(SPECIALS))
+    }
+    model = models.WordLevel(vocab=vocab, unk_token=SPECIALS["unk_token"])
+    return Tokenizer(model)

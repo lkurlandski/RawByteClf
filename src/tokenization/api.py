@@ -8,7 +8,7 @@ from transformers import PreTrainedTokenizerFast
 
 from src.enums import TokenizationAlgorithm, LiftLevel, BitsInByte
 from src.tokenization import SPECIALS
-from src.tokenization.core import get_postprocessor
+from src.tokenization.core import get_postprocessor, get_character_tokenizer
 from src.tokenization.helpers import TokenizerIOHelper, DirectoryIsEmptyError
 from src.tokenization.raw import get_raw_raw_tokenizer
 
@@ -78,6 +78,8 @@ def get_fast_tokenizer(
 
     if algorithm == TokenizationAlgorithm.WORDLEVEL and lift_level == LiftLevel.RAW:
         tokenizer = get_raw_raw_tokenizer(bits_in_byte)
+    elif algorithm == TokenizationAlgorithm.WORDLEVEL and lift_level != LiftLevel.RAW and vocab_size in (128, 256):
+        tokenizer = get_character_tokenizer()
     else:
         tokenizer = TokenizerIOHelper.fromdisk(lift_level, algorithm, vocab_size, None).load()
 
