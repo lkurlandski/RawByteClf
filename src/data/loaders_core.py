@@ -1598,7 +1598,7 @@ def get_materials_clf_elf(
 # Instead, the empty samples should be purged from the data caches directly.
 # This flag has not been added to the caches either, so this will cause confusion.
 
-DISABLE_ESP_CACHE = False
+DISABLE_ESP_CACHE = os.environ.get("DISABLE_ESP_CACHE") == "1"
 
 
 def esp_cache_file(get_materials: Callable, lift_level: LiftLevel, **kwds) -> Path:
@@ -2077,13 +2077,27 @@ def _get_materials_esp_clf(
     # Replace the logical files with real ArchivedFile objects that can be accessed.
     print("\tConverting to ArchivedFile.")
     file_to_archive_map = {}
-    for f in files:
-        for a in archives:
-            if f.startswith(a.stem):
-                file_to_archive_map[f.split(".")[0]] = a
-                break
-        else:
-            raise RuntimeError(f"Could not find the archive containing {f=} where {archives=}")
+    if all(len(a.stem) == 3 for a in archives):
+        # Because every sample here is from SOREL and is from an archive whose name
+        # consists of three hex characters, we can do this without a double for-loop.
+        prefix_archive_map = {a.stem: a for a in archives}
+        for f in tqdm(files):
+            if (prefix := f.split(".")[0][0:3]) in prefix_archive_map:
+                file_to_archive_map[f.split(".")[0]] = prefix_archive_map[prefix]
+            else:
+                raise RuntimeError(f"Could not find the archive containing {f=} where {archives=}")
+    else:
+        # This is the slow version with double for loop.
+        # We shouldn't really every hit this branch of code, but I'm remiss to delete it, so we'll raise.
+        raise RuntimeError("None but devils play past here.")
+        file_to_archive_map = {}
+        for f in tqdm(files):
+            for a in archives:
+                if f.startswith(a.stem):
+                    file_to_archive_map[f.split(".")[0]] = a
+                    break
+            else:
+                raise RuntimeError(f"Could not find the archive containing {f=} where {archives=}")
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
     materials = materials.convert_files_suffix(LIFT_LEVEL_EXTENSIONS[lift_level])
 
