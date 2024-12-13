@@ -1085,6 +1085,28 @@ def get_processed_dataset_hf(
         max_length=args.data_read_bytes,
     )
 
+    # TODO: remove after verifying that the labels are correct for DET and BEH
+    # from itertools import chain
+    # truth = {}
+    # with open("./tmp/avclass_family_cache.txt") as fp:
+    #     for line in fp:
+    #         parts = line.strip().split()
+    #         sha = parts[0]
+    #         label = " ".join(parts[1:])
+    #         truth[sha] = label
+
+    # for archived_file, label in zip(chain(materials.files["tr"], materials.files["vl"]), chain(materials.labels["tr"], materials.labels["vl"])):
+    #     sha = archived_file.name.split(".")[0]
+    #     label = materials.id2label[label]
+    #     if truth[sha] != label:
+    #         print(f"Error (materials): {sha} {label} != {truth[sha]}")
+
+    # for d in chain(dataset["tr"], dataset["vl"]):
+    #     sha = d["name"]
+    #     label = materials.id2label[d["labels"]]
+    #     if truth[sha] != label:
+    #         print(f"Error (dataset): {sha} {label} != {truth[sha]}")
+
     if materials.problem_type == "multi_label_classification":
         func = partial(hf_multilabel_encode, num_classes=materials.num_classes)
         # The one-hot encoding requires floating point one-hot labels.
@@ -1300,23 +1322,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif args.task == Task.DET:
         materials = get_materials_esp_det(args.lift_level)
     elif args.task == Task.FAM:
-        materials = get_materials_esp_fam(args.lift_level, min_freq=int(os.environ.get("MIN_FREQ", 100)), max_imbalance_ratio=int(os.environ.get("MAX_IMBALANCE_RATIO", 50)))
+        materials = get_materials_esp_fam(args.lift_level)
     elif args.task == Task.BEH:
         materials = get_materials_esp_beh(args.lift_level)
-
-
-    # TODO: remove debugging statements.
-    # if os.environ.get("DEBUG", "0") == "1":
-    #     tr_size = min(int(os.environ.get("TR_SIZE", 4096)), len(materials.files["tr"]))
-    #     _vl_size = min(int(os.environ.get("VL_SIZE", 4096)), len(materials.files["vl"]))
-    #     tr_idx = np.argsort([af.name for af in materials.files["tr"]])[0:_tr_size]
-    #     vl_idx = np.argsort([af.name for af in materials.files["vl"]])[0:_vl_size]
-    #     materials.files["tr"] = [materials.files["tr"][i] for i in tr_idx]
-    #     materials.files["vl"] = [materials.files["vl"][i] for i in vl_idx]
-    #     if materials.labels is not None:
-    #         materials.labels["tr"] = materials.labels["tr"][tr_idx]
-    #         materials.labels["vl"] = materials.labels["vl"][vl_idx]
-
 
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
@@ -1337,11 +1345,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.dataset_backend == "HF":
         num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
         dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
-
-        # TODO: remove debugging statements.
-        if os.environ.get("DEBUG", "0") == "1":
-            dataset["vl"] = dataset["vl"].take(64)
-
         print_dataset_hf(dataset)
         print(BR)
     else:
