@@ -2142,7 +2142,7 @@ def get_materials_esp_beh(
     ts_size: float = 0.00,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     min_freq: Optional[int] = 100,
-    max_imbalance_ratio: Optional[int] = 50,
+    max_imbalance_ratio: Optional[int] = 10,
     purge_empty_samples: bool = True,
     verbose: bool = True,
 ) -> Materials:
