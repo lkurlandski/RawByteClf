@@ -272,33 +272,39 @@ class HRRSelfAttention(nn.Module):
 
         pad_to = 1 << (D - 1).bit_length()
 
-        # log(key_layer, "key_layer")
-        # log(value_layer, "value_layer")
-        # log(query_layer, "query_layer")
-
-        # Binding and unbinding
-        # We perform the computations in fp32 aid stability because torch.fft cannot take bf16
+        # Superposition, value approximation, and pseudo attention scores.
+        # We perform the computations in fp32 aid stability because torch.fft cannot take bf16.
         superpositions = binding(
             key_layer.to(torch.float32),
             value_layer.to(torch.float32),
             dim=-1,
             norm=self.fft_norm,
-            n=pad_to
+            n=pad_to,
         )[:,:,:,0:D]  # (B, H, T, D)
-        if self.is_decoder and attention_mask is not None:
-            # Causal masking needs to take place within the superposition.
-            # We create T superpositions using interactions from the preceeding tokens.
-            # This ensures that the `superposition` and `value_approx` preserves causality.
-            superposition = torch.cumsum(superpositions, dim=-2)                                                   # (B, H, T, D)
-        else:
-            superposition = torch.sum(superpositions, dim=-2, keepdims=True)                                       # (B, H, 1, D)
-        value_approx = unbinding(superposition, query_layer, dim=-1, norm=self.fft_norm, n=pad_to)[:,:,:,0:D]      # (B, H, T, D)
-        attention_scores = cosine_similarity(value_layer, value_approx, dim=-1, keepdim=True).to(key_layer.dtype)  # (B, H, T, 1)
 
-        # log(superpositions, "superpositions")
-        # log(superposition, "superposition")
-        # log(value_approx, "value_approx")
-        # log(attention_scores, "attention_scores")
+        # Causal masking needs to take place within the superposition.
+        # If causal, we create T superpositions using interactions from the preceeding tokens.
+        # This ensures that the `superposition` and `value_approx` preserves causality.
+        # Otherwise, we just use the original deeply bidirectional HRR Self Attention
+        if self.is_decoder and attention_mask is not None:
+            superposition = torch.cumsum(superpositions, dim=-2)  # (B, H, T, D)
+        else:
+            superposition = torch.sum(superpositions, dim=-2, keepdims=True)  # (B, H, 1, D)
+
+        value_approx = unbinding(
+            superposition,
+            query_layer.to(torch.float32),
+            dim=-1,
+            norm=self.fft_norm,
+            n=pad_to,
+        )[:,:,:,0:D]  # (B, H, T, D)
+
+        attention_scores = cosine_similarity(
+            value_layer.to(torch.float32),
+            value_approx,
+            dim=-1,
+            keepdim=True
+        ).to(key_layer.dtype)  # (B, H, T, 1)
 
         # Add relative position embeddings.
         if self.position_embedding_type == "relative":
