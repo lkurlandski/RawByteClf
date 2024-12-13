@@ -1700,7 +1700,6 @@ def _get_materials_esp_lm(
     return materials
 
 
-
 def get_materials_esp_clm(
     lift_level: LiftLevel,
     tr_size: Optional[float | int] = None,
