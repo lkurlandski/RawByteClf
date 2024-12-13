@@ -9,12 +9,18 @@ import time
 from typing import Literal, Optional
 
 import numpy as np
+from scipy.special import expit, softmax  # pylint: disable=no-name-in-module
+from scipy.stats.mstats import gmean
 from sklearn import metrics
 from sklearn.utils.multiclass import type_of_target
-from scipy.special import expit, softmax  # pylint: disable=no-name-in-module
 from transformers import EvalPrediction
 import torch
 from torch import tensor, Tensor
+
+
+def geometric_mean_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    class_recalls = metrics.recall_score(y_true, y_pred, average=None)
+    return float(gmean(class_recalls))
 
 
 def compute_roc_auc(labels: np.ndarray, probabilities: np.ndarray, multi_class: str, average: str) -> float:
@@ -145,6 +151,22 @@ class ComputeMetrics(ABC):
 class CLFComputeMetrics(ComputeMetrics):
     """
     Compute classification metrics.
+
+    Keys:
+      acc - accuracy
+      bac - balanced accuracy
+      mcc - matthew's correlation coefficient
+      gme - geometric mean of per-class recall
+      ham - hamming loss
+      pre - precision
+      rec - recall
+      f-1 - f-1 measure
+      roc - area under the reciever operator characteristic curve
+      avp - area under the precision recall curve (average precision)
+      coe - coverage_error
+      lra - label ranking average precision
+      lrl - label ranking loss
+      jac - jaccard index
     """
 
     def __init__(self, pos_label: int = 1, threshold: float = 0.5) -> None:
@@ -158,7 +180,7 @@ class CLFComputeMetricsBinary(CLFComputeMetrics):
     Compute binary classification metrics.
     """
 
-    averages    = ["binary"]
+    average     = "binary"
     multi_class = "raise"
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[str, float]:
@@ -173,15 +195,20 @@ class CLFComputeMetricsBinary(CLFComputeMetrics):
         predictions   = np.argmax(probabilities, axis=1)  # (N,)
         probabilities = probabilities[:, 1]               # (N,)
 
-        precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average="binary", pos_label=self.pos_label)
+        if len(u := np.unique(predictions)) < 2:
+            print(f"Warning: Predictions cover only a single class ({u}).")
+
         report = {
-            "balanced_accuracy": metrics.balanced_accuracy_score(labels, predictions),
-            "accuracy": metrics.accuracy_score(labels, predictions),
-            "hamming_loss": metrics.hamming_loss(labels, predictions),
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "roc-auc": compute_roc_auc(labels, probabilities, self.multi_class, None),
+            "acc": metrics.accuracy_score(labels, predictions),
+            "bac": metrics.balanced_accuracy_score(labels, predictions),
+            "mcc": metrics.matthews_corrcoef(labels, predictions),
+            "ham": metrics.hamming_loss(labels, predictions),
+            "pre": metrics.precision_score(labels, predictions, zero_division=0.0, pos_label=self.pos_label),
+            "rec": metrics.recall_score(labels, predictions, zero_division=0.0, pos_label=self.pos_label),
+            "f-1": metrics.f1_score(labels, predictions, zero_division=0.0, pos_label=self.pos_label),
+            "avp": metrics.average_precision_score(labels, probabilities, pos_label=self.pos_label),
+            "roc": compute_roc_auc(labels, probabilities, self.multi_class, None),
+            "gme": geometric_mean_score(labels, predictions),
         }
 
         return self.update_and_return(report, support, compute_result)
@@ -192,7 +219,7 @@ class CLFComputeMetricsSingleLabel(CLFComputeMetrics):
     Compute multiclass classification metrics.
     """
 
-    averages = ["macro", "weighted", "micro"]
+    average     = "macro"
     multi_class = "ovr"
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[str, float]:
@@ -203,26 +230,24 @@ class CLFComputeMetricsSingleLabel(CLFComputeMetrics):
             raise TypeError(f"Expected binary labels. Got {type_of_target(labels)}.")
 
         probabilities = eval_pred.predictions             # (N, C)
-        probabilities = softmax(probabilities, axis=1)    # (N, C) | (N,)
+        probabilities = softmax(probabilities, axis=1)    # (N, C)
         predictions   = np.argmax(probabilities, axis=1)  # (N,)
 
         if len(u := np.unique(predictions)) < 2:
             print(f"Warning: Predictions cover only a single class ({u}).")
 
         report = {
-            "balanced_accuracy": metrics.balanced_accuracy_score(labels, predictions),
-            "accuracy": metrics.accuracy_score(labels, predictions),
-            "hamming_loss": metrics.hamming_loss(labels, predictions),
+            "acc": metrics.accuracy_score(labels, predictions),
+            "bac": metrics.balanced_accuracy_score(labels, predictions),
+            "mcc": metrics.matthews_corrcoef(labels, predictions),
+            "ham": metrics.hamming_loss(labels, predictions),
+            "pre": metrics.precision_score(labels, predictions, zero_division=0.0, average=self.average),
+            "rec": metrics.recall_score(labels, predictions, zero_division=0.0, average=self.average),
+            "f-1": metrics.f1_score(labels, predictions, zero_division=0.0, average=self.average),
+            "avp": metrics.average_precision_score(labels, probabilities, average=self.average),
+            "roc": compute_roc_auc(labels, probabilities, self.multi_class, self.average),
+            "gme": geometric_mean_score(labels, predictions),
         }
-        for average in self.averages:
-            precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average, pos_label=self.pos_label, zero_division=0.0)
-            roc_auc = compute_roc_auc(labels, probabilities, self.multi_class, average)
-            report |= {
-                f"precision-{average}": precision,
-                f"recall-{average}": recall,
-                f"f1-{average}": f1,
-                f"roc-auc-{average}": roc_auc,
-            }
 
         return self.update_and_return(report, support, compute_result)
 
@@ -232,7 +257,7 @@ class CLFComputeMetricsMultiLabel(CLFComputeMetrics):
     Compute multilabel classification metrics.
     """
 
-    averages = ["macro", "weighted", "micro"]
+    average     = "macro"
     multi_class = "ovr"
 
     def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[str, float]:
@@ -241,29 +266,24 @@ class CLFComputeMetricsMultiLabel(CLFComputeMetrics):
         support = labels.shape[0]
         if type_of_target(labels) != "multilabel-indicator":
             raise TypeError(f"Expected binary labels. Got {type_of_target(labels)}.")
+
         probabilities = expit(eval_pred.predictions)                           # (N, C)
         predictions   = (probabilities > self.threshold).astype(labels.dtype)  # (N, C)
 
         report = {
-            "accuracy": metrics.accuracy_score(labels, predictions),
-            "hamming_loss": metrics.hamming_loss(labels, predictions),
+            "acc": metrics.accuracy_score(labels, predictions),
+            "ham": metrics.hamming_loss(labels, predictions),
+            "pre": metrics.precision_score(labels, predictions, zero_division=0.0, average=self.average, pos_label=self.pos_label),
+            "rec": metrics.recall_score(labels, predictions, zero_division=0.0, average=self.average, pos_label=self.pos_label),
+            "f-1": metrics.f1_score(labels, predictions, zero_division=0.0, average=self.average, pos_label=self.pos_label),
+            "avp": metrics.average_precision_score(labels, probabilities, average=self.average, pos_label=self.pos_label),
+            "roc": compute_roc_auc(labels, probabilities, self.multi_class, self.average),
+            "gme": geometric_mean_score(labels, predictions),
+            "coe": metrics.coverage_error(labels, probabilities),
+            "lra": metrics.label_ranking_average_precision_score(labels, probabilities),
+            "lrl": metrics.label_ranking_loss(labels, probabilities),
+            "jac": metrics.jaccard_score(labels, predictions, average=self.average, pos_label=self.pos_label),
         }
-
-        for average in self.averages:
-            precision, recall, f1, _ = metrics.precision_recall_fscore_support(labels, predictions, average=average, pos_label=self.pos_label)
-            roc_auc = compute_roc_auc(labels, probabilities, self.multi_class, average)
-            avg_precision = metrics.average_precision_score(labels, probabilities, average=average, pos_label=self.pos_label)
-            report |= {
-                f"precision-{average}": precision,
-                f"recall-{average}": recall,
-                f"f1-{average}": f1,
-                f"roc-auc-{average}": roc_auc,
-                f"average_precision-{average}": avg_precision,
-            }
-
-        report["coverage_error"] = metrics.coverage_error(labels, probabilities)
-        report["label_ranking_average_precision_score"] = metrics.label_ranking_average_precision_score(labels, probabilities)
-        report["label_ranking_loss"] = metrics.label_ranking_loss(labels, probabilities)
 
         return self.update_and_return(report, support, compute_result)
 
