@@ -30,6 +30,7 @@ from src.data.loaders_core import (
 parser = ArgumentParser()
 parser.add_argument("--num_workers", type=int, default=1)
 parser.add_argument("--suppress", action="store_true")
+parser.add_argument("--remove", action="store_true")
 args = parser.parse_args()
 
 
@@ -48,8 +49,9 @@ def func(get_materials: Callable, lift_level: LiftLevel):
         get_materials(lift_level)
 
 
-for f in Path("./cache/materials").iterdir():
-    f.unlink()
+if args.remove:
+    for f in Path("./cache/materials").iterdir():
+        f.unlink()
 
 
 iterable = list(product(GET_MATERIALS, LiftLevel))
