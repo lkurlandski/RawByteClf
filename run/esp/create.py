@@ -27,6 +27,7 @@ ACTION   = None
 ARMITAGE = False
 ROOT     = Path(os.path.dirname(os.path.realpath(__file__)))
 
+
 GB = 1024 ** 3
 
 
@@ -87,6 +88,7 @@ def get_body(
     mem: str,
     gpu: int,
     streaming: bool,
+    sync_batch_size: bool,
     exit_after_map: bool,
     skip_eval_check: bool,
     model_name: ModelName,
@@ -99,6 +101,7 @@ def get_body(
     pretraining_task: Optional[Task],
     weighted_loss: Optional[WeightedLossAlgorithm],
     beta: Optiona[float],
+    pretraining_checkpoint: Optional[str],
     num_train_epochs: int,
     max_steps: Optional[int],
     save_steps: Optional[int],
@@ -140,12 +143,13 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if ARMITAGE else "module unload blindfold"}
 {"" if ARMITAGE else "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"}
 
+
 {"" if gpu <= 1 else torchrun_str(gpu)}
 python -u \\
 src/learn/train.py \\
 --root='./output/esp-{ACTION.value}' \\
 --streaming={bool_to_str(streaming)} \\
---sync_batch_size=true \\
+--sync_batch_size={bool_to_str(sync_batch_size)} \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
 --skip_eval_check={bool_to_str(skip_eval_check)} \\
 --dataset_backend="HF" \\
@@ -159,7 +163,7 @@ src/learn/train.py \\
 {"--pretraining_task='" + pretraining_task.value + "'" if pretraining_task is not None else ""} \\
 {"--weighted_loss='" + weighted_loss.value + "'" if weighted_loss is not None else ""} \\
 {f"--beta={beta}" if beta is not None else ""} \\
---pretraining_checkpoint=-1 \\
+{f"--pretraining_checkpoint='{pretraining_checkpoint}'" if pretraining_checkpoint is not None else ""} \\
 --seed={seed} \\
 --do_train \\
 --output_dir='/tmp' \\
@@ -174,9 +178,9 @@ src/learn/train.py \\
 --logging_steps=1 \\
 --dataloader_num_workers={dataloader_num_workers} \\
 --optim="adamw_torch" \\
---learning_rate={learning_rate} \\
---weight_decay={weight_decay} \\
---warmup_ratio={warmup_ratio} \\
+--learning_rate={learning_rate:.6f} \\
+--weight_decay={weight_decay:.6f} \\
+--warmup_ratio={warmup_ratio:.6f} \\
 --lr_scheduler_type="linear" \\
 --adam_beta1=0.900 \\
 --adam_beta2=0.999 \\
@@ -234,6 +238,22 @@ MODEL_SAMPLES_PER_SECOND: dict[tuple, tuple[float, float]] = {
 
 COMPRESSION_RATIOS: dict[tuple[TokenizationAlgorithm, int], float] = {
 
+}
+
+
+CHECKPOINTS = {
+    (LiftLevel.DECOMPILED, ModelName.HRR, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.DECOMPILED, ModelName.HRR, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--True/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.DECOMPILED, ModelName.MAM, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.DECOMPILED, ModelName.MAM, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--True/num_hidden_layers--64/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.DISASSEMBLED, ModelName.HRR, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dis/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.DISASSEMBLED, ModelName.HRR, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dis/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--True/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.DISASSEMBLED, ModelName.MAM, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dis/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.DISASSEMBLED, ModelName.MAM, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dis/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--True/num_hidden_layers--64/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.RAW, ModelName.HRR, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.RAW, ModelName.HRR, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--True/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.RAW, ModelName.MAM, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
+    (LiftLevel.RAW, ModelName.MAM, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--True/num_hidden_layers--64/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
 }
 
 
@@ -317,11 +337,11 @@ class Configuration:
         if ACTION == Action.EXECUTE:
             if self.max_length != 65536:
                 return False
+            if self.lift_level != LiftLevel.RAW:
+                return False
             if self.model_size != ModelSize.CO:
                 return False
             if self.task not in (Task.FAM,):
-                return False
-            if self.pretraining_task not in (None,):
                 return False
 
         return True
@@ -343,6 +363,7 @@ class Configuration:
 
     @property
     def tim(self) -> str:
+        return seconds_to_slurm_time(3600 * 24)  # FIXME
         if ACTION == Action.PREPARE:
             if self.task in (Task.CLM, Task.MLM):
                 return seconds_to_slurm_time(7200)
@@ -400,7 +421,11 @@ class Configuration:
         if ACTION == Action.PREPARE:
             return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
-            return bytes_to_slurm_mem(90 * self.gpu * GB)
+            if self.task in (Task.CLM, Task.MLM):
+                f = 90
+            else:
+                f = 64
+            return bytes_to_slurm_mem(f * self.gpu * GB)
 
         # The memory required for the classification tasks can be estimated.
         k = (self.tokenization_algorithm, self.vocab_size)
@@ -420,9 +445,13 @@ class Configuration:
 
     @property
     def streaming(self) -> bool:
-        if self.task in (Task.CLM, Task.MLM):
-            return True
-        return False
+        return True
+
+    @property
+    def sync_batch_size(self) -> bool: 
+        if self.task in (Task.DET, Task.FAM, Task.BEH):
+            return False
+        return True
 
     @property
     def exit_after_map(self) -> bool:
@@ -442,7 +471,19 @@ class Configuration:
 
         # Baseline MalConv2 from original authors.
         if self.model_name == ModelName.MAL:
-            return {"mode": "gcg", "channels": 256, "stride": 64, "kernel_size": 64, "embedding_size": 8}
+            d = {
+                "mode": "gcg",
+                "channels": 256,
+                "stride": 64,
+                "kernel_size": 64,
+            }
+            if self.vocab_size == 256:
+                d["embedding_size"] = 8
+            elif self.vocab_size == 16384:
+                d["embedding_size"] = 384
+            else:
+                raise NotImplementedError(f"{self.vocab_size}")
+            return d
 
         # When using gradient checkpointing, the hidden_size is much more impactful
         # for causing CUDA OOM errors, hence the increasing depth of these architectures.
@@ -465,9 +506,15 @@ class Configuration:
         }
 
         if self.model_name == ModelName.HRR:
-            d["position_embedding_type"] = "rotary"
+            d |= {
+                "hidden_dropout_prob": 0.1,
+                "position_embedding_type": "rotary",
+            }
         elif self.model_name == ModelName.MAM:
-            d["bi_tie_directions"] = False
+            d |= {
+                "hidden_dropout_prob": 0.0,
+                "bi_tie_directions": False,
+            }
             if self.model_mode == ModelMode.UN:
                 d["num_hidden_layers"] *= 2
 
@@ -476,6 +523,7 @@ class Configuration:
             "num_hidden_layers",
             "embedding_size",
             "hidden_size",
+            "hidden_dropout_prob",
             "head_num_hidden_layers",
             "head_hidden_size",
             "position_embedding_type",
@@ -485,6 +533,7 @@ class Configuration:
 
     @property
     def num_train_epochs(self) -> int:
+        return 1
         if self.task in (Task.CLM, Task.MLM):
             return 1
         if self.task == Task.DET:
@@ -532,19 +581,23 @@ class Configuration:
     def learning_rate(self) -> float:
         if self.task in (Task.CLM, Task.MLM):
             return 1e-3
-        return 1e-3
+        if self.model_name == ModelName.MAL:
+            return 1e-3
+        if self.pretraining_task is None:
+            return 1e-4
+        return 1e-5
 
     @property
     def weight_decay(self) -> float:
         if self.task in (Task.CLM, Task.MLM):
             return 0.10
-        return 0.02
+        return 0.01
 
     @property
     def warmup_ratio(self) -> float:
         if self.task in (Task.CLM, Task.MLM):
             return 0.05
-        return 0.01
+        return 0.05
 
     @property
     def tr_batch_size(self) -> int:
@@ -561,9 +614,13 @@ class Configuration:
     # Furthermore the CUDA OOMs only pop up when training in multi GPU setting.
     # Wow, fuck dude you're stupid. You had sync_batch_size=True, so it was all
     # getting set to 1 anyway.
+    # Jesus christ, apparently, these models can fit like 8x larger batch sizes
+    # for classification? WTF. Don't care.
 
     @property
     def tr_per_device_batch_size(self) -> int:
+        if self.task in (Task.DET, Task.FAM, Task.BEH):
+            return 8
         if self.model_name == ModelName.HRR:
             return 2
         if self.model_name == ModelName.MAM:
@@ -574,6 +631,8 @@ class Configuration:
 
     @property
     def vl_per_device_batch_size(self) -> int:
+        if self.task in (Task.DET, Task.FAM, Task.BEH):
+            return 32
         if self.model_name == ModelName.HRR:
             return 1
         if self.model_name == ModelName.MAM:
@@ -630,14 +689,22 @@ class Configuration:
 
     @property
     def weighted_loss(self) -> Optional[WeightedLossAlgorithm]:
-        if self.task == Task.FAM:
+        if self.task in (Task.FAM, Task.BEH):
             return WeightedLossAlgorithm.SAMPLE_REWEIGHTING
         return None
 
     @property
     def beta(self) -> Optional[float]:
-        if self.task == Task.FAM:
-            return 0.900
+        if self.task in (Task.FAM, Task.BEH):
+            return 0.990
+        return None
+
+    @property
+    def pretraining_checkpoint(self) -> Optional[str]:
+        # If we use a different dropout for finetuning, it is challenging to resolve
+        # the pretraining path were we to pass a "-1" to the program.
+        if self.pretraining_task is not None:
+            return CHECKPOINTS[(self.lift_level, self.model_name, self.pretraining_task)]
         return None
 
     @property
@@ -698,6 +765,7 @@ def main():
             mem=config.mem,
             gpu=config.gpu,
             streaming=config.streaming,
+            sync_batch_size=config.sync_batch_size,
             exit_after_map=config.exit_after_map,
             skip_eval_check=config.skip_eval_check,
             model_name=config.model_name,
@@ -710,6 +778,7 @@ def main():
             pretraining_task=config.pretraining_task,
             weighted_loss=config.weighted_loss,
             beta=config.beta,
+            pretraining_checkpoint=config.pretraining_checkpoint,
             num_train_epochs=config.num_train_epochs,
             max_steps=config.max_steps,
             save_steps=config.save_steps,
