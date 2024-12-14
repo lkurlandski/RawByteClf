@@ -337,8 +337,6 @@ class Configuration:
         if ACTION == Action.EXECUTE:
             if self.max_length != 65536:
                 return False
-            if self.lift_level != LiftLevel.RAW:
-                return False
             if self.model_size != ModelSize.CO:
                 return False
             if self.task not in (Task.FAM,):
@@ -620,7 +618,7 @@ class Configuration:
     @property
     def tr_per_device_batch_size(self) -> int:
         if self.task in (Task.DET, Task.FAM, Task.BEH):
-            return 8
+            return 4
         if self.model_name == ModelName.HRR:
             return 2
         if self.model_name == ModelName.MAM:
@@ -632,7 +630,7 @@ class Configuration:
     @property
     def vl_per_device_batch_size(self) -> int:
         if self.task in (Task.DET, Task.FAM, Task.BEH):
-            return 32
+            return 16
         if self.model_name == ModelName.HRR:
             return 1
         if self.model_name == ModelName.MAM:
