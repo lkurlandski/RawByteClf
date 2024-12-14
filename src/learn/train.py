@@ -1345,6 +1345,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.dataset_backend == "HF":
         num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
         dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
+        if (n := int(os.environ.get("TR_SIZE", "-1"))) > 0:
+            dataset["tr"] = dataset["tr"].take(n)
+        if (n := int(os.environ.get("VL_SIZE", "-1"))) > 0:
+            dataset["vl"] = dataset["vl"].take(n)
         print_dataset_hf(dataset)
         print(BR)
     else:
