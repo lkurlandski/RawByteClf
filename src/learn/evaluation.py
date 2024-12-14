@@ -244,7 +244,6 @@ class CLFComputeMetricsSingleLabel(CLFComputeMetrics):
             "pre": metrics.precision_score(labels, predictions, zero_division=0.0, average=self.average),
             "rec": metrics.recall_score(labels, predictions, zero_division=0.0, average=self.average),
             "f-1": metrics.f1_score(labels, predictions, zero_division=0.0, average=self.average),
-            "avp": metrics.average_precision_score(labels, probabilities, average=self.average),
             "roc": compute_roc_auc(labels, probabilities, self.multi_class, self.average),
             "gme": geometric_mean_score(labels, predictions),
         }
