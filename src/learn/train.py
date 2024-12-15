@@ -139,6 +139,7 @@ from src.utils import (
     check_model_parameters,
 )
 from src.architectures.head_utils import Head, check_for_anomalous_weights
+from src.architectures.other import FocalLoss
 from src.architectures.malconv_hf import (
     MalConvConfig,
     MalConvForSequenceClassification,
@@ -494,24 +495,37 @@ class ComputeLossFunction(Protocol):
         ...
 
 
-class WeightedLossFunction:
+class CustomComputeLossFunction:
 
-    def __init__(self, weight: Tensor, num_labels: int, loss_class: torch.nn.Module = CrossEntropyLoss) -> None:
-        if torch.isnan(weight).any() or torch.isinf(weight).any():
-            raise ValueError("NaN or Inf found in the weight tensor.")
-        self.weight     = weight
+    def __init__(self, num_labels: int, problem_type: str, loss_fn: torch.nn.Module) -> None:
         self.num_labels = num_labels
-        self.loss_class = loss_class
+        self.problem_type = problem_type
+        self.loss_fn = loss_fn
+        if self.problem_type not in ("single_label_classification", "multi_label_classification", "regression"):
+            raise ValueError(f"{self.problem_type}")
 
     def __call__(self, outputs: SequenceClassifierOutput, labels: Tensor, num_items_in_batch: Optional[int] = None) -> Tensor:
-        self.weight = self.weight.to(outputs.logits.device)
-        loss_fn     = self.loss_class(weight=self.weight)
-        loss        = loss_fn(outputs.logits.view(-1, self.num_labels), labels.view(-1))
-        if torch.isnan(loss).any():
-            raise RuntimeError("NaN loss.")
-        if torch.isinf(loss).any():
-            raise RuntimeError("Inf loss.")
+        self.loss_fn = self.loss_fn.to(labels.device)
+
+        inputs  = outputs.logits
+        targets = labels
+        if self.problem_type == "single_label_classification":
+            inputs = inputs.view(-1, self.num_labels)
+
+        loss = self.loss_fn(inputs, targets)
+
+        # if torch.isnan(loss).any():
+        #     raise RuntimeError("NaN loss.")
+        # if torch.isinf(loss).any():
+        #     raise RuntimeError("Inf loss.")
+
         return loss
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"CustomComputeLossFunction({self.num_labels}, {self.problem_type}, {self.loss_fn.__class__.__name__})"
 
 
 def hp_model_init(
@@ -1470,19 +1484,23 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     compute_loss_func = None
     if args.weighted_loss is not None:
-        if materials.problem_type == "single_label_classification":
+        if materials.problem_type not in ("single_label_classification", "multi_label_classification"):
+            raise NotImplementedError(f"Weighted loss not implemented for {materials.problem_type=}")
+
+        if args.weighted_loss == WeightedLossAlgorithm.FOCAL_LOSS:
+            loss_fn = FocalLoss()
+            compute_loss_func = CustomComputeLossFunction(config.num_labels, materials.problem_type, loss_fn)
+        else:
             if args.weighted_loss == WeightedLossAlgorithm.SAMPLE_REWEIGHTING:
                 weight = sample_reweighting(materials.dist_tr, beta=args.beta)
             elif args.weighted_loss == WeightedLossAlgorithm.INVERSE_CLASS_FREQUENCY:
                 weight = inverse_class_frequency(materials.dist_tr)
-            weight = [weight[materials.id2label[i]] for i in sorted(materials.id2label.keys())]
-            compute_loss_func = WeightedLossFunction(tensor(weight), config.num_labels, CrossEntropyLoss)
-        elif materials.problem_type == "multi_label_classification":
-            raise NotImplementedError(f"Weighted loss not implemented for {materials.problem_type=}")
-        elif materials.problem_type is None:
-            raise NotImplementedError(f"Weighted loss not implemented for {materials.problem_type=}")
-        else:
-            raise ValueError(f"Unrecognized problem type: {materials.problem_type=}")
+            weight = tensor([weight[materials.id2label[i]] for i in sorted(materials.id2label.keys())])
+            loss_fn = CrossEntropyLoss(weight=weight)
+            compute_loss_func = CustomComputeLossFunction(config.num_labels, materials.problem_type, loss_fn)
+
+        if compute_loss_func is None:
+            raise RuntimeError(f"compute_loss_func was not assigned: {compute_loss_func=}")
 
     print(f"{compute_loss_func=}")
     print(BR)
