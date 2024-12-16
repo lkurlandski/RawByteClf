@@ -1751,7 +1751,7 @@ def get_materials_esp_det(
     ratio_pos_split: Optional[float] = 0.50,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     purge_empty_samples: bool = True,
-    timestamp_early: int = int(datetime(2000, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    timestamp_early: int = int(datetime(2010, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     timestamp_late: int = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     verbose: bool = True,
 ) -> Materials:
