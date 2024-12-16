@@ -67,6 +67,7 @@ class SplitMode(Enum):
 class WeightedLossAlgorithm(Enum):
     SAMPLE_REWEIGHTING      = "srw"
     INVERSE_CLASS_FREQUENCY = "icf"
+    FOCAL_LOSS              = "foc"
 
 
 class DatasetName(Enum):

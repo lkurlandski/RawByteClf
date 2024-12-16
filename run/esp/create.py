@@ -339,7 +339,7 @@ class Configuration:
                 return False
             if self.model_size != ModelSize.CO:
                 return False
-            if self.task not in (Task.FAM,):
+            if self.task not in (Task.BEH,):
                 return False
 
         return True
@@ -687,8 +687,10 @@ class Configuration:
 
     @property
     def weighted_loss(self) -> Optional[WeightedLossAlgorithm]:
-        if self.task in (Task.FAM, Task.BEH):
+        if self.task == Task.FAM:
             return WeightedLossAlgorithm.SAMPLE_REWEIGHTING
+        if self.task == Task.BEH:
+            return WeightedLossAlgorithm.FOCAL_LOSS
         return None
 
     @property
