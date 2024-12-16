@@ -1694,9 +1694,11 @@ def _get_materials_esp_lm(
     materials = Materials(files=tr_vl_ts_files)
     materials = materials.convert_files_suffix(LIFT_LEVEL_EXTENSIONS[lift_level])
 
-    print(f"Saving materials to cache: {cache_file}.")
-    with open(cache_file, "wb") as fp:
-        pickle.dump(materials, fp)
+    if not DISABLE_ESP_CACHE:
+        print(f"Saving materials to cache: {cache_file}.")
+        with open(cache_file, "wb") as fp:
+            pickle.dump(materials, fp)
+
     return materials
 
 
@@ -1749,8 +1751,17 @@ def get_materials_esp_det(
     ratio_pos_split: Optional[float] = 0.50,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     purge_empty_samples: bool = True,
+    timestamp_early: int = int(datetime(1970,  1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    timestamp_late: int = int(datetime(2020, 10, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     verbose: bool = True,
 ) -> Materials:
+    """
+
+    Args:
+     timestamp_early: int
+      Beginning of time - int(datetime(1970,  1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
+      BODMAS end of collection - int(datetime(2020, 10, 1, 0, 0, 0, 0, timezone.utc).timestamp())
+    """
     # pylint: disable=multiple-statements
 
     lift_level     = LiftLevel(lift_level)
@@ -1765,6 +1776,8 @@ def get_materials_esp_det(
         ratio_pre_split=ratio_pre_split,
         ratio_pos_split=ratio_pos_split,
         lift_level_ddp=lift_level_ddp.value,
+        timestamp_early=timestamp_early,
+        timestamp_late=timestamp_late,
     )
 
     if not DISABLE_ESP_CACHE and cache_file.exists():
@@ -1779,10 +1792,6 @@ def get_materials_esp_det(
     # set, but this is probably better than having different ratios. The tr/vl/ts
     # sizes need to be tuned to see whats its going to look like after the fact.
 
-    # From the beginning of time until BODMAS stopped collecting.
-    TIMESTAMP_EARLY = int(datetime(1970,  1, 1, 0, 0, 0, 0, timezone.utc).timestamp())
-    TIMESTAMP_LATE  = int(datetime(2020, 10, 1, 0, 0, 0, 0, timezone.utc).timestamp())
-
     # Get data for each dataset.
     timestamps_files   = {dnm: TIMESTAMPS_FILES[dnm] for dnm in DatasetName}
     sha_timestamp_maps = {dnm: get_sha_timestamp_map(timestamps_files[dnm]) for dnm in DatasetName}
@@ -1793,8 +1802,8 @@ def get_materials_esp_det(
     print("\tRemoving files that do not meet timestamp requirements.")
     files = {}
     for dnm in DatasetName:
-        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], TIMESTAMP_EARLY)
-        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], TIMESTAMP_LATE)
+        lower = max(VALID_TIMESTAMP_RANGES[dnm][0], timestamp_early)
+        upper = min(VALID_TIMESTAMP_RANGES[dnm][1], timestamp_late)
         fs = [f for f, _ in tqdm(get_data_from_archives(archives[dnm], names=True, contents=False), leave=False)]
         if verbose: print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
         fs = [f for f in fs if sha_timestamp_maps[dnm].get(Path(f).stem) is not None]
@@ -1954,9 +1963,10 @@ def get_materials_esp_det(
     if verbose: print(f"\t\tvl: mal-ben  = {fmt(n_vl_mal, n_vl)} {fmt(n_vl_ben, n_vl)}")
     if verbose: print(f"\t\tts: mal-ben  = {fmt(n_ts_mal, n_ts)} {fmt(n_ts_ben, n_ts)}")
 
-    print(f"Saving materials to cache: {cache_file}.")
-    with open(cache_file, "wb") as fp:
-        pickle.dump(materials, fp)
+    if not DISABLE_ESP_CACHE:
+        print(f"Saving materials to cache: {cache_file}.")
+        with open(cache_file, "wb") as fp:
+            pickle.dump(materials, fp)
 
     return materials
 
@@ -2100,9 +2110,10 @@ def _get_materials_esp_clf(
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
     materials = materials.convert_files_suffix(LIFT_LEVEL_EXTENSIONS[lift_level])
 
-    print(f"Saving materials to cache: {cache_file}.")
-    with open(cache_file, "wb") as fp:
-        pickle.dump(materials, fp)
+    if not DISABLE_ESP_CACHE:
+        print(f"Saving materials to cache: {cache_file}.")
+        with open(cache_file, "wb") as fp:
+            pickle.dump(materials, fp)
 
     return materials
 
