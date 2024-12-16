@@ -344,6 +344,9 @@ class OutputHelper:
     def get_finetuning_model_name_or_path(
         pretraining_task: Task, pretraining_checkpoint: str | int = -1, **kwds,
     ) -> str:
+        if os.path.exists(pretraining_checkpoint):
+            return pretraining_checkpoint
+
         oh = OutputHelper(**kwds)
 
         path = oh.model_path / f"task--{pretraining_task.value}"
