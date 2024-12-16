@@ -1747,12 +1747,12 @@ def get_materials_esp_det(
     tr_size: float = 0.80,
     vl_size: float = 0.20,
     ts_size: float = 0.00,
-    ratio_pre_split: Optional[float] = 0.80,
+    ratio_pre_split: Optional[float] = None,
     ratio_pos_split: Optional[float] = 0.50,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     purge_empty_samples: bool = True,
-    timestamp_early: int = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
-    timestamp_late: int = int(datetime(2024, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    timestamp_early: int = int(datetime(2000, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    timestamp_late: int = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     verbose: bool = True,
 ) -> Materials:
     """
