@@ -1751,8 +1751,8 @@ def get_materials_esp_det(
     ratio_pos_split: Optional[float] = 0.50,
     lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
     purge_empty_samples: bool = True,
-    timestamp_early: int = int(datetime(1970,  1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
-    timestamp_late: int = int(datetime(2020, 10, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    timestamp_early: int = int(datetime(1970, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
+    timestamp_late: int = int(datetime(2024, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     verbose: bool = True,
 ) -> Materials:
     """
@@ -1931,11 +1931,11 @@ def get_materials_esp_det(
     if verbose: print("\tConverting to ArchivedFile.")
     file_to_archive_map = {}
     for dnm in DatasetName:
-        for f in files[dnm]:
-            for a in archives[dnm]:
-                if f.startswith(a.stem):
-                    file_to_archive_map[f] = a
-                    break
+        prefix_archive_map = {a.stem: a for a in archives[dnm]}
+        name_length = len(next(iter(prefix_archive_map.keys())))
+        for f in tqdm(files[dnm], leave=False):
+            if (prefix := f.split(".")[0][0:name_length]) in prefix_archive_map:
+                file_to_archive_map[f] = prefix_archive_map[prefix]
             else:
                 raise RuntimeError(f"Could not find the archive containing {f=} where {archives[dnm]=}")
     materials = materials.convert_files_to_archived_file(file_to_archive_map)
