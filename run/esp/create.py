@@ -339,7 +339,7 @@ class Configuration:
                 return False
             if self.model_size != ModelSize.CO:
                 return False
-            if self.task not in (Task.BEH,):
+            if self.task not in (Task.DET, Task.FAM, Task.BEH,):
                 return False
 
         return True
@@ -361,13 +361,15 @@ class Configuration:
 
     @property
     def tim(self) -> str:
-        return seconds_to_slurm_time(3600 * 24)  # FIXME
         if ACTION == Action.PREPARE:
             if self.task in (Task.CLM, Task.MLM):
                 return seconds_to_slurm_time(7200)
             if self.task == Task.FAM:
                 return seconds_to_slurm_time(3600)
             return seconds_to_slurm_time(1800)
+
+        if self.model_size != ModelSize.CO:
+            raise NotImplementedError()
 
         if self.task in (Task.CLM, Task.MLM):
             if self.gpu != 4:
@@ -376,35 +378,49 @@ class Configuration:
                 return "05-00:00:00"
             return "02-00:00:00"
 
-        SCALES = {
-            (ModelName.MAM, ModelMode.UN): 1.0,
-            (ModelName.MAM, ModelMode.BI): 1.0,
-            (ModelName.HRR, ModelMode.UN): 1.0,
-            (ModelName.HRR, ModelMode.BI): 1.0,
-        }
-        f1 = SCALES[(self.model_name, self.model_mode)]
+        if self.task == Task.DET:
+            n_tr = 24614
+            n_vl = 8322
+        if self.task == Task.FAM:
+            n_tr = 49168
+            n_vl = 12631
+        if self.task == Task.BEH:
+            n_tr = 13369
+            n_vl = 3343
 
-        SIZES = {
-            ModelSize.TN:  1.0,
-            ModelSize.SM:  2.0,
-            ModelSize.MD:  4.0,
-            ModelSize.LG:  8.0,
-            ModelSize.HG: 16.0,
-            ModelSize.CO: 32.0,
-        }
-        f2 = SIZES[self.model_size]
-
-        tr_samples_per_second = 16
-        vl_samples_per_second = 32
-
-        n_tr, n_vl = DATASET_SIZES[self.task]
         n_tr *= self.num_train_epochs / max(self.gpu, 1)
         n_vl *= self.num_train_epochs / max(self.gpu, 1)
 
-        s_tr = n_tr / tr_samples_per_second * f1 * f2
-        s_vl = n_vl / vl_samples_per_second * f1 * f2
+        if self.lift_level == LiftLevel.RAW:
+            tr_f = 1.0
+            vl_f = 1.0
+        if self.lift_level == LiftLevel.DISASSEMBLED:
+            tr_f = 0.760 / 3.617
+            vl_f = 3.192 / 16.163
+        if self.lift_level == LiftLevel.DECOMPILED:
+            tr_f = 0.760 / 2.978
+            vl_f = 3.192 / 13.02
 
-        return seconds_to_slurm_time(s_tr + s_vl + 3600)
+        if self.model_name == ModelName.HRR and self.model_mode == ModelMode.BI:
+            tr_samples_per_second = 0.766
+            vl_samples_per_second = 3.226
+        if self.model_name == ModelName.HRR and self.model_mode == ModelMode.UN:
+            tr_samples_per_second = 0.760
+            vl_samples_per_second = 3.192
+        if self.model_name == ModelName.MAM and self.model_mode == ModelMode.BI:
+            tr_samples_per_second = 0.766
+            vl_samples_per_second = 3.226
+        if self.model_name == ModelName.MAM and self.model_mode == ModelMode.UN:
+            tr_samples_per_second = 0.760
+            vl_samples_per_second = 3.192
+
+        tr_samples_per_second /= tr_f
+        vl_samples_per_second /= vl_f
+
+        s_tr = n_tr / tr_samples_per_second * 1.50
+        s_vl = n_vl / vl_samples_per_second * 1.50
+
+        return seconds_to_slurm_time(s_tr + s_vl)
 
     @property
     def cpu(self) -> int:
@@ -531,15 +547,9 @@ class Configuration:
 
     @property
     def num_train_epochs(self) -> int:
-        return 1
         if self.task in (Task.CLM, Task.MLM):
             return 1
-        if self.task == Task.DET:
-            return 4
-        if self.task == Task.FAM:
-            return 2
-        if self.task == Task.BEH:
-            return 2
+        return 5
 
     @property
     def max_steps(self) -> Optional[int]:
@@ -658,7 +668,7 @@ class Configuration:
         if self.gpu == 0:
             return False
         if self.model_name == ModelName.MAL:
-            return True
+            return False
         return False
 
     @property
