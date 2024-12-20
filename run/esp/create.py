@@ -435,11 +435,7 @@ class Configuration:
         if ACTION == Action.PREPARE:
             return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
-            if self.task in (Task.CLM, Task.MLM):
-                f = 90
-            else:
-                f = 64
-            return bytes_to_slurm_mem(f * self.gpu * GB)
+            return bytes_to_slurm_mem(90 * self.gpu * GB)
 
         # The memory required for the classification tasks can be estimated.
         k = (self.tokenization_algorithm, self.vocab_size)
@@ -742,6 +738,7 @@ def main():
     parser.add_argument("--action", type=Action)
     parser.add_argument("--armitage", action="store_true")
     parser.add_argument("--no_remove", action="store_true")
+    parser.add_argument("--dependencies", action="store_true")
     args = parser.parse_args()
 
     ACTION   = args.action
@@ -818,21 +815,26 @@ def main():
     if ACTION == Action.EXECUTE:
         with open(ROOT / "execute.sh", "w") as fp:
             for i, config in enumerate(configurations):
-                var = "j"
-                dep = ""
+                if args.dependencies:
+                    var = "j"
+                    dep = ""
 
-                newlines = 1 if config.task == Task.MLM and i > 0 else 0
+                    newlines = 1 if config.task == Task.MLM and i > 0 else 0
 
-                if config.pretraining_task is None:
-                    var = f"j_{config.task.value[0]}"
-                if config.pretraining_task is not None:
-                    dep = f"--dependency=\"afterok:$j_{config.pretraining_task.value[0]}:$j_{config.task.value[0]}\""
+                    if config.pretraining_task is None:
+                        var = f"j_{config.task.value[0]}"
+                    if config.pretraining_task is not None:
+                        dep = f"--dependency=\"afterok:$j_{config.pretraining_task.value[0]}:$j_{config.task.value[0]}\""
 
-                f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
-                awk = "awk '{print $4}'"
-                new = "\n" * newlines
-                s = f"{new}{var}=$(sbatch{' ' + dep if dep else ''} '{f}' | {awk})\n"
-                fp.write(s)
+                    f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
+                    awk = "awk '{print $4}'"
+                    new = "\n" * newlines
+                    s = f"{new}{var}=$(sbatch{' ' + dep if dep else ''} '{f}' | {awk})\n"
+                    fp.write(s)
+                else:
+                    f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
+                    s = f"sbatch {f}\n"
+                    fp.write(s)
 
 
 if __name__ == "__main__":
