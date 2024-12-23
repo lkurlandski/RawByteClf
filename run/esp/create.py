@@ -335,11 +335,9 @@ class Configuration:
                 return False
 
         if ACTION == Action.EXECUTE:
-            if self.max_length != 65536:
-                return False
             if self.model_size != ModelSize.CO:
                 return False
-            if self.task not in (Task.DET, Task.FAM, Task.BEH,):
+            if self.task not in (Task.CLM, Task.MLM,):
                 return False
 
         return True
@@ -372,11 +370,18 @@ class Configuration:
             raise NotImplementedError()
 
         if self.task in (Task.CLM, Task.MLM):
-            if self.gpu != 4:
-                raise RuntimeError(f"Timing unknown.")
+
             if self.lift_level == LiftLevel.RAW:
-                return "05-00:00:00"
-            return "02-00:00:00"
+                h = 520
+            if self.lift_level == LiftLevel.DISASSEMBLED:
+                h = 208
+            if self.lift_level == LiftLevel.DECOMPILED:
+                h = 260
+
+            h /= (65536 / self.max_length)
+            h /= self.gpu
+
+            return seconds_to_slurm_time(h * 3600)
 
         if self.task == Task.DET:
             n_tr = 24614
@@ -623,26 +628,32 @@ class Configuration:
 
     @property
     def tr_per_device_batch_size(self) -> int:
+        f = int(65536 / self.max_length)
+
         if self.task in (Task.DET, Task.FAM, Task.BEH):
-            return 4
+            return 4 * f
         if self.model_name == ModelName.HRR:
-            return 2
+            return 2 * f
         if self.model_name == ModelName.MAM:
-            return 1
+            return 1 * f
         if self.model_name == ModelName.MAL:
             return 256
+
         raise NotImplementedError(f"{self.model_name=}")
 
     @property
     def vl_per_device_batch_size(self) -> int:
+        f = int(65536 / self.max_length)
+
         if self.task in (Task.DET, Task.FAM, Task.BEH):
-            return 16
+            return 16 * f
         if self.model_name == ModelName.HRR:
-            return 1
+            return 1 * f
         if self.model_name == ModelName.MAM:
-            return 2
+            return 2 * f
         if self.model_name == ModelName.MAL:
             return 256
+
         raise NotImplementedError(f"{self.model_name=}")
 
     @property
@@ -752,7 +763,7 @@ def main():
         ModelName,
         ModelSize,
         ModelMode,
-        (1024, 4096, 16384, 65536),
+        (4096, 8192, 16384, 32768, 65536),
         LiftLevel,
         TokenizationAlgorithm,
         (256, 1024, 4096, 16384),
