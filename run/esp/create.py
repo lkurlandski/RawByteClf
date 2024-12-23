@@ -309,7 +309,7 @@ class Configuration:
                 return False
             if self.model_mode != ModelMode.BI:
                 return False
-            if self.model_size != ModelSize.TN:
+            if self.model_size != ModelSize.CO:
                 return False
 
         if ACTION == Action.DEBUG:
@@ -335,9 +335,13 @@ class Configuration:
                 return False
 
         if ACTION == Action.EXECUTE:
+            if self.max_length != 65536:
+                return False
+            if self.model_name != ModelName.MAL:
+                return False
             if self.model_size != ModelSize.CO:
                 return False
-            if self.task not in (Task.CLM, Task.MLM,):
+            if self.task in (Task.CLM, Task.MLM,):
                 return False
 
         return True
@@ -382,6 +386,15 @@ class Configuration:
             h /= self.gpu
 
             return seconds_to_slurm_time(h * 3600)
+
+        if self.model_name == ModelName.MAL:
+            if self.task == Task.DET:
+                h = 3
+            if self.task == Task.FAM:
+                h = 6
+            if self.task == Task.BEH:
+                h = 2
+            return seconds_to_slurm_time(3600 * h)
 
         if self.task == Task.DET:
             n_tr = 24614
@@ -628,6 +641,9 @@ class Configuration:
 
     @property
     def tr_per_device_batch_size(self) -> int:
+        if self.model_name == ModelName.MAL:
+            return 64
+
         f = int(65536 / self.max_length)
 
         if self.task in (Task.DET, Task.FAM, Task.BEH):
@@ -636,13 +652,14 @@ class Configuration:
             return 2 * f
         if self.model_name == ModelName.MAM:
             return 1 * f
-        if self.model_name == ModelName.MAL:
-            return 256
 
         raise NotImplementedError(f"{self.model_name=}")
 
     @property
     def vl_per_device_batch_size(self) -> int:
+        if self.model_name == ModelName.MAL:
+            return 64
+
         f = int(65536 / self.max_length)
 
         if self.task in (Task.DET, Task.FAM, Task.BEH):
@@ -651,8 +668,6 @@ class Configuration:
             return 1 * f
         if self.model_name == ModelName.MAM:
             return 2 * f
-        if self.model_name == ModelName.MAL:
-            return 256
 
         raise NotImplementedError(f"{self.model_name=}")
 
