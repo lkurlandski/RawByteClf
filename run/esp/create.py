@@ -185,7 +185,7 @@ src/learn/train.py \\
 --adam_beta1=0.900 \\
 --adam_beta2=0.999 \\
 --max_grad_norm=1.0 \\
---save_total_limit=-1 \\
+--save_total_limit=1 \\
 --per_device_train_batch_size={tr_per_device_batch_size} \\
 --per_device_eval_batch_size={vl_per_device_batch_size} \\
 --gradient_accumulation_steps={gradient_accumulation_steps} \\
@@ -335,13 +335,13 @@ class Configuration:
                 return False
 
         if ACTION == Action.EXECUTE:
-            if self.max_length != 65536:
+            if self.max_length == 65536:
                 return False
-            if self.model_name != ModelName.MAL:
+            if self.model_name == ModelName.MAL:
                 return False
             if self.model_size != ModelSize.CO:
                 return False
-            if self.task in (Task.CLM, Task.MLM,):
+            if self.task not in (Task.CLM, Task.MLM,):
                 return False
 
         return True
@@ -468,7 +468,11 @@ class Configuration:
         if ACTION == Action.PREPARE:
             return 0
         if self.task in (Task.CLM, Task.MLM):
-            return 4
+            if self.max_length >= 32768:
+                return 4
+            if self.max_length >= 8192:
+                return 2
+            return 1
         return 1
 
     @property
