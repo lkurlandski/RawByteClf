@@ -1261,6 +1261,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "packing_protocol": args.packing_protocol,
         "bits_in_byte": args.bits_in_byte,
         "lift_level": args.lift_level,
+        "lift_level_ddp": args.lift_level_ddp,
         "tokenization_algorithm": args.tokenization_algorithm,
         "vocab_size": args.vocab_size,
         "max_length": args.max_length,
@@ -1330,15 +1331,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
     if args.task == Task.CLM:
-        materials = get_materials_esp_clm(args.lift_level)
+        materials = get_materials_esp_clm(args.lift_level, lift_level_ddp=args.lift_level_ddp)
     elif args.task == Task.MLM:
-        materials = get_materials_esp_mlm(args.lift_level)
+        materials = get_materials_esp_mlm(args.lift_level, lift_level_ddp=args.lift_level_ddp)
     elif args.task == Task.DET:
-        materials = get_materials_esp_det(args.lift_level)
+        materials = get_materials_esp_det(args.lift_level, lift_level_ddp=args.lift_level_ddp)
     elif args.task == Task.FAM:
-        materials = get_materials_esp_fam(args.lift_level)
+        materials = get_materials_esp_fam(args.lift_level, lift_level_ddp=args.lift_level_ddp)
     elif args.task == Task.BEH:
-        materials = get_materials_esp_beh(args.lift_level)
+        materials = get_materials_esp_beh(args.lift_level, lift_level_ddp=args.lift_level_ddp)
 
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
