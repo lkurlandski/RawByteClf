@@ -95,6 +95,7 @@ def get_body(
     arch_config: dict,
     max_length: int,
     lift_level: LiftLevel,
+    lift_level_ddp: Optional[LiftLevel],
     tokenization_algorithm: TokenizationAlgorithm,
     vocab_size: int,
     task: Task,
@@ -157,6 +158,7 @@ src/learn/train.py \\
 --arch_config='{json.dumps(arch_config)}' \\
 --max_length={max_length} \\
 --lift_level='{lift_level.value}' \\
+{"--lift_level_ddp='" + lift_level_ddp.value + "'" if lift_level_ddp is not None else ""} \\
 --tokenization_algorithm='{tokenization_algorithm.value}' \\
 --vocab_size={vocab_size} \\
 --task='{task.value}' \\
@@ -264,6 +266,7 @@ class Configuration:
     model_mode: ModelMode
     max_length: int
     lift_level: LiftLevel
+    lift_level_ddp: Optional[LiftLevel]
     tokenization_algorithm: TokenizationAlgorithm
     vocab_size: int
     task: Task
@@ -335,13 +338,17 @@ class Configuration:
                 return False
 
         if ACTION == Action.EXECUTE:
-            if self.max_length == 65536:
+            # if self.lift_level_ddp != LiftLevel.DECOMPILED:
+            #     return False
+            if self.lift_level_ddp is not None:
                 return False
-            if self.model_name == ModelName.MAL:
+            if self.max_length != 65536:
+                return False
+            if self.model_name != ModelName.MAL:
                 return False
             if self.model_size != ModelSize.CO:
                 return False
-            if self.task not in (Task.CLM, Task.MLM,):
+            if self.task in (Task.CLM, Task.MLM,):
                 return False
 
         return True
@@ -358,6 +365,7 @@ class Configuration:
             f"{'0' * (5 - len(str(self.vocab_size))) + str(self.vocab_size)}",
             f"{self.pretraining_task.value if self.pretraining_task else 'nop'}",
             f"{self.task.value}",
+            f"{self.lift_level_ddp.value if self.lift_level_ddp else 'nop'}",
             f"{self.seed}",
         ]).replace("--", "-").rstrip("-")
 
@@ -784,6 +792,7 @@ def main():
         ModelMode,
         (4096, 8192, 16384, 32768, 65536),
         LiftLevel,
+        [l for l in LiftLevel] + [None],
         TokenizationAlgorithm,
         (256, 1024, 4096, 16384),
         Task,
@@ -809,6 +818,7 @@ def main():
             arch_config=config.arch_config,
             max_length=config.max_length,
             lift_level=config.lift_level,
+            lift_level_ddp=config.lift_level_ddp,
             tokenization_algorithm=config.tokenization_algorithm,
             vocab_size=config.vocab_size,
             task=config.task,
