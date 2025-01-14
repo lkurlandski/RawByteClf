@@ -2132,6 +2132,13 @@ def get_materials_esp_fam(
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = {s: l[0] for s, l in get_sorel_sha_label_map("fam").items()}
+
+    # This ensures that using other de-duplication lift levels will use the same classes
+    if lift_level_ddp != LiftLevel.DECOMPILED:
+        file = Path("./cache/usenix_fam_classes.txt")
+        include = set(file.read_text().split())
+        sha_label_map = {s: l for s, l in sha_label_map.items() if l in include}
+
     return _get_materials_esp_clf(
         sha_label_map,
         "single_label_classification",
@@ -2159,6 +2166,13 @@ def get_materials_esp_beh(
     verbose: bool = True,
 ) -> Materials:
     sha_label_map = get_sorel_sha_label_map("beh")
+
+    # This ensures that using other de-duplication lift levels will use the same classes
+    if lift_level_ddp != LiftLevel.DECOMPILED:
+        file = Path("./cache/usenix_beh_classes.txt")
+        include = set(file.read_text().split())
+        sha_label_map = {s: l for s, l in sha_label_map.items() if all(i in include for i in l)}
+
     return _get_materials_esp_clf(
         sha_label_map,
         "multi_label_classification",
