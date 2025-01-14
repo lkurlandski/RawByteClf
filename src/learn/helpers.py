@@ -129,6 +129,7 @@ class Args:
     packing_protocol: PackingProtocol                     = field(default=PackingProtocol.ANY)
     bits_in_byte: BitsInByte                              = field(default=BitsInByte.EIGHT)
     lift_level: LiftLevel                                 = field(default=LiftLevel.RAW)
+    lift_level_ddp: Optional[LiftLevel]                   = field(default=None)
     tokenization_algorithm: TokenizationAlgorithm         = field(default=TokenizationAlgorithm.WORDLEVEL)
     encryption_algorithm: Optional[EncryptionAlgorithm]   = field(default=None)
     compression_algorithm: Optional[CompressionAlgorithm] = field(default=None)
@@ -163,6 +164,7 @@ class Args:
     def __post_init__(self) -> None:
 
         self.lift_level             = LiftLevel(self.lift_level)
+        self.lift_level_ddp         = str_to_type(self.lift_level_ddp, LiftLevel)
         self.tokenization_algorithm = TokenizationAlgorithm(self.tokenization_algorithm)
         self.packing_protocol       = PackingProtocol(self.packing_protocol)
         self.bits_in_byte           = BitsInByte(self.bits_in_byte)
@@ -275,6 +277,7 @@ class OutputHelper:
         packing_protocol: PackingProtocol,
         bits_in_byte: BitsInByte,
         lift_level: LiftLevel,
+        lift_level_ddp: Optional[LiftLevel],
         tokenization_algorithm: TokenizationAlgorithm,
         vocab_size: int,
         max_length: int,
@@ -300,6 +303,7 @@ class OutputHelper:
 
         self._meta_args = [
             f"lift_level--{lift_level.value}",
+            f"lift_level_ddp--{lift_level_ddp.value if lift_level_ddp is not None else None}",
             f"packing_protocol--{packing_protocol.value}",
             f"bits_in_byte--{bits_in_byte.value}",
             f"tokenization_algorithm--{tokenization_algorithm.value}",
