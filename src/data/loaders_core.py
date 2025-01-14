@@ -1749,7 +1749,7 @@ def get_materials_esp_det(
     ts_size: float = 0.00,
     ratio_pre_split: Optional[float] = None,
     ratio_pos_split: Optional[float] = 0.50,
-    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    lift_level_ddp: Optional[LiftLevel] = LiftLevel.DECOMPILED,
     purge_empty_samples: bool = True,
     timestamp_early: int = int(datetime(2010, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     timestamp_late: int = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
@@ -1765,7 +1765,7 @@ def get_materials_esp_det(
     # pylint: disable=multiple-statements
 
     lift_level     = LiftLevel(lift_level)
-    lift_level_ddp = LiftLevel(lift_level_ddp)
+    lift_level_ddp = LiftLevel(lift_level_ddp) if lift_level_ddp is not None else None
 
     cache_file = esp_cache_file(
         get_materials_esp_det,
@@ -1775,7 +1775,7 @@ def get_materials_esp_det(
         ts_size=ts_size,
         ratio_pre_split=ratio_pre_split,
         ratio_pos_split=ratio_pos_split,
-        lift_level_ddp=lift_level_ddp.value,
+        lift_level_ddp=lift_level_ddp.value if lift_level_ddp is not None else None,
         timestamp_early=timestamp_early,
         timestamp_late=timestamp_late,
     )
@@ -1828,58 +1828,59 @@ def get_materials_esp_det(
         files[dnm] = np.array(files[dnm])
 
     # Remove files that are identical.
-    digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level_ddp] for dnm in DatasetName}
-    sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
+    if lift_level_ddp is not None:
+        digests_files   = {dnm: DIGESTS_FILES[dnm][lift_level_ddp] for dnm in DatasetName}
+        sha_digest_maps = {dnm: get_sha_digest_map(digests_files[dnm]) for dnm in DatasetName}
 
-    print("\tRemoving files that are duplicates.")
-    present: dict[str, set[str]] = {"ben": set(), "mal": set()}
-    noisy: set[str] = set()
-    for dnm in DatasetName:
-        if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
-            k = "ben"
-            j = "mal"
-        elif dnm in (DatasetName.BODMAS, DatasetName.SOREL):
-            k = "mal"
-            j = "ben"
-        else:
-            raise ValueError(f"Invalid dataset name: {dnm=}")
-
-        # Sort the files by timestamp, therefore, when we remove duplicates, we keep the earliest.
-        fs = files[dnm]
-        ts = np.array([sha_timestamp_maps[dnm][Path(f).stem] for f in fs], dtype=np.int64)
-        idx = np.argsort(ts)
-        fs = fs[idx]
-        rm = set()
-        if verbose: print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
-
-        for i, f in enumerate(fs):
-            s = Path(f).stem
-            d = sha_digest_maps[dnm][s]
-
-            if d in present[j]:
-                noisy.add(d)
-
-            if d in present[k]:
-                rm.add(i)
-            present[k].add(d)
-
-        fs = np.delete(fs, list(rm))
-        files[dnm] = fs
-        if verbose: print(f"{len(fs)=}")
-
-    if noisy:
-        if verbose: print(f"\tDetected {len(noisy)} non-unique samples leaking across different classes.")
+        print("\tRemoving files that are duplicates.")
+        present: dict[str, set[str]] = {"ben": set(), "mal": set()}
+        noisy: set[str] = set()
         for dnm in DatasetName:
+            if dnm in (DatasetName.ASSEMBLAGE, DatasetName.WINDOWS):
+                k = "ben"
+                j = "mal"
+            elif dnm in (DatasetName.BODMAS, DatasetName.SOREL):
+                k = "mal"
+                j = "ben"
+            else:
+                raise ValueError(f"Invalid dataset name: {dnm=}")
+
+            # Sort the files by timestamp, therefore, when we remove duplicates, we keep the earliest.
             fs = files[dnm]
+            ts = np.array([sha_timestamp_maps[dnm][Path(f).stem] for f in fs], dtype=np.int64)
+            idx = np.argsort(ts)
+            fs = fs[idx]
             rm = set()
+            if verbose: print(f"\t\t{dnm.value}: {len(fs)=} -->", end=" ")
+
             for i, f in enumerate(fs):
                 s = Path(f).stem
                 d = sha_digest_maps[dnm][s]
-                if d in noisy:
+
+                if d in present[j]:
+                    noisy.add(d)
+
+                if d in present[k]:
                     rm.add(i)
+                present[k].add(d)
+
             fs = np.delete(fs, list(rm))
             files[dnm] = fs
-            print(f"\t\t{dnm.value}: {len(rm)=}.")
+            if verbose: print(f"{len(fs)=}")
+
+        if noisy:
+            if verbose: print(f"\tDetected {len(noisy)} non-unique samples leaking across different classes.")
+            for dnm in DatasetName:
+                fs = files[dnm]
+                rm = set()
+                for i, f in enumerate(fs):
+                    s = Path(f).stem
+                    d = sha_digest_maps[dnm][s]
+                    if d in noisy:
+                        rm.add(i)
+                fs = np.delete(fs, list(rm))
+                files[dnm] = fs
+                print(f"\t\t{dnm.value}: {len(rm)=}.")
 
     # Create file-label map for malware detection. Remove spacial bias.
     print("\tGetting file label map.")
@@ -1978,7 +1979,7 @@ def _get_materials_esp_clf(
     tr_size: float = 0.80,
     vl_size: float = 0.20,
     ts_size: float = 0.00,
-    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    lift_level_ddp: Optional[LiftLevel] = LiftLevel.DECOMPILED,
     purge_empty_samples: bool = True,
     verbose: bool = True,
     **kwds,
@@ -1986,7 +1987,7 @@ def _get_materials_esp_clf(
     # pylint: disable=multiple-statements
 
     lift_level     = LiftLevel(lift_level)
-    lift_level_ddp = LiftLevel(lift_level_ddp)
+    lift_level_ddp = LiftLevel(lift_level_ddp) if lift_level_ddp is not None else None
 
     cache_file = esp_cache_file(
         _get_materials_esp_clf,
@@ -1995,7 +1996,7 @@ def _get_materials_esp_clf(
         tr_size=tr_size,
         vl_size=vl_size,
         ts_size=ts_size,
-        lift_level_ddp=lift_level_ddp.value,
+        lift_level_ddp=lift_level_ddp.value if lift_level_ddp is not None else None,
         **kwds,
     )
 
@@ -2022,45 +2023,46 @@ def _get_materials_esp_clf(
     print(f"{len(files)=}")
     print(f"{len(sha_label_map)=}")
 
-    # Generate a map containing the most popular label for each digest.
-    # When selecting one sample for each digest, we'll ensure it has this label.
-    print("\tComputing the most popular label for each digest.")
-    digests_file     = DIGESTS_FILES[dnm][lift_level_ddp]
-    sha_digest_map   = get_sha_digest_map(digests_file)
-    digest_label_map = defaultdict(Counter)
-    for s, l in sha_label_map.items():
-        d = sha_digest_map[s]
-        digest_label_map[d].update([l])
-    digest_label_map = {d: c.most_common(1)[0][0] for d, c in digest_label_map.items()}
+    if lift_level_ddp is not None:
+        # Generate a map containing the most popular label for each digest.
+        # When selecting one sample for each digest, we'll ensure it has this label.
+        print("\tComputing the most popular label for each digest.")
+        digests_file     = DIGESTS_FILES[dnm][lift_level_ddp]
+        sha_digest_map   = get_sha_digest_map(digests_file)
+        digest_label_map = defaultdict(Counter)
+        for s, l in sha_label_map.items():
+            d = sha_digest_map[s]
+            digest_label_map[d].update([l])
+        digest_label_map = {d: c.most_common(1)[0][0] for d, c in digest_label_map.items()}
 
-    # Remove samples that hash to the same digest.
-    # Keep a random sample with the most popular label.
-    print("\tRemoving files that are duplicates.")
-    if verbose: print(f"\t\t{len(files)=} -->", end=" ")
-    rm = set()
-    digests_added = set()
-    for i, f in enumerate(files):
-        s = Path(f).stem
-        d = sha_digest_map[s]
-        l = sha_label_map[s]
-        if d in digests_added:
-            rm.add(i)
-            continue
-        if l != digest_label_map[d]:
-            rm.add(i)
-            continue
-        digests_added.add(d)
-    files = np.delete(files, list(rm))
-    if verbose: print(f"{len(files)=}")
+        # Remove samples that hash to the same digest.
+        # Keep a random sample with the most popular label.
+        print("\tRemoving files that are duplicates.")
+        if verbose: print(f"\t\t{len(files)=} -->", end=" ")
+        rm = set()
+        digests_added = set()
+        for i, f in enumerate(files):
+            s = Path(f).stem
+            d = sha_digest_map[s]
+            l = sha_label_map[s]
+            if d in digests_added:
+                rm.add(i)
+                continue
+            if l != digest_label_map[d]:
+                rm.add(i)
+                continue
+            digests_added.add(d)
+        files = np.delete(files, list(rm))
+        if verbose: print(f"{len(files)=}")
 
-    # Re-create the sha_label_map
-    print("\tRe-creating the sha_label_map.")
-    sha_label_map = {}
-    for f in files:
-        s = Path(f).stem
-        d = sha_digest_map[s]
-        l = digest_label_map[d]
-        sha_label_map[s] = l
+        # Re-create the sha_label_map
+        print("\tRe-creating the sha_label_map.")
+        sha_label_map = {}
+        for f in files:
+            s = Path(f).stem
+            d = sha_digest_map[s]
+            l = digest_label_map[d]
+            sha_label_map[s] = l
 
     # Get the dataset materials.
     print("\tAcquiring raw materials.")
