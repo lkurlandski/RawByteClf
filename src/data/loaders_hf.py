@@ -403,43 +403,47 @@ def merge_raw_dis_dec_datasets(
         if cl != t:
             raise TypeError("Expected only DatasetDict or IterableDatasetDict. Receieved both.")
 
-    # End features of the output dataset.
-    features = {}
-    for k, v in dict(raw["tr"].features).items():
-        if k == "name":
-            continue
-        if k == "labels":
-            features[k] = v
-            continue
-        features[f"raw_{k}"] = v
-        features[f"dis_{k}"] = v
-        features[f"dec_{k}"] = v
-    features = Features(features)
+    features = None
+    df = pd.DataFrame()
+    if raw["tr"].features is not None:
+        # End features of the output dataset.
+        # No idea why I am doing this, it doesn't seem to work with the IterableDatasets.
+        features = {}
+        for k, v in dict(raw["tr"].features).items():
+            if k == "name":
+                continue
+            if k == "labels":
+                features[k] = v
+                continue
+            features[f"raw_{k}"] = v
+            features[f"dis_{k}"] = v
+            features[f"dec_{k}"] = v
+        features = Features(features)
 
-    # Empty dataframe for the case when one of the splits is empty.
-    # No idea why I need to cast these to object types, but its the only thing that works.
-    df = {}
-    types = {}
-    for k, v in features.items():
-        if "labels" in k:
-            if isinstance(v, Value):
+        # Empty dataframe for the case when one of the splits is empty.
+        # No idea why I need to cast these to object types, but its the only thing that works.
+        df = {}
+        types = {}
+        for k, v in features.items():
+            if "labels" in k:
+                if isinstance(v, Value):
+                    df[k] = [0]
+                    types[k] = object
+                elif isinstance(v, Sequence):
+                    df[k] = [[0]]
+                    types[k] = object
+                else:
+                    raise TypeError(f"Expected Value or Sequence. Received {type(v)}")
+            if "input_ids" in k:
                 df[k] = [0]
                 types[k] = object
-            elif isinstance(v, Sequence):
-                df[k] = [[0]]
+            if "attention_mask" in k:
+                df[k] = [0]
                 types[k] = object
-            else:
-                raise TypeError(f"Expected Value or Sequence. Received {type(v)}")
-        if "input_ids" in k:
-            df[k] = [0]
-            types[k] = object
-        if "attention_mask" in k:
-            df[k] = [0]
-            types[k] = object
-        if "token_type_ids" in k:
-            df[k] = [0]
-            types[k] = object
-    df = pd.DataFrame(df).astype(types).drop(index=0)
+            if "token_type_ids" in k:
+                df[k] = [0]
+                types[k] = object
+        df = pd.DataFrame(df).astype(types).drop(index=0)
 
     dataset = {}
     for s in raw.keys():

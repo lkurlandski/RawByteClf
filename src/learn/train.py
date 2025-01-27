@@ -1438,9 +1438,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR)
 
     # FIXME: remove
-    print(dataset["tr"].features == dataset["vl"].features)
-    print(dataset["tr"].features == dataset["ts"].features)
-    print(dataset["ts"].features == dataset["vl"].features)
+    print(getattr(dataset.get("tr"), "features", None) == getattr(dataset.get("vl"), "features", None))
+    print(getattr(dataset.get("tr"), "features", None) == getattr(dataset.get("ts"), "features", None))
+    print(getattr(dataset.get("vl"), "features", None) == getattr(dataset.get("ts"), "features", None))
 
     # TODO: should we add masks after mapping or before?
     # if MODEL_NAME in REQ_ATTENTION_MASK:
