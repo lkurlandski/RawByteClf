@@ -98,16 +98,18 @@ class ArchivedFile:
 
     @staticmethod
     def make_archive_list_contiguous(archive_list: list[ArchivedFile | tuple]) -> list[ArchivedFile]:
+        # NOTE: Added sorting of the archives to improve reproducibility, however,
+        # some experiments were already run under the more random conditions.
         archive_files_map = defaultdict(list)
         for af in archive_list:
             archive_files_map[af.archive].append(af)
 
         archives = list(archive_files_map.keys())
-        random.shuffle(archives)
+        archives.sort()
 
         new = []
         for archive in archives:
-            new.extend(archive_files_map[archive])
+            new.extend(sorted(archive_files_map[archive], key=lambda af: af.name))
         assert len(new) == len(archive_list)
         return new
 

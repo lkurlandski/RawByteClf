@@ -4,6 +4,7 @@ High-level loading API for huggingface datasets.
 
 import asyncio
 from collections.abc import Generator
+from copy import deepcopy
 from functools import partial
 from hashlib import md5
 import multiprocessing as mp
@@ -315,27 +316,144 @@ def get_dataset_hf(
 
     return dataset
 
-    # num_shards = 1 if num_shards is None else num_shards
-    # datasets: dict[SplitNames, IterableDataset] = {}
-    # for split in ["tr", "vl", "ts"]:
-    #     # if not materials.files[split]:  # Empty split for datasets > 2.14
-    #     #     datasets[split] = Dataset.from_pandas(df.copy(), features=features)
-    #     #     continue
-    #     generator = partial(
-    #         classification_generator,
-    #         materials.files[split],
-    #         materials.labels[split] if materials.labels is not None else None,
-    #         **kwds,
-    #     )
-    #     gen_kwargs={"shards": shards}
-    #     datasets[split] = IterableDataset.from_generator(generator, features=features)
-    # return DatasetDict(datasets)
+
+# TODO: optimize this function by batching the iteration and skipping the checks.
+def merge_generator(
+    raw: Dataset | IterableDataset,
+    dis: Dataset | IterableDataset,
+    dec: Dataset | IterableDataset,
+    check: bool = True,
+) -> Generator[dict[str, str | bytes | int], None, None]:
+    """
+    Merges three datasets with different representations of the same binary file into a single dataset.
+
+    Args:
+        raw: The raw bytes of the binary file.
+        dis: The disassembled representation of the binary file.
+        dec: The decompiled representation of the binary file.
+        check: Whether to check that the three datasets correspond to the same binary file.
+
+    Notes:
+        The three datasets must have the same number of samples and the same order of samples.
+            If check is False and the above condition is not met, then the dataset output
+            will be completely incorrect. If check is True and the above condition is not met,
+            then the function will (hopefully) raise an exception.
+        The output dataset will have a single feature for the `labels` key,
+            no feature for the `name` key, and three features for each other key, which will be
+            preceeded by either "raw_", "dis_", or "dec_" to indicate the source of the data.
+            Note that the merging of the lables from each dataset will result in completely
+            incorrect data if the labels are not the same for each dataset, i.e., the labels
+            must be for a classification task, not a languague modeling one.
+    """
+
+    for d_raw, d_dis, d_dec in tqdm(zip(raw, dis, dec), desc=f"Merging Datasets ({check=})"):
+
+        keys: set[str]
+
+        if check:
+            name   = None
+            labels = None
+            keys   = None
+            for d in [d_raw, d_dis, d_dec]:
+                name = d["name"] if name is None else name
+                if d["name"] != name:
+                    raise RuntimeError(f"Mismatched names: {name} != {d['name']}")
+                labels = d["labels"] if labels is None else labels
+                if d["labels"] != labels:
+                    raise RuntimeError(f"Mismatched labels: {labels} != {d['labels']}")
+                keys = set(d.keys()) if keys is None else keys
+                if set(d.keys()) != keys:
+                    raise RuntimeError(f"Mismatched keys: {keys} != {set(d.keys())}")
+                if "input_ids" not in keys:
+                    raise RuntimeError("Missing input_ids")
+        else:
+            keys = set(d_raw.keys())
+
+        keys = tuple(keys)
+        new = {}
+        for k in keys:
+            if k == "name":
+                continue
+            if k == "labels":
+                new[k] = d_raw[k]
+                continue
+            new[f"raw_{k}"] = d_raw[k]
+            new[f"dis_{k}"] = d_dis[k]
+            new[f"dec_{k}"] = d_dec[k]
+
+        yield new
+
+
+def merge_raw_dis_dec_datasets(
+    raw: DatasetDict | IterableDatasetDict,
+    dis: DatasetDict | IterableDatasetDict,
+    dec: DatasetDict | IterableDatasetDict,
+) -> DatasetDict | IterableDataset:
+
+    # Validate the input to make sure the datasets are of the same type.
+    cl = None
+    for d in [raw, dis, dec]:
+        if isinstance(d, DatasetDict):
+            t = Dataset
+        elif isinstance(d, IterableDatasetDict):
+            t = IterableDataset
+        else:
+            raise TypeError(f"Expected DatasetDict or IterableDatasetDict. Received {type(d)}")
+        cl = t if cl is None else cl
+        if cl != t:
+            raise TypeError("Expected only DatasetDict or IterableDatasetDict. Receieved both.")
+
+    # End features of the output dataset.
+    features = {}
+    for k, v in dict(raw["tr"].features).items():
+        if k == "name":
+            continue
+        if k == "labels":
+            features[k] = v
+            continue
+        features[f"raw_{k}"] = v
+        features[f"dis_{k}"] = v
+        features[f"dec_{k}"] = v
+    features = Features(features)
+
+    # Empty dataframe for the case when one of the splits is empty.
+    # No idea why I need to cast these to object types, but its the only thing that works.
+    df = {}
+    types = {}
+    for k, v in features.items():
+        if "labels" in k:
+            if isinstance(v, Value):
+                df[k] = [0]
+                types[k] = object
+            elif isinstance(v, Sequence):
+                df[k] = [[0]]
+                types[k] = object
+            else:
+                raise TypeError(f"Expected Value or Sequence. Received {type(v)}")
+        if "input_ids" in k:
+            df[k] = [0]
+            types[k] = object
+        if "attention_mask" in k:
+            df[k] = [0]
+            types[k] = object
+        if "token_type_ids" in k:
+            df[k] = [0]
+            types[k] = object
+    df = pd.DataFrame(df).astype(types).drop(index=0)
+
+    dataset = {}
+    for s in raw.keys():
+        if is_dataset_empty(raw[s]) or is_dataset_empty(dis[s]) or is_dataset_empty(dec[s]):
+            dataset[s] = cl.from_pandas(df.copy(), features=features)
+            continue
+        gen = partial(merge_generator, raw[s], dis[s], dec[s], True)
+        dataset[s] = cl.from_generator(gen, features)
+
+    return dataset
 
 
 def test():
     ...
-    # materials = get_materials_clf_bodmas(0.8, 0.1, 0.1, top_k=10)
-    # dataset, id2label, label2id, dist = get_dataset_hf(materials, max_length=65536)
 
 
 if __name__ == "__main__":

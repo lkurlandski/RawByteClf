@@ -9,6 +9,7 @@ class LiftLevel(Enum):
     RAW          = "raw"
     DISASSEMBLED = "dis"
     DECOMPILED   = "dec"
+    ALL          = "all"
 
 
 class TokenizationAlgorithm(Enum):

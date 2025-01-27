@@ -176,7 +176,7 @@ from src.data.loaders_core import (
     get_materials_esp_fam,
     get_materials_esp_beh,
 )
-from src.data.loaders_hf import get_dataset_hf, print_dataset_hf, is_dataset_empty
+from src.data.loaders_hf import get_dataset_hf, print_dataset_hf, is_dataset_empty, merge_raw_dis_dec_datasets
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
 from src.learn.class_weighting import sample_reweighting, inverse_class_frequency
 from src.learn.helpers import Args, OutputHelper
@@ -1087,9 +1087,11 @@ def get_map_kwds_for_hf_datasets(
 
 def get_processed_dataset_hf(
     materials: Materials,
+    lift_level: LiftLevel,
     args: Args,
     num_shards: Optional[int] = None,
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
+    remove_columns: Optional[tuple[str]] = ("name", "bytes"),
 ) -> DatasetDict | IterableDatasetDict:
 
     dataset = get_dataset_hf(
@@ -1146,7 +1148,7 @@ def get_processed_dataset_hf(
 
     # If we're mapping bytes to integers, we can do it in a more efficient way.
     # Otherwise, we need to use the tokenizer.
-    if args.lift_level == LiftLevel.RAW and args.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL:
+    if lift_level == LiftLevel.RAW and args.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL:
         func = partial(
             hf_bytes_to_input_ids,
             bits_in_byte=args.bits_in_byte,
@@ -1156,14 +1158,14 @@ def get_processed_dataset_hf(
             eos_token_id=tokenizer.eos_token_id,
         )
         desc = "Mapping bytes..."
-        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, remove_columns=["name", "bytes"], num_proc=NUM_PROC)
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, remove_columns=remove_columns, num_proc=NUM_PROC)
         dataset = dataset.map(**kwds)
     else:
         # The RAW level contains raw-bytes whereas DIS and DEC contains encoded strings.
-        hf_tokenize = hf_tokenize_bytes if args.lift_level == LiftLevel.RAW else hf_tokenize_str
+        hf_tokenize = hf_tokenize_bytes if lift_level == LiftLevel.RAW else hf_tokenize_str
         func = partial(hf_tokenize, tokenizer=tokenizer, max_length=args.max_length)
         desc = "Tokenizing bytes..."
-        kwds = get_map_kwds_for_hf_datasets(function=func, dataset=dataset, desc=desc, remove_columns=["name", "bytes"], num_proc=None)
+        kwds = get_map_kwds_for_hf_datasets(function=func, dataset=dataset, desc=desc, remove_columns=remove_columns, num_proc=None)
         dataset = dataset.map(**kwds)
 
     return dataset
@@ -1306,41 +1308,77 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             training_arguments = replace(training_arguments, batch_eval_metrics=True)
 
-    tokenizer = get_fast_tokenizer(
-        lift_level=args.lift_level,
-        algorithm=args.tokenization_algorithm,
-        bits_in_byte=args.bits_in_byte,
-        vocab_size=args.vocab_size,
-        model_max_length=args.max_length,
-        add_cls_token=False,
-        add_bos_token=True,
-        add_eos_token=True,
-        add_sep_token=False,
-    )
-    tokenizer.model_input_names = ["input_ids"]
+    tokenizer: PreTrainedTokenizerFast
+    multitokenizer: dict[LiftLevel, PreTrainedTokenizerFast]
+    if args.lift_level == LiftLevel.ALL:
+        multitokenizer = {
+            lift_level: get_fast_tokenizer(
+                lift_level=lift_level,
+                algorithm=args.tokenization_algorithm,
+                bits_in_byte=args.bits_in_byte,
+                vocab_size=args.vocab_size,
+                model_max_length=args.max_length,
+                add_cls_token=False,
+                add_bos_token=True,
+                add_eos_token=True,
+                add_sep_token=False,
+            )
+            for lift_level in LiftLevel if lift_level != LiftLevel.ALL
+        }
+        for t in multitokenizer.values():
+            t.model_input_names = ["input_ids"]
+        tokenizer = multitokenizer[LiftLevel.RAW]
+    else:
+        tokenizer = get_fast_tokenizer(
+            lift_level=args.lift_level,
+            algorithm=args.tokenization_algorithm,
+            bits_in_byte=args.bits_in_byte,
+            vocab_size=args.vocab_size,
+            model_max_length=args.max_length,
+            add_cls_token=False,
+            add_bos_token=True,
+            add_eos_token=True,
+            add_sep_token=False,
+        )
+        tokenizer.model_input_names = ["input_ids"]
+        multitokenizer = {LiftLevel.RAW: tokenizer}
 
     # TODO: should we add masks after mapping or before?
     if MODEL_NAME in REQ_ATTENTION_MASK:
-        tokenizer.model_input_names.append("attention_mask")
+        for t in multitokenizer.values():
+            t.model_input_names.append("attention_mask")
     if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
-        tokenizer.model_input_names.append("token_type_ids")
+        for t in multitokenizer.values():
+            t.model_input_names.append("token_type_ids")
 
     print_tokenizer(tokenizer)
     print(BR, flush=True)
 
-
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
     if args.task == Task.CLM:
-        materials = get_materials_esp_clm(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        get_materials = get_materials_esp_clm
     elif args.task == Task.MLM:
-        materials = get_materials_esp_mlm(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        get_materials = get_materials_esp_mlm
     elif args.task == Task.DET:
-        materials = get_materials_esp_det(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        get_materials = get_materials_esp_det
     elif args.task == Task.FAM:
-        materials = get_materials_esp_fam(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        get_materials = get_materials_esp_fam
     elif args.task == Task.BEH:
-        materials = get_materials_esp_beh(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        get_materials = get_materials_esp_beh
 
+    materials: Materials
+    multimaterials: dict[LiftLevel, Materials]
+    if args.lift_level == LiftLevel.ALL:
+        multimaterials = {
+            lift_level: get_materials(lift_level, lift_level_ddp=args.lift_level_ddp)
+            for lift_level in LiftLevel if lift_level != LiftLevel.ALL
+        }
+        materials = multimaterials[LiftLevel.RAW]
+    else:
+        materials = get_materials(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        multimaterials = {args.lift_level: materials}
+
+    print(f"Dataset Multimaterials:\n{list(multimaterials.keys())}")
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
 
@@ -1359,11 +1397,39 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.dataset_backend == "HF":
         num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
-        dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
-        if (n := int(os.environ.get("TR_SIZE", "-1"))) > 0:
-            dataset["tr"] = dataset["tr"].take(n)
-        if (n := int(os.environ.get("VL_SIZE", "-1"))) > 0:
-            dataset["vl"] = dataset["vl"].take(n)
+        if args.lift_level == LiftLevel.ALL:
+            # Some debugging on armitage.
+            if SYSTEM == System.ARMITAGE:
+                for split in ["tr", "vl"]:
+                    intersection = None
+                    for m in multimaterials.values():
+                        names = set(af.name.split(".")[0] for af in m.files[split])
+                        intersection = names if intersection is None else intersection & names
+                    for m in multimaterials.values():
+                        remove = [i for i, af in enumerate(m.files[split]) if af.name.split(".")[0] not in intersection]
+                        m.files[split] = [af for i, af in enumerate(m.files[split]) if i not in remove]
+                        m.labels[split] = [l for i, l in enumerate(m.labels[split]) if i not in remove]
+
+            multidataset = {
+                lift_level: get_processed_dataset_hf(
+                    multimaterials[lift_level],
+                    lift_level,
+                    args,
+                    num_shards,
+                    multitokenizer[lift_level],
+                    remove_columns=("bytes",),
+                )
+                for lift_level in LiftLevel if lift_level != LiftLevel.ALL
+            }
+
+            dataset = merge_raw_dis_dec_datasets(
+                multidataset[LiftLevel.RAW],
+                multidataset[LiftLevel.DISASSEMBLED],
+                multidataset[LiftLevel.DECOMPILED],
+            )
+            del multidataset
+        else:
+            dataset = get_processed_dataset_hf(materials, args.lift_level, args, num_shards, tokenizer)
         print_dataset_hf(dataset)
         print(BR)
     else:
@@ -1371,6 +1437,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print_dataset_pt(dataset)
         print(BR)
 
+    # FIXME: remove
+    print(dataset["tr"].features == dataset["vl"].features)
+    print(dataset["tr"].features == dataset["ts"].features)
+    print(dataset["ts"].features == dataset["vl"].features)
 
     # TODO: should we add masks after mapping or before?
     # if MODEL_NAME in REQ_ATTENTION_MASK:
