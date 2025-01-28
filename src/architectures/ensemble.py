@@ -14,6 +14,9 @@ from src.architectures.head_utils import Head, get_clf_loss
 
 class EnsembleForSequenceClassification(PreTrainedModel):
 
+    supports_gradient_checkpointing = False
+    backbone_forward_kwds = ("input_ids", "labels", "attention_mask", "token_type_ids")
+
     def __init__(self, config: PretrainedConfig, backbone: Callable[[PretrainedConfig], PreTrainedModel]) -> None:
         super().__init__(config)
         self.config = config
@@ -58,6 +61,7 @@ class EnsembleForSequenceClassification(PreTrainedModel):
         return SequenceClassifierOutput(loss=loss, logits=logits)
 
     def get_pooled_hidden_states(self, backbone: PreTrainedModel, **kwds) -> Tensor:
+        kwds = {k: v for k, v in kwds.items() if k in self.backbone_forward_kwds}
         return backbone.forward(**kwds).last_hidden_state
 
     def get_logits(self, hidden_states: Tensor) -> Tensor:

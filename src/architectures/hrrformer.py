@@ -910,6 +910,8 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
 
 class HRREnsembleForSequenceClassification(EnsembleForSequenceClassification):
 
+    supports_gradient_checkpointing = True
+
     def __init__(self, config: HRRConfig) -> None:
         super().__init__(config,  HRRModel)
 

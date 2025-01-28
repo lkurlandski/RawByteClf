@@ -498,12 +498,15 @@ class MalConv2ForSequenceClassification(MalConv2PreTrainedModel):
 
 class MalConv2EnsembleForSequenceClassification(EnsembleForSequenceClassification):
 
+    backbone_forward_kwds = ("input_ids",)
+
     def __init__(self, config: MalConv2Config) -> None:
         super().__init__(config, MalConv2)
 
     def get_pooled_hidden_states(self, backbone: MalConv2, input_ids: Tensor, **kwds) -> Tensor:  # pylint: disable=arguments-differ
         # This implementation uses the penultimate activations as pooled hidden states.
-        output = backbone(input_ids=input_ids)
+        kwds = {k: v for k, v in kwds.items() if k in self.backbone_forward_kwds}
+        output = backbone(input_ids=input_ids, **kwds)
         pooled_hidden_states = output.hidden_states[0]
         return pooled_hidden_states
 

@@ -876,12 +876,16 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
 
 class MambaEnsembleForSequenceClassification(EnsembleForSequenceClassification):
 
+    supports_gradient_checkpointing = True
+    backbone_forward_kwds = ("input_ids", "labels")
+
     def __init__(self, config: MambaConfig) -> None:
         super().__init__(config, MambaModel if config.is_decoder else BiMambaModel)
         if not config.is_decoder and not config.bi_add_directions:
             raise ValueError()
 
     def get_pooled_hidden_states(self, backbone: MambaModel | BiMambaModel, input_ids: Tensor, **kwds) -> Tensor:  # pylint: disable=arguments-differ
+        kwds = {k: v for k, v in kwds.items() if k in self.backbone_forward_kwds}
         output = backbone(input_ids=input_ids, **kwds)
         hidden_states = output.last_hidden_state
         if isinstance(backbone, BiMambaModel):
