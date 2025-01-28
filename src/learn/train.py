@@ -149,6 +149,7 @@ from src.architectures.malconv2 import (
     MalConv2Config,
     MalConv2ForSequenceClassification,
     MalConv2PreTrainedModel,
+    MalConv2EnsembleForSequenceClassification,
 )
 from src.architectures.hrrformer import (
     HRRConfig,
@@ -156,6 +157,7 @@ from src.architectures.hrrformer import (
     HRRForMaskedLM,
     HRRForCausalLM,
     HRRPreTrainedModel,
+    HRREnsembleForSequenceClassification,
 )
 from src.architectures.mamba_hf import (
     MambaConfig,
@@ -163,6 +165,7 @@ from src.architectures.mamba_hf import (
     MambaForCausalLM,
     MambaForMaskedLM,
     MambaPreTrainedModel,
+    MambaEnsembleForSequenceClassification,
 )
 from src.architectures.rwkv import (
     RwkvConfig,
@@ -179,6 +182,7 @@ from src.data.loaders_core import (
 from src.data.loaders_hf import get_dataset_hf, print_dataset_hf, is_dataset_empty, merge_raw_dis_dec_datasets
 from src.data.loaders_pt import get_dataset_pt, print_dataset_pt, MapBinaryDatasetDict, IterableBinaryDatasetDict
 from src.learn.class_weighting import sample_reweighting, inverse_class_frequency
+from src.learn.collators import EnsembleDataCollatorWithPadding
 from src.learn.helpers import Args, OutputHelper
 from src.learn.evaluation import (
     CLMComputeMetrics,
@@ -909,6 +913,7 @@ def get_model(
     task: Task,
     model_name_or_path: Optional[str] = None,
     config: Optional[PretrainedConfig] = None,
+    ensemble: bool = False,
     **kwds,
 ) -> PreTrainedModel:
     # At one point, I didn't want to be passing in both a config and a model_name_or_path.
@@ -923,6 +928,8 @@ def get_model(
 
     # Get model from disk
     if model_name_or_path is not None and Path(model_name_or_path).exists():
+        if ensemble:
+            raise NotImplementedError()
         print("Getting model from disk.")
         model_name = object_to_model_name(model_name_or_path)
         # This is an extensive procedure to ensure the weights of the classification head are
@@ -1014,18 +1021,32 @@ def get_model(
         print("Creating new model.")
         if task in (Task.DET, Task.FAM, Task.BEH):
             if isinstance(config, MalConvConfig):
+                if ensemble:
+                    raise NotImplementedError()
                 return MalConvForSequenceClassification(config)
             if isinstance(config, MalConv2Config):
+                if ensemble:
+                    return MalConv2EnsembleForSequenceClassification(config)
                 return MalConv2ForSequenceClassification(config)
             if isinstance(config, HRRConfig):
+                if ensemble:
+                    return HRREnsembleForSequenceClassification(config)
                 return HRRForSequenceClassification(config)
             if isinstance(config, RwkvConfig):
+                if ensemble:
+                    raise NotImplementedError()
                 return RwkvForSequenceClassification(config)
             if isinstance(config, MambaConfig):
+                if ensemble:
+                    return MambaEnsembleForSequenceClassification(config)
                 return MambaForSequenceClassification(config)
             if isinstance(config, PretrainedConfig):
+                if ensemble:
+                    raise NotImplementedError()
                 return AutoModelForSequenceClassification.from_config(config)
         if task == Task.MLM:
+            if ensemble:
+                raise NotImplementedError()
             if isinstance(config, HRRConfig):
                 return HRRForMaskedLM(config)
             if isinstance(config, RwkvConfig):
@@ -1035,6 +1056,8 @@ def get_model(
             if isinstance(config, PretrainedConfig):
                 return AutoModelForMaskedLM.from_config(config)
         if task == Task.CLM:
+            if ensemble:
+                raise NotImplementedError()
             if isinstance(config, HRRConfig):
                 return HRRForCausalLM(config)
             if isinstance(config, RwkvConfig):
@@ -1499,6 +1522,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             mlm_probability=0.25,
             pad_to_multiple_of=pad_to_multiple_of,
         )
+    elif args.lift_level == LiftLevel.ALL:
+        data_collator = EnsembleDataCollatorWithPadding(
+            raw_tokenizer=multitokenizer[LiftLevel.RAW],
+            dis_tokenizer=multitokenizer[LiftLevel.DISASSEMBLED],
+            dec_tokenizer=multitokenizer[LiftLevel.DECOMPILED],
+            padding="longest",
+            pad_to_multiple_of=pad_to_multiple_of,
+            max_length=args.max_length,
+        )
     else:
         data_collator = DataCollatorWithPadding(
             tokenizer=tokenizer,
@@ -1588,6 +1620,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.task,
             args.model_name_or_path,
             config,
+            args.lift_level==LiftLevel.ALL,
             num_labels=materials.num_classes,
             id2label=materials.id2label,
             label2id=materials.label2id,
@@ -1762,6 +1795,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 args.task,
                 checkpoint,
                 config,
+                args.lift_level==LiftLevel.ALL,
                 num_labels=materials.num_classes,
                 id2label=materials.id2label,
                 label2id=materials.label2id,
@@ -1802,6 +1836,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             args.task,
             oh.best_model_dir,
             config,
+            args.lift_level==LiftLevel.ALL,
             num_labels=materials.num_classes,
             id2label=materials.id2label,
             label2id=materials.label2id,
