@@ -23,7 +23,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.enums import LiftLevel, Task, TokenizationAlgorithm, WeightedLossAlgorithm
 
 
-ACTION   = None
 ARMITAGE = False
 ROOT     = Path(os.path.dirname(os.path.realpath(__file__)))
 
@@ -31,17 +30,8 @@ ROOT     = Path(os.path.dirname(os.path.realpath(__file__)))
 GB = 1024 ** 3
 
 
-class Action(Enum):
-    DEBUG   = "dbg"
-    PREPARE = "pre"
-    TIME    = "tim"
-    EXECUTE = "exe"
-    OVERFIT = "oft"
-    BASIC   = "bas"
-
-
 def outpath() -> Path:
-    return ROOT / "sbatch" / ACTION.value
+    return ROOT / "sbatch"
 
 
 def bool_to_str(b: bool) -> str:
@@ -128,7 +118,7 @@ def get_body(
 f"""
 #!/bin/bash -l
 
-#SBATCH --job-name={ACTION.value}-{job}
+#SBATCH --job-name=exe-{job}
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -148,7 +138,7 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if gpu <= 1 else torchrun_str(gpu)}
 python -u \\
 src/learn/train.py \\
---root='./output/esp-{ACTION.value}' \\
+--root='./output/esp-exe' \\
 --streaming={bool_to_str(streaming)} \\
 --sync_batch_size={bool_to_str(sync_batch_size)} \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
@@ -298,13 +288,10 @@ class Configuration:
         # At the moment, none of the ESP loaders support different seeds.
         if self.seed != 0:
             return False
-
-        # Adjust as desired.
-        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+        # Cannot pretrain with multi representations
+        if self.lift_level == LiftLevel.ALL and self.task in (Task.CLM, Task.MLM):
             return False
-        if self.vocab_size != 16384:
-            return False
-
+        # MalConv is only implemented under these conditions
         if self.model_name == ModelName.MAL:
             if self.task not in (Task.BEH, Task.DET, Task.FAM):
                 return False
@@ -315,41 +302,22 @@ class Configuration:
             if self.model_size != ModelSize.CO:
                 return False
 
-        if ACTION == Action.DEBUG:
-            if self.max_length != 1024:
-                return False
-            if self.task in (Task.DET, Task.FAM):
-                return False
-            if self.model_size != ModelSize.TN:
-                return False
-            if self.lift_level != LiftLevel.RAW:
-                return False
-
-        if ACTION == Action.PREPARE:
-            if self.max_length != 65536:
-                return False
-            if self.model_size != ModelSize.TN:
-                return False
-            if self.model_mode != ModelMode.BI:
-                return False
-            if self.pretraining_task is not None:
-                return False
-            if self.task == Task.CLM:
-                return False
-
-        if ACTION == Action.EXECUTE:
-            # if self.lift_level_ddp != LiftLevel.DECOMPILED:
-            #     return False
-            if self.lift_level_ddp is not None:
-                return False
-            if self.max_length != 65536:
-                return False
-            if self.model_name != ModelName.MAL:
-                return False
-            if self.model_size != ModelSize.CO:
-                return False
-            if self.task in (Task.CLM, Task.MLM,):
-                return False
+        # Adjust as desired.
+        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+            return False
+        if self.vocab_size != 16384:
+            return False
+        if self.lift_level_ddp != LiftLevel.DECOMPILED:
+            return False
+        if self.max_length != 65536:
+            return False
+        if self.model_size != ModelSize.CO:
+            return False
+        if self.lift_level != LiftLevel.ALL:
+            return False
+        # TODO: implement for ALL
+        if self.pretraining_task is not None:
+            return False
 
         return True
 
@@ -371,13 +339,6 @@ class Configuration:
 
     @property
     def tim(self) -> str:
-        if ACTION == Action.PREPARE:
-            if self.task in (Task.CLM, Task.MLM):
-                return seconds_to_slurm_time(7200)
-            if self.task == Task.FAM:
-                return seconds_to_slurm_time(3600)
-            return seconds_to_slurm_time(1800)
-
         if self.model_size != ModelSize.CO:
             raise NotImplementedError()
 
@@ -389,6 +350,8 @@ class Configuration:
                 h = 208
             if self.lift_level == LiftLevel.DECOMPILED:
                 h = 260
+            if self.lift_level == LiftLevel.ALL:
+                h = 520 + 208 + 260
 
             h /= (65536 / self.max_length)
             h /= self.gpu
@@ -426,6 +389,9 @@ class Configuration:
         if self.lift_level == LiftLevel.DECOMPILED:
             tr_f = 0.760 / 2.978
             vl_f = 3.192 / 13.02
+        if self.lift_level == LiftLevel.ALL:
+            tr_f = 1.0 + 0.760 / 3.617 + 0.760 / 2.978
+            vl_f = 1.0 + 3.192 / 16.163 + 3.192 / 13.02
 
         if self.model_name == ModelName.HRR and self.model_mode == ModelMode.BI:
             tr_samples_per_second = 0.766
@@ -450,16 +416,12 @@ class Configuration:
 
     @property
     def cpu(self) -> int:
-        if ACTION == Action.PREPARE:
-            return 16
         if self.streaming:
             return 4 * self.gpu
         return 2 * self.gpu
 
     @property
     def mem(self) -> int:
-        if ACTION == Action.PREPARE:
-            return bytes_to_slurm_mem(64 * GB)
         if self.streaming:
             return bytes_to_slurm_mem(90 * self.gpu * GB)
 
@@ -473,8 +435,6 @@ class Configuration:
 
     @property
     def gpu(self) -> int:
-        if ACTION == Action.PREPARE:
-            return 0
         if self.task in (Task.CLM, Task.MLM):
             if self.max_length >= 32768:
                 return 4
@@ -495,8 +455,6 @@ class Configuration:
 
     @property
     def exit_after_map(self) -> bool:
-        if ACTION == Action.PREPARE:
-            return True
         return False
 
     @property
@@ -769,17 +727,14 @@ def sort_configurations_key(c: Configuration) -> tuple:
 
 def main():
 
-    global ACTION
     global ARMITAGE
 
     parser = ArgumentParser()
-    parser.add_argument("--action", type=Action)
     parser.add_argument("--armitage", action="store_true")
     parser.add_argument("--no_remove", action="store_true")
     parser.add_argument("--dependencies", action="store_true")
     args = parser.parse_args()
 
-    ACTION   = args.action
     ARMITAGE = args.armitage
 
     if not args.no_remove:
@@ -852,29 +807,28 @@ def main():
             raise FileExistsError(config.outfile)
         config.outfile.write_text(body)
 
-    if ACTION == Action.EXECUTE:
-        with open(ROOT / "execute.sh", "w") as fp:
-            for i, config in enumerate(configurations):
-                if args.dependencies:
-                    var = "j"
-                    dep = ""
+    with open(ROOT / "execute.sh", "w") as fp:
+        for i, config in enumerate(configurations):
+            if args.dependencies:
+                var = "j"
+                dep = ""
 
-                    newlines = 1 if config.task == Task.MLM and i > 0 else 0
+                newlines = 1 if config.task == Task.MLM and i > 0 else 0
 
-                    if config.pretraining_task is None:
-                        var = f"j_{config.task.value[0]}"
-                    if config.pretraining_task is not None:
-                        dep = f"--dependency=\"afterok:$j_{config.pretraining_task.value[0]}:$j_{config.task.value[0]}\""
+                if config.pretraining_task is None:
+                    var = f"j_{config.task.value[0]}"
+                if config.pretraining_task is not None:
+                    dep = f"--dependency=\"afterok:$j_{config.pretraining_task.value[0]}:$j_{config.task.value[0]}\""
 
-                    f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
-                    awk = "awk '{print $4}'"
-                    new = "\n" * newlines
-                    s = f"{new}{var}=$(sbatch{' ' + dep if dep else ''} '{f}' | {awk})\n"
-                    fp.write(s)
-                else:
-                    f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
-                    s = f"sbatch {f}\n"
-                    fp.write(s)
+                f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
+                awk = "awk '{print $4}'"
+                new = "\n" * newlines
+                s = f"{new}{var}=$(sbatch{' ' + dep if dep else ''} '{f}' | {awk})\n"
+                fp.write(s)
+            else:
+                f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
+                s = f"sbatch {f}\n"
+                fp.write(s)
 
 
 if __name__ == "__main__":
