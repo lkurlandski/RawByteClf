@@ -14,7 +14,7 @@ from pprint import pformat
 import shutil
 import sys
 from tempfile import NamedTemporaryFile
-from typing import Optional
+from typing import Any, Optional
 import warnings
 import zipfile
 
@@ -317,7 +317,6 @@ def get_dataset_hf(
     return dataset
 
 
-# TODO: optimize this function by batching the iteration and skipping the checks.
 def merge_generator(
     raw: Dataset | IterableDataset,
     dis: Dataset | IterableDataset,
@@ -382,6 +381,71 @@ def merge_generator(
             new[f"dec_{k}"] = d_dec[k]
 
         yield new
+
+
+def merge_generator_fast(
+    raw: Dataset | IterableDataset,
+    dis: Dataset | IterableDataset,
+    dec: Dataset | IterableDataset,
+    check: bool = True,
+    batch_size: int = 1024,
+) -> Generator[dict[str, str | bytes | int], None, None]:
+    """
+    Batched (fast) version of the merge_generator function.
+    """
+
+    iterable = zip(raw.iter(batch_size), dis.iter(batch_size), dec.iter(batch_size))
+    for d_raw, d_dis, d_dec in tqdm(iterable, desc=f"Merging Datasets ({check=})"):
+
+        d_raw: dict[str, list[Any]]
+        d_dis: dict[str, list[Any]]
+        d_dec: dict[str, list[Any]]
+
+        keys = None
+        for d in (d_raw, d_dis, d_dec):
+            if keys is None:
+                keys = set(d.keys())
+            else:
+                if not set(d.keys()) == keys:
+                    raise RuntimeError("Mismatched keys.")
+        keys = tuple(keys)
+
+        length = None
+        for d in (d_raw, d_dis, d_dec):
+            for k in keys:
+                if length is None:
+                    length = len(d[k])
+                else:
+                    if len(d[k]) != length:
+                        raise RuntimeError("Mismatched lengths.")
+
+        if check:
+            for i in range(length):
+                name = None
+                labels = None
+                for d in (d_raw, d_dis, d_dec):
+                    if name is None:
+                        name = d["name"][i]
+                    if d["name"][i] != name:
+                        raise RuntimeError(f"Mismatched names: {name} != {d['name'][i]}")
+                    if labels is None:
+                        labels = d["labels"][i]
+                    if d["labels"][i] != labels:
+                        raise RuntimeError(f"Mismatched labels: {labels} != {d['labels'][i]}")
+
+        for i in range(length):
+            new = {}
+
+            for k in keys:
+                if k == "name":
+                    continue
+                if k == "labels":
+                    new[k] = d_raw[k][i]
+                new[f"raw_{k}"] = d_raw[k][i]
+                new[f"dis_{k}"] = d_dis[k][i]
+                new[f"dec_{k}"] = d_dec[k][i]
+
+            yield new
 
 
 def merge_raw_dis_dec_datasets(
@@ -450,7 +514,7 @@ def merge_raw_dis_dec_datasets(
         if is_dataset_empty(raw[s]) or is_dataset_empty(dis[s]) or is_dataset_empty(dec[s]):
             dataset[s] = cl.from_pandas(df.copy(), features=features)
             continue
-        gen = partial(merge_generator, raw[s], dis[s], dec[s], True)
+        gen = partial(merge_generator_fast, raw[s], dis[s], dec[s], True)
         dataset[s] = cl.from_generator(gen, features)
 
     return dataset
