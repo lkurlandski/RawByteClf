@@ -1445,6 +1445,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 for lift_level in LiftLevel if lift_level != LiftLevel.ALL
             }
 
+            if os.environ.get("TR_SIZE") is not None:
+                for k in multidataset:
+                    multidataset[k]["tr"] = multidataset[k]["tr"].take(int(os.environ["TR_SIZE"]))
+            if os.environ.get("VL_SIZE") is not None:
+                for k in multidataset:
+                    multidataset[k]["vl"] = multidataset[k]["vl"].take(int(os.environ["VL_SIZE"]))
+
             dataset = merge_raw_dis_dec_datasets(
                 multidataset[LiftLevel.RAW],
                 multidataset[LiftLevel.DISASSEMBLED],
