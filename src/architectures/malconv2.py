@@ -8,6 +8,8 @@ Implementation of the MalConv2 & MalConvGCG architectures from:
   }
 """
 
+import os
+import sys
 from typing import Literal, Optional
 import warnings
 
@@ -18,6 +20,11 @@ import torch
 from torch import Tensor, nn
 from torch.nn import CrossEntropyLoss, MSELoss, BCEWithLogitsLoss
 from torch.nn import functional as F
+
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from src.architectures.ensemble import EnsembleForSequenceClassification
 
 
 ################################################################################
@@ -395,6 +402,9 @@ class MalConv2Config(PretrainedConfig):
         stride: int = 512,
         kernel_size: int = 512,
         layers: int = 1,
+        head_hidden_size: int = 0,
+        head_num_hidden_layers: int = 0,
+        head_dropout: float = 0.1,
         **kwds,
     ) -> None:
         self.mode = mode
@@ -405,7 +415,16 @@ class MalConv2Config(PretrainedConfig):
         self.stride = stride
         self.kernel_size = kernel_size
         self.layers = layers
+        self.head_hidden_size = head_hidden_size
+        self.head_num_hidden_layers = head_num_hidden_layers
+        self.head_dropout = head_dropout
+        if head_hidden_size != 0 or head_num_hidden_layers != 0 or head_dropout != 0.1:
+            raise NotImplementedError("I never actually implemented this!")
         super().__init__(**kwds)
+
+    @property
+    def hidden_size(self) -> int:
+        return self.channels
 
 
 class MalConv2PreTrainedModel(PreTrainedModel):
@@ -435,7 +454,7 @@ class MalConv2(MalConv2PreTrainedModel):
 
     def forward(self, input_ids: Tensor) -> BaseModelOutput:
         x, penult, post_conv = self.malconv(input_ids)
-        return BaseModelOutput(last_hidden_state=x)
+        return BaseModelOutput(last_hidden_state=x, hidden_states=(penult, post_conv))
 
 
 class MalConv2ForSequenceClassification(MalConv2PreTrainedModel):
@@ -475,6 +494,18 @@ class MalConv2ForSequenceClassification(MalConv2PreTrainedModel):
                 loss = loss_fct(logits, labels)
 
         return SequenceClassifierOutput(loss=loss, logits=logits)
+
+
+class MalConv2EnsembleForSequenceClassification(EnsembleForSequenceClassification):
+
+    def __init__(self, config: MalConv2Config) -> None:
+        super().__init__(config, MalConv2)
+
+    def get_pooled_hidden_states(self, backbone: MalConv2, input_ids: Tensor, **kwds) -> Tensor:  # pylint: disable=arguments-differ
+        # This implementation uses the penultimate activations as pooled hidden states.
+        output = backbone(input_ids=input_ids)
+        pooled_hidden_states = output.hidden_states[0]
+        return pooled_hidden_states
 
 
 def test():

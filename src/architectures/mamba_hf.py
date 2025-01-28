@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
-from torch import nn
+from torch import nn, Tensor
 
 
 import transformers
@@ -38,6 +38,7 @@ from transformers.models.mamba.modeling_mamba import (  # pylint: disable=no-nam
 from transformers.configuration_utils import PretrainedConfig
 from transformers.utils import ModelOutput
 
+from src.architectures.ensemble import EnsembleForSequenceClassification
 from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss, check_tie_embeddings_will_work
 
 
@@ -871,3 +872,20 @@ class MambaForSequenceClassification(MambaPreTrainedModel):
             return ((loss,) + output) if loss is not None else output
 
         return MambaSequenceClassificationOutput(loss=loss, logits=logits)
+
+
+class MambaEnsembleForSequenceClassification(EnsembleForSequenceClassification):
+
+    def __init__(self, config: MambaConfig) -> None:
+        super().__init__(config, MambaModel if config.is_decoder else BiMambaModel)
+        if not config.is_decoder and not config.bi_add_directions:
+            raise ValueError()
+
+    def get_pooled_hidden_states(self, backbone: MambaModel | BiMambaModel, input_ids: Tensor, **kwds) -> Tensor:  # pylint: disable=arguments-differ
+        output = backbone(input_ids=input_ids, **kwds)
+        hidden_states = output.last_hidden_state
+        if isinstance(backbone, BiMambaModel):
+            hidden_states = hidden_states[0] + hidden_states[1]
+        pooling = "last"
+        pooled_hidden_states = pool_logits(pooling, hidden_states, input_ids, self.config.pad_token_id)
+        return pooled_hidden_states

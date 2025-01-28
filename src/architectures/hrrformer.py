@@ -30,9 +30,10 @@ from transformers.pytorch_utils import (
     prune_linear_layer,
 )
 from src.utils import log_tensor
-from src.architectures.utils import binding, unbinding, cosine_similarity
+from src.architectures.ensemble import EnsembleForSequenceClassification
 from src.architectures.head_utils import Head, pool_logits, get_clf_loss, get_clm_loss, get_mlm_loss, check_tie_embeddings_will_work
 from src.architectures.rotary import RotaryEmbedding
+from src.architectures.utils import binding, unbinding, cosine_similarity
 
 
 ARG_REQUIRED = -1
@@ -188,7 +189,7 @@ class HRRSelfAttention(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
 
         self.position_embeddings: nn.Identity | RotaryEmbedding = nn.Identity()
-        if self.position_embedding_type == "relative":
+        if self.position_embedding_type == "relative":  # pylint: disable=no-else-raise
             raise NotImplementedError()
         elif self.position_embedding_type == "rotary":
             self.position_embeddings = RotaryEmbedding(self.attention_head_size)
@@ -894,6 +895,9 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
         logits = pool_logits("last" if self.config.is_decoder else "mean", logits, input_ids, self.config.pad_token_id)
         loss = get_clf_loss(logits, labels, self.config.num_labels, self.config.problem_type) if labels is not None else None
 
+        # NOTE: when hidden_states or attentions are None, the resulting object does not even contain the corresponding field.
+        # When the field is present, it can cause errors in the Trainer class. As far as I can tell, the hidden_states and
+        # attentions are always None, so this error never occurs. Therefore, we should just delete them from the return statement.
         # Returning hidden_states can cause excessive memory build-up during evaluation.
         # Using TrainingArguments.prediction_loss_only is insufficient because we need the logits.
         return SequenceClassifierOutput(
@@ -902,3 +906,16 @@ class HRRForSequenceClassification(HRRPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+class HRREnsembleForSequenceClassification(EnsembleForSequenceClassification):
+
+    def __init__(self, config: HRRConfig) -> None:
+        super().__init__(config,  HRRModel)
+
+    def get_pooled_hidden_states(self, backbone: HRRModel, input_ids: Tensor, **kwds) -> Tensor:  # pylint: disable=arguments-differ
+        output = backbone(input_ids=input_ids, **kwds)
+        hidden_states = output.last_hidden_state
+        pooling = "last" if self.config.is_decoder else "mean"
+        pooled_hidden_states = pool_logits(pooling, hidden_states, input_ids, self.config.pad_token_id)
+        return pooled_hidden_states
