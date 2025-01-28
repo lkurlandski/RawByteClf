@@ -1,11 +1,11 @@
 """
+Custom data collators.
 """
 
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from transformers import DataCollatorWithPadding
-from transformers.data.data_collator import pad_without_fast_tokenizer_warning
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase, BatchEncoding
 
 
@@ -37,7 +37,7 @@ class EnsembleDataCollatorWithPadding:
 
         raw_batch = self.differentiate_batch(raw_batch, "raw_", ignore=universal)
         dis_batch = self.differentiate_batch(dis_batch, "dis_", ignore=universal)
-        dec_batch = self.differentiate_batch(dec_batch, "dec_", ignore=universal)        
+        dec_batch = self.differentiate_batch(dec_batch, "dec_", ignore=universal)
 
         data = {**raw_batch, **dis_batch, **dec_batch}
         return BatchEncoding(data)
