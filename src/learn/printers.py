@@ -98,5 +98,5 @@ def print_model(model: PreTrainedModel) -> None:
         out = model.get_output_embeddings()
         print(f"\tEmbedding weights the same: {inp.weight is out.weight}")
         print(f"\tEmbedding biases the same:  {inp.bias is out.bias}")
-    except AttributeError:
+    except (AttributeError, NotImplementedError):
         pass
