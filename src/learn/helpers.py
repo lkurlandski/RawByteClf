@@ -156,7 +156,7 @@ class Args:
 
     # Finetuning
     pretraining_task: Optional[Task]          = field(default=None)
-    pretraining_checkpoint: str               = field(default="-1")   # We use str to allow for an index or a path
+    pretraining_checkpoint: str               = field(default="-1")   # We use str to allow for an index or a path or a dict of paths with keys `raw`, `dis`, and `dec`.
 
     # Other
     eval_checkpoints: Optional[str] = field(default=None)  # A comma-separated list of checkpoints to evaluate. Either numbers or paths.
@@ -190,7 +190,19 @@ class Args:
         self.do_compute_unigram_probabilities = str_to_bool(self.do_compute_unigram_probabilities)
 
         self.pretraining_task       = str_to_type(self.pretraining_task, Task)
-        self.pretraining_checkpoint = int(self.pretraining_checkpoint) if self.pretraining_checkpoint.strip().lstrip("-").isdigit() else self.pretraining_checkpoint
+        self.pretraining_checkpoint: int | str | dict[LiftLevel, str]
+        if self.pretraining_checkpoint.strip().lstrip("-").isdigit():
+            self.pretraining_checkpoint: int = int(self.pretraining_checkpoint)
+        else:
+            try:
+                # pylint: disable=no-member
+                self.pretraining_checkpoint: dict[str, str] = json.loads(self.pretraining_checkpoint)
+                self.pretraining_checkpoint: dict[LiftLevel, str] = {LiftLevel(k): v for k, v in self.pretraining_checkpoint.items()}
+                if any(k not in self.pretraining_checkpoint.keys() for k in (LiftLevel.RAW, LiftLevel.DISASSEMBLED, LiftLevel.DECOMPILED)):
+                    raise KeyError(f"Expected keys: {KEYS}, got {self.pretraining_checkpoint.keys()}")
+                # pylint: enable=no-member
+            except json.JSONDecodeError:
+                self.pretraining_checkpoint: str = self.pretraining_checkpoint
 
         self.eval_checkpoints = str_to_type(self.eval_checkpoints, str)
         if self.eval_checkpoints is not None:
@@ -347,9 +359,14 @@ class OutputHelper:
     @staticmethod
     def get_finetuning_model_name_or_path(
         pretraining_task: Task, pretraining_checkpoint: str | int = -1, **kwds,
-    ) -> str:
-        if os.path.exists(pretraining_checkpoint):
+    ) -> str | dict[Any, str]:
+        if isinstance(pretraining_checkpoint, str) and os.path.exists(pretraining_checkpoint):
             return pretraining_checkpoint
+        if isinstance(pretraining_checkpoint, dict):
+            return {
+                k: OutputHelper.get_finetuning_model_name_or_path(pretraining_task, v, **kwds)
+                for k, v in pretraining_checkpoint.items()
+            }
 
         oh = OutputHelper(**kwds)
 

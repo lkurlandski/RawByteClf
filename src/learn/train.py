@@ -751,7 +751,7 @@ def get_config_from_path(model_name_or_path: str | Path, **kwds) -> PretrainedCo
 
 
 def get_config(
-    model_name_or_path: str,
+    model_name_or_path: str | dict[LiftLevel, str],
     tokenizer: Optional[PreTrainedTokenizerFast] = None,
     max_length: Optional[int] = None,
     arch_config: Optional[dict[str, Any]] = None,
@@ -779,6 +779,12 @@ def get_config(
     for k in ["num_labels", "id2label", "label2id", "problem_type"]:
         if k in kwds and kwds[k] is None:
             kwds.pop(k)
+
+    if isinstance(model_name_or_path, dict):
+        configs = [get_config(p) for p in model_name_or_path.values()]
+        if not all(c == configs[0] for c in configs):
+            raise RuntimeError()
+        return configs[0]
 
     if Path(model_name_or_path).exists():
         print("Getting config from disk.")
@@ -911,7 +917,7 @@ def get_config(
 
 def get_model(
     task: Task,
-    model_name_or_path: Optional[str | dict[str]] = None,
+    model_name_or_path: Optional[str | dict[LiftLevel, str]] = None,
     config: Optional[PretrainedConfig] = None,
     ensemble: bool = False,
     **kwds,
@@ -929,12 +935,14 @@ def get_model(
         if isinstance(model_name_or_path, str) and model_name_or_path.lower() in MODEL_NAMES:
             should_load_from_disk = False
             should_load_from_conf = True
-        elif (
-            isinstance(model_name_or_path, str) and Path(model_name_or_path).exists() or
-            isinstance(model_name_or_path, dict) and all(Path(f).exists() for f in model_name_or_path.values())
-        ):
+        elif isinstance(model_name_or_path, str) and Path(model_name_or_path).exists():
             should_load_from_disk = True
             should_load_from_conf = False
+        elif isinstance(model_name_or_path, dict) and all(Path(f).exists() for f in model_name_or_path.values()):
+            should_load_from_disk = True
+            should_load_from_conf = False
+            # The EnsembleModelForSequenceClassification requires a dictionary with str keys.
+            model_name_or_path = deepcopy({lift_level.value: f for lift_level, f in model_name_or_path.items()})
         else:
             raise ValueError(
                 "A value for model_name_or_path was provided, but its not in the list of MODEL_NAMES or a valid path. "
@@ -1337,6 +1345,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "weighted_loss": args.weighted_loss,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
+    # NOTE: this is quite bad, but args.model_name_or_path might change from a str representing the
+    # model's name, e.g., "mamba", to a path to the model's checkpoint, e.g., "output/mamba/checkpoint-1234",
+    # or a dictionary of paths to the model's checkpoints, e.g., {"raw": "output/mamba/checkpoint-1234", ...}.
     if args.pretraining_task is not None and not Path(args.model_name_or_path).exists():
         pretrain_kwds = deepcopy(kwds)
         # It would be nice to remove non-critical pretraining kwds, but its just going to be too difficult.
@@ -1354,7 +1365,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
             args.pretraining_task, args.pretraining_checkpoint, **pretrain_kwds,
         )
-        kwds["model_name_or_path"] = args.model_name_or_path
+        # NOTE: we're going to put the finetuned ensembles beneath the RAW models.
+        # Should we add symlinks to the output path beneath the DIS and DEC models?
+        # This might be useful for documentation, but could prove annoying when trying to navigate the directory.
+        if isinstance(args.model_name_or_path, dict):
+            kwds["model_name_or_path"] = args.model_name_or_path[LiftLevel.RAW]
     oh = OutputHelper(**kwds)
     print(f"Output Helper:\n{str(oh)}")
     print(f"Output Path: {oh.path}")
@@ -1461,7 +1476,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.dataset_backend == "HF":
         num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
         if args.lift_level == LiftLevel.ALL:
-            # Some debugging on armitage.
+            # On armitage, we don't have all the files, so we need to sync the data across representations.
             if SYSTEM == System.ARMITAGE:
                 for split in ["tr", "vl"]:
                     intersection = None
@@ -1485,13 +1500,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 for lift_level in LiftLevel if lift_level != LiftLevel.ALL
             }
 
-            if os.environ.get("TR_SIZE") is not None:
-                for k in multidataset:
-                    multidataset[k]["tr"] = multidataset[k]["tr"].take(int(os.environ["TR_SIZE"]))
-            if os.environ.get("VL_SIZE") is not None:
-                for k in multidataset:
-                    multidataset[k]["vl"] = multidataset[k]["vl"].take(int(os.environ["VL_SIZE"]))
-
             dataset = merge_raw_dis_dec_datasets(
                 multidataset[LiftLevel.RAW],
                 multidataset[LiftLevel.DISASSEMBLED],
@@ -1500,17 +1508,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             del multidataset
         else:
             dataset = get_processed_dataset_hf(materials, args.lift_level, args, num_shards, tokenizer)
+        if os.environ.get("TR_SIZE") is not None:
+            dataset["tr"] = dataset["tr"].take(int(os.environ["TR_SIZE"]))
+        if os.environ.get("VL_SIZE") is not None:
+            dataset["vl"] = dataset["vl"].take(int(os.environ["VL_SIZE"]))
         print_dataset_hf(dataset)
         print(BR)
     else:
         dataset = get_processed_dataset_pt(materials, args, None, tokenizer)
         print_dataset_pt(dataset)
         print(BR)
-
-    # FIXME: remove
-    print(getattr(dataset.get("tr"), "features", None) == getattr(dataset.get("vl"), "features", None))
-    print(getattr(dataset.get("tr"), "features", None) == getattr(dataset.get("ts"), "features", None))
-    print(getattr(dataset.get("vl"), "features", None) == getattr(dataset.get("ts"), "features", None))
 
     # TODO: should we add masks after mapping or before?
     # if MODEL_NAME in REQ_ATTENTION_MASK:
