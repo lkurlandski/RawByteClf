@@ -1,5 +1,6 @@
 """PyTorch MAMBA model."""
 
+from __future__ import annotations
 from dataclasses import dataclass
 import math
 from typing import Any, Dict, Optional, Tuple, Union
@@ -893,3 +894,13 @@ class MambaEnsembleForSequenceClassification(EnsembleForSequenceClassification):
         pooling = "last"
         pooled_hidden_states = pool_logits(pooling, hidden_states, input_ids, self.config.pad_token_id)
         return pooled_hidden_states
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str | tuple[str] | dict[str],
+        *args,
+        config: Optional[PretrainedConfig] = None,
+        **kwds,
+    ) -> MambaEnsembleForSequenceClassification:
+        return super().from_pretrained(pretrained_model_name_or_path, MambaModel if config.is_decoder else BiMambaModel, *args, config=config, **kwds)

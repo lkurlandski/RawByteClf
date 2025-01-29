@@ -911,25 +911,44 @@ def get_config(
 
 def get_model(
     task: Task,
-    model_name_or_path: Optional[str] = None,
+    model_name_or_path: Optional[str | dict[str]] = None,
     config: Optional[PretrainedConfig] = None,
     ensemble: bool = False,
     **kwds,
 ) -> PreTrainedModel:
-    # At one point, I didn't want to be passing in both a config and a model_name_or_path.
-    # I don't remember what the intuition behind this was...
-    # if (model_name_or_path is None) == (config is None):
-    #     raise ValueError("Must specify `model_name_or_path` xor `config`.")
 
     # PreTrainedModel doesn't like None values for num_labels id2label and label2id.
     for k in ["num_labels", "id2label", "label2id"]:
         if k in kwds and kwds[k] is None:
             kwds.pop(k)
 
-    # Get model from disk
-    if model_name_or_path is not None and Path(model_name_or_path).exists():
-        if ensemble:
-            raise NotImplementedError()
+    # Raise an exception if the arguments lead to ambiguous behavior to ensure we're taking the correct action.
+    should_load_from_disk = None
+    should_load_from_conf = None
+    if model_name_or_path is not None:
+        if isinstance(model_name_or_path, str) and model_name_or_path.lower() in MODEL_NAMES:
+            should_load_from_disk = False
+            should_load_from_conf = True
+        elif (
+            isinstance(model_name_or_path, str) and Path(model_name_or_path).exists() or
+            isinstance(model_name_or_path, dict) and all(Path(f).exists() for f in model_name_or_path.values())
+        ):
+            should_load_from_disk = True
+            should_load_from_conf = False
+        else:
+            raise ValueError(
+                "A value for model_name_or_path was provided, but its not in the list of MODEL_NAMES or a valid path. "
+                f"For the record, {model_name_or_path=} and MODEL_NAMES={'|'.join(MODEL_NAMES)}."
+            )
+    else:
+        should_load_from_disk = False
+        should_load_from_conf = True
+
+    if should_load_from_conf is None or should_load_from_disk is None:
+        raise RuntimeError(f"Invalid state: {should_load_from_disk=} {should_load_from_conf=}")
+
+    # Get model from disk.
+    if should_load_from_disk:
         print("Getting model from disk.")
         model_name = object_to_model_name(model_name_or_path)
         # This is an extensive procedure to ensure the weights of the classification head are
@@ -943,28 +962,49 @@ def get_model(
         # where `config` is a config for classification, prevents this from happening.
         if task in (Task.DET, Task.FAM, Task.BEH):
             if model_name == "hrrformer":
-                model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
-                _config = HRRConfig.from_pretrained(model_name_or_path)
+                if ensemble:
+                    model = HRREnsembleForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                else:
+                    model = HRRForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                if isinstance(model_name_or_path, str):
+                    _config = HRRConfig.from_pretrained(model_name_or_path)
+                else:
+                    _config = HRRConfig.from_pretrained(next(iter(model_name_or_path.values())))
                 _head_names = ["head_clf"]
             elif model_name == "rwkv":
+                if ensemble:
+                    raise NotImplementedError()
                 model = RwkvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = RwkvConfig.from_pretrained(model_name_or_path)
                 _head_names = ["head_clf"]
             elif model_name == "mamba":
-                model = MambaForSequenceClassification.from_pretrained(model_name_or_path, config=config)
-                if not config.is_decoder and config.bi_tie_directions:
-                    model.backbone.tie_forward_and_backward_weights(tie=True, clone=False)
+                if ensemble:
+                    model = MambaEnsembleForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                    if not config.is_decoder and config.bi_tie_directions:
+                        for backbone in [model.raw_backbone, model.dis_backbone, model.dec_backbone]:
+                            backbone.tie_forward_and_backward_weights(tie=True, clone=False)
+                else:
+                    model = MambaForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                    if not config.is_decoder and config.bi_tie_directions:
+                        model.backbone.tie_forward_and_backward_weights(tie=True, clone=False)
                 _config = MambaConfig.from_pretrained(model_name_or_path)
                 _head_names = ["head_clf"]
             elif model_name == "malconv":
+                if ensemble:
+                    raise NotImplementedError()
                 model = MalConvForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MalConvConfig.from_pretrained(model_name_or_path)
                 _head_names = ["head_clf"]
             elif model_name == "malconv2":
-                model = MalConv2ForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                if ensemble:
+                    model = MalConv2EnsembleForSequenceClassification.from_pretrained(model_name_or_path, config=config)
+                else:
+                    model = MalConv2ForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = MalConv2Config.from_pretrained(model_name_or_path)
                 _head_names = ["head_clf"]
             elif get_model_type(model_name_or_path) == "HF":
+                if ensemble:
+                    raise NotImplementedError()
                 model = AutoModelForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                 _config = AutoConfig.from_pretrained(model_name_or_path)
                 _head_names = []
@@ -1016,8 +1056,8 @@ def get_model(
                 return MambaForCausalLM.from_pretrained(model_name_or_path, **kwds)
             return AutoModelForCausalLM.from_pretrained(model_name_or_path, **kwds)
 
-    # Get model from config
-    if config:
+    # Get model from config.
+    elif should_load_from_conf:
         print("Creating new model.")
         if task in (Task.DET, Task.FAM, Task.BEH):
             if isinstance(config, MalConvConfig):

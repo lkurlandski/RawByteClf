@@ -2,6 +2,7 @@
 Implementation of HRRFormer.
 """
 
+from __future__ import annotations
 import warnings
 from typing import Literal, Optional
 
@@ -921,3 +922,13 @@ class HRREnsembleForSequenceClassification(EnsembleForSequenceClassification):
         pooling = "last" if self.config.is_decoder else "mean"
         pooled_hidden_states = pool_logits(pooling, hidden_states, input_ids, self.config.pad_token_id)
         return pooled_hidden_states
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str | tuple[str] | dict[str],
+        *args,
+        config: Optional[PretrainedConfig] = None,
+        **kwds,
+    ) -> HRREnsembleForSequenceClassification:
+        return super().from_pretrained(pretrained_model_name_or_path, HRRModel, *args, config=config, **kwds)

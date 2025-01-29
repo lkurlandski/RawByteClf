@@ -1,8 +1,9 @@
 """
-Utilities for ensembling multiple models together.
+An abominable class for ensembling multiple models together.
 """
 
-from typing import Callable, Optional
+from __future__ import annotations
+from typing import Callable, Optional, Protocol
 
 import torch
 from torch import Tensor
@@ -12,17 +13,36 @@ from transformers.modeling_outputs import BaseModelOutput, SequenceClassifierOut
 from src.architectures.head_utils import Head, get_clf_loss
 
 
+class BackboneInit(Protocol):
+
+    def __call__(self, config: PretrainedConfig) -> PreTrainedModel:
+        ...
+
+    def from_pretrained(self, pretrained_model_name_or_path: str, *args, **kwds) -> PreTrainedModel:
+        ...
+
+
 class EnsembleForSequenceClassification(PreTrainedModel):
 
+    # Class variables
     supports_gradient_checkpointing = False
     backbone_forward_kwds = ("input_ids", "labels", "attention_mask", "token_type_ids")
 
-    def __init__(self, config: PretrainedConfig, backbone: Callable[[PretrainedConfig], PreTrainedModel]) -> None:
+    # Instance variables
+    config: PretrainedConfig
+    backbone_init: BackboneInit
+    raw_backbone: PreTrainedModel
+    dis_backbone: PreTrainedModel
+    dec_backbone: PreTrainedModel
+    head_clf: Head
+
+    def __init__(self, config: PretrainedConfig, backbone_init: BackboneInit) -> None:
         super().__init__(config)
         self.config = config
-        self.raw_backbone = backbone(config)
-        self.dis_backbone = backbone(config)
-        self.dec_backbone = backbone(config)
+        self.backbone_init = backbone_init
+        self.raw_backbone = backbone_init(config)
+        self.dis_backbone = backbone_init(config)
+        self.dec_backbone = backbone_init(config)
         self.head_clf = Head(
             config.hidden_size * 3,
             config.num_labels,
@@ -31,6 +51,35 @@ class EnsembleForSequenceClassification(PreTrainedModel):
             config.head_dropout,
         )
         self.post_init()
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str | tuple[str] | dict[str],
+        backbone_init: BackboneInit,
+        *args,
+        config: Optional[PretrainedConfig] = None,
+        **kwds,
+    ) -> EnsembleForSequenceClassification:
+        # There appear to be some problems here, as indicated by pylint, but it works when called from a subclass.
+        if isinstance(pretrained_model_name_or_path, (tuple, dict)):
+            if isinstance(pretrained_model_name_or_path, tuple):
+                pretrained_model_name_or_path = {
+                    "raw": pretrained_model_name_or_path[0],
+                    "dis": pretrained_model_name_or_path[1],
+                    "dec": pretrained_model_name_or_path[2],
+                }
+            for k in ("raw", "dis", "dec"):
+                if k not in pretrained_model_name_or_path:
+                    raise KeyError(f"Missing key '{k}' in 'pretrained_model_name_or_path'.")
+
+            obj = cls(config)  # pylint: disable=no-value-for-parameter
+            obj.raw_backbone = backbone_init.from_pretrained(pretrained_model_name_or_path["raw"], *args, config=config, **kwds)
+            obj.dis_backbone = backbone_init.from_pretrained(pretrained_model_name_or_path["dis"], *args, config=config, **kwds)
+            obj.dec_backbone = backbone_init.from_pretrained(pretrained_model_name_or_path["dec"], *args, config=config, **kwds)
+            return obj
+
+        return super().from_pretrained(pretrained_model_name_or_path, *args, config=config, **kwds)  # pylint: disable=no-member
 
     def forward(
         self,

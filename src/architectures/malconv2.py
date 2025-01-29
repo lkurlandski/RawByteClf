@@ -8,6 +8,7 @@ Implementation of the MalConv2 & MalConvGCG architectures from:
   }
 """
 
+from __future__ import annotations
 import os
 import sys
 from typing import Literal, Optional
@@ -509,6 +510,16 @@ class MalConv2EnsembleForSequenceClassification(EnsembleForSequenceClassificatio
         output = backbone(input_ids=input_ids, **kwds)
         pooled_hidden_states = output.hidden_states[0]
         return pooled_hidden_states
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str | tuple[str] | dict[str],
+        *args,
+        config: Optional[PretrainedConfig] = None,
+        **kwds,
+    ) -> MalConv2EnsembleForSequenceClassification:
+        return super().from_pretrained(pretrained_model_name_or_path, MalConv2, *args, config=config, **kwds)
 
 
 def test():
