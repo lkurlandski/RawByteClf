@@ -91,7 +91,7 @@ def get_body(
     task: Task,
     pretraining_task: Optional[Task],
     weighted_loss: Optional[WeightedLossAlgorithm],
-    beta: Optiona[float],
+    beta: Optional[float],
     pretraining_checkpoint: Optional[str],
     num_train_epochs: int,
     max_steps: Optional[int],
@@ -233,6 +233,7 @@ COMPRESSION_RATIOS: dict[tuple[TokenizationAlgorithm, int], float] = {
 }
 
 
+# TODO: these need to be updated with the new paths that include the lift_level_ddp.
 CHECKPOINTS = {
     (LiftLevel.DECOMPILED, ModelName.HRR, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
     (LiftLevel.DECOMPILED, ModelName.HRR, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--hrrformer/is_decoder--True/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.1/head_num_hidden_layers--0/head_hidden_size--0/position_embedding_type--rotary/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--1/gradient_accumulation_steps--256/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
@@ -247,6 +248,19 @@ CHECKPOINTS = {
     (LiftLevel.RAW, ModelName.MAM, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
     (LiftLevel.RAW, ModelName.MAM, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--True/num_hidden_layers--64/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
 }
+
+def add_ensemble_checkpoints():
+    for path in CHECKPOINTS.values():
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+    for model_name in (ModelName.HRR, ModelName.MAM):
+        for task in (Task.CLM, Task.MLM):
+            CHECKPOINTS[(LiftLevel.ALL, model_name, task)] = {
+                lift_level.value: CHECKPOINTS[(lift_level, model_name, task)]
+                for lift_level in (LiftLevel.RAW, LiftLevel.DISASSEMBLED, LiftLevel.DECOMPILED)
+            }
+
+add_ensemble_checkpoints()
 
 
 @dataclass
@@ -314,9 +328,6 @@ class Configuration:
         if self.model_size != ModelSize.CO:
             return False
         if self.lift_level != LiftLevel.ALL:
-            return False
-        # TODO: implement for ALL
-        if self.pretraining_task is not None:
             return False
 
         return True
@@ -448,7 +459,7 @@ class Configuration:
         return True
 
     @property
-    def sync_batch_size(self) -> bool: 
+    def sync_batch_size(self) -> bool:
         if self.task in (Task.DET, Task.FAM, Task.BEH):
             return False
         return True
@@ -704,9 +715,13 @@ class Configuration:
     @property
     def pretraining_checkpoint(self) -> Optional[str]:
         # If we use a different dropout for finetuning, it is challenging to resolve
-        # the pretraining path were we to pass a "-1" to the program.
+        # the pretraining path were we to pass a "-1" to the program. This is even more complex
+        # when we try and finetune the ensemble of pretrained models, so we just pass raw paths.
         if self.pretraining_task is not None:
-            return CHECKPOINTS[(self.lift_level, self.model_name, self.pretraining_task)]
+            checkpoint = CHECKPOINTS[(self.lift_level, self.model_name, self.pretraining_task)]
+            if isinstance(checkpoint, dict):
+                checkpoint = json.dumps(checkpoint)
+            return checkpoint
         return None
 
     @property
@@ -727,7 +742,7 @@ def sort_configurations_key(c: Configuration) -> tuple:
 
 def main():
 
-    global ARMITAGE
+    global ARMITAGE  # pylint: disable=global-statement
 
     parser = ArgumentParser()
     parser.add_argument("--armitage", action="store_true")
@@ -747,7 +762,7 @@ def main():
         ModelMode,
         (4096, 8192, 16384, 32768, 65536),
         LiftLevel,
-        [l for l in LiftLevel] + [None],
+        [l for l in LiftLevel] + [None],  # pylint: disable=unnecessary-comprehension
         TokenizationAlgorithm,
         (256, 1024, 4096, 16384),
         Task,
