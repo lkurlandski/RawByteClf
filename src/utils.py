@@ -72,7 +72,7 @@ def print_context(suppress: bool = False):
 
 
 def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:
-    for root, dirs, files in os.walk(top, followlinks=True):
+    for root, dirs, files in os.walk(top, followlinks=followlinks):  # pylint: disable=unused-variable
         for file in files:
             if fnmatch.fnmatch(file, pattern):
                 yield os.path.join(root, file)
@@ -321,7 +321,7 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
     args = [a.replace('"', "").replace("'", "").replace("\\", "").rstrip() for a in args]
     args = [f'"{a}"' for a in args]
 
-    # Special processing for the arch_config
+    # Special processing for the arch_config and pretraining_checkpoint
 
     def encapsulate_string(s: str) -> str:
         r = ""
@@ -339,15 +339,20 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
         except ValueError:
             return False
 
-    idx = None
+    idx_1 = None
+    idx_2 = None
     for i, a in enumerate(args):
         if "--arch_config" in a:
-            if idx is not None:
+            if idx_1 is not None:
                 raise RuntimeError()
-            idx = i
+            idx_1 = i
+        if "--pretraining_checkpoint" in a:
+            if idx_2 is not None:
+                raise RuntimeError()
+            idx_2 = i
 
-    if idx is not None:
-        s = args[idx]
+    if idx_1 is not None:
+        s = args[idx_1]
         s = s[len('"--arch_config={'):-len('}"')]
         iterator = [x.split(":") for x in s.split(",")]
         s = ""
@@ -366,7 +371,29 @@ def bash_file_to_vscode_debug_str(file: Path) -> str:
 
         s = s[:-len(", ")]
         s = '"--arch_config={' + s + '}"'
-        args[idx] = s
+        args[idx_1] = s
+
+    if idx_2 is not None and all(c in args[idx_2] for c in ("{", "}")):
+        s = args[idx_2]
+        s = s[len('"--pretraining_checkpoint={'):-len('}"')]
+        iterator = [x.split(":") for x in s.split(",")]
+        s = ""
+        for k, v in iterator:
+            k = k.strip()
+            v = v.strip()
+            s += encapsulate_string(k)
+            s += ": "
+
+            if v in ("true", "false", "null") or isdigit(v):
+                s += v
+            else:
+                s += encapsulate_string(v)
+
+            s += ", "
+
+        s = s[:-len(", ")]
+        s = '"--pretraining_checkpoint={' + s + '}"'
+        args[idx_2] = s
 
     return ", ".join(args)
 
