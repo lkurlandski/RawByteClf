@@ -369,13 +369,14 @@ class Configuration:
             return seconds_to_slurm_time(h * 3600)
 
         if self.model_name == ModelName.MAL:
+            z = 3 if self.lift_level == LiftLevel.ALL else 1
             if self.task == Task.DET:
                 h = 3
             if self.task == Task.FAM:
                 h = 6
             if self.task == Task.BEH:
                 h = 2
-            return seconds_to_slurm_time(3600 * h)
+            return seconds_to_slurm_time(3600 * h * z)
 
         if self.task == Task.DET:
             n_tr = 24614
@@ -445,13 +446,21 @@ class Configuration:
 
     @property
     def gpu(self) -> int:
+        if self.model_name == ModelName.MAL:
+            return 1
         if self.task in (Task.CLM, Task.MLM):
             if self.max_length >= 32768:
                 return 4
             if self.max_length >= 8192:
                 return 2
             return 1
-        return 1
+        if self.task == Task.FAM:
+            return 4
+        if self.task == Task.DET:
+            return 2
+        if self.task == Task.BEH:
+            return 1
+        raise RuntimeError()
 
     @property
     def streaming(self) -> bool:
@@ -573,10 +582,11 @@ class Configuration:
     def dataloader_num_workers(self) -> int:
         # One additional process will engage the prefetching.
         # When streaming, we can rely on tokenizers' parallelization for speed.
+        # Fuck. Now I'm getting the stupid parallel tokenizers warning. Just make it 0. Don't care.
         if self.gpu == 0:
             return 0
         if self.streaming:
-            return 1
+            return 0
         return self.cpu // self.gpu - 1
 
     @property
