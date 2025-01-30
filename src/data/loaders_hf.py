@@ -57,6 +57,8 @@ DF_CLF_MULTILABEL = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [[0]]}
 USE_FAST_STORAGE = True
 
 
+# TODO: SPORC usually does not have enough space in the /tmp directory to perform the precopy.
+# We should enhance this function to precopy large batches of archives in succession.
 def generator_from_zipfiles(
     files: list[ArchivedFile],
     labels: Optional[np.ndarray] = None,
