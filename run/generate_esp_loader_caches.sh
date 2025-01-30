@@ -15,8 +15,41 @@
 
 
 source ~/anaconda3/etc/profile.d/conda.sh
-conda activate RawByteClf
 conda activate RawByteClf2
 
 
-python -u src/data/generate_esp_loader_caches.py --num_workers=15 --suppress
+lift_level_ddp="dec"
+for task in "beh" "fam"; do
+    for lift_level in "raw" "dis" "dec"; do
+        (
+            echo "Started: task='${task}', lift_level='${lift_level}', lift_level_ddp='${lift_level_ddp}'"
+            python -u src/data/generate_esp_loader_caches.py \
+                --task="${task}" \
+                --lift_level="${lift_level}" \
+                --lift_level_ddp="${lift_level_ddp}" \
+                > /dev/null 2>&1
+            echo "Finished: task='${task}', lift_level='${lift_level}', lift_level_ddp='${lift_level_ddp}' with exit code $?"
+        ) &
+    done
+done
+
+wait
+
+exit
+
+for task in "det" "beh" "fam" "mlm" "clm"; do
+    for lift_level in "raw" "dis" "dec"; do
+        for lift_level_ddp in "raw" "dis" "dec" "none"; do
+            (
+                python -u src/data/generate_esp_loader_caches.py \
+                    --task="${task}" \
+                    --lift_level="${lift_level}" \
+                    --lift_level_ddp="${lift_level_ddp}" \
+                    > /dev/null 2>&1
+                echo "Finished: task='${task}', lift_level='${lift_level}', lift_level_ddp='${lift_level_ddp}' with exit code $?"
+            ) &
+        done
+    done
+done
+
+wait
