@@ -322,6 +322,7 @@ def merge_generator(
     dis: Dataset | IterableDataset,
     dec: Dataset | IterableDataset,
     check: bool = True,
+    disable_tqdm: bool = False,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     """
     Merges three datasets with different representations of the same binary file into a single dataset.
@@ -345,7 +346,9 @@ def merge_generator(
             must be for a classification task, not a languague modeling one.
     """
 
-    for d_raw, d_dis, d_dec in tqdm(zip(raw, dis, dec), desc=f"Merging Datasets ({check=})"):
+    iterable = zip(raw, dis, dec)
+    iterable = iterable if disable_tqdm else tqdm(iterable, desc=f"Merging Datasets ({check=})")
+    for d_raw, d_dis, d_dec in iterable:
 
         keys: set[str]
 
@@ -389,13 +392,15 @@ def merge_generator_fast(
     dec: Dataset | IterableDataset,
     check: bool = True,
     batch_size: int = 1024,
+    disable_tqdm: bool = False,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
     """
     Batched (fast) version of the merge_generator function.
     """
 
     iterable = zip(raw.iter(batch_size), dis.iter(batch_size), dec.iter(batch_size))
-    for d_raw, d_dis, d_dec in tqdm(iterable, desc=f"Merging Datasets ({check=})"):
+    iterable = iterable if disable_tqdm else tqdm(iterable, desc=f"Merging Datasets ({check=})")
+    for d_raw, d_dis, d_dec in iterable:
 
         d_raw: dict[str, list[Any]]
         d_dis: dict[str, list[Any]]
@@ -459,8 +464,10 @@ def merge_raw_dis_dec_datasets(
     for d in [raw, dis, dec]:
         if isinstance(d, DatasetDict):
             t = Dataset
+            disable_tqdm = False
         elif isinstance(d, IterableDatasetDict):
             t = IterableDataset
+            disable_tqdm = True
         else:
             raise TypeError(f"Expected DatasetDict or IterableDatasetDict. Received {type(d)}")
         cl = t if cl is None else cl
@@ -514,7 +521,8 @@ def merge_raw_dis_dec_datasets(
         if is_dataset_empty(raw[s]) or is_dataset_empty(dis[s]) or is_dataset_empty(dec[s]):
             dataset[s] = cl.from_pandas(df.copy(), features=features)
             continue
-        gen = partial(merge_generator_fast, raw[s], dis[s], dec[s], True)
+        # gen = partial(merge_generator, raw[s], dis[s], dec[s], True, disable_tqdm)
+        gen = partial(merge_generator_fast, raw[s], dis[s], dec[s], True, 64, disable_tqdm)
         dataset[s] = cl.from_generator(gen, features)
 
     return dataset
