@@ -781,7 +781,7 @@ def get_config(
             kwds.pop(k)
 
     if isinstance(model_name_or_path, dict):
-        configs = [get_config(p) for p in model_name_or_path.values()]
+        configs = [get_config(p, tokenizer, max_length, arch_config, **kwds) for p in model_name_or_path.values()]
         if not all(c == configs[0] for c in configs):
             raise RuntimeError()
         return configs[0]
