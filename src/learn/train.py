@@ -1413,7 +1413,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 add_eos_token=True,
                 add_sep_token=False,
             )
-            for lift_level in LiftLevel if lift_level != LiftLevel.ALL
+            for lift_level in (LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC)
         }
         for t in multitokenizer.values():
             t.model_input_names = ["input_ids"]
@@ -1461,7 +1461,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     if args.lift_level == LiftLevel.ALL:
         multimaterials = {
             lift_level: get_materials(lift_level, lift_level_ddp=args.lift_level_ddp)
-            for lift_level in LiftLevel if lift_level != LiftLevel.ALL
+            for lift_level in (LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC)
         }
         materials = multimaterials[LiftLevel.RAW]
     else:
@@ -1509,7 +1509,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     multitokenizer[lift_level],
                     remove_columns=("bytes",),
                 )
-                for lift_level in LiftLevel if lift_level != LiftLevel.ALL
+                for lift_level in (LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC)
             }
 
             dataset = merge_raw_dis_dec_datasets(

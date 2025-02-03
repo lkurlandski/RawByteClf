@@ -67,7 +67,7 @@ TIMESTAMPS_FILES = {
 DIGESTS_FILES = {
     dnm: {
         lift_level: Path(f"./data/{dnm.value}/{lift_level.value}") / "digests.json"
-        for lift_level in LiftLevel if lift_level != LiftLevel.ALL
+        for lift_level in (LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC)
     }
     for dnm in DatasetName
 }

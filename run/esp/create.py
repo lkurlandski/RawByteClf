@@ -777,7 +777,7 @@ def main():
         ModelMode,
         (4096, 8192, 16384, 32768, 65536),
         LiftLevel,
-        [l for l in LiftLevel] + [None],  # pylint: disable=unnecessary-comprehension
+        list(LiftLevel) + [None],
         TokenizationAlgorithm,
         (256, 1024, 4096, 16384),
         Task,
