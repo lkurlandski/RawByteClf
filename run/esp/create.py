@@ -464,6 +464,8 @@ class Configuration:
 
     @property
     def streaming(self) -> bool:
+        if self.task == Task.DET:  # FIXME: fix this problem!
+            return False
         return True
 
     @property
@@ -637,6 +639,8 @@ class Configuration:
         f = int(65536 / self.max_length)
 
         if self.task in (Task.DET, Task.FAM, Task.BEH):
+            if self.model_name == ModelName.MAM and self.lift_level == LiftLevel.ALL:
+                return 3 * f
             return 4 * f
         if self.model_name == ModelName.HRR:
             return 2 * f
@@ -653,6 +657,8 @@ class Configuration:
         f = int(65536 / self.max_length)
 
         if self.task in (Task.DET, Task.FAM, Task.BEH):
+            if self.model_name == ModelName.MAM and self.lift_level == LiftLevel.ALL:
+                return 12 * f
             return 16 * f
         if self.model_name == ModelName.HRR:
             return 1 * f
