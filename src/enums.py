@@ -9,6 +9,7 @@ class LiftLevel(Enum):
     RAW = "raw"
     DIS = "dis"
     DEC = "dec"
+    NOP = "nop"
     ALL = "all"
 
 

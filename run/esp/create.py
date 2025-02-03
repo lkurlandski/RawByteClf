@@ -247,11 +247,11 @@ CHECKPOINTS = {
     (LiftLevel.RAW, ModelName.MAM, Task.MLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/lift_level_ddp--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--False/num_hidden_layers--32/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--mlm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
     (LiftLevel.RAW, ModelName.MAM, Task.CLM): "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/lift_level--raw/lift_level_ddp--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--bpe/vocab_size--16384/max_length--65536/model_name--mamba/is_decoder--True/num_hidden_layers--64/embedding_size--384/hidden_size--384/hidden_dropout_prob--0.0/head_num_hidden_layers--0/head_hidden_size--0/bi_tie_directions--False/task--clm/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.1/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--1.0/world_size--4/per_device_train_batch_size--2/gradient_accumulation_steps--128/tf32--True/fp16--False/bf16--True/seed--0/results/checkpoints/checkpoint-799",
 }
+# for path in CHECKPOINTS.values():
+    # if not os.path.exists(path):
+    #     raise FileNotFoundError(path)
 
 def add_ensemble_checkpoints():
-    for path in CHECKPOINTS.values():
-        if not os.path.exists(path):
-            raise FileNotFoundError(path)
     for model_name in (ModelName.HRR, ModelName.MAM):
         for task in (Task.CLM, Task.MLM):
             CHECKPOINTS[(LiftLevel.ALL, model_name, task)] = {
@@ -290,7 +290,7 @@ class Configuration:
             return False
         # Only some tokenizers were trained.
         if self.tokenization_algorithm not in (TokenizationAlgorithm.BPE, TokenizationAlgorithm.UNIGRAM):
-            if self.lift_level != LiftLevel.RAW:
+            if self.lift_level != LiftLevel.NOP:
                 return False
         # Pretraining and detection does not required random runs.
         if self.task in (Task.CLM, Task.MLM, Task.DET) and self.seed != 0:
@@ -316,9 +316,9 @@ class Configuration:
                 return False
 
         # Adjust as desired.
-        if self.tokenization_algorithm != TokenizationAlgorithm.BPE:
+        if self.tokenization_algorithm != TokenizationAlgorithm.WORDLEVEL:
             return False
-        if self.vocab_size != 16384:
+        if self.vocab_size != 256:
             return False
         if self.lift_level_ddp != LiftLevel.DEC:
             return False
@@ -326,7 +326,9 @@ class Configuration:
             return False
         if self.model_size != ModelSize.CO:
             return False
-        if self.lift_level != LiftLevel.ALL:
+        if self.lift_level != LiftLevel.NOP:
+            return False
+        if self.pretraining_task is not None:
             return False
 
         return True
@@ -361,7 +363,9 @@ class Configuration:
             if self.lift_level == LiftLevel.DEC:
                 h = 260
             if self.lift_level == LiftLevel.ALL:
-                h = 520 + 208 + 260
+                h = 520 + 208 + 260  # TODO: measure
+            if self.lift_level == LiftLevel.NOP:
+                h = 1000  # TODO: measure
 
             h /= (65536 / self.max_length)
             h /= self.gpu
@@ -401,8 +405,11 @@ class Configuration:
             tr_f = 0.760 / 2.978
             vl_f = 3.192 / 13.02
         if self.lift_level == LiftLevel.ALL:
-            tr_f = 1.0 + 0.760 / 3.617 + 0.760 / 2.978
-            vl_f = 1.0 + 3.192 / 16.163 + 3.192 / 13.02
+            tr_f = 1.0 + 0.760 / 3.617 + 0.760 / 2.978   # TODO: measure
+            vl_f = 1.0 + 3.192 / 16.163 + 3.192 / 13.02  # TODO: measure
+        if self.lift_level == LiftLevel.NOP:
+            tr_f = 2.0  # TODO: measure
+            vl_f = 2.0  # TODO: measure
 
         if self.model_name == ModelName.HRR and self.model_mode == ModelMode.BI:
             tr_samples_per_second = 0.766

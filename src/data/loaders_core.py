@@ -1626,6 +1626,9 @@ def _get_materials_esp_lm(
     lift_level     = LiftLevel(lift_level)
     lift_level_ddp = LiftLevel(lift_level_ddp)
 
+    if lift_level == LiftLevel.ALL or lift_level_ddp == LiftLevel.ALL:
+        raise NotImplementedError(f"Cannot use LiftLevel.ALL directly.")
+
     cache_file = esp_cache_file(
         _get_materials_esp_lm,
         lift_level,
@@ -1652,6 +1655,10 @@ def _get_materials_esp_lm(
     if purge_empty_samples:
         shas_that_are_empty = set(Path("./cache/empty_shas.txt").read_text().split("\n"))
 
+    shas_that_are_valid = set()
+    if lift_level == LiftLevel.ALL:
+        shas_that_are_valid = set(Path("./cache/processedShas.txt").read_text().split("\n"))
+
     sha_digest_map = {}
     for dnm in DatasetName:
         _sha_digest_map = get_sha_digest_map(DIGESTS_FILES[dnm][lift_level_ddp])
@@ -1661,6 +1668,7 @@ def _get_materials_esp_lm(
     archives = sorted(a for a in archives if a.parent.name == lift_level.value)
 
     skipped_cause_empty                 = 0
+    skipped_cause_invalid               = 0
     skipped_cause_finetuning            = 0
     skipped_cause_duplicates            = 0
     skipped_cause_duplicates_finetuning = 0
@@ -1672,6 +1680,9 @@ def _get_materials_esp_lm(
             s = name.split(".")[0]
             if s in shas_that_are_empty:
                 skipped_cause_empty += 1
+                continue
+            if s not in shas_that_are_valid:
+                skipped_cause_invalid += 1
                 continue
             if s in shas_for_finetuning:
                 skipped_cause_finetuning += 1
@@ -1686,6 +1697,7 @@ def _get_materials_esp_lm(
             archived_files.append(ArchivedFile(archive, name))
     print(f"\tAcquired {len(archived_files)} for pretraining.")
     if verbose: print(f"\tSkipped {skipped_cause_empty=} due to empty file.")
+    if verbose: print(f"\tSkipped {skipped_cause_invalid=} due to invalid file (not present in RAW, DIS, and DEC collections).")
     if verbose: print(f"\tSkipped {skipped_cause_finetuning=} due to finetuning.")
     if verbose: print(f"\tSkipped {skipped_cause_duplicates_finetuning=} due to duplicates with finetuning.")
     if verbose: print(f"\tSkipped {skipped_cause_duplicates=} due to duplicates.")
@@ -1769,6 +1781,9 @@ def get_materials_esp_det(
     lift_level     = LiftLevel(lift_level)
     lift_level_ddp = LiftLevel(lift_level_ddp) if lift_level_ddp is not None else None
 
+    if lift_level == LiftLevel.ALL or lift_level_ddp == LiftLevel.ALL:
+        raise NotImplementedError(f"Cannot use LiftLevel.ALL directly.")
+
     cache_file = esp_cache_file(
         get_materials_esp_det,
         lift_level,
@@ -1822,6 +1837,16 @@ def get_materials_esp_det(
             fs = files[dnm]
             if verbose: print(f"\t\t{len(fs)=} -->", end=" ")
             fs = [f for f in fs if f.split(".")[0] not in shas_that_are_empty]
+            if verbose: print(f"{len(fs)=}")
+            files[dnm] = fs
+
+    if lift_level == LiftLevel.NOP:
+        print("Removing files that aren't present in the RAW, DIS, and DEC collections.")
+        shas_that_are_valid = set(Path("./cache/processedShas.txt").read_text().split("\n"))
+        for dnm in DatasetName:
+            fs = files[dnm]
+            if verbose: print(f"\t\t{len(fs)=} -->", end=" ")
+            fs = [f for f in fs if f.split(".")[0] in shas_that_are_valid]
             if verbose: print(f"{len(fs)=}")
             files[dnm] = fs
 
@@ -1991,6 +2016,9 @@ def _get_materials_esp_clf(
     lift_level     = LiftLevel(lift_level)
     lift_level_ddp = LiftLevel(lift_level_ddp) if lift_level_ddp is not None else None
 
+    if lift_level == LiftLevel.ALL or lift_level_ddp == LiftLevel.ALL:
+        raise NotImplementedError(f"Cannot use LiftLevel.ALL directly.")
+
     cache_file = esp_cache_file(
         _get_materials_esp_clf,
         lift_level,
@@ -2011,6 +2039,12 @@ def _get_materials_esp_clf(
         print(f"\tRemoving files that are empty ({len(sha_label_map)} --> ", end="")
         shas_that_are_empty = set(Path("./cache/empty_shas.txt").read_text().split("\n"))
         sha_label_map = {s: l for s, l in sha_label_map.items() if s.split(".")[0] not in shas_that_are_empty}
+        print(f"{len(sha_label_map)})")
+
+    if lift_level == LiftLevel.NOP:
+        print(f"\tRemoving files that aren't present in the RAW, DIS, and DEC collections ({len(sha_label_map)} --> ", end="")
+        shas_that_are_valid = set(Path("./cache/processedShas.txt").read_text().split("\n"))
+        sha_label_map = {s: l for s, l in sha_label_map.items() if s.split(".")[0] in shas_that_are_valid}
         print(f"{len(sha_label_map)})")
 
     dnm = DatasetName.SOREL

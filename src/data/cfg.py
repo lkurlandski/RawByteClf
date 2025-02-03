@@ -173,7 +173,8 @@ VALID_TIMESTAMP_RANGES = {
 }
 
 LIFT_LEVEL_EXTENSIONS = {
-    LiftLevel.DEC:   ".c",
+    LiftLevel.DEC: ".c",
     LiftLevel.DIS: ".asm",
-    LiftLevel.RAW:          ".exe",
+    LiftLevel.RAW: ".exe",
+    LiftLevel.NOP: ".exe",
 }

@@ -1221,7 +1221,7 @@ def get_processed_dataset_hf(
 
     # If we're mapping bytes to integers, we can do it in a more efficient way.
     # Otherwise, we need to use the tokenizer.
-    if lift_level == LiftLevel.RAW and args.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL:
+    if lift_level in (LiftLevel.RAW, LiftLevel.NOP) and args.tokenization_algorithm == TokenizationAlgorithm.WORDLEVEL:
         func = partial(
             hf_bytes_to_input_ids,
             bits_in_byte=args.bits_in_byte,
