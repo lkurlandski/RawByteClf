@@ -1617,7 +1617,7 @@ def _get_materials_esp_lm(
     tr_size: Optional[float | int] = None,
     vl_size: float | int = 4096,
     ts_size: float | int = 0,
-    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    lift_level_ddp: LiftLevel = LiftLevel.DEC,
     purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
@@ -1709,7 +1709,7 @@ def get_materials_esp_clm(
     tr_size: Optional[float | int] = None,
     vl_size: float | int = 4096,
     ts_size: float | int = 0,
-    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    lift_level_ddp: LiftLevel = LiftLevel.DEC,
     purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
@@ -1729,7 +1729,7 @@ def get_materials_esp_mlm(
     tr_size: Optional[float | int] = None,
     vl_size: float | int = 4096,
     ts_size: float | int = 0,
-    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    lift_level_ddp: LiftLevel = LiftLevel.DEC,
     purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
@@ -1751,7 +1751,7 @@ def get_materials_esp_det(
     ts_size: float = 0.00,
     ratio_pre_split: Optional[float] = None,
     ratio_pos_split: Optional[float] = 0.50,
-    lift_level_ddp: Optional[LiftLevel] = LiftLevel.DECOMPILED,
+    lift_level_ddp: Optional[LiftLevel] = LiftLevel.DEC,
     purge_empty_samples: bool = True,
     timestamp_early: int = int(datetime(2010, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
     timestamp_late: int = int(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc).timestamp()),
@@ -1981,7 +1981,7 @@ def _get_materials_esp_clf(
     tr_size: float = 0.80,
     vl_size: float = 0.20,
     ts_size: float = 0.00,
-    lift_level_ddp: Optional[LiftLevel] = LiftLevel.DECOMPILED,
+    lift_level_ddp: Optional[LiftLevel] = LiftLevel.DEC,
     purge_empty_samples: bool = True,
     verbose: bool = True,
     **kwds,
@@ -2127,7 +2127,7 @@ def get_materials_esp_fam(
     tr_size: float = 0.80,
     vl_size: float = 0.20,
     ts_size: float = 0.00,
-    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    lift_level_ddp: LiftLevel = LiftLevel.DEC,
     min_freq: Optional[int] = 10,
     max_imbalance_ratio: Optional[int] = 100,
     purge_empty_samples: bool = True,
@@ -2136,7 +2136,7 @@ def get_materials_esp_fam(
     sha_label_map = {s: l[0] for s, l in get_sorel_sha_label_map("fam").items()}
 
     # This ensures that using other de-duplication lift levels will use the same classes
-    if lift_level_ddp != LiftLevel.DECOMPILED:
+    if lift_level_ddp != LiftLevel.DEC:
         file = Path("./cache/usenix_fam_classes.txt")
         include = set(file.read_text().split())
         sha_label_map = {s: l for s, l in sha_label_map.items() if l in include}
@@ -2161,7 +2161,7 @@ def get_materials_esp_beh(
     tr_size: float = 0.80,
     vl_size: float = 0.20,
     ts_size: float = 0.00,
-    lift_level_ddp: LiftLevel = LiftLevel.DECOMPILED,
+    lift_level_ddp: LiftLevel = LiftLevel.DEC,
     min_freq: Optional[int] = 100,
     max_imbalance_ratio: Optional[int] = 10,
     purge_empty_samples: bool = True,
@@ -2170,7 +2170,7 @@ def get_materials_esp_beh(
     sha_label_map = get_sorel_sha_label_map("beh")
 
     # This ensures that using other de-duplication lift levels will use the same classes
-    if lift_level_ddp != LiftLevel.DECOMPILED:
+    if lift_level_ddp != LiftLevel.DEC:
         file = Path("./cache/usenix_beh_classes.txt")
         include = set(file.read_text().split())
         sha_label_map = {s: l for s, l in sha_label_map.items() if all(i in include for i in l)}

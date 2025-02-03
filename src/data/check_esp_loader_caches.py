@@ -25,7 +25,7 @@ from src.learn.train import get_processed_dataset_hf
 from src.tokenization.api import get_fast_tokenizer
 
 
-LIFT_LEVEL_DDP = LiftLevel.DECOMPILED
+LIFT_LEVEL_DDP = LiftLevel.DEC
 
 GET_MATERIALS = [
     get_materials_esp_det,
@@ -37,14 +37,14 @@ GET_MATERIALS = [
 
 LIFT_LEVELS = [
     LiftLevel.RAW,
-    LiftLevel.DISASSEMBLED,
-    LiftLevel.DECOMPILED,
+    LiftLevel.DIS,
+    LiftLevel.DEC,
 ]
 
 LIFT_LEVEL_PAIRS = [
-    (LiftLevel.RAW, LiftLevel.DISASSEMBLED),
-    (LiftLevel.RAW, LiftLevel.DECOMPILED),
-    (LiftLevel.DECOMPILED, LiftLevel.DISASSEMBLED),
+    (LiftLevel.RAW, LiftLevel.DIS),
+    (LiftLevel.RAW, LiftLevel.DEC),
+    (LiftLevel.DEC, LiftLevel.DIS),
 ]
 
 def get_files(materials: Materials, split: str) -> set[str]:

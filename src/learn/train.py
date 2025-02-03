@@ -1514,8 +1514,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
             dataset = merge_raw_dis_dec_datasets(
                 multidataset[LiftLevel.RAW],
-                multidataset[LiftLevel.DISASSEMBLED],
-                multidataset[LiftLevel.DECOMPILED],
+                multidataset[LiftLevel.DIS],
+                multidataset[LiftLevel.DEC],
             )
             del multidataset
         else:
@@ -1591,8 +1591,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     elif args.lift_level == LiftLevel.ALL:
         data_collator = EnsembleDataCollatorWithPadding(
             raw_tokenizer=multitokenizer[LiftLevel.RAW],
-            dis_tokenizer=multitokenizer[LiftLevel.DISASSEMBLED],
-            dec_tokenizer=multitokenizer[LiftLevel.DECOMPILED],
+            dis_tokenizer=multitokenizer[LiftLevel.DIS],
+            dec_tokenizer=multitokenizer[LiftLevel.DEC],
             padding="longest",
             pad_to_multiple_of=pad_to_multiple_of,
             max_length=args.max_length,

@@ -64,9 +64,9 @@ class TokenizerIOHelper:
         # Handle custom normalizers and pretokenizers.
         if self.lift_level == LiftLevel.RAW:
             pass
-        elif self.lift_level == LiftLevel.DISASSEMBLED:
+        elif self.lift_level == LiftLevel.DIS:
             pass
-        elif self.lift_level == LiftLevel.DECOMPILED:
+        elif self.lift_level == LiftLevel.DEC:
             pass
         else:
             raise ValueError(f"{self.lift_level=}")
@@ -80,9 +80,9 @@ class TokenizerIOHelper:
         # Handle custom normalizers and pretokenizers.
         if self.lift_level == LiftLevel.RAW:
             pass
-        elif self.lift_level == LiftLevel.DISASSEMBLED:
+        elif self.lift_level == LiftLevel.DIS:
             pass
-        elif self.lift_level == LiftLevel.DECOMPILED:
+        elif self.lift_level == LiftLevel.DEC:
             pass
         else:
             raise ValueError(f"{self.lift_level=}")

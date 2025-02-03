@@ -6,10 +6,10 @@ from enum import Enum, IntEnum
 
 
 class LiftLevel(Enum):
-    RAW          = "raw"
-    DISASSEMBLED = "dis"
-    DECOMPILED   = "dec"
-    ALL          = "all"
+    RAW = "raw"
+    DIS = "dis"
+    DEC = "dec"
+    ALL = "all"
 
 
 class TokenizationAlgorithm(Enum):

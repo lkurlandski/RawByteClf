@@ -33,10 +33,10 @@ batch_size         = 64
 src.BATCH_SIZE_ITR = batch_size
 
 
-# for lift_level in [LiftLevel.RAW, LiftLevel.DISASSEMBLED, LiftLevel.DECOMPILED]:
+# for lift_level in [LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC]:
 for lift_level in [LiftLevel.RAW]:
-# for lift_level in [LiftLevel.DISASSEMBLED]:
-# for lift_level in [LiftLevel.DECOMPILED]:
+# for lift_level in [LiftLevel.DIS]:
+# for lift_level in [LiftLevel.DEC]:
 
     materials = get_materials_esp_clm(lift_level=lift_level, rm_finetuning_files=False)
     total = (len(materials.files["tr"]) + len(materials.files["vl"]))

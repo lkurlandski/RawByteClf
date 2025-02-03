@@ -198,7 +198,7 @@ class Args:
                 # pylint: disable=no-member
                 self.pretraining_checkpoint: dict[str, str] = json.loads(self.pretraining_checkpoint)
                 self.pretraining_checkpoint: dict[LiftLevel, str] = {LiftLevel(k): v for k, v in self.pretraining_checkpoint.items()}
-                if any(k not in self.pretraining_checkpoint.keys() for k in (LiftLevel.RAW, LiftLevel.DISASSEMBLED, LiftLevel.DECOMPILED)):
+                if any(k not in self.pretraining_checkpoint.keys() for k in (LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC)):
                     raise KeyError(f"Expected keys: {KEYS}, got {self.pretraining_checkpoint.keys()}")
                 # pylint: enable=no-member
             except json.JSONDecodeError:
