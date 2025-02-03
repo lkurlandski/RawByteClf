@@ -264,7 +264,7 @@ class CLFComputeMetricsMultiLabel(CLFComputeMetrics):
         labels  = eval_pred.label_ids  # (N, C)
         support = labels.shape[0]
         if type_of_target(labels) != "multilabel-indicator":
-            raise TypeError(f"Expected binary labels. Got {type_of_target(labels)}.")
+            raise TypeError(f"Expected multilabel-indicator labels. Got {type_of_target(labels)}.")
 
         probabilities = expit(eval_pred.predictions)                           # (N, C)
         predictions   = (probabilities > self.threshold).astype(labels.dtype)  # (N, C)
