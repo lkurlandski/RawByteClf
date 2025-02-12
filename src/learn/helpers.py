@@ -42,6 +42,8 @@ from src.enums import (
     Task,
     TokenizationAlgorithm,
     WeightedLossAlgorithm,
+    ExplanationAlgorithm,
+    ExplanationMethod,
 )
 from src.utils import get_highest_path, is_jsonable
 from src.data.labeling import KEYS
@@ -161,6 +163,11 @@ class Args:
     # Other
     eval_checkpoints: Optional[str] = field(default=None)  # A comma-separated list of checkpoints to evaluate. Either numbers or paths.
 
+    # Explaination/Attribution
+    xai_method: Optional[ExplanationMethod]       = field(default=None)
+    xai_algorithm: Optional[ExplanationAlgorithm] = field(default=None)
+    xai_chunk_size: Optional[int]                 = field(default=None)
+
     def __post_init__(self) -> None:
 
         self.lift_level             = LiftLevel(self.lift_level)
@@ -244,6 +251,10 @@ class Args:
         if self.vocab_size is None:
             self.vocab_size = 2 ** self.bits_in_byte
 
+        # Attribution stuff.
+        self.xai_method    = str_to_type(self.xai_method, ExplanationMethod)
+        self.xai_algorithm = str_to_type(self.xai_algorithm, ExplanationAlgorithm)
+
 
 class OutputHelper:
 
@@ -298,6 +309,9 @@ class OutputHelper:
         task: Task,
         split_mode: Optional[SplitMode],
         weighted_loss: Optional[WeightedLossAlgorithm],
+        xai_method: Optional[ExplanationMethod],
+        xai_algorithm: Optional[ExplanationAlgorithm],
+        xai_chunk_size: Optional[int],
         trainer_config: Optional[dict],
     ) -> None:
 
@@ -337,6 +351,13 @@ class OutputHelper:
             raise KeyError("world_size not found in trainer_config.")
         self._trainer_config = trainer_config
         self._trainer_args = self.get_trainer_path_args()
+
+        # Attribution parameters
+        self._xai_args = [
+            f"xai_method--{xai_method.value if xai_method is not None else 'none'}",
+            f"xai_algorithm--{xai_algorithm.value if xai_algorithm is not None else 'none'}",
+            f"xai_chunk_size--{xai_chunk_size if xai_chunk_size is not None else 'none'}",
+        ]
 
     def __del__(self) -> None:
         attrs = ["root", "_meta_args", "_model_args", "_task_args", "_trainer_args", "lock_file"]
@@ -427,6 +448,10 @@ class OutputHelper:
         return self.task_path.joinpath(*self._trainer_args)
 
     @property
+    def attribution_path(self) -> Path:
+        return self.path.joinpath("attributions", *self._xai_args)
+
+    @property
     def best_model_dir(self) -> Path:
         with open(self.last_checkpoint / "trainer_state.json") as fp:
             state: dict = json.load(fp)
@@ -476,7 +501,15 @@ class OutputHelper:
 
     @property
     def attribution_results_file(self) -> Path:
-        return self.path / "attribution_results.pt"
+        return self.attribution_path / "results.pt"
+
+    @property
+    def attribution_names_file(self) -> Path:
+        return self.attribution_path / "names.txt"
+
+    @property
+    def attribution_labels_file(self) -> Path:
+        return self.attribution_path / "labels.pt"
 
     @property
     def tuning_results_dir(self) -> Path:

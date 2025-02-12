@@ -157,7 +157,10 @@ src/learn/train.py \\
 {f"--beta={beta}" if beta is not None else ""} \\
 {f"--pretraining_checkpoint='{pretraining_checkpoint}'" if pretraining_checkpoint is not None else ""} \\
 --seed={seed} \\
---do_train \\
+--do_attribute \\
+--xai_method={} \\
+--xai_algorithm={} \\
+--xai_chunk_size={} \\
 --output_dir='/tmp' \\
 --save_strategy='{"epoch" if save_steps is None else "steps"}' \\
 --eval_strategy='{"epoch" if eval_steps is None else "steps"}' \\
@@ -196,7 +199,7 @@ src/learn/train.py \\
 class ModelName(Enum):
     HRR = "hrrformer"
     MAM = "mamba"
-    MAL = "malconv2"
+    MAL = "malconv"
 
 
 class ModelSize(Enum):
@@ -498,10 +501,11 @@ class Configuration:
         # Baseline MalConv2 from original authors.
         if self.model_name == ModelName.MAL:
             d = {
-                "mode": "gcg",
                 "channels": 256,
                 "stride": 64,
                 "kernel_size": 64,
+                "head_num_hidden_layers": 1,
+                "head_hidden_size": 128,
             }
             if self.vocab_size == 256:
                 d["embedding_size"] = 8

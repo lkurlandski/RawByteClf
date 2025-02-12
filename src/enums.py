@@ -47,6 +47,18 @@ class Task(Enum):
     BEH = "beh"
 
 
+class ExplanationAlgorithm(Enum):
+    SHAP = "shap"
+    LIME = "lime"
+    IGRD = "igrd"
+
+
+class ExplanationMethod(Enum):
+    TOK = "tok"
+    CHK = "chk"
+    FUN = "fun"
+
+
 class PackingProtocol(Enum):
     ANY = "any"
     YES = "yes"

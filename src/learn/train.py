@@ -48,6 +48,10 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from accelerate.utils import DistributedDataParallelKwargs
+try:
+    from captum.attr import InterpretableEmbeddingBase, configure_interpretable_embedding_layer, remove_interpretable_embedding_layer
+except (ModuleNotFoundError, ImportError) as _err:
+    print(f"{_err.__class__.__name__}: captum")
 import datasets
 from datasets import (
     DatasetDict,
@@ -125,6 +129,8 @@ from src.enums import (
     Task,
     TokenizationAlgorithm,
     WeightedLossAlgorithm,
+    ExplanationMethod,
+    ExplanationAlgorithm,
 )
 from src.utils import (
     getattr_recursively,
@@ -140,7 +146,7 @@ from src.utils import (
 )
 from src.architectures.head_utils import Head, check_for_anomalous_weights
 from src.architectures.other import FocalLoss
-from src.architectures.malconv_hf import (
+from src.architectures.malconv import (
     MalConvConfig,
     MalConvForSequenceClassification,
     MalConvPreTrainedModel,
@@ -171,6 +177,7 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
+from src.attribute.utils import get_attributor, get_attribution
 from src.data.loaders_core import (
     Materials,
     get_materials_esp_clm,
@@ -1355,6 +1362,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "arch_config": args.arch_config,
         "split_mode": args.split_mode,
         "weighted_loss": args.weighted_loss,
+        "xai_method": args.xai_method,
+        "xai_algorithm": args.xai_algorithm,
+        "xai_chunk_size": args.xai_chunk_size,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     # NOTE: this is quite bad, but args.model_name_or_path might change from a str representing the
@@ -1519,7 +1529,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             del multidataset
         else:
-            dataset = get_processed_dataset_hf(materials, args.lift_level, args, num_shards, tokenizer)
+            dataset = get_processed_dataset_hf(
+                materials,
+                args.lift_level,
+                args,
+                num_shards,
+                tokenizer,
+                remove_columns=("bytes",) if args.do_attribute else ("bytes", "name"),  # NOTE: name is needed for attribution.
+            )
         if os.environ.get("TR_SIZE") is not None:
             dataset["tr"] = dataset["tr"].take(int(os.environ["TR_SIZE"]))
         if os.environ.get("VL_SIZE") is not None:
@@ -2019,6 +2036,78 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         analysis: tune.ExperimentAnalysis = best_trial.run_summary
         analysis.dataframe().to_csv(oh.tuning_results_dir / "dataframe.csv")
+
+
+    if args.do_attribute:
+
+        if args.lift_level == LiftLevel.ALL:
+            raise NotImplementedError("Attribution not implemented for LiftLevel.ALL")
+
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+        model = get_model(
+            args.task,
+            args.model_name_or_path,
+            config,
+            args.lift_level==LiftLevel.ALL,
+            num_labels=materials.num_classes,
+            id2label=materials.id2label,
+            label2id=materials.label2id,
+        )
+        model = model.eval().to(device)
+        print_model(model)
+        print(BR, flush=True)
+
+        embedding: Optional[InterpretableEmbeddingBase] = None
+        if args.xai_algorithm in (ExplanationAlgorithm.SHAP, ExplanationAlgorithm.IGRD):
+            embedding = configure_interpretable_embedding_layer(model, "backbone.embeddings")
+        print(f"{embedding=}")
+
+        alg = get_attributor(args.xai_algorithm)
+        print(f"{alg=}")
+
+        # We need the names, so we can't use a dataloader (I think). This is going to slow us down
+        # because we won't be able to use prefetching or concurrent preprocessing, but its probably ok for now.
+        # Getting attribution for ~65536 tokens from ~4096 samples only requires ~1GB memory, so we can just do it all at once.
+        all_names: list[str] = []
+        all_labels: list[Tensor] = []
+        all_attributions: list[Tensor] = []
+        iterable = dataset["vl"].iter(training_arguments.per_device_eval_batch_size)
+        iterable = tqdm(iterable, total=len(materials.files["vl"]) // training_arguments.per_device_eval_batch_size, desc="Explaining...")
+        for batch in iterable:
+            names  = batch.pop("name")
+
+            inputs = data_collator(batch)
+
+            labels: Optional[Tensor] = inputs.pop("labels")
+            labels = labels.to(device) if labels is not None else None
+
+            input_ids: Optional[Tensor] = inputs.pop("input_ids")
+            input_ids = input_ids.to(device) if input_ids is not None else None
+
+            inputs_embeds = embedding.indices_to_embeddings(input_ids) if embedding is not None else None
+            inputs_embeds = inputs_embeds.to(device) if inputs_embeds is not None else None
+
+            attention_mask: Optional[Tensor] = inputs.pop("attention_mask", None)
+            attention_mask = attention_mask.to(device) if attention_mask is not None else None
+
+            token_type_ids: Optional[Tensor] = inputs.pop("token_type_ids", None)
+            token_type_ids = token_type_ids.to(device) if token_type_ids is not None else None
+
+            attributions: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model)
+            attributions = list(attributions.to("cpu"))
+
+            all_names.extend(names)
+            all_labels.extend(labels)
+            all_attributions.extend(attributions)
+
+        if embedding is not None:
+            remove_interpretable_embedding_layer(model, embedding)
+
+        oh.attribution_path.mkdir(exist_ok=True, parents=True)
+        oh.attribution_names_file.write_text("\n".join(all_names))
+        torch.save(labels, oh.attribution_labels_file)
+        torch.save(all_attributions, oh.attribution_results_file)
 
 
 def cli():
