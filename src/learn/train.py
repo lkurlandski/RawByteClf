@@ -177,7 +177,7 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.attribute.utils import get_attributor, get_attribution
+from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker
 from src.data.loaders_core import (
     Materials,
     get_materials_esp_clm,
@@ -2066,6 +2066,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         alg = get_attributor(args.xai_algorithm)
         print(f"{alg=}")
 
+        masker: Optional[Masker] = None
+        if args.xai_method in (ExplanationMethod.CHK, ExplanationMethod.FUN):
+            masker = get_masker(args.xai_method, args.xai_chunk_size)
+        print(f"{masker=}")
+
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down
         # because we won't be able to use prefetching or concurrent preprocessing, but its probably ok for now.
         # Getting attribution for ~65536 tokens from ~4096 samples only requires ~1GB memory, so we can just do it all at once.
@@ -2094,7 +2099,10 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             token_type_ids: Optional[Tensor] = inputs.pop("token_type_ids", None)
             token_type_ids = token_type_ids.to(device) if token_type_ids is not None else None
 
-            attributions: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model)
+            feature_mask: Optional[Tensor] = masker(input_ids.size(1), names) if masker is not None else None
+            feature_mask = feature_mask.to(device) if feature_mask is not None else None
+
+            attributions: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
             attributions = list(attributions.to("cpu"))
 
             all_names.extend(names)
