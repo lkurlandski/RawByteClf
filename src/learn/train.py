@@ -1181,28 +1181,6 @@ def get_processed_dataset_hf(
         max_length=args.data_read_bytes,
     )
 
-    # TODO: remove after verifying that the labels are correct for DET and BEH
-    # from itertools import chain
-    # truth = {}
-    # with open("./tmp/avclass_family_cache.txt") as fp:
-    #     for line in fp:
-    #         parts = line.strip().split()
-    #         sha = parts[0]
-    #         label = " ".join(parts[1:])
-    #         truth[sha] = label
-
-    # for archived_file, label in zip(chain(materials.files["tr"], materials.files["vl"]), chain(materials.labels["tr"], materials.labels["vl"])):
-    #     sha = archived_file.name.split(".")[0]
-    #     label = materials.id2label[label]
-    #     if truth[sha] != label:
-    #         print(f"Error (materials): {sha} {label} != {truth[sha]}")
-
-    # for d in chain(dataset["tr"], dataset["vl"]):
-    #     sha = d["name"]
-    #     label = materials.id2label[d["labels"]]
-    #     if truth[sha] != label:
-    #         print(f"Error (dataset): {sha} {label} != {truth[sha]}")
-
     if materials.problem_type == "multi_label_classification":
         func = partial(hf_multilabel_encode, num_classes=materials.num_classes)
         # The one-hot encoding requires floating point one-hot labels.
