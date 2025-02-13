@@ -2018,8 +2018,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.do_attribute:
 
-        if args.lift_level == LiftLevel.ALL:
-            raise NotImplementedError("Attribution not implemented for LiftLevel.ALL")
+        if args.lift_level != LiftLevel.NOP:
+            raise NotImplementedError(
+                "For now, attribution is only implemented for processing raw-bytes from the beginning of the file. "
+                "To use other inputs requires mapping the tokens back to the function offsets in the original executable."
+            )
 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
