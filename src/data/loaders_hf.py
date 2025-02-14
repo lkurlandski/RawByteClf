@@ -133,7 +133,7 @@ def generator_from_zipfiles(
                     zp.close()
 
                 # If copying and contiguous, we'll never encounter this archive again, so remove it.
-                if precopy and contiguous and isinstance(archive, str):
+                if precopy and contiguous and isinstance(archive, (str, Path)):
                     if os.path.dirname(archive) != str(tmppath):
                         raise RuntimeError(f"Attempting to remove perminent data: {archive=}")
                     os.unlink(archive)
@@ -148,8 +148,8 @@ def generator_from_zipfiles(
                     samples_per_second = (i / (t_ini - t_fin)) if t_fin is not None else None
                     samples_per_second = round(samples_per_second) if samples_per_second is not None else None
                     t_fin = time.time()
-                    time_for_batch_reading = round(t_fin - t_ini)
-                    print(f"{time_for_batch_reading=} {samples_per_second=}")
+                    time_for_batch_copy = round(t_fin - t_ini)
+                    print(f"generator_from_zipfiles: {time_for_batch_copy=}s {samples_per_second=}")
 
                 # We set the archive variable and open it for reading.
                 archive_idx += 1
