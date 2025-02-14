@@ -133,6 +133,7 @@ def generator_from_zipfiles(
                     zp.close()
 
                 # If copying and contiguous, we'll never encounter this archive again, so remove it.
+                # NOTE: it would probably be faster if we deleted in batches too.
                 if precopy and contiguous and isinstance(archive, (str, Path)):
                     if os.path.dirname(archive) != str(tmppath):
                         raise RuntimeError(f"Attempting to remove perminent data: {archive=}")
