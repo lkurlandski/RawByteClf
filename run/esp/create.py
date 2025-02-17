@@ -113,6 +113,7 @@ def get_body(
     bf16: bool,
     bf16_full_eval: bool,
     gradient_checkpointing: bool,
+    sort_when_making_archives_contiguous: bool,
     seed: int,
 ) -> str: return (
 f"""
@@ -133,7 +134,7 @@ source ~/anaconda3/etc/profile.d/conda.sh
 conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if ARMITAGE else "module unload blindfold"}
 {"" if ARMITAGE else "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"}
-
+{"" if sort_when_making_archives_contiguous else "export SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0"}
 
 {"" if gpu <= 1 else torchrun_str(gpu)}
 python -u \\
@@ -322,7 +323,9 @@ class Configuration:
             return False
         if self.lift_level_ddp != LiftLevel.DEC:
             return False
-        if self.max_length != 65536:
+        if self.max_length != 2**20:
+            return False
+        if self.model_name != ModelName.MAL:
             return False
         if self.model_size != ModelSize.CO:
             return False
@@ -373,6 +376,7 @@ class Configuration:
             return seconds_to_slurm_time(h * 3600)
 
         if self.model_name == ModelName.MAL:
+            k = self.max_length // 65536
             z = 3 if self.lift_level == LiftLevel.ALL else 1
             if self.task == Task.DET:
                 h = 3
@@ -380,7 +384,7 @@ class Configuration:
                 h = 6
             if self.task == Task.BEH:
                 h = 2
-            return seconds_to_slurm_time(3600 * h * z)
+            return seconds_to_slurm_time(3600 * h * z * k)
 
         if self.task == Task.DET:
             n_tr = 24614
@@ -470,8 +474,14 @@ class Configuration:
         raise RuntimeError()
 
     @property
+    def sort_when_making_archives_contiguous(self) -> bool:
+        if self.task == Task.DET and self.max_length > 65536:
+            return False
+        return True
+
+    @property
     def streaming(self) -> bool:
-        if self.task == Task.DET:  # FIXME: fix this problem!
+        if self.task == Task.DET and self.max_length <= 65536:
             return False
         return True
 
@@ -594,7 +604,8 @@ class Configuration:
         # Fuck. Now I'm getting the stupid parallel tokenizers warning. Just make it 0. Don't care.
         if self.gpu == 0:
             return 0
-        if self.streaming:
+        # When using byte-level embeddings, we don't use tokenizers, so we can use multiple loaders.
+        if self.streaming and not self.vocab_size == 256:
             return 0
         return self.cpu // self.gpu - 1
 
@@ -782,7 +793,8 @@ def main():
         ModelName,
         ModelSize,
         ModelMode,
-        (4096, 8192, 16384, 32768, 65536),
+        # (4096, 8192, 16384, 32768, 65536),
+        (2 ** 20,),
         LiftLevel,
         list(LiftLevel) + [None],
         TokenizationAlgorithm,
@@ -791,7 +803,7 @@ def main():
         [None, Task.CLM, Task.MLM],
         (0, 1, 2, 3, 4),
     )
-    configurations = [Configuration(*config) for config in configurations]
+    configurations = [Configuration(*config) for config in tqdm(configurations)]
     configurations = [config for config in configurations if config.do]
     configurations = sorted(configurations, key=sort_configurations_key)
 
@@ -838,6 +850,7 @@ def main():
             bf16=config.bf16,
             bf16_full_eval=config.bf16_full_eval,
             gradient_checkpointing=config.gradient_checkpointing,
+            sort_when_making_archives_contiguous=config.sort_when_making_archives_contiguous,
             seed=config.seed,
         )
         if config.outfile.exists():
