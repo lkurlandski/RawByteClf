@@ -14,6 +14,7 @@ from pprint import pformat
 import shutil
 import sys
 from tempfile import NamedTemporaryFile
+import time
 from typing import Any, Optional
 import warnings
 import zipfile
@@ -57,8 +58,6 @@ DF_CLF_MULTILABEL = pd.DataFrame({"name": [""], "bytes": [b""], "labels": [[0]]}
 USE_FAST_STORAGE = True
 
 
-# TODO: SPORC usually does not have enough space in the /tmp directory to perform the precopy.
-# We should enhance this function to precopy large batches of archives in succession.
 def generator_from_zipfiles(
     files: list[ArchivedFile],
     labels: Optional[np.ndarray] = None,
@@ -66,48 +65,29 @@ def generator_from_zipfiles(
     preserve_order: bool = False,
     use_fast_storage: bool = USE_FAST_STORAGE,
 ) -> Generator[dict[str, str | bytes | int], None, None]:
-    # If we're on SPORC, we can copy archives to /tmp before reading for decreased IO latency.
-    # If all the archives fit comfortably in /tmp, we can just copy them all at once.
-    # This is currently set to 1/2 TB, meaning that two of these processes can work independently
-    # without wreacking havoc on that particular node, but its not guarenteed to work.
-    # On SPORC, reading from /shared results in a processing speed of about ~10 samples/s.
-    # Reading from /tmp using the iterative approach gives ~?? samples/s.
-    # Pre-copying the archives leads to a read speed of ~200 samples/s.
-    # The above stats only seem to pertain to the data used with the lift_level stuff...
-    # when working with full-length binaries, the copy approach feels much slower.
+    print()
 
-    # Half a terabyte, or 500G.
-    HTB = 0.50 * 2 ** 40
+    print(f"generator_from_zipfiles: {max_length=} {preserve_order=} {use_fast_storage=}.")
 
-    # Sorted list of unique archives and their asoociated sizes.
+    # If True, then we are going to copy the archives from one location to another.
+    precopy = SYSTEM == System.SPORC and use_fast_storage
+    tmppath = Path(f"/tmp/lk3591/{os.urandom(16).hex()}")
+    print(f"generator_from_zipfiles: {precopy=} {tmppath=}")
+
+    # Sorted list of unique archives.
     archives = sorted(set(af.archive for af in files))
-    sizes    = [os.stat(af.archive).st_size for af in files]
 
     # Map from the original archive file in the input list to its real location.
-    # If we do any copying, the real location will be different from the original.
     archive_path_map = {a: a for a in archives}
 
-    # Figure out what we're going to do and set things up.
-    shdcopy = SYSTEM == System.SPORC and all(s <= HTB for s in sizes) and use_fast_storage
-    precopy = None
-    tmppath = None
-    if shdcopy:
-        precopy = sum(sizes) <= HTB
-        tmppath = Path(f"/tmp/lk3591/{os.urandom(16).hex()}")
+    # Set up the temporary directory and the archive map to it.
+    if precopy:
         tmppath.mkdir(parents=True)
         archive_path_map = {a: tmppath / md5(str(a).encode()).hexdigest() for a in archives}
 
     # Double check the integrity of the map.
     if len(set(archive_path_map.values())) != len(archive_path_map):
         raise RuntimeError("A hash collision has occurred.")
-
-    print(f"\ngenerator_from_zipfiles: {shdcopy=} {precopy=} {len(files)=} {len(archives)=} {tmppath=}")
-
-    # Perform the pre-copying.
-    if shdcopy and precopy:
-        iterable = [(src, dst) for src, dst in archive_path_map.items() if not dst.exists()]
-        with mp.Pool(min(16, len(os.sched_getaffinity(0)))) as pool:
-            pool.starmap(shutil.copy2, iterable)
 
     # Since we may be sorting the files, we cannot rely on the ordered nature of the arrays.
     name_label_map = None
@@ -119,41 +99,62 @@ def generator_from_zipfiles(
         del labels
 
     # Sort the archives so we can read them in a contiguous fashion.
-    if not (contiguous := ArchivedFile.is_archive_list_contiguous(files)):
-        if preserve_order:
-            print("Preserve order was specified, but the files are non-contiguous, so this may be slow.")
-        else:
-            print("Sorting non-contiguous files to improve read speed.")
-            files = ArchivedFile.make_archive_list_contiguous(files)
-            if not ArchivedFile.is_archive_list_contiguous(files):
-                raise RuntimeError("Detected non-contiguous files.")
-            contiguous = True
+    contiguous = ArchivedFile.is_archive_list_contiguous(files)
+    sort_when_making_archives_contiguous = None
+    if not contiguous and not preserve_order:
+        sort_when_making_archives_contiguous = os.environ.get("SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS", "1") == "1"
+        files = ArchivedFile.make_archive_list_contiguous(files, sort=sort_when_making_archives_contiguous)
+        if not ArchivedFile.is_archive_list_contiguous(files):
+            raise RuntimeError("Detected non-contiguous files.")
+        contiguous = True
+    print(f"generator_from_zipfiles: {contiguous=} {sort_when_making_archives_contiguous=}")
 
-    zp = None
+    # We keep track of the order we'll encounter the archives as well as the
+    # index of the archive we're currently processing.
+    archives_in_order = list({af.archive: None for af in files}.keys())
+    archive_idx = 0
+
+    # The current archive and the opened ZipFile object for reading from it.
+    # When the currently opened ZipFile does not contain the next data blob, we open up a new one.
+    zp: Optional[zipfile.ZipFile] = None
+    archive: Optional[str] = None
+
+    t_fin: float = None
 
     try:
 
-        archive: str = ""
-        for i, af in enumerate(files):
+        for i, af in enumerate(files):  # pylint: disable=unused-variable
 
-            # When the currently opened ZipFile does not contain the next data blob, we open up a new one.
-            # If we're using the copy-system, we get the next archive location from the archive_path_map.
-            # If we've got contiguous files, we can delete the temporary archive because we won't need it.
+            # If the archive associated with this sample is not the one we have open, then we need to open it.
             if archive_path_map[af.archive] != archive:
+
+                # Close the open archive before reading the next one.
                 if isinstance(zp, zipfile.ZipFile):
                     zp.close()
 
-                if shdcopy:
-                    if os.path.isfile(archive) and os.path.exists(archive) and contiguous:
-                        if os.path.dirname(archive) != str(tmppath):
-                            raise RuntimeError(f"Attempting to remove perminent data: {archive=}")
-                        os.unlink(archive)
-                    archive = archive_path_map[af.archive]
-                    if not precopy:
-                        shutil.copy2(af.archive, archive)
-                else:
-                    archive = af.archive
+                # If copying and contiguous, we'll never encounter this archive again, so remove it.
+                # NOTE: it would probably be faster if we deleted in batches too.
+                if precopy and contiguous and isinstance(archive, (str, Path)):
+                    if os.path.dirname(archive) != str(tmppath):
+                        raise RuntimeError(f"Attempting to remove perminent data: {archive=}")
+                    os.unlink(archive)
 
+                # If copying, copy a batch of archives to faster storage location every 256 archives.
+                if precopy and archive_idx % 256 == 0:
+                    archives_to_copy = archives_in_order[archive_idx: archive_idx + 256]
+                    iterable = [(src, archive_path_map[src]) for src in archives_to_copy]
+                    t_ini = time.time()
+                    with mp.Pool(min(16, len(os.sched_getaffinity(0)))) as pool:
+                        pool.starmap(shutil.copy2, iterable)
+                    samples_per_second = (i / (t_ini - t_fin)) if t_fin is not None else None
+                    samples_per_second = round(samples_per_second) if samples_per_second is not None else None
+                    t_fin = time.time()
+                    time_for_batch_copy = round(t_fin - t_ini)
+                    print(f"generator_from_zipfiles: {time_for_batch_copy=}s {samples_per_second=}")
+
+                # We set the archive variable and open it for reading.
+                archive_idx += 1
+                archive = archive_path_map[af.archive]
                 zp = zipfile.ZipFile(archive, "r")  # pylint: disable=consider-using-with
 
             b = zp.read(af.name)[0:max_length]
@@ -171,7 +172,7 @@ def generator_from_zipfiles(
         # Close the zipfile and clean up temporary directories.
         if isinstance(zp, zipfile.ZipFile):
             zp.close()
-        if tmppath is not None:
+        if tmppath.exists():
             shutil.rmtree(tmppath)
 
 
@@ -200,7 +201,7 @@ def generator(
             for j, d in zip(idx, data_chunk):
                 data[j] = d
 
-        r = {"bytes": data[i], "name": str(files[i]).split("/")[-1].split(".")[0]}
+        r = {"bytes": data[i], "name": str(files[i]).split("/")[-1].split(".")[0]}  # pylint: disable=use-maxsplit-arg
         if labels is not None and labels[i] is not None:
             r["labels"] = labels[i]
 
@@ -212,13 +213,13 @@ def generator(
 def is_dataset_empty(dataset: Dataset | IterableDataset) -> bool:
     if isinstance(dataset, Dataset):
         return dataset.num_rows == 0
-    elif isinstance(dataset, IterableDataset):
+    if isinstance(dataset, IterableDataset):
         try:
             next(iter(dataset))
             return False
         except StopIteration:
             return True
-    elif dataset is None:
+    if dataset is None:
         return True
 
     raise TypeError(type(dataset))

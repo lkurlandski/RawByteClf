@@ -1303,14 +1303,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     np.random.seed(training_arguments.seed)
     torch.random.manual_seed(training_arguments.seed)
 
-    # FIXME: come up with a solution for this problem!
-    if args.task == Task.DET and args.streaming:
+    # FIXME: come up with a better solution for this problem!
+    if args.task == Task.DET and args.streaming and os.environ.get("SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS", "1") == "1":
         raise RuntimeError(
             "To synchronize the materials across lift_levels, we implemented sorting in the archive reader. "
             "Unfortunately, since the benign and malicious samples are obviously not uniformly distributed within the archives, "
             "this results in a dataset whose malware and benigware is not evenly distributed among batches. "
             "When not streaming, the dataset is shuffled before use, so this doesn't matter. "
-            "When streaming, the original file-order is used, and the approximate shuffling technique of IterableDataset is not sufficient."
+            "When streaming, the original file-order is used, and the approximate shuffling technique of IterableDataset is not sufficient. "
+            "If you want to use streaming for the detection task, you need to set `SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0`."
         )
 
     print(f"args={pformat(args)}")
