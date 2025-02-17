@@ -52,7 +52,7 @@ class Masker(ABC):
         self.bos_token_id = bos_token_id
         self.eos_token_id = eos_token_id
         self.pad_token_id = pad_token_id
-        self.special_token_ids = tuple(filter(None, (self.bos_token_id, self.eos_token_id, self.pad_token_id)))
+        self.special_token_ids = tuple(filter(lambda x: x is not None, (self.bos_token_id, self.eos_token_id, self.pad_token_id)))
 
     def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:  # pylint: disable=unused-argument
         mask = torch.full_like(input_ids, 1, dtype=torch.int64)
