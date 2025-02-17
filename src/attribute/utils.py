@@ -3,10 +3,11 @@ Tools for performing input attribution with captum.
 """
 
 from __future__ import annotations
+from abc import ABC, abstractmethod
 from functools import wraps
 import json
 import sys
-from typing import Optional, Protocol
+from typing import Optional
 import warnings
 
 from captum.attr import (
@@ -15,6 +16,7 @@ from captum.attr import (
     IntegratedGradients,
     GradientShap,
 )
+import numpy as np
 import torch
 from torch import Tensor
 from torch.nn import Module
@@ -23,6 +25,7 @@ from transformers import PreTrainedModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from src.enums import ExplanationMethod, ExplanationAlgorithm
+from src.data.function_boundaries import get_exe_func_bounds_map
 
 
 def chunk_mask(x: Tensor, size: int) -> Tensor:
@@ -35,60 +38,96 @@ def chunk_mask(x: Tensor, size: int) -> Tensor:
     return mask.to(torch.int64)
 
 
-class Masker(Protocol):
+class Masker(ABC):
+    """
+    Base class for masking features in input data.
 
-    def __call__(self, length: int, shas: Optional[list[str]] = None) -> Tensor:
-        ...
+    Special tokens are masked with 0, if present.
+    All other tokens are masked with integers starting at 1.
+    """
 
+    special_token_ids: tuple[int]
 
-class FunctionFeatureMasker:
+    def __init__(self, bos_token_id: Optional[int] = None, eos_token_id: Optional[int] = None, pad_token_id: Optional[int] = None) -> None:
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
+        self.pad_token_id = pad_token_id
+        self.special_token_ids = tuple(filter(None, (self.bos_token_id, self.eos_token_id, self.pad_token_id)))
 
-    def __init__(self, boundaries: dict[str, list[tuple[int, int]]]) -> None:
-        self.boundaries = boundaries
-
-    @classmethod
-    def from_file(cls, file: str) -> FunctionFeatureMasker:
-        with open(file, "r") as fp:
-            boundaries = json.load(fp)
-        return cls(boundaries)
-
-    def __call__(self, length: int, shas: list[str]) -> Tensor:
-
-        mask = torch.zeros(len(shas), length, dtype=torch.int64)
-
-        for i, s in enumerate(shas):
-            for j, (start, end) in enumerate(self.boundaries[s], 1):
-                mask[i, start:end] = j
-
+    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:  # pylint: disable=unused-argument
+        mask = torch.full_like(input_ids, 1, dtype=torch.int64)
+        for t in self.special_token_ids:
+            mask[input_ids == t] = 0
         return mask
 
 
-class ChunkFeatureMasker:
+class ChunkFeatureMasker(Masker):
 
-    def __init__(self, chunk_size: int) -> None:
+    chunk_size: int
+
+    def __init__(self, *args, chunk_size: int) -> None:
+        super().__init__(*args)
         self.chunk_size = chunk_size
 
-    def __call__(self, length: int, shas: Optional[list[str]] = None, num: Optional[int] = None) -> Tensor:
+    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:
 
-        num = len(shas) if num is None else num
+        mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
-        mask = torch.zeros(length, dtype=torch.int64)
-
-        i = 0
-        while i < length:
-            mask[i:i + self.chunk_size] = i // self.chunk_size
+        i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
+        while i < mask.shape[1]:
+            mask[:, i:i + self.chunk_size] = (i // self.chunk_size) + 1  # Start at 1.
             i += self.chunk_size
 
-        mask = torch.stack([mask.clone() for _ in range(num)])
+        for t in self.special_token_ids:
+            mask[input_ids == t] = 0
+
+        assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
 
         return mask
 
 
-def get_masker(method: ExplanationMethod, chunk_size: Optional[int] = None) -> FunctionFeatureMasker | ChunkFeatureMasker:
+class FunctionFeatureMasker(Masker):
+
+    boundaries: dict[str, np.ndarray]
+
+    def __init__(self, *args, boundaries: dict[str, np.ndarray], allow_missing_shas: bool = False) -> None:
+        super().__init__(*args)
+        self.boundaries = boundaries
+        self.allow_missing_shas = allow_missing_shas
+
+    def __call__(self, input_ids: Tensor, shas: list[str] = None) -> Tensor:
+
+        mask = torch.full_like(input_ids, -1, dtype=torch.int64)
+
+        for i, s in enumerate(shas):
+            mask[i,:] = 1
+            if self.allow_missing_shas and s not in self.boundaries:
+                continue
+            for j, (start, end) in enumerate(self.boundaries[s], 2):
+                mask[i, start:end] = j
+
+        for t in self.special_token_ids:
+            mask[input_ids == t] = 0
+
+        assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
+
+        return mask
+
+
+def get_masker(
+    method: ExplanationMethod,
+    bos_token_id: Optional[int] = None,
+    eos_token_id: Optional[int] = None,
+    pad_token_id: Optional[int] = None,
+    chunk_size: Optional[int] = None,
+    shas: Optional[list[str]] = None,
+) -> FunctionFeatureMasker | ChunkFeatureMasker:
     if method == ExplanationMethod.CHK:
-        return ChunkFeatureMasker(chunk_size)
+        return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id,
+                chunk_size=chunk_size)
     if method == ExplanationMethod.FUN:
-        return FunctionFeatureMasker.from_file(file=None)
+        return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id,
+                boundaries=get_exe_func_bounds_map(shas=shas, allow_missing_shas=True), allow_missing_shas=True)
 
     raise ValueError(f"Explanation method {method} not supported.")
 

@@ -2049,7 +2049,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         masker: Optional[Masker] = None
         if args.xai_method in (ExplanationMethod.CHK, ExplanationMethod.FUN):
-            masker = get_masker(args.xai_method, args.xai_chunk_size)
+            shas = set(materials.shas_tr + materials.shas_vl + materials.shas_ts)
+            masker = get_masker(args.xai_method, tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, args.xai_chunk_size, shas)
         print(f"{masker=}")
 
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down
@@ -2080,7 +2081,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             token_type_ids: Optional[Tensor] = inputs.pop("token_type_ids", None)
             token_type_ids = token_type_ids.to(device) if token_type_ids is not None else None
 
-            feature_mask: Optional[Tensor] = masker(input_ids.size(1), names) if masker is not None else None
+            feature_mask: Optional[Tensor] = masker(input_ids, names) if masker is not None else None
             feature_mask = feature_mask.to(device) if feature_mask is not None else None
 
             attributions: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
