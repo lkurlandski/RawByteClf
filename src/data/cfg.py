@@ -63,6 +63,13 @@ TIMESTAMPS_FILES = {
     DatasetName.WINDOWS:    WINDOWS_PATH    / "timestamps.json",
 }
 
+FUNCTION_BOUNDARIES_FILES = {
+    DatasetName.ASSEMBLAGE: ASSEMBLAGE_PATH / "function_boundaries.npz",
+    DatasetName.BODMAS:     BODMAS_PATH     / "function_boundaries.npz",
+    DatasetName.SOREL:      SOREL_PATH      / "function_boundaries.npz",
+    DatasetName.WINDOWS:    WINDOWS_PATH    / "function_boundaries.npz",
+}
+
 
 DIGESTS_FILES = {
     dnm: {
