@@ -112,7 +112,7 @@ def get_exe_func_bounds_map(
     data = {}
     for dnm in dnms:  # pylint: disable=redefined-argument-from-local
         d = np.load(FUNCTION_BOUNDARIES_FILES[dnm])
-        data.update(d)
+        data.update(dict(d))
 
     if shas is not None:
         shas = set(shas)
