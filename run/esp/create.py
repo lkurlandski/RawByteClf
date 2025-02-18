@@ -118,14 +118,15 @@ def get_body(
     bf16_full_eval: bool,
     gradient_checkpointing: bool,
     sort_when_making_archives_contiguous: bool,
-    xai_method: Optional[ExplanationMethod],
-    xai_algorithm: Optional[ExplanationAlgorithm],
+    xai_method: ExplanationMethod,
+    xai_algorithm: ExplanationAlgorithm,
+    xai_chunk_size: int,
     seed: int,
 ) -> str: return (
 f"""
 #!/bin/bash -l
 
-#SBATCH --job-name=exe-{job}
+#SBATCH --job-name=att-{job}
 #SBATCH --account=admalware
 #SBATCH --partition=tier3
 #SBATCH --output=./logs/%x_%j.out
@@ -165,9 +166,9 @@ src/learn/train.py \\
 {f"--pretraining_checkpoint='{pretraining_checkpoint}'" if pretraining_checkpoint is not None else ""} \\
 --seed={seed} \\
 --do_attribute \\
---xai_method={str(xai_method)} \\
---xai_algorithm={str(xai_algorithm)} \\
---xai_chunk_size={256} \\
+--xai_method={xai_method.value} \\
+--xai_algorithm={xai_algorithm.value} \\
+--xai_chunk_size={xai_chunk_size} \\
 --output_dir='/tmp' \\
 --save_strategy='{"epoch" if save_steps is None else "steps"}' \\
 --eval_strategy='{"epoch" if eval_steps is None else "steps"}' \\
@@ -284,8 +285,9 @@ class Configuration:
     vocab_size: int
     task: Task
     pretraining_task: Optional[Task]
-    xai_method: Optional[ExplanationMethod]
-    xai_algorithm: Optional[ExplanationAlgorithm]
+    xai_method: ExplanationMethod
+    xai_algorithm: ExplanationAlgorithm
+    xai_chunk_size: int
     seed: int
 
     def __postinit__(self) -> None:
@@ -360,6 +362,9 @@ class Configuration:
             f"{self.pretraining_task.value if self.pretraining_task else 'nop'}",
             f"{self.task.value}",
             f"{self.lift_level_ddp.value if self.lift_level_ddp else 'nop'}",
+            f"{self.xai_method.value}",
+            f"{self.xai_algorithm.value}",
+            f"{self.xai_chunk_size if self.xai_chunk_size is not None else 'nop'}",
             f"{self.seed}",
         ]).replace("--", "-").rstrip("-")
 
@@ -785,6 +790,21 @@ def sort_configurations_key(c: Configuration) -> tuple:
     )
 
 
+class Product:
+
+    def __init__(self, *args):
+        self.args = args
+
+    def __iter__(self):
+        return product(*self.args)
+
+    def __len__(self):
+        n = 1
+        for a in self.args:
+            n *= len(a)
+        return n
+
+
 def main():
 
     global ARMITAGE  # pylint: disable=global-statement
@@ -801,21 +821,23 @@ def main():
         shutil.rmtree(outpath(), ignore_errors=True)
     outpath().mkdir(parents=True, exist_ok=True)
 
-    configurations = product(
+    configurations = Product(
         ModelName,
         ModelSize,
         ModelMode,
         # (4096, 8192, 16384, 32768, 65536),
         (2 ** 20,),
         LiftLevel,
-        list(LiftLevel) + [None],
+        # list(LiftLevel) + [None],
+        [LiftLevel.DEC],
         TokenizationAlgorithm,
         (256, 1024, 4096, 16384),
         Task,
         [None, Task.CLM, Task.MLM],
-        [ExplanationMethod.FUN, ExplanationMethod.CHK],
+        [ExplanationMethod.FUN, ExplanationMethod.NUM],
         list(ExplanationAlgorithm),
-        (0, 1, 2, 3, 4),
+        [None],
+        (0,),
     )
     configurations = [Configuration(*config) for config in tqdm(configurations)]
     configurations = [config for config in configurations if config.do]
@@ -867,6 +889,7 @@ def main():
             sort_when_making_archives_contiguous=config.sort_when_making_archives_contiguous,
             xai_method=config.xai_method,
             xai_algorithm=config.xai_algorithm,
+            xai_chunk_size=config.xai_chunk_size,
             seed=config.seed,
         )
         if config.outfile.exists():
