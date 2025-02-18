@@ -177,7 +177,7 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker
+from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker, FunctionFeatureMasker
 from src.data.loaders_core import (
     Materials,
     get_materials_esp_clm,
@@ -2053,6 +2053,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             shas = set(materials.shas_tr + materials.shas_vl + materials.shas_ts)
             masker = get_masker(args.xai_method, tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, args.xai_chunk_size, shas)
         print(f"{masker=}")
+        if isinstance(masker, FunctionFeatureMasker):
+            print(f"{masker.boundaries.get_stats(2)=}")
 
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down
         # because we won't be able to use prefetching or concurrent preprocessing, but its probably ok for now.

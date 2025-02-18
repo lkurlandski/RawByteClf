@@ -4,8 +4,10 @@ Tools for boundary identification of functions.
 The functions for producing the map are definetly not optimized.
 """
 
+from __future__ import annotations
 from array import array
 from argparse import ArgumentParser
+from collections import UserDict
 from functools import partial
 from itertools import islice
 import json
@@ -16,6 +18,7 @@ import pickle
 from pprint import pprint, pformat
 import re
 import sys
+import time
 from typing import Optional, Iterable, Literal
 import zipfile
 
@@ -35,6 +38,8 @@ from src.data.utils import get_data_from_archives
 def dis_file_to_exe_func_bounds(content: Path | str | bytes, errors: Literal["raise", "pass"] = "raise") -> np.ndarray:
     """
     Take a disassembly file and return the function boundaries with respect to the original executable file.
+
+    If no functions were found, the saved array is empty, so we reshape to have two columns.
     """
     if errors not in {"raise", "pass"}:
         raise ValueError(f"Invalid value for errors: {errors}")
@@ -70,7 +75,9 @@ def dis_file_to_exe_func_bounds(content: Path | str | bytes, errors: Literal["ra
 
             bounds.append([lower, upper])
 
-        return np.array(bounds, dtype=np.uint32)
+        bounds = np.array(bounds, dtype=np.uint32)
+        bounds = np.reshape(bounds, (len(bounds), 2))
+        return bounds
 
     except Exception:  # pylint: disable=broad-except
         if errors == "raise":
@@ -102,25 +109,84 @@ def dis_files_archives_to_exe_func_bounds_map(files: Iterable[Path], num_workers
     return data
 
 
-def get_exe_func_bounds_map(
-    dnm: Optional[str | DatasetName] = None,
-    shas: Optional[list[str]] = None,
-    allow_missing_shas: bool = False,
-) -> dict[str, np.ndarray]:
-    dnms = [DatasetName(dnm)] if dnm is not None else list(DatasetName)
+class EXEFuncBoundsMap(UserDict):
+    """
+    This is slow as fuck for a large number of samples. Using memory mapping does not seem to help.
+    """
 
-    data = {}
-    for dnm in dnms:  # pylint: disable=redefined-argument-from-local
-        d = np.load(FUNCTION_BOUNDARIES_FILES[dnm])
-        data.update(dict(d))
+    def __init__(self, data: dict[str, np.ndarray] = None, shas: Optional[list[str]] = None, allow_missing_shas: bool = False) -> None:
 
-    if shas is not None:
-        shas = set(shas)
-        data = {k: v for k, v in data.items() if k in shas}
-        if not allow_missing_shas and len(data) != len(shas):
-            raise ValueError(f"Missing {len(shas) - len(data)} shas!")
+        if shas is not None:
+            shas = set(shas)
+            data = {k: v for k, v in data.items() if k in shas}
+            if not allow_missing_shas and len(data) != len(shas):
+                raise ValueError(f"Missing {len(shas) - len(data)} shas!")
 
-    return data
+        for k, v in data.items():
+            if not isinstance(k, str):
+                raise TypeError(f"Invalid type for key: {type(k)}")
+            if not isinstance(v, np.ndarray):
+                raise TypeError(f"Invalid type for value: {type(v)}")
+            if v.ndim != 2 or v.shape[1] != 2:
+                raise ValueError(f"Invalid shape for value: {v.shape}")
+            if v.dtype != np.uint32:
+                raise ValueError(f"Invalid dtype for value: {v.dtype}")
+
+        super().__init__(data)
+
+    @classmethod
+    def from_files(cls, files: list[Path], shas: Optional[list[str]] = None, allow_missing_shas: bool = False) -> EXEFuncBoundsMap:
+        """
+        Load the function boundaries from a list of files.
+
+        If no functions were found, the saved array might be empty, so we reshape to have two columns.
+        """
+
+        data = {}
+        for f in files:
+            print(f"Loading {f} ... ", end="")
+            t_initital = time.time()
+
+            # Load the data from the file. If shas is provided, only load the data for those shas.
+            # Since np.load returns a lazy map, this greatly reduces the latency and memory usage.
+            # The __init__ method is responsible for ensuring that all shas are present.
+            d: dict[str, np.ndarray] = np.load(f, mmap_mode=None)
+            if shas is not None:
+                d = {s: d[s] for s in shas if s in d}
+            else:
+                d = dict(d)
+
+            d = {k: np.reshape(v, (len(v), 2)) if v.shape == (0,) else v for k, v in d.items()}
+            data.update(d)
+
+            t_final = time.time()
+            print(f"done. Elapsed time: {round(t_final - t_initital)}s")
+        return cls(data, shas, allow_missing_shas)
+
+    @classmethod
+    def from_dataset_name(cls, dnms: Optional[list[DatasetName]] = None, shas: Optional[list[str]] = None, allow_missing_shas: bool = False) -> EXEFuncBoundsMap:
+        dnms = dnms if dnms is not None else list(DatasetName)
+        files = [FUNCTION_BOUNDARIES_FILES[dnm] for dnm in dnms]
+        return cls.from_files(files, shas, allow_missing_shas)
+
+    def get_stats(self, r: Optional[int] = None) -> dict[str, float]:
+        d = {}
+
+        num_funs = np.array([len(b) for b in self.values()])
+        d["fun-num-med"] = np.median(num_funs)
+        d["fun-num-men"] = np.mean(num_funs)
+        d["fun-num-std"] = np.std(num_funs)
+
+        all_bounds = np.concatenate(list(self.values()), axis=0)
+        lengths = all_bounds[:, 1] - all_bounds[:, 0]
+        d["fun-len-med"] = np.median(lengths)
+        d["fun-len-men"] = np.mean(lengths)
+        d["fun-len-std"] = np.std(lengths)
+
+        if r is not None:
+            d = {k: round(v, r) for k, v in d.items()}
+
+        return d
 
 
 def main():
