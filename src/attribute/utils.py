@@ -25,7 +25,7 @@ from transformers import PreTrainedModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 from src.enums import ExplanationMethod, ExplanationAlgorithm
-from src.data.function_boundaries import get_exe_func_bounds_map
+from src.data.function_boundaries import EXEFuncBoundsMap
 
 
 def chunk_mask(x: Tensor, size: int) -> Tensor:
@@ -69,7 +69,7 @@ class ChunkFeatureMasker(Masker):
         super().__init__(*args)
         self.chunk_size = chunk_size
 
-    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:
+    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:  # pylint: disable=unused-argument
 
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
@@ -88,11 +88,11 @@ class ChunkFeatureMasker(Masker):
 
 class FunctionFeatureMasker(Masker):
 
-    boundaries: dict[str, np.ndarray]
+    boundaries: EXEFuncBoundsMap
 
     def __init__(self, *args, boundaries: dict[str, np.ndarray], allow_missing_shas: bool = False) -> None:
         super().__init__(*args)
-        self.boundaries = boundaries
+        self.boundaries = EXEFuncBoundsMap(boundaries) if not isinstance(boundaries, EXEFuncBoundsMap) else boundaries
         self.allow_missing_shas = allow_missing_shas
 
     def __call__(self, input_ids: Tensor, shas: list[str] = None) -> Tensor:
@@ -123,11 +123,9 @@ def get_masker(
     shas: Optional[list[str]] = None,
 ) -> FunctionFeatureMasker | ChunkFeatureMasker:
     if method == ExplanationMethod.CHK:
-        return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id,
-                chunk_size=chunk_size)
+        return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
     if method == ExplanationMethod.FUN:
-        return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id,
-                boundaries=get_exe_func_bounds_map(shas=shas, allow_missing_shas=True), allow_missing_shas=True)
+        return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=EXEFuncBoundsMap.from_dataset_name(shas=shas))
 
     raise ValueError(f"Explanation method {method} not supported.")
 
