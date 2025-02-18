@@ -20,7 +20,11 @@ import warnings
 from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))  #pylint: disable=wrong-import-position
-from src.enums import LiftLevel, Task, TokenizationAlgorithm, WeightedLossAlgorithm
+from src.enums import (
+    LiftLevel, Task,
+    TokenizationAlgorithm, WeightedLossAlgorithm,
+    ExplanationMethod, ExplanationAlgorithm,
+)
 
 
 ARMITAGE = False
@@ -114,6 +118,8 @@ def get_body(
     bf16_full_eval: bool,
     gradient_checkpointing: bool,
     sort_when_making_archives_contiguous: bool,
+    xai_method: Optional[ExplanationMethod],
+    xai_algorithm: Optional[ExplanationAlgorithm],
     seed: int,
 ) -> str: return (
 f"""
@@ -159,9 +165,9 @@ src/learn/train.py \\
 {f"--pretraining_checkpoint='{pretraining_checkpoint}'" if pretraining_checkpoint is not None else ""} \\
 --seed={seed} \\
 --do_attribute \\
---xai_method={} \\
---xai_algorithm={} \\
---xai_chunk_size={} \\
+--xai_method={str(xai_method)} \\
+--xai_algorithm={str(xai_algorithm)} \\
+--xai_chunk_size={256} \\
 --output_dir='/tmp' \\
 --save_strategy='{"epoch" if save_steps is None else "steps"}' \\
 --eval_strategy='{"epoch" if eval_steps is None else "steps"}' \\
@@ -278,6 +284,8 @@ class Configuration:
     vocab_size: int
     task: Task
     pretraining_task: Optional[Task]
+    xai_method: Optional[ExplanationMethod]
+    xai_algorithm: Optional[ExplanationAlgorithm]
     seed: int
 
     def __postinit__(self) -> None:
@@ -805,6 +813,8 @@ def main():
         (256, 1024, 4096, 16384),
         Task,
         [None, Task.CLM, Task.MLM],
+        [ExplanationMethod.FUN, ExplanationMethod.CHK],
+        list(ExplanationAlgorithm),
         (0, 1, 2, 3, 4),
     )
     configurations = [Configuration(*config) for config in tqdm(configurations)]
@@ -855,6 +865,8 @@ def main():
             bf16_full_eval=config.bf16_full_eval,
             gradient_checkpointing=config.gradient_checkpointing,
             sort_when_making_archives_contiguous=config.sort_when_making_archives_contiguous,
+            xai_method=config.xai_method,
+            xai_algorithm=config.xai_algorithm,
             seed=config.seed,
         )
         if config.outfile.exists():
