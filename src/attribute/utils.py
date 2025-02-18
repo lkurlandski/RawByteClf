@@ -192,7 +192,7 @@ def get_masker(
         return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
 
     bounds_map = EXEFuncBoundsMap.from_dataset_name(shas=shas)
-    len_stats = {s: np.mean(v[1] - v[0]) for s, v in bounds_map.items()}
+    len_stats = {s: np.mean(v[:,1] - v[:,0]) for s, v in bounds_map.items()}
     num_stats = {s: len(v) for s, v in bounds_map.items()}
 
     if method == ExplanationMethod.LEN:
