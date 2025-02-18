@@ -170,6 +170,18 @@ class EXEFuncBoundsMap(UserDict):
         return cls.from_files(files, shas, allow_missing_shas)
 
     def get_stats(self, r: Optional[int] = None) -> dict[str, float]:
+        """
+        Get statistics about the function boundaries.
+
+        On samples from the ass, bod, win, and a subset of samples from the sor corpus totalling to 150K:
+          fun-num-med: 39
+          fun-num-men: 220
+          fun-num-std: 653274
+          fun-len-med: 74
+          fun-len-men: 864
+          fun-len-std: 3111
+        """
+
         d = {}
 
         num_funs = np.array([len(b) for b in self.values()])
