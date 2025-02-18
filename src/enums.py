@@ -56,9 +56,11 @@ class ExplanationAlgorithm(Enum):
 
 
 class ExplanationMethod(Enum):
-    TOK = "tok"
-    CHK = "chk"
-    FUN = "fun"
+    TOK = "tok"  # Token-level.
+    CHK = "chk"  # Fixed-size chunks.
+    NUM = "num"  # Fixed-size chunks; number of chunks set to one above the number of functions.
+    LEN = "len"  # Fixed-size chunks; size of chunks set to the median function length.
+    FUN = "fun"  # Function-level.
 
 
 class PackingProtocol(Enum):

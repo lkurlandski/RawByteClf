@@ -3,9 +3,10 @@ Tools for performing input attribution with captum.
 """
 
 from __future__ import annotations
-from abc import ABC, abstractmethod
+from collections import namedtuple
 from functools import wraps
 import json
+import math
 import sys
 from typing import Optional
 import warnings
@@ -40,7 +41,7 @@ def chunk_mask(x: Tensor, size: int) -> Tensor:
     return mask.to(torch.int64)
 
 
-class Masker(ABC):
+class Masker:
     """
     Base class for masking features in input data.
 
@@ -88,6 +89,67 @@ class ChunkFeatureMasker(Masker):
         return mask
 
 
+class AutoChunkFeatureMasker(Masker):
+
+    def __init__(self, *args, stats: dict[str, float]) -> None:
+        super().__init__(*args)
+        self.stats = stats
+
+    def __call__(self, input_ids: Tensor, shas: list[str] = None) -> Tensor:
+        masks = []
+        for i, s in zip(input_ids, shas):
+            chunk_size = self.get_chunk_size(i, s)
+            mask = self.chunk_mask_for_one_input(i, chunk_size)
+            masks.append(mask)
+        return torch.stack(masks)
+
+    def chunk_mask_for_one_input(self, input_ids: Tensor, chunk_size: int) -> Tensor:
+        if input_ids.dim() != 1:
+            raise RuntimeError()
+
+        mask = torch.full_like(input_ids, -1, dtype=torch.int64)
+
+        i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
+        while i < mask.shape[0]:
+            mask[i:i + chunk_size] = (i // chunk_size) + 1  # Start at 1.
+            i += chunk_size
+
+        for t in self.special_token_ids:
+            mask[input_ids == t] = 0
+
+        assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
+
+        return mask
+
+    def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
+        raise NotImplementedError()
+
+
+class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
+
+    def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
+        v = self.stats[sha]
+        if math.isnan(v):
+            return len(input_ids)
+        return int(v)
+
+
+class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
+
+    def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
+        if self.eos_token_id is not None:
+            n = torch.argmax((input_ids == self.eos_token_id).int()).item()
+        else:
+            n = len(input_ids)
+        if self.bos_token_id is not None:
+            n -= 1
+
+        v = self.stats[sha]
+        if v == 0:
+            return n
+        return int(math.ceil(n / self.stats[sha])) - 1
+
+
 class FunctionFeatureMasker(Masker):
 
     boundaries: EXEFuncBoundsMap
@@ -101,12 +163,14 @@ class FunctionFeatureMasker(Masker):
 
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
+        offset = 1 if self.bos_token_id is not None else 0
+
         for i, s in enumerate(shas):
             mask[i,:] = 1
             if self.allow_missing_shas and s not in self.boundaries:
                 continue
             for j, (start, end) in enumerate(self.boundaries[s], 2):
-                mask[i, start:end] = j
+                mask[i, start + offset : end + offset] = j
 
         for t in self.special_token_ids:
             mask[input_ids == t] = 0
@@ -126,8 +190,17 @@ def get_masker(
 ) -> FunctionFeatureMasker | ChunkFeatureMasker:
     if method == ExplanationMethod.CHK:
         return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
+
+    bounds_map = EXEFuncBoundsMap.from_dataset_name(shas=shas)
+    len_stats = {s: np.mean(v[1] - v[0]) for s, v in bounds_map.items()}
+    num_stats = {s: len(v) for s, v in bounds_map.items()}
+
+    if method == ExplanationMethod.LEN:
+        return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=len_stats)
+    if method == ExplanationMethod.NUM:
+        return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=num_stats)
     if method == ExplanationMethod.FUN:
-        return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=EXEFuncBoundsMap.from_dataset_name(shas=shas))
+        return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
 
     raise ValueError(f"Explanation method {method} not supported.")
 
