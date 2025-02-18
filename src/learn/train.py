@@ -2041,11 +2041,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR, flush=True)
 
         embedding: Optional[InterpretableEmbeddingBase] = None
-        if args.xai_algorithm in (ExplanationAlgorithm.SHAP, ExplanationAlgorithm.IGRD):
+        if args.xai_algorithm in (ExplanationAlgorithm.SHAP, ExplanationAlgorithm.IGRD, ExplanationAlgorithm.DLFT):
             embedding = configure_interpretable_embedding_layer(model, "backbone.embeddings")
         print(f"{embedding=}")
 
-        alg = get_attributor(args.xai_algorithm)
+        alg = get_attributor(args.xai_algorithm, model)
         print(f"{alg=}")
 
         masker: Optional[Masker] = None

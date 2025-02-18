@@ -15,6 +15,8 @@ from captum.attr import (
     Lime,
     IntegratedGradients,
     GradientShap,
+    FeatureAblation,
+    DeepLift,
 )
 import numpy as np
 import torch
@@ -199,20 +201,45 @@ def forward_func_with_inputs_embeds(inputs_embeds: Tensor, model: PreTrainedMode
     return probas
 
 
-def get_attributor(xai_algorithm: ExplanationAlgorithm) -> Attribution:
+class WrapperWithInputIDs(Module):
 
+    def __init__(self, model: PreTrainedModel) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids: Tensor) -> Tensor:
+        return forward_func_with_input_ids(input_ids, self.model)
+
+
+class WrapperWithInputEmbeds(Module):
+
+    def __init__(self, model: PreTrainedModel) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, inputs_embeds: Tensor) -> Tensor:
+        return forward_func_with_inputs_embeds(inputs_embeds, self.model)
+
+
+def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrainedModel]) -> Attribution:
+
+    if xai_algorithm == ExplanationAlgorithm.IGRD:
+        return IntegratedGradients(forward_func_with_inputs_embeds)
+    if xai_algorithm == ExplanationAlgorithm.DLFT:
+        return DeepLift(WrapperWithInputEmbeds(model))
     if xai_algorithm == ExplanationAlgorithm.SHAP:
         return GradientShap(forward_func_with_inputs_embeds)
     if xai_algorithm == ExplanationAlgorithm.LIME:
         return Lime(forward_func_with_input_ids)
-    if xai_algorithm == ExplanationAlgorithm.IGRD:
-        return IntegratedGradients(forward_func_with_inputs_embeds)
+    if xai_algorithm == ExplanationAlgorithm.FABL:
+        return FeatureAblation(forward_func_with_input_ids)
 
     raise TypeError(f"Explanation algorithm {xai_algorithm} not supported.")
 
 
 @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^You are providing multiple inputs for Lime / Kernel SHAP attributions.*")
 @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^Attempting to construct interpretable model with > 10000 features.*")
+@ignore_warnings_decorator("ignore", category=UserWarning, message=r"^Setting forward, backward hooks and attributes on non-linear*")
 def get_attribution(
     alg: Attribution,
     input_ids: Optional[Tensor],
@@ -224,7 +251,7 @@ def get_attribution(
 
     attribs = None
 
-    if isinstance(alg, GradientShap):
+    if isinstance(alg, IntegratedGradients):
         apply_pooling = True
         apply_masking = feature_mask is not None
         attribs = alg.attribute(
@@ -232,7 +259,15 @@ def get_attribution(
             target=labels, additional_forward_args=(model,),
         )
 
-    if isinstance(alg, IntegratedGradients):
+    if isinstance(alg, DeepLift):
+        apply_pooling = True
+        apply_masking = feature_mask is not None
+        attribs = alg.attribute(
+            inputs_embeds, baselines=torch.zeros_like(inputs_embeds),
+            target=labels,
+        )
+
+    if isinstance(alg, GradientShap):
         apply_pooling = True
         apply_masking = feature_mask is not None
         attribs = alg.attribute(
@@ -245,6 +280,14 @@ def get_attribution(
         apply_masking = False
         attribs = alg.attribute(
             input_ids, baselines=torch.zeros_like(input_ids),
+            target=labels, additional_forward_args=(model,), feature_mask=feature_mask,
+        )
+
+    if isinstance(alg, FeatureAblation):
+        apply_pooling = False
+        apply_masking = False
+        attribs = alg.attribute(
+            input_ids, baselines=0,
             target=labels, additional_forward_args=(model,), feature_mask=feature_mask,
         )
 

@@ -51,6 +51,8 @@ class ExplanationAlgorithm(Enum):
     SHAP = "shap"
     LIME = "lime"
     IGRD = "igrd"
+    FABL = "fabl"
+    DLFT = "dlft"
 
 
 class ExplanationMethod(Enum):
