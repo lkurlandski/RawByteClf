@@ -23,6 +23,8 @@ import shutil
 import sys
 from typing import Any, Literal, Optional
 
+import torch
+
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
     print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
@@ -500,8 +502,12 @@ class OutputHelper:
         return self.test_results_dir / "confusion_matrix.png"
 
     @property
-    def attribution_results_file(self) -> Path:
-        return self.attribution_path / "results.pt"
+    def attribution_attribs_file(self) -> Path:
+        return self.attribution_path / "attribs.pt"
+
+    @property
+    def attribution_masks_file(self) -> Path:
+        return self.attribution_path / "masks.pt"
 
     @property
     def attribution_names_file(self) -> Path:
@@ -655,3 +661,59 @@ class OutputHelper:
             raise FileNotFoundError(f"Could not find {self.path=}")
 
         return self
+
+    def save_attribution_data(
+        self,
+        io_iteration: int,
+        all_names: list[torch.Tensor],
+        all_labels: list[torch.Tensor],
+        all_attribs: list[torch.Tensor],
+        all_masks: list[torch.Tensor],
+        clear: bool = False,
+    ) -> None:
+        suffix = f".{'0' * (3 - len(str(io_iteration)))}{io_iteration}"
+
+        attribution_names_file   = self.attribution_names_file.with_suffix(f"{suffix}{self.attribution_names_file.suffix}")
+        attribution_labels_file  = self.attribution_labels_file.with_suffix(f"{suffix}{self.attribution_labels_file.suffix}")
+        attribution_attribs_file = self.attribution_attribs_file.with_suffix(f"{suffix}{self.attribution_attribs_file.suffix}")
+        attribution_masks_file   = self.attribution_masks_file.with_suffix(f"{suffix}{self.attribution_masks_file.suffix}")
+
+        attribution_names_file.write_text("\n".join(all_names) + "\n")
+        torch.save(all_labels, attribution_labels_file)
+        torch.save(all_attribs, attribution_attribs_file)
+        torch.save(all_masks, attribution_masks_file)
+
+        if clear:
+            all_names.clear()
+            all_labels.clear()
+            all_attribs.clear()
+            all_masks.clear()
+
+    def _merge_attribution_data(self, file: Path, method: Literal["torch", "txt"], io_iteration: int, clean: bool = False) -> None:
+
+        remove = []
+        all_data = []
+        for i in range(io_iteration):
+            suffix = f".{'0' * (3 - len(str(i)))}{i}"
+            f = file.with_suffix(f"{suffix}{file.suffix}")
+            if method == "torch":
+                data = torch.load(f)
+            elif method == "txt":
+                data = [l.strip() for l in f.read_text().split("\n")]
+            all_data.extend(data)
+            remove.append(f)
+
+        if method == "torch":
+            torch.save(all_data, file)
+        elif method == "txt":
+            file.write_text("\n".join(all_data) + "\n")
+
+        if clean:
+            for f in remove:
+                f.unlink()
+
+    def merge_attribution_data(self, io_iteration: int, clean: bool = False) -> None:
+        self._merge_attribution_data(self.attribution_names_file, "txt", io_iteration, clean)
+        self._merge_attribution_data(self.attribution_labels_file, "torch", io_iteration, clean)
+        self._merge_attribution_data(self.attribution_attribs_file, "torch", io_iteration, clean)
+        self._merge_attribution_data(self.attribution_masks_file, "torch", io_iteration, clean)

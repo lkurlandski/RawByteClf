@@ -2059,11 +2059,19 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down
         # because we won't be able to use prefetching or concurrent preprocessing, but its probably ok for now.
         # Getting attribution for ~65536 tokens from ~4096 samples only requires ~1GB memory, so we can just do it all at once.
-        all_names: list[str] = []
-        all_labels: list[Tensor] = []
-        all_attributions: list[Tensor] = []
-        iterable = dataset["vl"].iter(training_arguments.per_device_eval_batch_size)
-        iterable = tqdm(iterable, total=len(materials.files["vl"]) // training_arguments.per_device_eval_batch_size, desc="Explaining...")
+        all_names:    list[str]    = []
+        all_labels:   list[Tensor] = []
+        all_attribs:  list[Tensor] = []
+        all_masks:    list[Tensor] = []
+
+        io_iteration = 0
+        oh.attribution_path.mkdir(exist_ok=True, parents=True)
+
+        iterable = tqdm(
+            dataset["vl"].iter(training_arguments.per_device_eval_batch_size),
+            total=len(materials.files["vl"]) // training_arguments.per_device_eval_batch_size,
+            desc="Explaining...",
+        )
         for batch in iterable:
             names  = batch.pop("name")
 
@@ -2087,20 +2095,32 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             feature_mask: Optional[Tensor] = masker(input_ids, names) if masker is not None else None
             feature_mask = feature_mask.to(device) if feature_mask is not None else None
 
-            attributions: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
-            attributions = list(attributions.to("cpu"))
+            attribs: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
+            attribs = list(attribs.to("cpu"))
 
             all_names.extend(names)
             all_labels.extend(labels)
-            all_attributions.extend(attributions)
+            all_attribs.extend(attribs)
+            all_masks.extend(feature_mask)
+
+            mem = 0
+            for z in (all_labels, all_attribs, all_masks):
+                mem += sum(a.numel() * a.element_size() for a in z)
+
+            if mem > 2 ** 30:
+                oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True)
+                io_iteration += 1
+                gc.collect()
 
         if embedding is not None:
             remove_interpretable_embedding_layer(model, embedding)
 
-        oh.attribution_path.mkdir(exist_ok=True, parents=True)
-        oh.attribution_names_file.write_text("\n".join(all_names))
-        torch.save(labels, oh.attribution_labels_file)
-        torch.save(all_attributions, oh.attribution_results_file)
+        if len(all_names) > 0:
+            oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True)
+            io_iteration += 1
+            gc.collect()
+
+        oh.merge_attribution_data(io_iteration, clean=True)
 
 
 def cli():
