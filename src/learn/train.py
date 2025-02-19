@@ -2049,7 +2049,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(f"{alg=}")
 
         masker: Optional[Masker] = None
-        if args.xai_method in (ExplanationMethod.CHK, ExplanationMethod.FUN):
+        if args.xai_method != ExplanationMethod.TOK:
             shas = set(materials.shas_tr + materials.shas_vl + materials.shas_ts)
             masker = get_masker(args.xai_method, tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, args.xai_chunk_size, shas)
         print(f"{masker=}")

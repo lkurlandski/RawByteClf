@@ -198,7 +198,7 @@ def get_masker(
     if method == ExplanationMethod.LEN:
         return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=len_stats)
     if method == ExplanationMethod.NUM:
-        return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=num_stats)
+        return AutoNumChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=num_stats)
     if method == ExplanationMethod.FUN:
         return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
 
