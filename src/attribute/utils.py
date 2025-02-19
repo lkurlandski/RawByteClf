@@ -260,38 +260,90 @@ def ignore_warnings_decorator(*filter_args, **filter_kwargs):
     return decorator
 
 
-def forward_func_with_input_ids(input_ids: Tensor, model: PreTrainedModel) -> Tensor:
+def forward_func_with_input_ids(input_ids: Tensor, model: PreTrainedModel, targets: Optional[Tensor] = None) -> Tensor:
+    """
+    Forward function for captum algorithms that take input IDs.
+
+    Args:
+        input_ids (torch.Tensor): The input IDs. Shape (B, T).
+        model (transformers.PreTrainedModel): The model.
+        targets (torch.Tensor, optional): The target tensor. Defaults to None. Shape (B, C).
+
+    Returns:
+        torch.Tensor: The output tensor. Shape (B, C) if targets is None, else (B,).
+
+    If targets is None, the Attribution class should be used as follows:
+        >>> alg = AttributionClass(forward_func_with_input_ids)
+        >>> attribs = alg.attribute(input_ids, baselines=torch.zeros_like(input_ids), target=labels, additional_forward_args=(model,))
+
+    If performing multilabel classification, the targets should be an indicator tensor,
+    and the Attribution class should be used a little differently:
+        >>> alg = AttributionClass(forward_func_with_input_ids)
+        >>> attribs = alg.attribute(input_ids, baselines=torch.zeros_like(input_ids), target=None, additional_forward_args=(model, labels))
+    """
     output: SequenceClassifierOutput = model.forward(input_ids)
     logits = output.logits
     probas = F.softmax(logits, dim=1)
+    if targets is not None:
+        return (probas * targets).sum(dim=1)
     return probas
 
 
-def forward_func_with_inputs_embeds(inputs_embeds: Tensor, model: PreTrainedModel) -> Tensor:
+def forward_func_with_inputs_embeds(inputs_embeds: Tensor, model: PreTrainedModel, targets: Optional[Tensor] = None) -> Tensor:
+    """
+    Forward function for captum algorithms that take input embeddings.
+
+    Args:
+        inputs_embeds (torch.Tensor): The input embeddings. Shape (B, T, H).
+        model (transformers.PreTrainedModel): The model.
+        targets (torch.Tensor, optional): The target tensor. Defaults to None. Shape (B, C).
+
+    Returns:
+        torch.Tensor: The output tensor. Shape (B, C) if targets is None, else (B,).
+
+    For use with Attribution algorithms that require differentiable functions. Use as follows:
+        >>> embedding = configure_interpretable_embedding_layer(model, "backbone.embeddings")
+        >>> alg = AttributionClass(forward_func_with_inputs_embeds)
+        >>> attribs = alg.attribute(embedding(input_ids), baselines=torch.zeros_like(embedding), target=labels, additional_forward_args=(model,))
+
+    See `forward_func_with_input_ids` for additional documentation.
+    """
     output: SequenceClassifierOutput = model.forward(inputs_embeds=inputs_embeds)
     logits = output.logits
     probas = F.softmax(logits, dim=1)
+    if targets is not None:
+        return (probas * targets).sum(dim=1)
     return probas
 
 
 class WrapperWithInputIDs(Module):
+    """
+    Wrapper class for captum algorithms that take input IDs and require an instance of `torch.nn.Module`.
+
+    See `forward_func_with_input_ids` for more information.
+    """
 
     def __init__(self, model: PreTrainedModel) -> None:
         super().__init__()
         self.model = model
 
-    def forward(self, input_ids: Tensor) -> Tensor:
-        return forward_func_with_input_ids(input_ids, self.model)
+    def forward(self, input_ids: Tensor, targets: Optional[Tensor] = None) -> Tensor:
+        return forward_func_with_input_ids(input_ids, self.model, targets)
 
 
 class WrapperWithInputEmbeds(Module):
+    """
+    Wrapper class for captum algorithms that take input embeddings and require an instance of `torch.nn.Module`.
+
+    See `forward_func_with_inputs_embeds` for more information.
+    """
 
     def __init__(self, model: PreTrainedModel) -> None:
         super().__init__()
         self.model = model
 
-    def forward(self, inputs_embeds: Tensor) -> Tensor:
-        return forward_func_with_inputs_embeds(inputs_embeds, self.model)
+    def forward(self, inputs_embeds: Tensor, targets: Optional[Tensor] = None) -> Tensor:
+        return forward_func_with_inputs_embeds(inputs_embeds, self.model, targets)
 
 
 def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrainedModel]) -> Attribution:
@@ -322,50 +374,59 @@ def get_attribution(
     feature_mask: Optional[Tensor] = None,
 ) -> Tensor:
 
-    attribs = None
+    is_multilabel = labels.dim() == 2
 
     if isinstance(alg, IntegratedGradients):
         apply_pooling = True
         apply_masking = feature_mask is not None
         attribs = alg.attribute(
-            inputs_embeds, baselines=torch.zeros_like(inputs_embeds),
-            target=labels, additional_forward_args=(model,),
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
         )
 
     if isinstance(alg, DeepLift):
         apply_pooling = True
         apply_masking = feature_mask is not None
         attribs = alg.attribute(
-            inputs_embeds, baselines=torch.zeros_like(inputs_embeds),
-            target=labels,
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(labels,) if is_multilabel else None,
         )
 
     if isinstance(alg, GradientShap):
         apply_pooling = True
         apply_masking = feature_mask is not None
         attribs = alg.attribute(
-            inputs_embeds, baselines=torch.zeros_like(inputs_embeds),
-            target=labels, additional_forward_args=(model,),
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
         )
 
     if isinstance(alg, Lime):
         apply_pooling = False
         apply_masking = False
         attribs = alg.attribute(
-            input_ids, baselines=torch.zeros_like(input_ids),
-            target=labels, additional_forward_args=(model,), feature_mask=feature_mask,
+            input_ids,
+            baselines=torch.zeros_like(input_ids),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+            feature_mask=feature_mask,
         )
 
     if isinstance(alg, FeatureAblation):
         apply_pooling = False
         apply_masking = False
         attribs = alg.attribute(
-            input_ids, baselines=0,
-            target=labels, additional_forward_args=(model,), feature_mask=feature_mask,
+            input_ids,
+            baselines=0,
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+            feature_mask=feature_mask,
         )
-
-    if attribs is None:
-        raise TypeError(f"Attribution algorithm {alg} not supported.")
 
     if apply_pooling:
         attribs = attribs.mean(dim=2)
