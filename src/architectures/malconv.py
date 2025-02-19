@@ -150,4 +150,4 @@ class MalConvForSequenceClassification(MalConvPreTrainedModel):
         hidden_states = self.backbone.forward(input_ids=input_ids, inputs_embeds=inputs_embeds)[0]
         logits = self.clf_head.forward(hidden_states.unsqueeze(1)).squeeze(1)
         loss = get_clf_loss(logits, labels, self.config.num_labels, self.config.problem_type) if labels is not None else None
-        return SequenceClassifierOutput(loss, logits, hidden_states)
+        return SequenceClassifierOutput(loss, logits)
