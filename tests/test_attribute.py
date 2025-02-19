@@ -116,7 +116,7 @@ class TestMaskers(unittest.TestCase):
         ], dtype=torch.int64)
         assert torch.equal(mask, correct), f"Got:\n{pformat(mask.tolist())}\nExpected:\n{pformat(correct.tolist())}"
 
-    def test_chunk_feature_masker_fix(self):
+    def test_chunk_feature_masker_fix_1(self):
         m = ChunkFeatureMasker(self.bos_token_id, self.eos_token_id, self.pad_token_id, chunk_size=2)
         assert m.special_token_ids == self.special_token_ids
         mask = m(self.input_ids)
@@ -125,7 +125,22 @@ class TestMaskers(unittest.TestCase):
             [0, 1, 1, 2, 2, 3, 3, 0, 0, 0],
             [0, 1, 1, 2, 2, 3, 3, 4, 0, 0],
         ], dtype=torch.int64)
-        assert torch.equal(mask, correct)
+        assert torch.equal(mask, correct), f"Got:\n{pformat(mask.tolist())}\nExpected:\n{pformat(correct.tolist())}"
+
+    def test_chunk_feature_masker_fix_2(self):
+        with self.assertRaises(ValueError):
+            ChunkFeatureMasker(self.bos_token_id, self.eos_token_id, self.pad_token_id, chunk_size=0)
+
+    def test_chunk_feature_masker_fix_3(self):
+        m = ChunkFeatureMasker(self.bos_token_id, self.eos_token_id, self.pad_token_id, chunk_size=1)
+        assert m.special_token_ids == self.special_token_ids
+        mask = m(self.input_ids)
+        correct = torch.tensor([
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 0],
+            [0, 1, 2, 3, 4, 5, 6, 0, 0, 0],
+            [0, 1, 2, 3, 4, 5, 6, 7, 0, 0],
+        ], dtype=torch.int64)
+        assert torch.equal(mask, correct), f"Got:\n{pformat(mask.tolist())}\nExpected:\n{pformat(correct.tolist())}"
 
     def test_chunk_feature_masker_len(self):
         stats = {s: np.mean(b[:,1] - b[:,0]) for s, b in self.boundaries.items()}  # {'sha1': 2.0, 'sha2': 2.0, 'sha3': nan}

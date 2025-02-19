@@ -71,14 +71,17 @@ class ChunkFeatureMasker(Masker):
     def __init__(self, *args, chunk_size: int) -> None:
         super().__init__(*args)
         self.chunk_size = chunk_size
+        if chunk_size < 1:
+            raise ValueError("Chunk size must be greater than 0.")
 
     def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:  # pylint: disable=unused-argument
 
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
         i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
+        c = 0 if self.chunk_size == 1 else 1
         while i < mask.shape[1]:
-            mask[:, i:i + self.chunk_size] = (i // self.chunk_size) + 1  # Start at 1.
+            mask[:, i:i + self.chunk_size] = (i // self.chunk_size) + c  # Start at 1.
             i += self.chunk_size
 
         for t in self.special_token_ids:
@@ -104,14 +107,18 @@ class AutoChunkFeatureMasker(Masker):
         return torch.stack(masks)
 
     def chunk_mask_for_one_input(self, input_ids: Tensor, chunk_size: int) -> Tensor:
+        if chunk_size < 1:
+            raise ValueError("Chunk size must be greater than 0.")
+
         if input_ids.dim() != 1:
             raise RuntimeError()
 
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
         i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
+        c = 0 if chunk_size == 1 else 1
         while i < mask.shape[0]:
-            mask[i:i + chunk_size] = (i // chunk_size) + 1  # Start at 1.
+            mask[i:i + chunk_size] = (i // chunk_size) + c  # Start at 1.
             i += chunk_size
 
         for t in self.special_token_ids:
