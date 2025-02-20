@@ -2,12 +2,14 @@
 Test the attribution methods.
 """
 
+import math
 import os
 from pprint import pformat, pprint
 import sys
 import unittest
 
 import numpy as np
+from scipy.stats import rankdata
 import torch
 
 # pylint: disable=wrong-import-position
@@ -24,6 +26,7 @@ from src.attribute.utils import (
     AutoNumChunkFeatureMasker,
     FunctionFeatureMasker,
 )
+from src.attribute.compare import kendallw_without_ties, kendallw_with_ties
 
 
 torch.random.manual_seed(0)
@@ -176,3 +179,60 @@ class TestMaskers(unittest.TestCase):
             [0, 1, 1, 1, 1, 1, 1, 1, 0, 0],
         ], dtype=torch.int64)
         assert torch.equal(mask, correct), f"Got:\n{pformat(mask.tolist())}\nExpected:\n{pformat(correct.tolist())}"
+
+
+class TestKendallW(unittest.TestCase):
+
+    def setUp(self):
+        # These are bird traits from an example for R.
+        self.X: np.ndarray = np.array([
+            [10.4, 10.8, 11.1, 10.2, 10.3, 10.2, 10.7, 10.5, 10.8, 11.2, 10.6, 11.4],
+            [7.4, 7.6, 7.9, 7.2, 7.4, 7.1, 7.4, 7.2, 7.8, 7.7, 7.8, 8.3],
+            [17.0, 17.0, 20.0, 14.5, 15.5, 13.0, 19.5, 16.0, 21.0, 20.0, 18.0, 22.0],
+        ]).T
+
+    def test_0(self):  # Errors
+        A = [0, 1, 2, 3, 4]
+        R = np.array([A,]).T
+        with self.assertRaises(ValueError):
+            kendallw_without_ties(R)
+        with self.assertRaises(ValueError):
+            kendallw_with_ties(R)
+
+    def test_1(self):  # Warnings
+        A = [0, 1, 2, 3, 4]
+        B = [0, 1, 2, 3, 4]
+        R = np.array([A, B]).T
+        with self.assertWarns(UserWarning):
+            kendallw_without_ties(R)
+        with self.assertWarns(UserWarning):
+            kendallw_with_ties(R)
+
+    def test_2(self):  # NaNs
+        c = np.nan
+        A = [0,]
+        B = [0,]
+        C = [0,]
+        R = np.array([A, B, C]).T
+        w = kendallw_without_ties(R)[0]
+        assert math.isnan(w), f"Got: {w}, Expected: {c}"
+        w = kendallw_with_ties(R)[0]
+        assert math.isnan(w), f"Got: {w}, Expected: {c}"
+
+    def test_3_a(self):
+        c = 0.9134
+        R = rankdata(self.X, axis=0)
+        w = kendallw_without_ties(R)[0]
+        assert math.isclose(w, c, abs_tol=0.00005), f"Got: {w}, Expected: {c}"
+
+    def test_3_b(self):
+        c = 0.9241
+        R = rankdata(self.X, axis=0)
+        w = kendallw_with_ties(R)[0]
+        assert math.isclose(w, c, abs_tol=0.00005), f"Got: {w}, Expected: {c}"
+
+    def test_4(self):
+        R = rankdata(self.X, axis=0, method="ordinal")
+        w_1 = kendallw_without_ties(R)[0]
+        w_2 = kendallw_with_ties(R)[0]
+        assert math.isclose(w_1, w_2, abs_tol=0.00005), f"Got: {w_1} != {w_2}, Expected: {w_1} == {w_2}"

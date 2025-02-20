@@ -49,9 +49,7 @@ class Annotations(NamedTuple):
     if interpretable features correspond to functions, scores[0] is the score of the first function
     in the sample and scores[-1] is the score of the last function in the sample.
 
-    Higher scores and lower ranks indicate greater importance. The scores may
-    be any real value, positive or negative, whereas the ranks are non-negative
-    integers with 0 being given to the most important function.
+    Higher scores and higher ranks indicate greater importance.
 
     We chose to name the variable `scores` instead of `attribs` because there is a single score
     for each interpretable feature, whereas the `attribs` contains a score for each feature.
@@ -78,10 +76,9 @@ def get_function_annotations(
         unq, idx = torch.unique(mask, return_inverse=True)
         scores = torch.zeros_like(unq, dtype=attrib.dtype)
         scores.scatter_reduce_(0, idx, attrib, reduce="amax")
-        ranks = torch.argsort(torch.argsort(scores, descending=True))
 
         scores = scores.numpy(force=True)
-        ranks  = ranks.numpy(force=True)
+        ranks  = stats.rankdata(scores)
         label  = label.numpy(force=True)
 
         yield Annotations(name, label, scores, ranks)
@@ -127,7 +124,7 @@ def get_function_annotations_from_attribution_path(path: Path) -> Generator[Anno
     yield from get_function_annotations_from_files(names, labels, attribs, masks)
 
 
-def kendallw(R: np.ndarray) -> SignificanceResult:
+def kendallw_without_ties(R: np.ndarray) -> SignificanceResult:
     """
     Implementation of Kendall's Coefficient for Concordance (Kendall's W).
 
@@ -157,6 +154,51 @@ def kendallw(R: np.ndarray) -> SignificanceResult:
     p = stats.chi2.sf(s, f)
 
     return SignificanceResult(W, p)
+
+
+def kendallw_with_ties(R: np.ndarray) -> SignificanceResult:
+    """
+    Implementation of Kendall's Coefficient for Concordance (Kendall's W) accounting for ties.
+
+    See Wikipedia (https://en.wikipedia.org/wiki/Kendall%27s_W) for details.
+    """
+
+    n = R.shape[0]  # number of samples
+    m = R.shape[1]  # number of judges
+
+    # Edge cases match the behavior of scipy.stats.kendalltau
+    if n < 2:
+        return SignificanceResult(np.nan, np.nan)
+    if m < 2:
+        raise ValueError("Kendall's W requires at least two judges.")
+    if m == 2:
+        warnings.warn("Kendall's W is less appropriate for only two judges. Use `kendalltau` instead.")
+
+    # Correction for ties
+    T = np.zeros((m,))
+    for j in range(m):
+        _, counts = np.unique(R[:,j], return_counts=True)
+        counts = counts[counts > 1]
+        T[j] = np.sum(np.power(counts, 3) - counts)
+
+    # Compute Kendall's W
+    R_sum     = np.sum(R, axis=1)         # (n,)
+    R_sqr_sum = np.sum(np.square(R_sum))  # (,)
+    W = (
+        ( (12 * R_sqr_sum) - (3 * m ** 2 * n * (n + 1) ** 2) )
+        /
+        ( m ** 2 * n * (n ** 2 - 1) - (m * np.sum(T)))
+    )
+
+    # Compute the significance
+    s = m * (n - 1) * W         # Chi-squared statistic
+    f = n - 1                   # Degrees of freedom
+    p = stats.chi2.sf(s, f)
+
+    return SignificanceResult(W, p)
+
+
+kendallw = kendallw_with_ties
 
 
 def main():
