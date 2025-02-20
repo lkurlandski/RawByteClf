@@ -671,6 +671,19 @@ class OutputHelper:
         all_masks: list[torch.Tensor],
         clear: bool = False,
     ) -> None:
+        """
+        Save each macro-batch of attribution materials to disk.
+
+        The file will be named using the following convention:
+            - names.000.txt
+            - labels.000.pt
+            - attribs.000.pt
+            - masks.000.pt
+
+        The labels, attribs, and masks are saved as torch tensors.
+        The names are saved as a text file with one name per line, no newline at the end.
+        """
+
         suffix = f".{'0' * (3 - len(str(io_iteration)))}{io_iteration}"
 
         attribution_names_file   = self.attribution_names_file.with_suffix(f"{suffix}{self.attribution_names_file.suffix}")
@@ -678,7 +691,7 @@ class OutputHelper:
         attribution_attribs_file = self.attribution_attribs_file.with_suffix(f"{suffix}{self.attribution_attribs_file.suffix}")
         attribution_masks_file   = self.attribution_masks_file.with_suffix(f"{suffix}{self.attribution_masks_file.suffix}")
 
-        attribution_names_file.write_text("\n".join(all_names) + "\n")
+        attribution_names_file.write_text("\n".join(all_names))
         torch.save(all_labels, attribution_labels_file)
         torch.save(all_attribs, attribution_attribs_file)
         torch.save(all_masks, attribution_masks_file)
@@ -689,31 +702,47 @@ class OutputHelper:
             all_attribs.clear()
             all_masks.clear()
 
-    def _merge_attribution_data(self, file: Path, method: Literal["torch", "txt"], io_iteration: int, clean: bool = False) -> None:
-
-        remove = []
-        all_data = []
-        for i in range(io_iteration):
+    @staticmethod
+    def _get_attribution_data_files(file: Path, io_iteration: Optional[int] = None) -> list[Path]:
+        files = []
+        i = 0
+        while True:
+            if io_iteration is not None and i > io_iteration:
+                break
             suffix = f".{'0' * (3 - len(str(i)))}{i}"
             f = file.with_suffix(f"{suffix}{file.suffix}")
+            if io_iteration is None and not f.exists():
+                break
+            files.append(f)
+            i += 1
+        return files
+
+    @staticmethod
+    def _merge_attribution_data(file: Path, method: Literal["torch", "txt"], io_iteration: int, clean: bool = False) -> None:
+
+        files = OutputHelper._get_attribution_data_files(file, io_iteration)
+
+        all_data = []
+        for f in files:
             if method == "torch":
                 data = torch.load(f)
             elif method == "txt":
-                data = [l.strip() for l in f.read_text().split("\n")]
+                data = f.read_text().splitlines()
+            else:
+                raise ValueError(f"Invalid method: {method}")
             all_data.extend(data)
-            remove.append(f)
 
         if method == "torch":
             torch.save(all_data, file)
         elif method == "txt":
-            file.write_text("\n".join(all_data) + "\n")
+            file.write_text("\n".join(all_data))
 
         if clean:
-            for f in remove:
+            for f in files:
                 f.unlink()
 
     def merge_attribution_data(self, io_iteration: int, clean: bool = False) -> None:
-        self._merge_attribution_data(self.attribution_names_file, "txt", io_iteration, clean)
-        self._merge_attribution_data(self.attribution_labels_file, "torch", io_iteration, clean)
-        self._merge_attribution_data(self.attribution_attribs_file, "torch", io_iteration, clean)
-        self._merge_attribution_data(self.attribution_masks_file, "torch", io_iteration, clean)
+        OutputHelper._merge_attribution_data(self.attribution_names_file, "txt", io_iteration, clean)
+        OutputHelper._merge_attribution_data(self.attribution_labels_file, "torch", io_iteration, clean)
+        OutputHelper._merge_attribution_data(self.attribution_attribs_file, "torch", io_iteration, clean)
+        OutputHelper._merge_attribution_data(self.attribution_masks_file, "torch", io_iteration, clean)

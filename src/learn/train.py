@@ -252,6 +252,8 @@ CACHE_FILE_NAME: Optional[str] = None
 NUM_PROC = None
 KEEP_IN_MEMORY = False
 
+MAX_ATTRIBUTION_MEMORY = 2 ** 32  # 4 GB
+
 # Variables for hyperparameter tuning.
 N_INITIAL_POINTS = 16
 N_TRIALS = 64
@@ -2107,7 +2109,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             for z in (all_labels, all_attribs, all_masks):
                 mem += sum(a.numel() * a.element_size() for a in z)
 
-            if mem > 2 ** 30:
+            if mem > MAX_ATTRIBUTION_MEMORY:
                 oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True)
                 io_iteration += 1
                 gc.collect()
@@ -2120,7 +2122,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             io_iteration += 1
             gc.collect()
 
-        oh.merge_attribution_data(io_iteration, clean=True)
+        # Merging the individual attribution files might make performing analysis require more memory.
+        # oh.merge_attribution_data(io_iteration, clean=True)
 
 
 def cli():
