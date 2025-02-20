@@ -2064,7 +2064,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         all_names:    list[str]    = []
         all_labels:   list[Tensor] = []
         all_attribs:  list[Tensor] = []
-        all_masks:    list[Tensor] = []
+        all_masks:    Optional[list[Tensor]] = [] if masker is not None else None
 
         io_iteration = 0
         oh.attribution_path.mkdir(exist_ok=True, parents=True)
@@ -2103,10 +2103,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             all_names.extend(names)
             all_labels.extend(labels)
             all_attribs.extend(attribs)
-            all_masks.extend(feature_mask)
+            if masker is not None:
+                all_masks.extend(feature_mask)
 
             mem = 0
-            for z in (all_labels, all_attribs, all_masks):
+            for z in (all_labels, all_attribs, all_masks if all_masks is not None else []):
                 mem += sum(a.numel() * a.element_size() for a in z)
 
             if mem > MAX_ATTRIBUTION_MEMORY:
@@ -2123,7 +2124,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             gc.collect()
 
         # Merging the individual attribution files might make performing analysis require more memory.
-        # oh.merge_attribution_data(io_iteration, clean=True)
+        # oh.merge_attribution_data(io_iteration, do_masks=all_masks is not None, clean=True)
 
 
 def cli():

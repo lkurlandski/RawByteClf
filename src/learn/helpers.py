@@ -668,7 +668,7 @@ class OutputHelper:
         all_names: list[torch.Tensor],
         all_labels: list[torch.Tensor],
         all_attribs: list[torch.Tensor],
-        all_masks: list[torch.Tensor],
+        all_masks: Optional[list[torch.Tensor]] = None,
         clear: bool = False,
     ) -> None:
         """
@@ -694,13 +694,15 @@ class OutputHelper:
         attribution_names_file.write_text("\n".join(all_names))
         torch.save(all_labels, attribution_labels_file)
         torch.save(all_attribs, attribution_attribs_file)
-        torch.save(all_masks, attribution_masks_file)
+        if all_masks is not None:
+            torch.save(all_masks, attribution_masks_file)
 
         if clear:
             all_names.clear()
             all_labels.clear()
             all_attribs.clear()
-            all_masks.clear()
+            if all_masks is not None:
+                all_masks.clear()
 
     @staticmethod
     def _get_attribution_data_files(file: Path, io_iteration: Optional[int] = None) -> list[Path]:
@@ -741,8 +743,9 @@ class OutputHelper:
             for f in files:
                 f.unlink()
 
-    def merge_attribution_data(self, io_iteration: int, clean: bool = False) -> None:
+    def merge_attribution_data(self, io_iteration: int, do_masks: bool = True, clean: bool = False) -> None:
         OutputHelper._merge_attribution_data(self.attribution_names_file, "txt", io_iteration, clean)
         OutputHelper._merge_attribution_data(self.attribution_labels_file, "torch", io_iteration, clean)
         OutputHelper._merge_attribution_data(self.attribution_attribs_file, "torch", io_iteration, clean)
-        OutputHelper._merge_attribution_data(self.attribution_masks_file, "torch", io_iteration, clean)
+        if do_masks:
+            OutputHelper._merge_attribution_data(self.attribution_masks_file, "torch", io_iteration, clean)
