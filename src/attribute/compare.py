@@ -142,6 +142,8 @@ def kendallw(R: np.ndarray) -> SignificanceResult:
         return SignificanceResult(np.nan, np.nan)
     if m < 2:
         raise ValueError("Kendall's W requires at least two judges.")
+    if m == 2:
+        warnings.warn("Kendall's W is less appropriate for only two judges. Use `kendalltau` instead.")
 
     # Compute Kendall's W
     R_sum  = np.sum(R, axis=1)              # (n,)
