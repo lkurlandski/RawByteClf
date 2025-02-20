@@ -705,7 +705,7 @@ class OutputHelper:
                 all_masks.clear()
 
     @staticmethod
-    def _get_attribution_data_files(file: Path, io_iteration: Optional[int] = None) -> list[Path]:
+    def get_attribution_data_files(file: Path, io_iteration: Optional[int] = None) -> list[Path]:
         files = []
         i = 0
         while True:
@@ -722,7 +722,7 @@ class OutputHelper:
     @staticmethod
     def _merge_attribution_data(file: Path, method: Literal["torch", "txt"], io_iteration: int, clean: bool = False) -> None:
 
-        files = OutputHelper._get_attribution_data_files(file, io_iteration)
+        files = OutputHelper.get_attribution_data_files(file, io_iteration)
 
         all_data = []
         for f in files:
