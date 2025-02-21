@@ -16,6 +16,7 @@ from captum.attr import (
     Lime,
     IntegratedGradients,
     GradientShap,
+    KernelShap,
     FeatureAblation,
     DeepLift,
 )
@@ -359,12 +360,14 @@ def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrain
         return IntegratedGradients(forward_func_with_inputs_embeds)
     if xai_algorithm == ExplanationAlgorithm.DLFT:
         return DeepLift(WrapperWithInputEmbeds(model))
-    if xai_algorithm == ExplanationAlgorithm.SHAP:
+    if xai_algorithm == ExplanationAlgorithm.GSHP:
         return GradientShap(forward_func_with_inputs_embeds)
     if xai_algorithm == ExplanationAlgorithm.LIME:
         return Lime(forward_func_with_input_ids)
     if xai_algorithm == ExplanationAlgorithm.FABL:
         return FeatureAblation(forward_func_with_input_ids)
+    if xai_algorithm == ExplanationAlgorithm.KSHP:
+        return KernelShap(forward_func_with_input_ids)
 
     raise TypeError(f"Explanation algorithm {xai_algorithm} not supported.")
 
@@ -414,6 +417,17 @@ def get_attribution(
         )
 
     if isinstance(alg, Lime):
+        apply_pooling = False
+        apply_masking = False
+        attribs = alg.attribute(
+            input_ids,
+            baselines=torch.zeros_like(input_ids),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+            feature_mask=feature_mask,
+        )
+
+    if isinstance(alg, KernelShap):
         apply_pooling = False
         apply_masking = False
         attribs = alg.attribute(

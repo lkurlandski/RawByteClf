@@ -2062,7 +2062,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR, flush=True)
 
         embedding: Optional[InterpretableEmbeddingBase] = None
-        if args.xai_algorithm in (ExplanationAlgorithm.SHAP, ExplanationAlgorithm.IGRD, ExplanationAlgorithm.DLFT):
+        if args.xai_algorithm in (ExplanationAlgorithm.GSHP, ExplanationAlgorithm.IGRD, ExplanationAlgorithm.DLFT):
             embedding = configure_interpretable_embedding_layer(model, "backbone.embeddings")
         print(f"{embedding=}")
 

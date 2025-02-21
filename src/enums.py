@@ -48,11 +48,23 @@ class Task(Enum):
 
 
 class ExplanationAlgorithm(Enum):
-    SHAP = "shap"
-    LIME = "lime"
-    IGRD = "igrd"
-    FABL = "fabl"
-    DLFT = "dlft"
+    """
+    Notes:
+        - We do not include FeaturePermutation because its permutes an input
+          based on other examples in the batch, which makes it less appealing.
+        - We do not include Occlusion because the captum implementation does not
+          support per-sample control over the perturbation behavior. Its possible
+          to convert a `feature_mask` to arguments for `sliding_window_shapes` and
+          `strides` to attain similar behavior for one sample, but it cannot be done
+          for a batch of samples.
+    """
+
+    KSHP = "kshp"  # Kernel SHAP
+    GSHP = "gshp"  # Gradient SHAP
+    LIME = "lime"  # LIME
+    IGRD = "igrd"  # Integrated Gradients
+    FABL = "fabl"  # Feature Ablation
+    DLFT = "dlft"  # DeepLIFT
 
 
 class ExplanationMethod(Enum):
