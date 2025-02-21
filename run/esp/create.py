@@ -12,7 +12,6 @@ import json
 import math
 from pathlib import Path
 import os
-import shutil
 import sys
 from typing import Any, Optional
 import warnings
@@ -168,7 +167,7 @@ src/learn/train.py \\
 --do_attribute \\
 --xai_method={xai_method.value} \\
 --xai_algorithm={xai_algorithm.value} \\
---xai_chunk_size={xai_chunk_size} \\
+{f"--xai_chunk_size={xai_chunk_size}" if xai_chunk_size is not None else ""} \\
 --output_dir='/tmp' \\
 --save_strategy='{"epoch" if save_steps is None else "steps"}' \\
 --eval_strategy='{"epoch" if eval_steps is None else "steps"}' \\
@@ -818,7 +817,9 @@ def main():
     ARMITAGE = args.armitage
 
     if not args.no_remove:
-        shutil.rmtree(outpath(), ignore_errors=True)
+        for f in outpath().iterdir():
+            if f.name[0] != ".":
+                f.unlink()
     outpath().mkdir(parents=True, exist_ok=True)
 
     configurations = Product(
