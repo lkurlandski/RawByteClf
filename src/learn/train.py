@@ -2029,9 +2029,28 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+        # We can safely assume that we always want to perform attribution analysis on a pretrained model,
+        # not one with random weights. In this case, we can be a little flexible with the checkpoints directory.
+        # We'll basically accept any checkpoint with the same configurations, but permit for different batch sizes and dtypes.
+        if oh.checkpoints_dir.exists():
+            model_name_or_path = oh.last_checkpoint
+        else:
+            print("A checkpoint was not found in output helper path. Mutating the dtypes in an attempt to resolve this.")
+            oh = oh.infer_path_and_mutate(batch_size=False, dtypes=True)
+            if oh.checkpoints_dir.exists():
+                model_name_or_path = oh.last_checkpoint
+            else:
+                print("A checkpoint was not found in output helper path. Mutating the batch_size in an attempt to resolve this.")
+                oh = oh.infer_path_and_mutate(batch_size=True, dtypes=True)
+                if oh.checkpoints_dir.exists():
+                    model_name_or_path = oh.last_checkpoint
+                else:
+                    raise FileNotFoundError(f"A checkpoint was not found in output helper path.")
+        model_name_or_path = str(model_name_or_path)
+
         model = get_model(
             args.task,
-            args.model_name_or_path,
+            model_name_or_path,
             config,
             args.lift_level==LiftLevel.ALL,
             num_labels=materials.num_classes,
