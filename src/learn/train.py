@@ -177,7 +177,7 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker, FunctionFeatureMasker
+from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker, FunctionFeatureMasker, ignore_warnings_decorator
 from src.data.loaders_core import (
     Materials,
     get_materials_esp_clm,
@@ -1299,6 +1299,7 @@ def compute_unigram_probabilities(
     return {tokenizer.convert_ids_to_tokens(i): p for i, p in probs.items()}
 
 
+@ignore_warnings_decorator("ignore", category=UserWarning, message=r"^In order to make embedding layers more interpretable they will be replaced with an interpretable embedding layer*")
 def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     random.seed(training_arguments.seed)
@@ -2034,6 +2035,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # We'll basically accept any checkpoint with the same configurations, but permit for different batch sizes and dtypes.
         if oh.checkpoints_dir.exists():
             model_name_or_path = oh.last_checkpoint
+        elif os.environ.get("ATTRIBUTE_UNTRAINED_MODEL", "0") == "1":
+            model_name_or_path = args.model_name_or_path
         else:
             print("A checkpoint was not found in output helper path. Mutating the dtypes in an attempt to resolve this.")
             oh = oh.infer_path_and_mutate(batch_size=False, dtypes=True)
@@ -2077,6 +2080,53 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if isinstance(masker, FunctionFeatureMasker):
             print(f"{masker.boundaries.get_stats(2)=}")
 
+        # Figure out the batch size
+        @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
+        def determine_max_attribution_batch_size(batch_size: int) -> int:
+            print(f"Running pseuodo attribution to determine max batch size {batch_size=}.")
+
+            input_ids = torch.randint(len(tokenizer.all_special_ids), len(tokenizer), (batch_size, args.max_length - 2)).to(device)
+            input_ids[:, 0]  = tokenizer.bos_token_id
+            input_ids[:, -1] = tokenizer.eos_token_id
+
+            labels = torch.randint(0, materials.num_classes, (batch_size,))
+            if materials.problem_type == "multi_label_classification":
+                labels = torch.randint(0, 2, (batch_size, materials.num_classes))
+            labels = labels.to(device)
+
+            token_type_ids = None
+            if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
+                token_type_ids = torch.zeros_like(input_ids).to(device)
+                token_type_ids[:, 0]  = 1
+                token_type_ids[:, -1] = 1
+
+            attention_mask = None
+            if MODEL_NAME in REQ_ATTENTION_MASK:
+                attention_mask = torch.ones_like(input_ids).to(device)
+                attention_mask[:, 0]  = 0
+                attention_mask[:, -1] = 0
+
+            inputs_embeds = None
+            if embedding is not None:
+                inputs_embeds = embedding.indices_to_embeddings(input_ids)
+
+            feature_mask = None
+            if masker is not None:
+                feature_mask = get_masker(
+                    ExplanationMethod.CHK,
+                    tokenizer.bos_token_id,
+                    tokenizer.eos_token_id,
+                    tokenizer.pad_token_id,
+                    args.max_length // 8,
+                )(input_ids, None).to(device)
+
+            get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
+
+            return batch_size
+
+        per_device_attribute_batch_size = determine_max_attribution_batch_size() if args.auto_find_batch_size_and_gradient_accumulation_steps else training_arguments.per_device_eval_batch_size
+        print(f"Performing attribution with batch size {per_device_attribute_batch_size=}.")
+
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down
         # because we won't be able to use prefetching or concurrent preprocessing, but its probably ok for now.
         # Getting attribution for ~65536 tokens from ~4096 samples only requires ~1GB memory, so we can just do it all at once.
@@ -2088,8 +2138,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         io_iteration = 0
         oh.attribution_path.mkdir(exist_ok=True, parents=True)
 
-        total = len(materials.files["vl"]) // training_arguments.per_device_eval_batch_size + 1
-        iterable = tqdm(dataset["vl"].iter(training_arguments.per_device_eval_batch_size), total=total, desc="Explaining...")
+        total = len(materials.files["vl"]) // per_device_attribute_batch_size + 1
+        iterable = tqdm(dataset["vl"].iter(per_device_attribute_batch_size), total=total, desc="Explaining...")
         t_start = time.time()
         for step, batch in enumerate(iterable):
             t_start_step = time.time()
@@ -2107,6 +2157,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             inputs_embeds = embedding.indices_to_embeddings(input_ids) if embedding is not None else None
             inputs_embeds = inputs_embeds.to(device) if inputs_embeds is not None else None
 
+            # FIXME: handle models that require token_type_ids and attention_mask.
             attention_mask: Optional[Tensor] = inputs.pop("attention_mask", None)
             attention_mask = attention_mask.to(device) if attention_mask is not None else None
 
@@ -2139,7 +2190,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 d = {
                     "step": step,
                     "epoch": round(step / total, 2),
-                    "time_per_sample": round((t_end_step - t_start_step) / (training_arguments.logging_steps * training_arguments.per_device_eval_batch_size), 2),
+                    "time_per_sample": round((t_end_step - t_start_step) / (training_arguments.logging_steps * per_device_attribute_batch_size), 2),
                     "time_total": round(t_end_step - t_start, 2),
                 }
                 print(d)
