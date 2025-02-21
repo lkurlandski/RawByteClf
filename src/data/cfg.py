@@ -66,7 +66,7 @@ TIMESTAMPS_FILES = {
 FUNCTION_BOUNDARIES_FILES = {
     DatasetName.ASSEMBLAGE: ASSEMBLAGE_PATH / "function_boundaries.npz",
     DatasetName.BODMAS:     BODMAS_PATH     / "function_boundaries.npz",
-    DatasetName.SOREL:      SOREL_PATH      / "function_boundaries.npz",
+    DatasetName.SOREL:      SOREL_PATH      / "function_boundaries",
     DatasetName.WINDOWS:    WINDOWS_PATH    / "function_boundaries.npz",
 }
 

@@ -166,7 +166,13 @@ class EXEFuncBoundsMap(UserDict):
     @classmethod
     def from_dataset_name(cls, dnms: Optional[list[DatasetName]] = None, shas: Optional[list[str]] = None, allow_missing_shas: bool = False) -> EXEFuncBoundsMap:
         dnms = dnms if dnms is not None else list(DatasetName)
-        files = [FUNCTION_BOUNDARIES_FILES[dnm] for dnm in dnms]
+        files = []
+        for dnm in dnms:
+            f = FUNCTION_BOUNDARIES_FILES[dnm]
+            if f.is_file():
+                files.append(f)
+            else:
+                files.extend(list(rglob(f, "*.npz")))
         return cls.from_files(files, shas, allow_missing_shas)
 
     def get_stats(self, r: Optional[int] = None) -> dict[str, float]:
@@ -203,7 +209,7 @@ class EXEFuncBoundsMap(UserDict):
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--outfile", type=Path, required=True)
+    parser.add_argument("--outdir", type=Path, required=True)
     parser.add_argument("--inarchives", type=Path, required=True)
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--subset", type=int, default=None)
@@ -211,9 +217,7 @@ def main():
 
     print(f"args={pformat(args.__dict__)}")
 
-    if args.outfile.suffix != ".npz":
-        raise ValueError(f"Invalid extension for outfile: {args.outfile.suffix}. Expected: `.npz`.")
-
+    args.outdir.mkdir(exist_ok=True)
     archives = sorted(rglob(args.inarchives, "*.zip"))
     bounds = dis_files_archives_to_exe_func_bounds_map(archives, args.num_workers)
 
@@ -222,10 +226,16 @@ def main():
     for i, (s, b) in enumerate(bounds.items()):
         if b is None:
             failed.add(s)
+            print(f"Failed: {s}")
+    bounds = {k: v for k, v in bounds.items() if k not in failed}
 
     print(f"Finished: {i + 1 - len(failed)} / {i + 1}")
 
-    np.savez_compressed(args.outfile, **bounds)
+    for i in range(256):
+        h = format(i, "02x")
+        f = args.outdir / f"{h}.npz"
+        d = {k: v for k, v in bounds.items() if k.startswith(h)}
+        np.savez_compressed(f, **d)
 
 
 def test():
