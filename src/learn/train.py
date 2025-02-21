@@ -2081,7 +2081,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             print(f"{masker.boundaries.get_stats(2)=}")
 
         # Figure out the batch size
-        @find_executable_batch_size(starting_batch_size=training_arguments.per_device_eval_batch_size)
+        @find_executable_batch_size(starting_batch_size=args.per_device_attr_batch_size)
         def determine_max_attribution_batch_size(batch_size: int) -> int:
             print(f"Running pseuodo attribution to determine max batch size {batch_size=}.")
 
@@ -2124,7 +2124,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
             return batch_size
 
-        per_device_attribute_batch_size = determine_max_attribution_batch_size() if args.auto_find_batch_size_and_gradient_accumulation_steps else training_arguments.per_device_eval_batch_size
+        per_device_attribute_batch_size = determine_max_attribution_batch_size() if args.auto_find_batch_size_and_gradient_accumulation_steps else args.per_device_attr_batch_size
         print(f"Performing attribution with batch size {per_device_attribute_batch_size=}.")
 
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down

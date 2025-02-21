@@ -169,6 +169,7 @@ class Args:
     xai_method: Optional[ExplanationMethod]       = field(default=None)
     xai_algorithm: Optional[ExplanationAlgorithm] = field(default=None)
     xai_chunk_size: Optional[int]                 = field(default=None)
+    per_device_attr_batch_size: int               = field(default=8)
 
     def __post_init__(self) -> None:
 

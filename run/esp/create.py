@@ -108,6 +108,7 @@ def get_body(
     warmup_ratio: float,
     tr_per_device_batch_size: int,
     vl_per_device_batch_size: int,
+    at_per_device_batch_size: int,
     gradient_accumulation_steps: int,
     eval_accumulation_steps: int,
     tf32: bool,
@@ -190,6 +191,7 @@ src/learn/train.py \\
 --save_total_limit=1 \\
 --per_device_train_batch_size={tr_per_device_batch_size} \\
 --per_device_eval_batch_size={vl_per_device_batch_size} \\
+--per_device_attr_batch_size={at_per_device_batch_size} \\
 --gradient_accumulation_steps={gradient_accumulation_steps} \\
 --eval_accumulation_steps={eval_accumulation_steps} \\
 {"--use_cpu" if gpu <= 0 else ""} \\
@@ -199,6 +201,7 @@ src/learn/train.py \\
 --bf16={bool_to_str(bf16)} \\
 --bf16_full_eval={bool_to_str(bf16_full_eval)} \\
 --gradient_checkpointing={bool_to_str(gradient_checkpointing)} \\
+--auto_find_batch_size_and_gradient_accumulation_steps=true \\
 """.replace("\n \\", "").strip() + "\n"
 )
 
@@ -702,6 +705,16 @@ class Configuration:
         raise NotImplementedError(f"{self.model_name=}")
 
     @property
+    def at_per_device_batch_size(self) -> int:
+        if self.model_name != ModelName.MAL:
+            raise NotImplementedError(f"{self.model_name=}")
+        if self.xai_algorithm == ExplanationAlgorithm.IGRD:
+            return 4
+        if self.xai_algorithm == ExplanationAlgorithm.GSHP:
+            return 32
+        return 256
+
+    @property
     def gradient_accumulation_steps(self) -> int:
         return self.tr_batch_size // (self.tr_per_device_batch_size * self.gpu)
 
@@ -879,6 +892,7 @@ def main():
             warmup_ratio=config.warmup_ratio,
             tr_per_device_batch_size=config.tr_per_device_batch_size,
             vl_per_device_batch_size=config.vl_per_device_batch_size,
+            at_per_device_batch_size=config.at_per_device_batch_size,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             eval_accumulation_steps=config.eval_accumulation_steps,
             tf32=config.tf32,
