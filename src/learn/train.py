@@ -2088,12 +2088,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         io_iteration = 0
         oh.attribution_path.mkdir(exist_ok=True, parents=True)
 
-        iterable = tqdm(
-            dataset["vl"].iter(training_arguments.per_device_eval_batch_size),
-            total=len(materials.files["vl"]) // training_arguments.per_device_eval_batch_size,
-            desc="Explaining...",
-        )
-        for batch in iterable:
+        total = len(materials.files["vl"]) // training_arguments.per_device_eval_batch_size + 1
+        iterable = tqdm(dataset["vl"].iter(training_arguments.per_device_eval_batch_size), total=total, desc="Explaining...")
+        t_start = time.time()
+        for step, batch in enumerate(iterable):
+            t_start_step = time.time()
+
             names  = batch.pop("name")
 
             inputs = data_collator(batch)
@@ -2133,6 +2133,18 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True)
                 io_iteration += 1
                 gc.collect()
+
+            if step % training_arguments.logging_steps == 0:
+                t_end_step = time.time()
+                d = {
+                    "step": step,
+                    "epoch": round(step / total, 2),
+                    "time_per_sample": round((t_end_step - t_start_step) / (training_arguments.logging_steps * training_arguments.per_device_eval_batch_size), 2),
+                    "time_total": round(t_end_step - t_start, 2),
+                }
+                print(d)
+
+        t_end = time.time()
 
         if embedding is not None:
             remove_interpretable_embedding_layer(model, embedding)
