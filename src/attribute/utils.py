@@ -58,7 +58,10 @@ class Masker:
         self.pad_token_id = pad_token_id
         self.special_token_ids = tuple(filter(lambda x: x is not None, (self.bos_token_id, self.eos_token_id, self.pad_token_id)))
 
-    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:  # pylint: disable=unused-argument
+    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:
+        if shas is not None and len(shas) != input_ids.shape[0]:
+            raise ValueError("The number of SHAs must match the number of input IDs.")
+
         mask = torch.full_like(input_ids, 1, dtype=torch.int64)
         for t in self.special_token_ids:
             mask[input_ids == t] = 0
@@ -75,7 +78,9 @@ class ChunkFeatureMasker(Masker):
         if chunk_size < 1:
             raise ValueError("Chunk size must be greater than 0.")
 
-    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:  # pylint: disable=unused-argument
+    def __call__(self, input_ids: Tensor, shas: Optional[list[str]] = None) -> Tensor:
+        if shas is not None and len(shas) != input_ids.shape[0]:
+            raise ValueError("The number of SHAs must match the number of input IDs.")
 
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
@@ -100,6 +105,9 @@ class AutoChunkFeatureMasker(Masker):
         self.stats = stats
 
     def __call__(self, input_ids: Tensor, shas: list[str] = None) -> Tensor:
+        if shas is not None and len(shas) != input_ids.shape[0]:
+            raise ValueError("The number of SHAs must match the number of input IDs.")
+
         masks = []
         for i, s in zip(input_ids, shas):
             chunk_size = self.get_chunk_size(i, s)
@@ -168,6 +176,8 @@ class FunctionFeatureMasker(Masker):
         self.allow_missing_shas = allow_missing_shas
 
     def __call__(self, input_ids: Tensor, shas: list[str] = None) -> Tensor:
+        if shas is not None and len(shas) != input_ids.shape[0]:
+            raise ValueError("The number of SHAs must match the number of input IDs.")
 
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
