@@ -206,6 +206,12 @@ def get_masker(
     chunk_size: Optional[int] = None,
     shas: Optional[list[str]] = None,
 ) -> FunctionFeatureMasker | ChunkFeatureMasker:
+    if any(x is None for x in (bos_token_id, eos_token_id, pad_token_id)):
+        raise ValueError(
+            "This may not be nessecary in the future, but for now, every model needs three special tokens. "
+            f"Got bos_token_id={bos_token_id}, eos_token_id={eos_token_id}, pad_token_id={pad_token_id}."
+        )
+
     if method == ExplanationMethod.CHK:
         return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
 
