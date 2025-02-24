@@ -33,6 +33,14 @@ from src.enums import ExplanationMethod, ExplanationAlgorithm
 from src.data.function_boundaries import EXEFuncBoundsMap
 
 
+REQUIRES_INTERPRETABLE_EMBEDDINGS = (
+    ExplanationAlgorithm.IGRD,
+    ExplanationAlgorithm.GSHP,
+    ExplanationAlgorithm.DLFT,
+    ExplanationAlgorithm.OCCL,
+)
+
+
 def chunk_mask(x: Tensor, size: int) -> Tensor:
     length = x.shape[0]
     if length < size:

@@ -177,7 +177,7 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker, FunctionFeatureMasker, ignore_warnings_decorator
+from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker, FunctionFeatureMasker, ignore_warnings_decorator, REQUIRES_INTERPRETABLE_EMBEDDINGS
 from src.data.loaders_core import (
     Materials,
     get_materials_esp_clm,
@@ -2065,7 +2065,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR, flush=True)
 
         embedding: Optional[InterpretableEmbeddingBase] = None
-        if args.xai_algorithm in (ExplanationAlgorithm.GSHP, ExplanationAlgorithm.IGRD, ExplanationAlgorithm.DLFT):
+        if args.xai_algorithm in REQUIRES_INTERPRETABLE_EMBEDDINGS:
             embedding = configure_interpretable_embedding_layer(model, "backbone.embeddings")
         print(f"{embedding=}")
 
