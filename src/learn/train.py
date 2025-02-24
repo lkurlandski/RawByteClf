@@ -2048,7 +2048,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 if oh.checkpoints_dir.exists():
                     model_name_or_path = oh.last_checkpoint
                 else:
-                    raise FileNotFoundError(f"A checkpoint was not found in output helper path.")
+                    raise FileNotFoundError("A checkpoint was not found in output helper path.")
         model_name_or_path = str(model_name_or_path)
 
         model = get_model(
@@ -2122,9 +2122,20 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
             get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
 
-            return batch_size
+            # TODO: implement something a bit better.
+            # if batch_size % 4 == 0:
+            #     return 3 * (batch_size // 4)
+            # if batch_size % 3 == 0:
+            #     return 2 * (batch_size // 3)
+            # if batch_size % 2 == 0:
+            #     return 1 * (batch_size // 2)
+            # return batch_size
+            return max(batch_size // 2, 1)
 
-        per_device_attribute_batch_size = determine_max_attribution_batch_size() if args.auto_find_batch_size_and_gradient_accumulation_steps else args.per_device_attr_batch_size
+
+        per_device_attribute_batch_size = args.per_device_attr_batch_size
+        if args.auto_find_batch_size_and_gradient_accumulation_steps:
+            per_device_attribute_batch_size = determine_max_attribution_batch_size()  # pylint: disable=no-value-for-parameter
         print(f"Performing attribution with batch size {per_device_attribute_batch_size=}.")
 
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down
@@ -2168,13 +2179,22 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             feature_mask = feature_mask.to(device) if feature_mask is not None else None
 
             attribs: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
-            attribs = list(attribs.to("cpu"))
 
+            # Move everything to the CPU.
+            labels         = labels.to("cpu") if labels is not None else None
+            input_ids      = input_ids.to("cpu") if input_ids is not None else None
+            inputs_embeds  = inputs_embeds.to("cpu") if inputs_embeds is not None else None
+            attention_mask = attention_mask.to("cpu") if attention_mask is not None else None
+            token_type_ids = token_type_ids.to("cpu") if token_type_ids is not None else None
+            feature_mask   = feature_mask.to("cpu") if feature_mask is not None else None
+            attribs        = attribs.to("cpu") if attribs is not None else None
+
+            # Store critical information as lists of Tensors (only the names are lists of lists!)
             all_names.extend(names)
-            all_labels.extend(labels)
-            all_attribs.extend(attribs)
+            all_labels.extend(list(labels))
+            all_attribs.extend(list(attribs))
             if masker is not None:
-                all_masks.extend(feature_mask)
+                all_masks.extend(list(feature_mask))
 
             mem = 0
             for z in (all_labels, all_attribs, all_masks if all_masks is not None else []):
@@ -2195,7 +2215,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 }
                 print(d)
 
-        t_end = time.time()
 
         if embedding is not None:
             remove_interpretable_embedding_layer(model, embedding)
