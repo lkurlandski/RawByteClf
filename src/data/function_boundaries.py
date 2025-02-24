@@ -8,6 +8,7 @@ from __future__ import annotations
 from array import array
 from argparse import ArgumentParser
 from collections import UserDict
+from copy import deepcopy
 from functools import partial
 from itertools import islice
 import json
@@ -135,24 +136,39 @@ class EXEFuncBoundsMap(UserDict):
         super().__init__(data)
 
     @classmethod
-    def from_files(cls, files: list[Path], shas: Optional[list[str]] = None, allow_missing_shas: bool = False) -> EXEFuncBoundsMap:
+    def from_files(cls, files: list[Path], shas: Optional[list[str]] = None, allow_missing_shas: bool = False, auto: bool = False) -> EXEFuncBoundsMap:
         """
         Load the function boundaries from a list of files.
 
         If no functions were found, the saved array might be empty, so we reshape to have two columns.
         """
 
+        if shas is not None:
+            shas = sorted(deepcopy(shas))
+
         data = {}
         for f in files:
             print(f"Loading {f} ... ", end="")
             t_initital = time.time()
+
+            # If auto is True, we assume two types of files: "function_boundaries.npz" and "function_boundaries/hh.npz"
+            # where hh are hex values indicating which files are contained in the archive. This basically let's us
+            # slightly optimize the search within the npz file by only checking a subset of the shas.
+            if auto and shas is not None:
+                if f.name == "function_boundaries.npz":
+                    shas_to_look_for = shas
+                elif f.parent.name == "function_boundaries":
+                    h = f.stem
+                    shas_to_look_for = [s for s in shas if s.startswith(h)]
+                else:
+                    raise RuntimeError(f"Unexpected file: {f}")
 
             # Load the data from the file. If shas is provided, only load the data for those shas.
             # Since np.load returns a lazy map, this greatly reduces the latency and memory usage.
             # The __init__ method is responsible for ensuring that all shas are present.
             d: dict[str, np.ndarray] = np.load(f, mmap_mode=None)
             if shas is not None:
-                d = {s: d[s] for s in shas if s in d}
+                d = {s: d[s] for s in shas_to_look_for if s in d}
             else:
                 d = dict(d)
 
@@ -172,8 +188,8 @@ class EXEFuncBoundsMap(UserDict):
             if f.is_file():
                 files.append(f)
             else:
-                files.extend(list(rglob(f, "*.npz")))
-        return cls.from_files(files, shas, allow_missing_shas)
+                files.extend(list(f.rglob("*.npz")))
+        return cls.from_files(files, shas, allow_missing_shas, auto=True)
 
     def get_stats(self, r: Optional[int] = None) -> dict[str, float]:
         """
