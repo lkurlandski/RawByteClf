@@ -188,10 +188,33 @@ class FunctionFeatureMasker(Masker):
             if self.allow_missing_shas and s not in self.boundaries:
                 continue
             for j, (start, end) in enumerate(self.boundaries[s], 2):
-                mask[i, start + offset : end + offset] = j
+                # Figure out which positions have not yet been set. If any have been set,
+                # then there are overlapping functions and we need to handle them accordingly.
+                # If some positions have already been set, we just set the unset ones and move on.
+                # If all positions have already been set, we could just skip this function, decrement j,
+                # then move on, but other parts of the codebase aren't going to know about this situation,
+                # which could cause issues. So for now, we'll just consider these samples as completely broken.
+                # An example of a problematic sample is 91e06aa60176b1a5506e3f875eb7d80329240e34de36bacb8a5606f9f3c4bdb
+                # at j=2516 and j=2534.
+                unset = mask[i, start + offset : end + offset] == 1
+                if not torch.all(unset):
+                    if torch.any(unset):
+                        warnings.warn(f"Overlapping (partial) function boundaries detected ({s=} {j=} {start=} {end=})!")
+                        mask[i, start + offset : end + offset][unset] = j
+                    else:
+                        warnings.warn(f"Overlapping (total) function boundaries detected ({s=} {j=} {start=} {end=})!")
+                        mask[i,:] = 1
+                        break
+                else:
+                    mask[i, start + offset : end + offset] = j
 
         for t in self.special_token_ids:
             mask[input_ids == t] = 0
+
+        for i in range(len(shas)):
+            u = mask[i,:].unique().tolist()
+            if set(u) != set(range(len(u))):
+                raise RuntimeError("The mask indices are not consecutive.")
 
         assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
 
@@ -239,7 +262,12 @@ def apply_feature_mask_slow(X: Tensor, M: Tensor) -> Tensor:
     Y = torch.zeros_like(X)
 
     for i, (x, m) in enumerate(zip(X, M)):
-        n = m.unique().numel()
+        u = m.unique()
+        n = u.numel()
+
+        if set(u.tolist()) != set(range(len(u))):
+            raise RuntimeError("The mask indices are not consecutive.")
+
         s = torch.zeros(n, dtype=x.dtype, device=x.device)
         s.scatter_add_(0, m, x)
         y = s[m]
@@ -256,7 +284,11 @@ def apply_feature_mask_fast(X: torch.Tensor, M: torch.Tensor) -> torch.Tensor:
     assert M.dim() == 2
 
     b = X.shape[0]
-    n = M.unique().numel()
+    u = M.unique()
+    n = u.numel()
+
+    if set(u.tolist()) != set(range(len(u))):
+        raise RuntimeError("The mask indices are not consecutive.")
 
     S = torch.zeros(b, n, dtype=X.dtype, device=X.device)
     O = torch.arange(b, device=X.device).unsqueeze(1) * n
