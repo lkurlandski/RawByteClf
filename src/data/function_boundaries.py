@@ -188,7 +188,7 @@ class EXEFuncBoundsMap(UserDict):
             if f.is_file():
                 files.append(f)
             else:
-                files.extend(list(f.rglob("*.npz")))
+                files.extend(sorted(f.rglob("*.npz")))
         return cls.from_files(files, shas, allow_missing_shas, auto=True)
 
     def get_stats(self, r: Optional[int] = None) -> dict[str, float]:
