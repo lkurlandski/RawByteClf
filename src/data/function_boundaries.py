@@ -71,7 +71,7 @@ def dis_file_to_exe_func_bounds(content: Path | str | bytes, errors: Literal["ra
 
             final = body[-1].split("\t")
             addr  = int(final[1].strip(), 16)
-            leng  = len(final[3].strip().split(" "))
+            leng  = len(final[3].strip().split(" ")) if len(final) == 4 else 0
             upper = addr + leng
 
             bounds.append([lower, upper])
@@ -82,6 +82,15 @@ def dis_file_to_exe_func_bounds(content: Path | str | bytes, errors: Literal["ra
 
     except Exception:  # pylint: disable=broad-except
         if errors == "raise":
+            try:
+                print("func=\n********\n", func, "\n********\n", sep="", end="")
+                print("signature=\n********\n", signature, "\n********\n", sep="", end="")
+                print("first=\n********\n", first, "\n********\n", sep="", end="")
+                print("lower=\n********\n", lower, "\n********\n", sep="", end="")
+                print("final=\n********\n", final, "\n********\n", sep="", end="")
+                print("upper=\n********\n", upper, "\n********\n", sep="", end="")
+            except Exception:
+                pass
             raise
         return None
 
