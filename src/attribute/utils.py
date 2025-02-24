@@ -19,6 +19,7 @@ from captum.attr import (
     KernelShap,
     FeatureAblation,
     DeepLift,
+    ShapleyValueSampling,
 )
 import numpy as np
 import torch
@@ -302,6 +303,19 @@ def apply_feature_mask_fast(X: torch.Tensor, M: torch.Tensor) -> torch.Tensor:
 apply_feature_mask = apply_feature_mask_fast
 
 
+def convert_to_overlapping_feature_mask(mask: Tensor) -> Tensor:
+    assert mask.dim() == 2
+
+    mask = mask.clone()
+
+    offset = 0
+    for i in range(len(mask)):
+        mask[i,:] += offset
+        offset = mask[i].max().item() + 1
+
+    return mask
+
+
 def ignore_warnings_decorator(*filter_args, **filter_kwargs):
 
     def decorator(func):
@@ -404,18 +418,29 @@ class WrapperWithInputEmbeds(Module):
 
 def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrainedModel]) -> Attribution:
 
-    if xai_algorithm == ExplanationAlgorithm.IGRD:
-        return IntegratedGradients(forward_func_with_inputs_embeds)
-    if xai_algorithm == ExplanationAlgorithm.DLFT:
-        return DeepLift(WrapperWithInputEmbeds(model))
-    if xai_algorithm == ExplanationAlgorithm.GSHP:
-        return GradientShap(forward_func_with_inputs_embeds)
+    # Surrogate methods.
     if xai_algorithm == ExplanationAlgorithm.LIME:
         return Lime(forward_func_with_input_ids)
-    if xai_algorithm == ExplanationAlgorithm.FABL:
-        return FeatureAblation(forward_func_with_input_ids)
     if xai_algorithm == ExplanationAlgorithm.KSHP:
         return KernelShap(forward_func_with_input_ids)
+    if xai_algorithm == ExplanationAlgorithm.ANCH:
+        raise NotImplementedError(f"Explanation algorithm {xai_algorithm} not supported yet.")
+
+    # Gradient methods.
+    if xai_algorithm == ExplanationAlgorithm.IGRD:
+        return IntegratedGradients(forward_func_with_inputs_embeds)
+    if xai_algorithm == ExplanationAlgorithm.GSHP:
+        return GradientShap(forward_func_with_inputs_embeds)
+    if xai_algorithm == ExplanationAlgorithm.DLFT:
+        return DeepLift(WrapperWithInputEmbeds(model))
+
+    # Perturbation methods.
+    if xai_algorithm == ExplanationAlgorithm.FABL:
+        return FeatureAblation(forward_func_with_input_ids)
+    if xai_algorithm == ExplanationAlgorithm.SSHP:
+        return ShapleyValueSampling(forward_func_with_input_ids)
+    if xai_algorithm == ExplanationAlgorithm.OCCL:
+        raise NotImplementedError(f"Explanation algorithm {xai_algorithm} not supported yet.")
 
     raise TypeError(f"Explanation algorithm {xai_algorithm} not supported.")
 
@@ -434,36 +459,7 @@ def get_attribution(
 
     is_multilabel = labels.dim() == 2
 
-    if isinstance(alg, IntegratedGradients):
-        apply_pooling = True
-        apply_masking = feature_mask is not None
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-        )
-
-    if isinstance(alg, DeepLift):
-        apply_pooling = True
-        apply_masking = feature_mask is not None
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(labels,) if is_multilabel else None,
-        )
-
-    if isinstance(alg, GradientShap):
-        apply_pooling = True
-        apply_masking = feature_mask is not None
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-        )
-
+    # Surrogate methods.
     if isinstance(alg, Lime):
         apply_pooling = False
         apply_masking = False
@@ -474,7 +470,6 @@ def get_attribution(
             additional_forward_args=(model, labels) if is_multilabel else (model,),
             feature_mask=feature_mask,
         )
-
     if isinstance(alg, KernelShap):
         apply_pooling = False
         apply_masking = False
@@ -486,6 +481,36 @@ def get_attribution(
             feature_mask=feature_mask,
         )
 
+    # Gradient methods.
+    if isinstance(alg, IntegratedGradients):
+        apply_pooling = True
+        apply_masking = feature_mask is not None
+        attribs = alg.attribute(
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+        )
+    if isinstance(alg, GradientShap):
+        apply_pooling = True
+        apply_masking = feature_mask is not None
+        attribs = alg.attribute(
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+        )
+    if isinstance(alg, DeepLift):
+        apply_pooling = True
+        apply_masking = feature_mask is not None
+        attribs = alg.attribute(
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(labels,) if is_multilabel else None,
+        )
+
+    # Perturbation methods.
     if isinstance(alg, FeatureAblation):
         apply_pooling = False
         apply_masking = False
@@ -495,6 +520,24 @@ def get_attribution(
             target=None if is_multilabel else labels,
             additional_forward_args=(model, labels) if is_multilabel else (model,),
             feature_mask=feature_mask,
+        )
+    if isinstance(alg, ShapleyValueSampling):
+        if input_ids.shape[0] > 1:
+            warnings.warn(
+                "ShapleyValueSampling does some weird stuff with multiple samples. "
+                f"Got {input_ids.shape[0]} samples. Highly advice you run this with a batch size of 1."
+            )
+            feature_mask = convert_to_overlapping_feature_mask(feature_mask)
+        apply_pooling = False
+        apply_masking = False
+        attribs = alg.attribute(
+            input_ids,
+            baselines=0,
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+            feature_mask=feature_mask,
+            n_samples=128,
+            perturbations_per_eval=128,
         )
 
     if apply_pooling:
