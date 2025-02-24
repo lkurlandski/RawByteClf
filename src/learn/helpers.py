@@ -170,6 +170,8 @@ class Args:
     xai_algorithm: Optional[ExplanationAlgorithm] = field(default=None)
     xai_chunk_size: Optional[int]                 = field(default=None)
     per_device_attr_batch_size: int               = field(default=8)
+    xai_clean: bool                               = field(default=False)
+    xai_continue: bool                            = field(default=False)
 
     def __post_init__(self) -> None:
 
@@ -257,6 +259,8 @@ class Args:
         # Attribution stuff.
         self.xai_method    = str_to_type(self.xai_method, ExplanationMethod)
         self.xai_algorithm = str_to_type(self.xai_algorithm, ExplanationAlgorithm)
+        self.xai_clean     = str_to_bool(self.xai_clean)
+        self.xai_continue  = str_to_bool(self.xai_continue)
 
 
 class OutputHelper:

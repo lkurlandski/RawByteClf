@@ -2149,6 +2149,21 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         io_iteration = 0
         oh.attribution_path.mkdir(exist_ok=True, parents=True)
 
+        if args.xai_clean:
+            for f in oh.attribution_path.iterdir():
+                f.unlink()
+
+        skip = set()
+        if args.xai_continue:
+            files = list(oh.attribution_path.rglob("attribs.*.pt"))
+            if files:
+                file = get_highest_path(files, lstrip="attribs.", rstrip=".pt")
+                io_iteration = int(file.name.replace("attribs.", "").replace(".pt", "")) + 1
+                for f in oh.attribution_path.rglob("names.*.txt"):
+                    if int(f.name.replace("names.", "").replace(".txt", "")) < io_iteration:
+                        skip |= set(f.read_text().splitlines())
+                print(f"Continuing from iteration {io_iteration} with {len(skip)} files skipped.")
+
         total = len(materials.files["vl"]) // per_device_attribute_batch_size + 1
         iterable = tqdm(dataset["vl"].iter(per_device_attribute_batch_size), total=total, desc="Explaining...")
         t_start = time.time()
@@ -2156,6 +2171,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             t_start_step = time.time()
 
             names  = batch.pop("name")
+            if all(n in skip for n in names):
+                continue
 
             inputs = data_collator(batch)
 
