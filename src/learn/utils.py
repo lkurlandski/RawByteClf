@@ -147,6 +147,12 @@ def should_reduce_batch_size(exception: Exception) -> bool:
 
 def clear_cuda_caches(synchronize: bool = True, no_grad: bool = False, verbose: bool = False):
 
+    if not torch.cuda.is_available():
+        gc.collect()
+        if verbose:
+            print("CUDA unavailable. Ran garbage collector.")
+        return
+
     def _clear_cuda_caches():
         gc.collect()
         torch.cuda.empty_cache()
