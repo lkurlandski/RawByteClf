@@ -169,6 +169,7 @@ src/learn/train.py \\
 --xai_method={xai_method.value} \\
 --xai_algorithm={xai_algorithm.value} \\
 {f"--xai_chunk_size={xai_chunk_size}" if xai_chunk_size is not None else ""} \\
+--xai_continue \\
 --output_dir='/tmp' \\
 --save_strategy='{"epoch" if save_steps is None else "steps"}' \\
 --eval_strategy='{"epoch" if eval_steps is None else "steps"}' \\
@@ -372,6 +373,12 @@ class Configuration:
 
     @property
     def tim(self) -> str:
+        """
+        Time for training and validating models.
+        """
+        return self.time_for_attribution
+        # pylint: disable=unreachable
+
         if self.model_size != ModelSize.CO:
             raise NotImplementedError()
 
@@ -455,6 +462,28 @@ class Configuration:
         return seconds_to_slurm_time(s_tr + s_vl)
 
     @property
+    def time_for_attribution(self) -> str:
+        if self.model_name != ModelName.MAL:
+            raise NotImplementedError(f"{self.model_name=}")
+        if self.max_length != 2 ** 20:
+            raise NotImplementedError(f"{self.max_length}")
+
+        if self.xai_algorithm == ExplanationAlgorithm.LIME:
+            return seconds_to_slurm_time(3600 * 2)
+        if self.xai_algorithm == ExplanationAlgorithm.KSHP:
+            return seconds_to_slurm_time(3600 * 3)
+        if self.xai_algorithm == ExplanationAlgorithm.IGRD:
+            return seconds_to_slurm_time(3600 * 1.5)
+        if self.xai_algorithm == ExplanationAlgorithm.GSHP:
+            return seconds_to_slurm_time(3600 * 1.5)
+        if self.xai_algorithm == ExplanationAlgorithm.FABL:
+            return seconds_to_slurm_time(3600 * 24)
+        if self.xai_algorithm == ExplanationAlgorithm.SSHP:
+            return seconds_to_slurm_time(3600 * 48)
+
+        raise RuntimeError()
+
+    @property
     def cpu(self) -> int:
         if self.streaming:
             return 4 * self.gpu
@@ -462,6 +491,9 @@ class Configuration:
 
     @property
     def mem(self) -> int:
+        return self.mem_for_attribution
+        # pylint: disable=unreachable
+
         if self.streaming:
             return bytes_to_slurm_mem(90 * self.gpu * GB)
 
@@ -472,6 +504,10 @@ class Configuration:
         b = t * 8
         b = b + (16 * GB)
         return bytes_to_slurm_mem(b)
+
+    @property
+    def mem_for_attribution(self) -> str:
+        return "48G"
 
     @property
     def gpu(self) -> int:
@@ -624,7 +660,7 @@ class Configuration:
         if self.gpu == 0:
             return 0
         # When using byte-level embeddings, we don't use tokenizers, so we can use multiple loaders.
-        if self.streaming and not self.vocab_size == 256:
+        if self.streaming and self.vocab_size != 256:
             return 0
         return self.cpu // self.gpu - 1
 
@@ -708,10 +744,19 @@ class Configuration:
     def at_per_device_batch_size(self) -> int:
         if self.model_name != ModelName.MAL:
             raise NotImplementedError(f"{self.model_name=}")
+        if self.max_length != 2 ** 20:
+            raise NotImplementedError(f"{self.max_length}")
+
+        if self.xai_algorithm == ExplanationAlgorithm.LIME:
+            return 128
+        if self.xai_algorithm == ExplanationAlgorithm.KSHP:
+            return 128
         if self.xai_algorithm == ExplanationAlgorithm.IGRD:
-            return 4
+            return 2
         if self.xai_algorithm == ExplanationAlgorithm.GSHP:
-            return 32
+            return 16
+        if self.xai_algorithm == ExplanationAlgorithm.FABL:
+            return 128
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
             return 1
         return 256
@@ -851,7 +896,7 @@ def main():
         Task,
         [None, Task.CLM, Task.MLM],
         [ExplanationMethod.FUN, ExplanationMethod.NUM],
-        list(ExplanationAlgorithm),
+        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
         [None],
         (0,),
     )
