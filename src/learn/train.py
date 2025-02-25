@@ -2154,7 +2154,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 f.unlink()
 
         skip = set()
-        if args.xai_continue:
+        if args.xai_continue and oh.attribution_path.exists():
             files = list(oh.attribution_path.rglob("attribs.*.pt"))
             if files:
                 file = get_highest_path(files, lstrip="attribs.", rstrip=".pt")
