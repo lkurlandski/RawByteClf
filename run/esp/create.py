@@ -712,6 +712,8 @@ class Configuration:
             return 4
         if self.xai_algorithm == ExplanationAlgorithm.GSHP:
             return 32
+        if self.xai_algorithm == ExplanationAlgorithm.SSHP:
+            return 1
         return 256
 
     @property
