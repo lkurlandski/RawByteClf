@@ -61,13 +61,13 @@ class ExplanationAlgorithm(Enum):
 
     LIME = "lime"  # LIME                   # Surrogate
     KSHP = "kshp"  # Kernel SHAP            # Surrogate
-    ANCH = "anch"  # Anchors                # Surrogate
+    # ANCH = "anch"  # Anchors                # Surrogate
     IGRD = "igrd"  # Integrated Gradients   # Gradient
     GSHP = "gshp"  # Gradient SHAP          # Gradient
     DLFT = "dlft"  # DeepLIFT               # Gradient
     FABL = "fabl"  # Feature Ablation       # Perturbation
     SSHP = "sshp"  # Sampling SHAP          # Perturbation
-    OCCL = "occl"  # Occlusion              # Perturbation
+    # FPRM = "fprm"  # Feature Permutation    # Perturbation
 
 
 class ExplanationMethod(Enum):

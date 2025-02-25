@@ -37,7 +37,6 @@ REQUIRES_INTERPRETABLE_EMBEDDINGS = (
     ExplanationAlgorithm.IGRD,
     ExplanationAlgorithm.GSHP,
     ExplanationAlgorithm.DLFT,
-    ExplanationAlgorithm.OCCL,
 )
 
 
@@ -431,8 +430,6 @@ def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrain
         return Lime(forward_func_with_input_ids)
     if xai_algorithm == ExplanationAlgorithm.KSHP:
         return KernelShap(forward_func_with_input_ids)
-    if xai_algorithm == ExplanationAlgorithm.ANCH:
-        raise NotImplementedError(f"Explanation algorithm {xai_algorithm} not supported yet.")
 
     # Gradient methods.
     if xai_algorithm == ExplanationAlgorithm.IGRD:
@@ -447,8 +444,6 @@ def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrain
         return FeatureAblation(forward_func_with_input_ids)
     if xai_algorithm == ExplanationAlgorithm.SSHP:
         return ShapleyValueSampling(forward_func_with_input_ids)
-    if xai_algorithm == ExplanationAlgorithm.OCCL:
-        raise NotImplementedError(f"Explanation algorithm {xai_algorithm} not supported yet.")
 
     raise TypeError(f"Explanation algorithm {xai_algorithm} not supported.")
 
