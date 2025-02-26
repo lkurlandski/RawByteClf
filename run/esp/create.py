@@ -468,20 +468,32 @@ class Configuration:
         if self.max_length != 2 ** 20:
             raise NotImplementedError(f"{self.max_length}")
 
-        if self.xai_algorithm == ExplanationAlgorithm.LIME:
-            return seconds_to_slurm_time(3600 * 2)
-        if self.xai_algorithm == ExplanationAlgorithm.KSHP:
-            return seconds_to_slurm_time(3600 * 3)
-        if self.xai_algorithm == ExplanationAlgorithm.IGRD:
-            return seconds_to_slurm_time(3600 * 1.5)
-        if self.xai_algorithm == ExplanationAlgorithm.GSHP:
-            return seconds_to_slurm_time(3600 * 1.5)
-        if self.xai_algorithm == ExplanationAlgorithm.FABL:
-            return seconds_to_slurm_time(3600 * 24)
-        if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-            return seconds_to_slurm_time(3600 * 48)
+        if self.xai_method == ExplanationMethod.FUN:
+            f_0 = 1
+        if self.xai_method == ExplanationMethod.NUM:
+            f_0 = 2
 
-        raise RuntimeError()
+        if self.task == Task.DET:
+            f_1 = 8322  / 8322
+        if self.task == Task.FAM:
+            f_1 = 12698 / 8322
+        if self.task == Task.BEH:
+            f_1 = 3727  / 8322
+
+        if self.xai_algorithm == ExplanationAlgorithm.LIME:
+            h = 2
+        if self.xai_algorithm == ExplanationAlgorithm.KSHP:
+            h = 3
+        if self.xai_algorithm == ExplanationAlgorithm.IGRD:
+            h = 1.5
+        if self.xai_algorithm == ExplanationAlgorithm.GSHP:
+            h = 1.5
+        if self.xai_algorithm == ExplanationAlgorithm.FABL:
+            h = 24
+        if self.xai_algorithm == ExplanationAlgorithm.SSHP:
+            h = 120
+
+        return seconds_to_slurm_time(3600 * h * f_0 * f_1)
 
     @property
     def cpu(self) -> int:
