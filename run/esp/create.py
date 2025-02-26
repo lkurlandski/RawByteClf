@@ -109,6 +109,7 @@ def get_body(
     tr_per_device_batch_size: int,
     vl_per_device_batch_size: int,
     at_per_device_batch_size: int,
+    auto_find_batch_size_and_gradient_accumulation_steps: bool,
     gradient_accumulation_steps: int,
     eval_accumulation_steps: int,
     tf32: bool,
@@ -202,7 +203,7 @@ src/learn/train.py \\
 --bf16={bool_to_str(bf16)} \\
 --bf16_full_eval={bool_to_str(bf16_full_eval)} \\
 --gradient_checkpointing={bool_to_str(gradient_checkpointing)} \\
---auto_find_batch_size_and_gradient_accumulation_steps=true \\
+{"--auto_find_batch_size_and_gradient_accumulation_steps" if auto_find_batch_size_and_gradient_accumulation_steps else ""} \\
 """.replace("\n \\", "").strip() + "\n"
 )
 
@@ -471,7 +472,7 @@ class Configuration:
         if self.xai_method == ExplanationMethod.FUN:
             f_0 = 1
         if self.xai_method == ExplanationMethod.NUM:
-            f_0 = 2
+            f_0 = 1
 
         if self.task == Task.DET:
             f_1 = 8322  / 8322
@@ -491,7 +492,7 @@ class Configuration:
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
             h = 24
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-            h = 120
+            h = 24
 
         return seconds_to_slurm_time(3600 * h * f_0 * f_1)
 
@@ -770,8 +771,12 @@ class Configuration:
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
             return 128
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-            return 1
+            return 128
         return 256
+
+    @property
+    def auto_find_batch_size_and_gradient_accumulation_steps(self) -> bool:
+        return False
 
     @property
     def gradient_accumulation_steps(self) -> int:
@@ -952,6 +957,7 @@ def main():
             tr_per_device_batch_size=config.tr_per_device_batch_size,
             vl_per_device_batch_size=config.vl_per_device_batch_size,
             at_per_device_batch_size=config.at_per_device_batch_size,
+            auto_find_batch_size_and_gradient_accumulation_steps=config.auto_find_batch_size_and_gradient_accumulation_steps,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             eval_accumulation_steps=config.eval_accumulation_steps,
             tf32=config.tf32,
