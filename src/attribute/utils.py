@@ -525,27 +525,31 @@ def get_attribution(
             feature_mask=feature_mask,
         )
     if isinstance(alg, ShapleyValueSampling):
-        if input_ids.shape[0] > 1:
-            warnings.warn(
-                "ShapleyValueSampling does some weird stuff with multiple samples. "
-                f"Got {input_ids.shape[0]} samples. Highly advice you run this with a batch size of 1."
-            )
-            feature_mask = convert_to_overlapping_feature_mask(feature_mask)
         apply_pooling = False
         apply_masking = False
-        attribs = alg.attribute(
-            input_ids,
-            baselines=0,
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-            feature_mask=feature_mask,
-            n_samples=128,
-            perturbations_per_eval=128,
-        )
+
+        tasks   = []
+        results = []
+        for i in range(input_ids.shape[0]):
+            task = torch.jit.fork(alg.attribute,
+                input_ids[i].unsqueeze(0),
+                baselines=0,
+                target=None if is_multilabel else labels[i].unsqueeze(0),
+                additional_forward_args=(model, labels[i].unsqueeze(0)) if is_multilabel else (model,),
+                feature_mask=feature_mask[i].unsqueeze(0) if feature_mask is not None else None,
+            )
+            tasks.append(task)
+        for task in tasks:
+            results.append(torch.jit.wait(task))
+
+        attribs = torch.cat(results, axis=0)
 
     if apply_pooling:
         attribs = attribs.mean(dim=2)
     if apply_masking:
         attribs = apply_feature_mask(attribs, feature_mask)
+
+    if tuple(attribs.shape) != (tuple(input_ids.shape)):
+        raise RuntimeError(attribs.shape)
 
     return attribs
