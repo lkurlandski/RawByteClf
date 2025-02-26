@@ -2227,6 +2227,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 d = {
                     "step": step,
                     "epoch": round(step / total, 2),
+                    "io_iteration": io_iteration,
                     "time_per_sample": round((t_end_step - t_start_step) / (training_arguments.logging_steps * per_device_attribute_batch_size), 2),
                     "time_total": round(t_end_step - t_start, 2),
                 }
