@@ -2083,7 +2083,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # Figure out the batch size
         @find_executable_batch_size(starting_batch_size=args.per_device_attr_batch_size)
         def determine_max_attribution_batch_size(batch_size: int) -> int:
-            print(f"Running pseuodo attribution to determine max batch size {batch_size=}.")
+            print(f"Running pseudo attribution to determine max batch size {batch_size=}.")
 
             input_ids = torch.randint(len(tokenizer.all_special_ids), len(tokenizer), (batch_size, args.max_length - 2)).to(device)
             input_ids[:, 0]  = tokenizer.bos_token_id
