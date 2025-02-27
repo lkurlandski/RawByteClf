@@ -555,6 +555,8 @@ def get_attribution(
                 attribs.append(attrib)
             attribs = torch.cat(attribs, axis=0)
         else:
+            if os.environ.get("NOOVERLAP_SHAPLEY_VALUE_SAMPLING", "0") == "1":
+                feature_mask = convert_to_overlapping_feature_mask(feature_mask)
             attribs = alg.attribute(
                 input_ids,
                 baselines=0,
