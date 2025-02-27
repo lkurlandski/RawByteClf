@@ -492,7 +492,7 @@ class Configuration:
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
             h = 24
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-            h = 24
+            h = 36  # TODO: refine.
 
         return seconds_to_slurm_time(3600 * h * f_0 * f_1)
 
@@ -771,8 +771,9 @@ class Configuration:
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
             return 128
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-            return 128
-        return 256
+            return 8
+
+        raise RuntimeError()
 
     @property
     def auto_find_batch_size_and_gradient_accumulation_steps(self) -> bool:

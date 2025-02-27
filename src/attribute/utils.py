@@ -7,6 +7,7 @@ from collections import namedtuple
 from functools import wraps
 import json
 import math
+import os
 import sys
 from typing import Optional
 import warnings
@@ -525,24 +526,44 @@ def get_attribution(
             feature_mask=feature_mask,
         )
     if isinstance(alg, ShapleyValueSampling):
+        # This algorithm has complexity O(num_features * n_samples * batch_size / perturbations_per_eval).
+        # The number of features is the number of unique indices in the feature_mask.
+        # If we convert the feature_mask into a non-overlapping one with convert_to_overlapping_feature_mask,
+        # we wind up with num_features=batch_size * num_features_per_sample. This is a problem because
+        # then the complexity is O(batch_size^2 * num_features_per_sample * n_samples / perturbations_per_eval).
+        # In other words, increasing the batch_size to improve performance will actually make it performance worse.
+        # Upon deeper investigation, I'm fairly confident that converting to a non-overlapping feature mask is
+        # not necessary. The features indicated by the same mask value will be perturbed together, but since
+        # the model has no interaction between samples of a batch (dropout and batch norm are disabled during eval),
+        # this ultimately does not matter.
         apply_pooling = False
         apply_masking = False
-
-        tasks   = []
-        results = []
-        for i in range(input_ids.shape[0]):
-            task = torch.jit.fork(alg.attribute,
-                input_ids[i].unsqueeze(0),
+        n_samples = 32
+        perturbations_per_eval = 32
+        if os.environ.get("BATCH_SHAPLEY_VALUE_SAMPLING", "1") == "0":
+            attribs = []
+            for i in range(input_ids.shape[0]):
+                attrib = alg.attribute(
+                    input_ids[i].unsqueeze(0),
+                    baselines=0,
+                    target=None if is_multilabel else labels[i].unsqueeze(0),
+                    additional_forward_args=(model, labels[i].unsqueeze(0)) if is_multilabel else (model,),
+                    feature_mask=feature_mask[i].unsqueeze(0) if feature_mask is not None else None,
+                    n_samples=n_samples,
+                    perturbations_per_eval=perturbations_per_eval,
+                )
+                attribs.append(attrib)
+            attribs = torch.cat(attribs, axis=0)
+        else:
+            attribs = alg.attribute(
+                input_ids,
                 baselines=0,
-                target=None if is_multilabel else labels[i].unsqueeze(0),
-                additional_forward_args=(model, labels[i].unsqueeze(0)) if is_multilabel else (model,),
-                feature_mask=feature_mask[i].unsqueeze(0) if feature_mask is not None else None,
+                target=None if is_multilabel else labels,
+                additional_forward_args=(model, labels) if is_multilabel else (model,),
+                feature_mask=feature_mask,
+                n_samples=n_samples,
+                perturbations_per_eval=perturbations_per_eval,
             )
-            tasks.append(task)
-        for task in tasks:
-            results.append(torch.jit.wait(task))
-
-        attribs = torch.cat(results, axis=0)
 
     if apply_pooling:
         attribs = attribs.mean(dim=2)
