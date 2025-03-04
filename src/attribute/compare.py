@@ -5,8 +5,10 @@ Conduct analysis to compare the attributions of different XAI methods and algori
 from collections import namedtuple
 from collections.abc import Iterable, Generator
 from copy import deepcopy
+import hashlib
 from itertools import chain
 from dataclasses import dataclass
+import multiprocessing as mp
 import os
 from pathlib import Path
 import sys
@@ -124,6 +126,16 @@ def get_function_annotations_from_attribution_path(path: Path) -> Generator[Anno
     yield from get_function_annotations_from_files(names, labels, attribs, masks)
 
 
+def get_function_annotations_from_attribution_paths(paths: list[Path]) -> Generator[list[Annotations], None, None]:
+    iterables = [get_function_annotations_from_attribution_path(path) for path in paths]
+    while True:
+        try:
+            out = [next(it) for it in iterables]
+            yield out
+        except StopIteration:
+            break
+
+
 def kendallw_without_ties(R: np.ndarray) -> SignificanceResult:
     """
     Implementation of Kendall's Coefficient for Concordance (Kendall's W).
@@ -201,17 +213,24 @@ def kendallw_with_ties(R: np.ndarray) -> SignificanceResult:
 kendallw = kendallw_with_ties
 
 
-def main():
-    root = Path("./output/test/lift_level--nop/lift_level_ddp--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--wdl/vocab_size--256/max_length--65536/model_name--malconv/channels--256/stride--64/kernel_size--64/embedding_size--8/head_num_hidden_layers--1/head_hidden_size--128/task--det/weighted_loss--none/split_mode--none/max_grad_norm--1.0/weight_decay--0.01/learning_rate--0.001/lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/num_train_epochs--5.0/world_size--1/per_device_train_batch_size--64/gradient_accumulation_steps--1/tf32--False/fp16--False/bf16--False/seed--0/results/attributions/")
+def kendalltau(R: np.ndarray) -> SignificanceResult:
+    assert R.shape[1] == 2
+    res = stats.kendalltau(R[:,0], R[:,1], alternative=ALTERNATIVE)
+    return SignificanceResult(res[0], res[1])
 
-    # Ensure that every XAI method and algorithm has the same names in the same order.
-    print("Checking integrity of samples across XAI methods and algorithms.")
+
+####################################################################################################
+# Main
+####################################################################################################
+
+
+def verify_names_are_consistent(xai_methods: Iterable[ExplanationMethod], xai_algorithms: Iterable[ExplanationAlgorithm], root: Path, verbose: bool = True) -> list[str]:
     names = None
     index = None
-    for xai_method in (ExplanationMethod.NUM, ExplanationMethod.FUN):
-        for xai_algorithm in ExplanationAlgorithm:
+    for xai_method in xai_methods:
+        for xai_algorithm in xai_algorithms:
             index = (xai_method, xai_algorithm) if index is None else index
-            path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--4096"
+            path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--none"
             if not path.exists():
                 raise FileNotFoundError(path)
             files = [path / "names.txt"]
@@ -224,46 +243,201 @@ def main():
             names = deepcopy(names_) if names is None else names
             if names != names_:
                 raise ValueError(f"Samples analized in {(xai_method.value, xai_algorithm.value)} do not match those from {index}.")
-            print(f"\tMethod={xai_method.value}, Algorithm={xai_algorithm.value}, Samples={len(names)}")
+            if verbose:
+                print(f"\tMethod={xai_method.value}, Algorithm={xai_algorithm.value}, Samples={len(names)}")
+    return names
 
 
-    for xai_method in tqdm((ExplanationMethod.NUM, ExplanationMethod.FUN)):
-        # Array of (n_samples, n_algorithms, n_interpretable_features) with the rank of each feature.
-        A = np.full((len(names), len(ExplanationAlgorithm), 2 ** 20), np.nan)
-        lengths = np.empty(len(names), dtype=int)
-        for i, xai_algorithm in tqdm(enumerate(ExplanationAlgorithm), leave=False):
-            path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--4096"
-            iterator = get_function_annotations_from_attribution_path(path)
-            for j, annotation in tqdm(enumerate(iterator), leave=False, total=len(names)):
-                ranks = annotation.ranks
-                l = len(ranks)
-                lengths[j] = l
-                A[j, i, 0:l] = ranks
+def create_rank_matrices(
+    xai_method: ExplanationMethod,
+    xai_algorithms: Iterable[ExplanationAlgorithm],
+    root: Path,
+    num_samples: int,
+    num_judges: int,
+    verbose: bool = True,
+    subset: Optional[int] = None,
+    cache_load: bool = True,
+    cache_save: bool = True,
+    skip: Optional[set[str]] = tuple(),
+) -> tuple[np.ndarray, np.ndarray]:
 
-        w = np.empty((len(names),))
-        p = np.empty((len(names),))
-        for j in range(A.shape[0]):
-            l = lengths[j]
-            R = A[j].transpose()
-            assert np.all(np.isnan(R[l:,]))
-            R = R[:l,]
-            assert not np.any(np.isnan(R))
+    # If a previous cache exists, load it and return.
+    for p in root.parts:
+        if p.split("--")[0] == "task":
+            task = p.split("--")[1]
+            break
+    else:
+        raise ValueError(f"Could not find the task in {root}.")
+    s = f"{task}--{xai_method.value}--"
+    s += "--".join(sorted([xai_algorithm.value for xai_algorithm in xai_algorithms]))
+    s += f"--{num_samples}"
+    cache_file = Path(f"./cache/attribute/{s}")
+    cache_file_A = cache_file.with_suffix(".A.npy")
+    cache_file_L = cache_file.with_suffix(".L.npy")
+    if cache_load and os.path.exists(cache_file_A) and os.path.exists(cache_file_L):
+        A = np.load(cache_file_A)
+        L = np.load(cache_file_L)
+        return A, L
 
-            # If no functions were detected, we wind up with only a single annotation,
-            # in which case, we cannot compute agreement, so we skip it.
-            if R.shape[0] == 1 and xai_method in (ExplanationMethod.NUM, ExplanationMethod.FUN):
-                w_, p_ = np.nan, np.nan
-            else:
-                w_, p_ = kendallw(R)
-                if np.isnan(w_):
-                    raise ValueError(f"Kendall's W is NaN for sample {j}.")
-                if np.isnan(p_):
-                    raise ValueError(f"Kendall's W p-value is NaN for sample {j}.")
+    if subset is not None:
+        assert subset == num_samples
 
-            w[j] = w_
-            p[j] = p_
+    skip = set(skip)
 
-        # NOTE: once removing the NaNs, the list no longer corresponds to each sample.
+    feature_incr = 2 ** 16
+    num_features = feature_incr
+
+    paths = []
+    for xai_algorithm in xai_algorithms:
+        path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--none"
+        paths.append(path)
+
+    L = np.empty((num_samples,), dtype=np.int64)
+    A = np.full((num_samples, num_judges, num_features), np.nan, dtype=np.float16)
+    i = 0
+    for i, annotations in tqdm(enumerate(get_function_annotations_from_attribution_paths(paths)), total=num_samples, desc="Creating rank matrices..."):
+        for j, annotation in enumerate(annotations):
+            if annotation.name in skip:
+                continue
+            # If the ranks are too large, rescale it to fit within the float16 range.
+            r = annotation.ranks
+            if (overflow := np.finfo(np.float16).max - r.max()) < 0:
+                factor = np.ceil(-overflow / np.finfo(np.float16).max)
+                r = r / factor
+            r = r.astype(np.float16)
+            # If the ranks are too long, resize the cumulative matrix to fit the new length.
+            l = len(r)
+            if l > num_features:
+                if verbose:
+                    print(f"Sample {i} has {l} features, which exceeds the current limit of {num_features}. Resizing accordingly.")
+                while l > num_features:
+                    num_features += feature_incr
+                P = np.full((num_samples, num_judges, feature_incr), np.nan, dtype=np.float16)
+                A = np.concatenate((A, P), axis=2)
+            # Save the ranks and length.
+            A[i, j, 0:l] = r
+            L[i] = l
+
+        if subset is not None and i == subset - 1:
+            break
+
+    if i != num_samples - 1:
+        raise ValueError(f"Expected {num_samples} samples, but only found {i + 1}.")
+
+    for k in range(num_features - 1, -1, -1):
+        if not np.all(np.isnan(A[:, :, k])):
+            break
+    num_features = k + 1
+    if verbose:
+        print(f"Determined that the maximum number of features is {num_features}. Removing {A.shape[2] - num_features} empty columns.")
+    A = A[:, :, 0:num_features]
+
+    if verbose:
+        print(f"Saving rank matrices and lengths to {cache_file.name}.")
+
+    if cache_save:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cache_file_A, A)
+        np.save(cache_file_L, L)
+
+    return A, L
+
+
+def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute the agreement scores and p-value for every sample.
+    If the number of interpretable is less than 2, then the agreement score is NaN, so the output will have NaNs in it!
+    If the number of judges is two, use Kendall's tau-b, otherwise use Kendall's W.
+    xai_algorithms allows for the selection of a subset of algorithms to compute agreement.
+     Unlike in previous functions, this is in fact a 1D array of booleans indicating which columns to keep.
+    """
+    if judges is not None:
+        assert judges.ndim == 1, judges.shape
+        assert judges.shape[0] == A.shape[1], judges.shape
+        assert judges.dtype == bool, judges.dtype
+
+    num_judges = A.shape[1]
+    if judges is not None:
+        num_judges = np.sum(judges)
+    if num_judges < 2:
+        raise ValueError(f"Correlation tests requires at least two judges, but only {num_judges} were provided.")
+    kendall = kendalltau if num_judges == 2 else kendallw
+
+    w = np.empty((A.shape[0],))
+    p = np.empty((A.shape[0],))
+    for j in range(A.shape[0]):
+        l = L[j]
+
+        R = A[j].transpose()
+        assert np.all(np.isnan(R[l:,]))
+        assert not np.any(np.isnan(R[:l,]))
+        R = R[:l,]
+        if judges is not None:
+            R = R[:,judges]
+
+        # If no functions were detected, we wind up with only a single annotation and we cannot compute agreement.
+        # This isn't an error, so we just set the agreement to NaN and move on.
+        if R.shape[0] == 1:
+            w_, p_ = np.nan, np.nan
+        else:
+            w_, p_ = kendall(R)
+            if any(np.isnan(z) or np.isinf(z) for z in (w_, p_)):
+                should_raise = True
+                for k in range(num_judges):
+                    if len(np.unique(R[:,k])) == 1:
+                        warnings.warn(f"Sample {j} has only one unique rank for judge {k}.")
+                        if num_judges == 2:
+                            w_, p_ = 0, 1
+                            should_raise = False
+
+                if should_raise:
+                    raise ValueError(f"Correlation test is NaN/InF for sample {j}. ({w_=} {p_=})")
+
+        w[j] = w_
+        p[j] = p_
+
+    return w, p
+
+
+def main():
+    root = Path("/home/lk3591/Documents/code/RawByteClf/output/esp-exe/"
+        "lift_level--nop/lift_level_ddp--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--wdl/vocab_size--256/"
+        "max_length--1048576/"
+        "model_name--malconv/channels--256/stride--64/kernel_size--64/head_num_hidden_layers--1/head_hidden_size--128/embedding_size--8/"
+        "task--det/").rglob("attributions")
+    root = list(root)
+    assert len(root) == 1
+    root = root[0]
+
+    XAI_METHODS = (
+        ExplanationMethod.NUM,
+        ExplanationMethod.FUN,
+    )
+    XAI_ALGORITHMS = (
+        ExplanationAlgorithm.LIME,
+        ExplanationAlgorithm.KSHP,
+        ExplanationAlgorithm.IGRD,
+        ExplanationAlgorithm.GSHP,
+        ExplanationAlgorithm.FABL,
+        ExplanationAlgorithm.SSHP,
+    )
+
+    SUBSET    = None
+    VERBOSE   = True
+    CACHELOAD = False
+    CACHESAVE = True
+    SKIP = [
+        "94430ac65ede0bd6562674339a24daf507ed3004b41e910ee5ed3a163403f16d",  # Has 2 ** 19 interpretable features.
+    ]
+
+    names = verify_names_are_consistent(XAI_METHODS, XAI_ALGORITHMS, root, VERBOSE)
+    names = [n for n in names if n not in SKIP]
+    num_samples = len(names) if SUBSET is None else SUBSET
+    num_judges = len(XAI_ALGORITHMS)
+
+    for xai_method in XAI_METHODS:
+        A, L = create_rank_matrices(xai_method, XAI_ALGORITHMS, root, num_samples, num_judges, VERBOSE, SUBSET, CACHELOAD, CACHESAVE, skip=SKIP)
+        w, p = auto_compute_agreement(A, L, judges=None)
         w = w[~np.isnan(w)]
         p = p[~np.isnan(p)]
         mean = np.mean(w)
