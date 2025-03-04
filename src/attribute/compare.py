@@ -12,6 +12,7 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import sys
+import time
 from typing import Optional, NamedTuple
 import warnings
 
@@ -244,8 +245,68 @@ def verify_names_are_consistent(xai_methods: Iterable[ExplanationMethod], xai_al
             if names != names_:
                 raise ValueError(f"Samples analized in {(xai_method.value, xai_algorithm.value)} do not match those from {index}.")
             if verbose:
-                print(f"\tMethod={xai_method.value}, Algorithm={xai_algorithm.value}, Samples={len(names)}")
+                print(f"Method={xai_method.value}, Algorithm={xai_algorithm.value}, Samples={len(names)}")
     return names
+
+
+def _create_rank_matrices(
+    xai_method: ExplanationMethod,
+    xai_algorithm: ExplanationAlgorithm,
+    root: Path,
+    num_samples: int,
+    num_judges: int,
+    verbose: bool,
+    subset: Optional[int],
+    skip: set[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    if verbose:
+        print(f"{os.getpid()} creating rank matrices for {xai_method.value} {xai_algorithm.value}.")
+
+    feature_incr = 2 ** 16
+    num_features = feature_incr
+
+    L = np.empty((num_samples,), dtype=np.int64)
+    A = np.full((num_samples, num_features), np.nan, dtype=np.float16)
+
+    path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--none"
+    i = 0
+    t_i = time.time()
+    for i, annotation in enumerate(get_function_annotations_from_attribution_path(path)):
+        if i % 1000 == 0 and verbose:
+            t_f = time.time()
+            spaces = " " * (len(str(num_samples)) - len(str(i)))
+            print(f"{os.getpid()} %={spaces}{i} / {num_samples} Δ={round(t_f - t_i)} ({xai_method.value} {xai_algorithm.value} {annotation.name})", flush=True)
+            t_i = time.time()
+        if annotation.name in skip:
+            continue
+        # If the ranks are too large, rescale it to fit within the float16 range.
+        r = annotation.ranks
+        if (overflow := np.finfo(np.float16).max - r.max()) < 0:
+            if verbose:
+                print(f"Downscaling sample due to overflow {r.max()} ({xai_method.value} {xai_algorithm.value} {annotation.name})")
+            factor = np.ceil(-overflow / np.finfo(np.float16).max)
+            r = r / factor
+        r = r.astype(np.float16)
+        # If the ranks are too long, resize the cumulative matrix to fit the new length.
+        l = len(r)
+        if l > num_features:
+            while l > num_features:
+                num_features += feature_incr
+            if verbose:
+                print(f"Increasing feature dimensionality {A.shape[1]} --> {num_features} to acomidate {l} features ({xai_method.value} {xai_algorithm.value} {annotation.name})")
+            P = np.full((num_samples, num_judges, feature_incr), np.nan, dtype=np.float16)
+            A = np.concatenate((A, P), axis=2)
+        # Save the ranks and length.
+        A[i, 0:l] = r
+        L[i] = l
+
+        if subset is not None and i == subset - 1:
+            break
+
+    if i != num_samples - 1:
+        raise ValueError(f"Expected {num_samples} samples, but only found {i + 1}.")
+
+    return A, L
 
 
 def create_rank_matrices(
@@ -284,46 +345,19 @@ def create_rank_matrices(
 
     skip = set(skip)
 
-    feature_incr = 2 ** 16
-    num_features = feature_incr
+    with mp.Pool(len(xai_algorithms)) as pool:
+        results = pool.starmap(
+            _create_rank_matrices,
+            [(xai_method, xai_algorithm, root, num_samples, num_judges, verbose, subset, skip) for xai_algorithm in xai_algorithms]
+        )
 
-    paths = []
-    for xai_algorithm in xai_algorithms:
-        path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--none"
-        paths.append(path)
+    A = np.concatenate([np.expand_dims(r[0], 1) for r in results], axis=1)
+    L = results[0][1]
+    for _, L_ in results[1:]:
+        if not np.all(L == L_):
+            raise ValueError("Lengths of samples do not match.")
 
-    L = np.empty((num_samples,), dtype=np.int64)
-    A = np.full((num_samples, num_judges, num_features), np.nan, dtype=np.float16)
-    i = 0
-    for i, annotations in tqdm(enumerate(get_function_annotations_from_attribution_paths(paths)), total=num_samples, desc="Creating rank matrices..."):
-        for j, annotation in enumerate(annotations):
-            if annotation.name in skip:
-                continue
-            # If the ranks are too large, rescale it to fit within the float16 range.
-            r = annotation.ranks
-            if (overflow := np.finfo(np.float16).max - r.max()) < 0:
-                factor = np.ceil(-overflow / np.finfo(np.float16).max)
-                r = r / factor
-            r = r.astype(np.float16)
-            # If the ranks are too long, resize the cumulative matrix to fit the new length.
-            l = len(r)
-            if l > num_features:
-                if verbose:
-                    print(f"Sample {i} has {l} features, which exceeds the current limit of {num_features}. Resizing accordingly.")
-                while l > num_features:
-                    num_features += feature_incr
-                P = np.full((num_samples, num_judges, feature_incr), np.nan, dtype=np.float16)
-                A = np.concatenate((A, P), axis=2)
-            # Save the ranks and length.
-            A[i, j, 0:l] = r
-            L[i] = l
-
-        if subset is not None and i == subset - 1:
-            break
-
-    if i != num_samples - 1:
-        raise ValueError(f"Expected {num_samples} samples, but only found {i + 1}.")
-
+    num_features = A.shape[2]
     for k in range(num_features - 1, -1, -1):
         if not np.all(np.isnan(A[:, :, k])):
             break
@@ -351,6 +385,9 @@ def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.nda
     xai_algorithms allows for the selection of a subset of algorithms to compute agreement.
      Unlike in previous functions, this is in fact a 1D array of booleans indicating which columns to keep.
     """
+    if A.dtype == np.float16:
+        warnings.warn("Performing correlation tests in low-precision mode can lead to numerical instability.")
+
     if judges is not None:
         assert judges.ndim == 1, judges.shape
         assert judges.shape[0] == A.shape[1], judges.shape
@@ -430,20 +467,22 @@ def main():
         "94430ac65ede0bd6562674339a24daf507ed3004b41e910ee5ed3a163403f16d",  # Has 2 ** 19 interpretable features.
     ]
 
+    print("Verifying that the names are consistent accross experiments.")
     names = verify_names_are_consistent(XAI_METHODS, XAI_ALGORITHMS, root, VERBOSE)
     names = [n for n in names if n not in SKIP]
     num_samples = len(names) if SUBSET is None else SUBSET
     num_judges = len(XAI_ALGORITHMS)
 
     for xai_method in XAI_METHODS:
+        print("Generating rank matrices.")
         A, L = create_rank_matrices(xai_method, XAI_ALGORITHMS, root, num_samples, num_judges, VERBOSE, SUBSET, CACHELOAD, CACHESAVE, skip=SKIP)
-        w, p = auto_compute_agreement(A, L, judges=None)
-        w = w[~np.isnan(w)]
-        p = p[~np.isnan(p)]
-        mean = np.mean(w)
-        medn = np.median(w)
-        stdv = np.std(w)
-        print(f"\nMethod={xai_method.value} Mean={mean:.4f} Median={medn:.4f} StdDev={stdv:.4f}")
+        # w, p = auto_compute_agreement(A.astype(np.float32), L, judges=None)
+        # w = w[~np.isnan(w)]
+        # p = p[~np.isnan(p)]
+        # mean = np.mean(w)
+        # medn = np.median(w)
+        # stdv = np.std(w)
+        # print(f"\nMethod={xai_method.value} Mean={mean:.4f} Median={medn:.4f} StdDev={stdv:.4f}")
 
 
 if __name__ == "__main__":
