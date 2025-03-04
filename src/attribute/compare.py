@@ -294,8 +294,8 @@ def _create_rank_matrices(
                 num_features += feature_incr
             if verbose:
                 print(f"Increasing feature dimensionality {A.shape[1]} --> {num_features} to acomidate {l} features ({xai_method.value} {xai_algorithm.value} {annotation.name})")
-            P = np.full((num_samples, num_judges, feature_incr), np.nan, dtype=np.float16)
-            A = np.concatenate((A, P), axis=2)
+            P = np.full((num_samples, feature_incr), np.nan, dtype=np.float16)
+            A = np.concatenate((A, P), axis=1)
         # Save the ranks and length.
         A[i, 0:l] = r
         L[i] = l
