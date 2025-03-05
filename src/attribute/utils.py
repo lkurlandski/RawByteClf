@@ -108,6 +108,10 @@ class ChunkFeatureMasker(Masker):
 
 
 class AutoChunkFeatureMasker(Masker):
+    """
+    Args:
+        stats (dict[str, float]): A dictionary mapping SHAs to statistics about the input data.
+    """
 
     def __init__(self, *args, stats: dict[str, float]) -> None:
         super().__init__(*args)
@@ -151,6 +155,11 @@ class AutoChunkFeatureMasker(Masker):
 
 
 class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
+    """
+    Args:
+        stats (dict[str, float]): A dictionary mapping SHAs to statistics about the input data.
+            For this class, each value in the dictionary should be the average length of a function.
+    """
 
     def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
         v = self.stats[sha]
@@ -160,19 +169,33 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
 
 
 class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
+    """
+    Args:
+        stats (dict[str, float]): A dictionary mapping SHAs to statistics about the input data.
+            For this class, each value in the dictionary should be the number of functions in the file.
+    """
 
     def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
         if self.eos_token_id is not None:
-            n = torch.argmax((input_ids == self.eos_token_id).int()).item()
+            msk = input_ids == self.eos_token_id
+            if not torch.any(msk):
+                raise ValueError("No EOS token found in input.")
+            num_tok = torch.argmax(msk.int()).item()
+        elif self.pad_token_id is not None:
+            msk = input_ids == self.pad_token_id
+            if not torch.any(msk):
+                num_tok = len(input_ids)
+            else:
+                num_tok = torch.argmax(msk.int()).item()
         else:
-            n = len(input_ids)
+            num_tok = len(input_ids)
         if self.bos_token_id is not None:
-            n -= 1
+            num_tok -= 1
 
-        v = self.stats[sha]
-        if v == 0:
-            return n
-        return int(math.ceil(n / self.stats[sha])) - 1
+        num_fun = self.stats[sha]
+        if num_fun == 0:
+            return num_tok
+        return int(math.ceil(num_tok / num_fun)) - 1
 
 
 class FunctionFeatureMasker(Masker):
