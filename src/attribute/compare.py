@@ -259,26 +259,38 @@ def _create_rank_matrices(
     subset: Optional[int],
     skip: set[str],
 ) -> tuple[np.ndarray, np.ndarray]:
+    # Logging.
     if verbose:
         print(f"{os.getpid()} creating rank matrices for {xai_method.value} {xai_algorithm.value}.")
 
+    # The path to read attributions from.
+    path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--none"
+
+    # Defines the initial presumed number of interpretable features and
+    # the increment to add when the number of features is exceeded.
     feature_incr = 2 ** 16
     num_features = feature_incr
 
+    # Initialize the rank matrix and length matrix. Note the difference in shape
+    # between this rank matrix and the one containing ranks for all judges.
     L = np.empty((num_samples,), dtype=np.int64)
     A = np.full((num_samples, num_features), np.nan, dtype=np.float16)
 
-    path = root / f"xai_method--{xai_method.value}/xai_algorithm--{xai_algorithm.value}/xai_chunk_size--none"
-    i = 0
+    # Loop over every annotation in the path and extract ranks.
     t_i = time.time()
-    for i, annotation in enumerate(get_function_annotations_from_attribution_path(path)):
+    i   = 0
+    for annotation in get_function_annotations_from_attribution_path(path):
+        # Skip files that have been identified as problematic.
+        if annotation.name in skip:
+            continue
+
+        # Logging.
         if i % 1000 == 0 and verbose:
             t_f = time.time()
             spaces = " " * (len(str(num_samples)) - len(str(i)))
             print(f"{os.getpid()} %={spaces}{i} / {num_samples} Δ={round(t_f - t_i)} ({xai_method.value} {xai_algorithm.value} {annotation.name})", flush=True)
             t_i = time.time()
-        if annotation.name in skip:
-            continue
+
         # If the ranks are too large, rescale it to fit within the float16 range.
         r = annotation.ranks
         if (overflow := np.finfo(np.float16).max - r.max()) < 0:
@@ -287,6 +299,7 @@ def _create_rank_matrices(
             factor = np.ceil(-overflow / np.finfo(np.float16).max)
             r = r / factor
         r = r.astype(np.float16)
+
         # If the ranks are too long, resize the cumulative matrix to fit the new length.
         l = len(r)
         if l > num_features:
@@ -296,13 +309,17 @@ def _create_rank_matrices(
                 print(f"Increasing feature dimensionality {A.shape[1]} --> {num_features} to acomidate {l} features ({xai_method.value} {xai_algorithm.value} {annotation.name})")
             P = np.full((num_samples, feature_incr), np.nan, dtype=np.float16)
             A = np.concatenate((A, P), axis=1)
+
         # Save the ranks and length.
         A[i, 0:l] = r
         L[i] = l
 
+        # If we are only processing a subset of the samples, break early, otherwise, increment the counter.
         if subset is not None and i == subset - 1:
             break
+        i += 1
 
+    # Verify that we processed the correct number of samples.
     if i != num_samples - 1:
         raise ValueError(f"Expected {num_samples} samples, but only found {i + 1}.")
 
