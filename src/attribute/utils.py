@@ -260,7 +260,8 @@ def get_masker(
     pad_token_id: Optional[int] = None,
     chunk_size: Optional[int] = None,
     shas: Optional[list[str]] = None,
-) -> FunctionFeatureMasker | ChunkFeatureMasker:
+    allow_missing_shas: bool = False,
+) -> Masker:
     if any(x is None for x in (bos_token_id, eos_token_id, pad_token_id)):
         raise ValueError(
             "This may not be nessecary in the future, but for now, every model needs three special tokens. "
@@ -270,7 +271,7 @@ def get_masker(
     if method == ExplanationMethod.CHK:
         return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
 
-    bounds_map = EXEFuncBoundsMap.from_dataset_name(shas=shas)
+    bounds_map = EXEFuncBoundsMap.from_dataset_name(shas=shas, allow_missing_shas=allow_missing_shas)
     len_stats = {s: np.mean(v[:,1] - v[:,0]) for s, v in bounds_map.items()}
     num_stats = {s: len(v) for s, v in bounds_map.items()}
 
