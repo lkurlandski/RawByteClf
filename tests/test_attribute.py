@@ -229,10 +229,10 @@ class TestMaskersWithRealData(unittest.TestCase):
 
         args = (self.bos_token_id, self.eos_token_id, self.pad_token_id, self.chunk_size, shas, True, self.max_length, "pass")
         with print_context(suppress=True):
-            masker_num = get_masker(ExplanationMethod.NUM, *args)
-            masker_len = get_masker(ExplanationMethod.LEN, *args)
-            masker_fun = get_masker(ExplanationMethod.FUN, *args)
-            masker_chk = get_masker(ExplanationMethod.CHK, *args)
+            masker_num: AutoNumChunkFeatureMasker = get_masker(ExplanationMethod.NUM, *args)
+            masker_len: AutoLenChunkFeatureMasker = get_masker(ExplanationMethod.LEN, *args)
+            masker_fun: FunctionFeatureMasker = get_masker(ExplanationMethod.FUN, *args)
+            masker_chk: ChunkFeatureMasker = get_masker(ExplanationMethod.CHK, *args)
 
         present = set(masker_fun.boundaries.keys())
         remove  = []
@@ -250,7 +250,6 @@ class TestMaskersWithRealData(unittest.TestCase):
         num_errors = 0
         error_logs = defaultdict(int)
         for i, (s, t) in tqdm(enumerate(zip(shas, data)), total=len(shas)):
-            check = True
             errors = []
 
             names     = [s]
@@ -269,34 +268,33 @@ class TestMaskersWithRealData(unittest.TestCase):
                 print(s)
                 raise e
 
-            if check:
-                unq_num = len(torch.unique(mask_num))
-                unq_len = len(torch.unique(mask_len))
-                unq_fun = len(torch.unique(mask_fun))
-                unq_chk = len(torch.unique(mask_chk))
+            unq_num = len(torch.unique(mask_num))
+            unq_len = len(torch.unique(mask_len))
+            unq_fun = len(torch.unique(mask_fun))
+            unq_chk = len(torch.unique(mask_chk))
 
-                num_function_within_max_length = np.sum(masker_fun.boundaries[s][:,0] < self.max_length)
-                if unq_fun != num_function_within_max_length + 2:
-                    msg = "unq_fun != num_function_within_max_length + 2"
-                    errors.append(f"{msg} ({unq_fun} != {num_function_within_max_length + 2})")
-                    error_logs[msg] += 1
+            num_function_within_max_length = np.sum(masker_fun.boundaries[s][:,0] < self.max_length)
+            if unq_fun != num_function_within_max_length + 2:
+                msg = "unq_fun != num_function_within_max_length + 2"
+                errors.append(f"{msg} ({unq_fun} != {num_function_within_max_length + 2})")
+                error_logs[msg] += 1
 
-                if unq_num != unq_fun:
-                    msg = "unq_num != unq_fun"
-                    errors.append(f"{msg} ({unq_num} != {unq_fun})")
-                    error_logs[msg] += 1
+            if unq_num != unq_fun:
+                msg = "unq_num != unq_fun"
+                errors.append(f"{msg} ({unq_num} != {unq_fun})")
+                error_logs[msg] += 1
 
-                num_chunk_sizes = infer_chunk_sizes(mask_num[0][~special_idx])
-                if len(set(num_chunk_sizes)) not in (1, 2):
-                    msg = "len(set(num_chunk_sizes)) not in (1, 2)"
-                    errors.append(f"{msg} ({len(set(num_chunk_sizes))} not in (1, 2))")
-                    error_logs[msg] += 1
+            num_chunk_sizes = infer_chunk_sizes(mask_num[0][~special_idx])
+            if len(set(num_chunk_sizes)) not in (1, 2):
+                msg = "len(set(num_chunk_sizes)) not in (1, 2)"
+                errors.append(f"{msg} ({len(set(num_chunk_sizes))} not in (1, 2))")
+                error_logs[msg] += 1
 
-                len_chunk_sizes = infer_chunk_sizes(mask_len[0][~special_idx])
-                if len(set(len_chunk_sizes)) not in (1, 2):
-                    msg = "len(set(len_chunk_sizes)) not in (1, 2)"
-                    errors.append(f"{msg} ({len(set(len_chunk_sizes))} not in (1, 2))")
-                    error_logs[msg] += 1
+            len_chunk_sizes = infer_chunk_sizes(mask_len[0][~special_idx])
+            if len(set(len_chunk_sizes)) not in (1, 2):
+                msg = "len(set(len_chunk_sizes)) not in (1, 2)"
+                errors.append(f"{msg} ({len(set(len_chunk_sizes))} not in (1, 2))")
+                error_logs[msg] += 1
 
             if errors:
                 num_errors += 1

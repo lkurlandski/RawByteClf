@@ -278,29 +278,17 @@ class FunctionFeatureMasker(Masker):
             if self.allow_missing_shas and s not in self.boundaries:
                 continue
 
-            if self.function_out_of_bounds != "pass":
-                # Get the last_idx, i.e., the last non-special token position in the input.
-                if self.eos_token_id is not None:
-                    idx = torch.nonzero(input_ids[i] == self.eos_token_id)
-                    last_idx = idx[0].item()
-                elif self.pad_token_id is not None:
-                    idx = torch.nonzero(input_ids[i] == self.pad_token_id)
-                    if len(idx) == 0:
-                        last_idx = len(input_ids[i])
-                    else:
-                        last_idx = idx[0].item()
-                else:
-                    last_idx = len(input_ids[i])
+            if self.number_of_functions_outside_input(input_ids[i], s) > 0:
+                if self.function_out_of_bounds == "warn":
+                    warnings.warn(f"Function boundary past length of the file detected ({sha})!")
+                elif self.function_out_of_bounds == "raise":
+                    raise RuntimeError(f"Function boundary past length of the file detected ({sha})!")
 
-                # Handle the situation where a function is past the length of the file.
-                last_idx = last_idx - 1 if self.bos_token_id is not None else last_idx
-                if np.any(self.boundaries[s][:,0] > last_idx):
-                    if self.function_out_of_bounds == "warn":
-                        warnings.warn(f"Function boundary past length of the file detected ({s})!")
-                    elif self.function_out_of_bounds == "raise":
-                        raise RuntimeError(f"Function boundary past length of the file detected ({s})!")
-
-            for j, (start, end) in enumerate(self.boundaries[s], 2):
+            # This can fix an issue with the boundaries being out of order, resulting in non-consecutive mask indices.
+            bounds = self.boundaries[s]
+            idx = np.argsort(bounds[:,0])
+            bounds = bounds[idx]
+            for j, (start, end) in enumerate(bounds, 2):
                 # Figure out which positions have not yet been set. If any have been set,
                 # then there are overlapping functions and we need to handle them accordingly.
                 # If some positions have already been set, we just set the unset ones and move on.
@@ -332,6 +320,24 @@ class FunctionFeatureMasker(Masker):
         assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
 
         return mask
+
+    def number_of_functions_outside_input(self, input_ids: Tensor, sha: str) -> int:
+        # Get the last_idx, i.e., the last non-special token position in the input.
+        if self.eos_token_id is not None:
+            idx = torch.nonzero(input_ids == self.eos_token_id)
+            last_idx = idx[0].item()
+        elif self.pad_token_id is not None:
+            idx = torch.nonzero(input_ids == self.pad_token_id)
+            if len(idx) == 0:
+                last_idx = len(input_ids)
+            else:
+                last_idx = idx[0].item()
+        else:
+            last_idx = len(input_ids)
+
+        # Handle the situation where a function is past the length of the file.
+        last_idx = last_idx - 1 if self.bos_token_id is not None else last_idx
+        return np.sum(self.boundaries[sha][:,0] > last_idx)
 
 
 def get_masker(
