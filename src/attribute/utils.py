@@ -270,28 +270,27 @@ class FunctionFeatureMasker(Masker):
             if self.allow_missing_shas and s not in self.boundaries:
                 continue
 
-            # Get the last_idx, i.e., the last non-special token position in the input.
-            if self.eos_token_id is not None:
-                idx = torch.nonzero(input_ids[i] == self.eos_token_id)
-                last_idx = idx[0].item()
-            elif self.pad_token_id is not None:
-                idx = torch.nonzero(input_ids[i] == self.pad_token_id)
-                if len(idx) == 0:
-                    last_idx = len(input_ids[i])
-                else:
+            if self.function_out_of_bounds != "pass":
+                # Get the last_idx, i.e., the last non-special token position in the input.
+                if self.eos_token_id is not None:
+                    idx = torch.nonzero(input_ids[i] == self.eos_token_id)
                     last_idx = idx[0].item()
-            else:
-                last_idx = len(input_ids[i])
-
-            # Handle the situation where a function is past the length of the file.
-            last_idx = last_idx - 1 if self.bos_token_id is not None else last_idx
-            if np.any(self.boundaries[s][:,0] > last_idx):
-                if self.function_out_of_bounds == "warn":
-                    warnings.warn(f"Function boundary past length of the file detected ({s})!")
-                elif self.function_out_of_bounds == "raise":
-                    raise RuntimeError(f"Function boundary past length of the file detected ({s})!")
+                elif self.pad_token_id is not None:
+                    idx = torch.nonzero(input_ids[i] == self.pad_token_id)
+                    if len(idx) == 0:
+                        last_idx = len(input_ids[i])
+                    else:
+                        last_idx = idx[0].item()
                 else:
-                    continue
+                    last_idx = len(input_ids[i])
+
+                # Handle the situation where a function is past the length of the file.
+                last_idx = last_idx - 1 if self.bos_token_id is not None else last_idx
+                if np.any(self.boundaries[s][:,0] > last_idx):
+                    if self.function_out_of_bounds == "warn":
+                        warnings.warn(f"Function boundary past length of the file detected ({s})!")
+                    elif self.function_out_of_bounds == "raise":
+                        raise RuntimeError(f"Function boundary past length of the file detected ({s})!")
 
             for j, (start, end) in enumerate(self.boundaries[s], 2):
                 # Figure out which positions have not yet been set. If any have been set,
