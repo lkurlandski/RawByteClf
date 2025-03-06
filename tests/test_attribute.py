@@ -2,21 +2,27 @@
 Test the attribution methods.
 """
 
+from collections import defaultdict
 import math
 import os
+from pathlib import Path
 from pprint import pformat, pprint
 import sys
 import unittest
+import zipfile
 
 import numpy as np
 from scipy.stats import rankdata
 import torch
+from tqdm import tqdm
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 # pylint: enable=wrong-import-position
 
+from src.enums import ExplanationMethod
+from src.utils import rglob, print_context
 from src.attribute.utils import (
     apply_feature_mask_slow,
     apply_feature_mask_fast,
@@ -25,6 +31,8 @@ from src.attribute.utils import (
     AutoLenChunkFeatureMasker,
     AutoNumChunkFeatureMasker,
     FunctionFeatureMasker,
+    get_masker,
+    infer_chunk_sizes,
 )
 from src.attribute.compare import kendallw_without_ties, kendallw_with_ties
 
@@ -179,6 +187,124 @@ class TestMaskers(unittest.TestCase):
             [0, 1, 1, 1, 1, 1, 1, 1, 0, 0],
         ], dtype=torch.int64)
         assert torch.equal(mask, correct), f"Got:\n{pformat(mask.tolist())}\nExpected:\n{pformat(correct.tolist())}"
+
+
+class TestMaskersWithRealData(unittest.TestCase):
+
+    def setUp(self):
+        self.bos_token_id = 1
+        self.eos_token_id = 2
+        self.pad_token_id = 0
+        self.special_token_ids = (self.bos_token_id, self.eos_token_id, self.pad_token_id)
+        self.chunk_size = 4096
+        self.max_length = 2 ** 20
+
+    def get_data(self):
+
+        files = []
+        for f in rglob("./data/", "*.zip"):
+            if "nop" in f:
+                files.append(f)
+
+        data = []
+        shas = []
+        for f in files:
+            with zipfile.ZipFile(f, "r") as zp:
+                for name in zp.namelist():
+                    b = zp.read(name)[0:self.max_length - 2]
+                    s = name.split(".")[0]
+                    data.append(b)
+                    shas.append(s)
+
+        for i in range(len(data)):
+            t = torch.frombuffer(data[i], dtype=torch.uint8).to(torch.int64)
+            t = t + len(self.special_token_ids)
+            t = torch.cat([torch.tensor([self.bos_token_id]), t, torch.tensor([self.eos_token_id])])
+            data[i] = t
+
+        return shas, data
+
+    def test(self):
+        shas, data = self.get_data()
+
+        args = (self.bos_token_id, self.eos_token_id, self.pad_token_id, self.chunk_size, shas, True, self.max_length, "pass")
+        with print_context(suppress=True):
+            masker_num = get_masker(ExplanationMethod.NUM, *args)
+            masker_len = get_masker(ExplanationMethod.LEN, *args)
+            masker_fun = get_masker(ExplanationMethod.FUN, *args)
+            masker_chk = get_masker(ExplanationMethod.CHK, *args)
+
+        present = set(masker_fun.boundaries.keys())
+        remove  = []
+        for i, (s, t) in enumerate(zip(shas, data)):
+            if s not in present:
+                remove.append(i)
+        remove = set(remove)
+        shas = [s for i, s in enumerate(shas) if i not in remove]
+        data = [t for i, t in enumerate(data) if i not in remove]
+
+        idx = np.argsort(np.array(shas, dtype=str))
+        shas = [shas[i] for i in idx]
+        data = [data[i] for i in idx]
+
+        num_errors = 0
+        error_logs = defaultdict(int)
+        for i, (s, t) in tqdm(enumerate(zip(shas, data)), total=len(shas)):
+            check = True
+            errors = []
+
+            names     = [s]
+            input_ids = t.unsqueeze(0)
+
+            special_idx = torch.full_like(input_ids[0], False)
+            for t in self.special_token_ids:
+                special_idx |= input_ids[0] == t
+
+            mask_chk = masker_chk(input_ids, names)
+            mask_num = masker_num(input_ids, names)
+            mask_len = masker_len(input_ids, names)
+            try:
+                mask_fun = masker_fun(input_ids, names)
+            except RuntimeError as e:
+                print(s)
+                raise e
+
+            if check:
+                unq_num = len(torch.unique(mask_num))
+                unq_len = len(torch.unique(mask_len))
+                unq_fun = len(torch.unique(mask_fun))
+                unq_chk = len(torch.unique(mask_chk))
+
+                num_function_within_max_length = np.sum(masker_fun.boundaries[s][:,0] < self.max_length)
+                if unq_fun != num_function_within_max_length + 2:
+                    msg = "unq_fun != num_function_within_max_length + 2"
+                    errors.append(f"{msg} ({unq_fun} != {num_function_within_max_length + 2})")
+                    error_logs[msg] += 1
+
+                if unq_num != unq_fun:
+                    msg = "unq_num != unq_fun"
+                    errors.append(f"{msg} ({unq_num} != {unq_fun})")
+                    error_logs[msg] += 1
+
+                num_chunk_sizes = infer_chunk_sizes(mask_num[0][~special_idx])
+                if len(set(num_chunk_sizes)) not in (1, 2):
+                    msg = "len(set(num_chunk_sizes)) not in (1, 2)"
+                    errors.append(f"{msg} ({len(set(num_chunk_sizes))} not in (1, 2))")
+                    error_logs[msg] += 1
+
+                len_chunk_sizes = infer_chunk_sizes(mask_len[0][~special_idx])
+                if len(set(len_chunk_sizes)) not in (1, 2):
+                    msg = "len(set(len_chunk_sizes)) not in (1, 2)"
+                    errors.append(f"{msg} ({len(set(len_chunk_sizes))} not in (1, 2))")
+                    error_logs[msg] += 1
+
+            if errors:
+                num_errors += 1
+                print(s)
+                for e in errors:
+                    print(f"\t{e}")
+
+        assert num_errors == 0, f"Errors Occurred: {num_errors}\n{pformat(dict(error_logs))}"
 
 
 class TestKendallW(unittest.TestCase):
