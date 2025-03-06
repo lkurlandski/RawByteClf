@@ -319,10 +319,6 @@ def _create_rank_matrices(
             break
         i += 1
 
-    # Verify that we processed the correct number of samples.
-    if i != num_samples - 1:
-        raise ValueError(f"Expected {num_samples} samples, but only found {i + 1}.")
-
     return A, L
 
 
