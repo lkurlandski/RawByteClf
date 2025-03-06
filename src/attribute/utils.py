@@ -9,7 +9,7 @@ import json
 import math
 import os
 import sys
-from typing import Optional
+from typing import Optional, Literal
 import warnings
 
 from captum.attr import (
@@ -49,6 +49,20 @@ def chunk_mask(x: Tensor, size: int) -> Tensor:
     mask = torch.cat([torch.full((size,), i) for i in range(q)])
     mask = torch.cat([mask, torch.full((r,), q)])
     return mask.to(torch.int64)
+
+
+def infer_chunk_sizes(mask: Tensor) -> list[int]:
+    if mask.dim() != 1:
+        raise ValueError("The mask must be 1D.")
+
+    regions = []
+    a = 0
+    for i in range(1, len(mask), 1):
+        if mask[i] != mask[i - 1]:
+            regions.append((a, i))
+            a = i
+
+    return [r[1] - r[0] for r in regions]
 
 
 class Masker:
@@ -161,8 +175,14 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
         return int(v)
 
     @staticmethod
-    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray]) -> dict[str, float]:
-        return {s: np.mean(v[:,1] - v[:,0]) for s, v in bounds_map.items()}
+    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:
+        stats = {}
+        for s, v in bounds_map.items():
+            if max_length is not None:
+                idx = v[:,0] < max_length
+                v = v[idx]
+            stats[s] = np.mean(v[:,1] - v[:,0])
+        return stats
 
 
 class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
@@ -212,22 +232,29 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
 
         num_fun = self.stats[sha]
         if num_fun == 0:
-            return num_tok
+            return 1
         return num_fun + 1
 
     @staticmethod
-    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray]) -> dict[str, float]:
-        return {s: len(v) for s, v in bounds_map.items()}
+    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:
+        stats = {}
+        for s, v in bounds_map.items():
+            if max_length is not None:
+                idx = v[:,0] < max_length
+                v = v[idx]
+            stats[s] = len(v)
+        return stats
 
 
 class FunctionFeatureMasker(Masker):
 
     boundaries: EXEFuncBoundsMap
 
-    def __init__(self, *args, boundaries: dict[str, np.ndarray], allow_missing_shas: bool = False) -> None:
+    def __init__(self, *args, boundaries: dict[str, np.ndarray], allow_missing_shas: bool = False, function_out_of_bounds: Literal["warn", "raise", "pass"] = "raise") -> None:
         super().__init__(*args)
         self.boundaries = EXEFuncBoundsMap(boundaries) if not isinstance(boundaries, EXEFuncBoundsMap) else boundaries
         self.allow_missing_shas = allow_missing_shas
+        self.function_out_of_bounds = function_out_of_bounds
 
     def __call__(self, input_ids: Tensor, shas: list[str] = None) -> Tensor:
         if shas is not None and len(shas) != input_ids.shape[0]:
@@ -239,8 +266,33 @@ class FunctionFeatureMasker(Masker):
 
         for i, s in enumerate(shas):
             mask[i,:] = 1
+
             if self.allow_missing_shas and s not in self.boundaries:
                 continue
+
+            # Get the last_idx, i.e., the last non-special token position in the input.
+            if self.eos_token_id is not None:
+                idx = torch.nonzero(input_ids[i] == self.eos_token_id)
+                last_idx = idx[0].item()
+            elif self.pad_token_id is not None:
+                idx = torch.nonzero(input_ids[i] == self.pad_token_id)
+                if len(idx) == 0:
+                    last_idx = len(input_ids[i])
+                else:
+                    last_idx = idx[0].item()
+            else:
+                last_idx = len(input_ids[i])
+
+            # Handle the situation where a function is past the length of the file.
+            last_idx = last_idx - 1 if self.bos_token_id is not None else last_idx
+            if np.any(self.boundaries[s][:,0] > last_idx):
+                if self.function_out_of_bounds == "warn":
+                    warnings.warn(f"Function boundary past length of the file detected ({s})!")
+                elif self.function_out_of_bounds == "raise":
+                    raise RuntimeError(f"Function boundary past length of the file detected ({s})!")
+                else:
+                    continue
+
             for j, (start, end) in enumerate(self.boundaries[s], 2):
                 # Figure out which positions have not yet been set. If any have been set,
                 # then there are overlapping functions and we need to handle them accordingly.
@@ -283,6 +335,8 @@ def get_masker(
     chunk_size: Optional[int] = None,
     shas: Optional[list[str]] = None,
     allow_missing_shas: bool = False,
+    max_length: Optional[int] = None,
+    function_out_of_bounds: Literal["warn", "raise", "pass"] = "pass",
 ) -> Masker:
     if any(x is None for x in (bos_token_id, eos_token_id, pad_token_id)):
         raise ValueError(
@@ -294,15 +348,19 @@ def get_masker(
         return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
 
     bounds_map = EXEFuncBoundsMap.from_dataset_name(shas=shas, allow_missing_shas=allow_missing_shas)
+    if bos_token_id is not None and max_length is not None:
+        max_length -= 1
+    if eos_token_id is not None and max_length is not None:
+        max_length -= 1
 
     if method == ExplanationMethod.LEN:
-        stats = AutoLenChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map)
+        stats = AutoLenChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map, max_length)
         return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=stats)
     if method == ExplanationMethod.NUM:
-        stats = AutoNumChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map)
+        stats = AutoNumChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map, max_length)
         return AutoNumChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=stats)
     if method == ExplanationMethod.FUN:
-        return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
+        return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map, function_out_of_bounds=function_out_of_bounds)
 
     raise ValueError(f"Explanation method {method} not supported.")
 
