@@ -51,18 +51,26 @@ def chunk_mask(x: Tensor, size: int) -> Tensor:
     return mask.to(torch.int64)
 
 
-def infer_chunk_sizes(mask: Tensor) -> list[int]:
+def infer_chunk_sizes(mask: torch.Tensor) -> list[int]:
     if mask.dim() != 1:
         raise ValueError("The mask must be 1D.")
 
-    regions = []
-    a = 0
-    for i in range(1, len(mask), 1):
-        if mask[i] != mask[i - 1]:
-            regions.append((a, i))
-            a = i
+    # Compute where consecutive elements differ.
+    diff = mask[1:] != mask[:-1]
+    # Get indices where changes occur (adjust indices by +1).
+    change_indices = diff.nonzero(as_tuple=True)[0] + 1
 
-    return [r[1] - r[0] for r in regions]
+    # Concatenate the start and end boundaries.
+    indices = torch.cat((
+        torch.tensor([0], dtype=change_indices.dtype, device=mask.device),
+        change_indices,
+        torch.tensor([mask.size(0)], dtype=change_indices.dtype, device=mask.device)
+    ))
+
+    # Compute sizes by taking differences between consecutive boundaries.
+    sizes = indices[1:] - indices[:-1]
+    return sizes.tolist()
+
 
 
 class Masker:
