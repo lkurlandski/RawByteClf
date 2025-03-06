@@ -123,34 +123,14 @@ class AutoChunkFeatureMasker(Masker):
 
         masks = []
         for i, s in zip(input_ids, shas):
-            chunk_size = self.get_chunk_size(i, s)
-            mask = self.chunk_mask_for_one_input(i, chunk_size)
+            mask = self.chunk_mask_for_one_input(i, s)
+            for t in self.special_token_ids:
+                mask[i == t] = 0
+            assert torch.all(mask >= 0), "Negative values were detected in the mask."
             masks.append(mask)
         return torch.stack(masks)
 
-    def chunk_mask_for_one_input(self, input_ids: Tensor, chunk_size: int) -> Tensor:
-        if chunk_size < 1:
-            raise ValueError("Chunk size must be greater than 0.")
-
-        if input_ids.dim() != 1:
-            raise RuntimeError()
-
-        mask = torch.full_like(input_ids, -1, dtype=torch.int64)
-
-        i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
-        c = 0 if chunk_size == 1 else 1
-        while i < mask.shape[0]:
-            mask[i:i + chunk_size] = (i // chunk_size) + c  # Start at 1.
-            i += chunk_size
-
-        for t in self.special_token_ids:
-            mask[input_ids == t] = 0
-
-        assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
-
-        return mask
-
-    def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
+    def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:  # pylint: disable=unused-argument
         raise NotImplementedError()
 
 
@@ -160,6 +140,19 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
         stats (dict[str, float]): A dictionary mapping SHAs to statistics about the input data.
             For this class, each value in the dictionary should be the average length of a function.
     """
+
+    def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:
+        mask = torch.full_like(input_ids, -1, dtype=torch.int64)
+
+        chunk_size = self.get_chunk_size(input_ids, sha)
+
+        i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
+        c = 0 if chunk_size == 1 else 1
+        while i < mask.shape[0]:
+            mask[i:i + chunk_size] = (i // chunk_size) + c  # Start at 1.
+            i += chunk_size
+
+        return mask
 
     def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
         v = self.stats[sha]
@@ -179,7 +172,27 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
             For this class, each value in the dictionary should be the number of functions in the file.
     """
 
-    def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
+    def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:
+        mask = torch.full_like(input_ids, -1, dtype=torch.int64)
+
+        num_chunks = self.get_num_chunks(input_ids, sha)
+
+        chunk_size_1 = len(input_ids) // num_chunks
+        chunk_size_2 = chunk_size_1 + 1
+        change_idx = len(input_ids) % num_chunks
+
+        i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
+        c = 0 if chunk_size_2 == 1 else 1  # NOTE: this may not work here.
+        j = 0
+        while i < mask.shape[0]:
+            chunk_size = chunk_size_2 if j < change_idx else chunk_size_1
+            mask[i:i + chunk_size] = (i // chunk_size) + c  # Start at 1.
+            i += chunk_size
+            j += 1
+
+        return mask
+
+    def get_num_chunks(self, input_ids: Tensor, sha: str) -> int:
         if self.eos_token_id is not None:
             msk = input_ids == self.eos_token_id
             if not torch.any(msk):
@@ -193,14 +206,14 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
                 num_tok = torch.argmax(msk.int()).item()
         else:
             num_tok = len(input_ids)
+
         if self.bos_token_id is not None:
             num_tok -= 1
 
         num_fun = self.stats[sha]
         if num_fun == 0:
             return num_tok
-
-        return math.floor(num_tok / (num_fun + 1))
+        return num_fun + 1
 
     @staticmethod
     def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray]) -> dict[str, float]:
@@ -255,7 +268,7 @@ class FunctionFeatureMasker(Masker):
         for i in range(len(shas)):
             u = mask[i,:].unique().tolist()
             if set(u) != set(range(len(u))):
-                raise RuntimeError("The mask indices are not consecutive.")
+                raise RuntimeError(f"The mask indices are not consecutive ({s}) {u=}")
 
         assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
 
