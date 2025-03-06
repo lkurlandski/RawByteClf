@@ -2,6 +2,10 @@
 Tools for boundary identification of functions.
 
 The functions for producing the map are definetly not optimized.
+
+NOTE: The physical addresses in the disassembly files cannot always be trusted.
+For example, 0007ad60610f055472513ded6bbc47130f77804dee7046a18d479409f3e2bbad, contains
+sections named "UPX", which contains references to functions that are out of bounds.
 """
 
 from __future__ import annotations
