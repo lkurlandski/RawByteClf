@@ -250,6 +250,13 @@ class TestMaskersWithRealData(unittest.TestCase):
         num_errors = 0
         error_logs = defaultdict(int)
         for i, (s, t) in tqdm(enumerate(zip(shas, data)), total=len(shas)):
+            # if s not in (
+            #     "0007ad60610f055472513ded6bbc47130f77804dee7046a18d479409f3e2bbad",
+            #     "0008e34c2bf27aabaf22d12a778a1cc30c99f1893aed13dd570c10336ab1abdd",
+            #     "11b5d9b827501cd3edc8c6fe29f6d18917d9cdc39f6ca84c98da3ee4db0b1ae2",
+            #     "1661430f96ed9af3a1cacc7079e26f520839a91f98ef5271a6d4639fb783f51f",
+            # ):
+            #     continue
             errors = []
 
             names     = [s]
@@ -273,7 +280,8 @@ class TestMaskersWithRealData(unittest.TestCase):
             unq_fun = len(torch.unique(mask_fun))
             unq_chk = len(torch.unique(mask_chk))
 
-            num_function_within_max_length = np.sum(masker_fun.boundaries[s][:,0] < self.max_length)
+            # num_function_within_max_length = np.sum(masker_fun.boundaries[s][:,0] < self.max_length)
+            num_function_within_max_length = len(masker_fun.boundaries[s]) - masker_fun.number_of_functions_outside_input(input_ids[0], s)
             if unq_fun != num_function_within_max_length + 2:
                 msg = "unq_fun != num_function_within_max_length + 2"
                 errors.append(f"{msg} ({unq_fun} != {num_function_within_max_length + 2})")
