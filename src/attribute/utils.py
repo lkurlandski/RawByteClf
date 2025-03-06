@@ -167,6 +167,10 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
             return len(input_ids)
         return int(v)
 
+    @staticmethod
+    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray]) -> dict[str, float]:
+        return {s: np.mean(v[:,1] - v[:,0]) for s, v in bounds_map.items()}
+
 
 class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
     """
@@ -195,7 +199,12 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         num_fun = self.stats[sha]
         if num_fun == 0:
             return num_tok
-        return int(math.ceil(num_tok / num_fun)) - 1
+
+        return math.floor(num_tok / (num_fun + 1))
+
+    @staticmethod
+    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray]) -> dict[str, float]:
+        return {s: len(v) for s, v in bounds_map.items()}
 
 
 class FunctionFeatureMasker(Masker):
@@ -272,13 +281,13 @@ def get_masker(
         return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
 
     bounds_map = EXEFuncBoundsMap.from_dataset_name(shas=shas, allow_missing_shas=allow_missing_shas)
-    len_stats = {s: np.mean(v[:,1] - v[:,0]) for s, v in bounds_map.items()}
-    num_stats = {s: len(v) for s, v in bounds_map.items()}
 
     if method == ExplanationMethod.LEN:
-        return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=len_stats)
+        stats = AutoLenChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map)
+        return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=stats)
     if method == ExplanationMethod.NUM:
-        return AutoNumChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=num_stats)
+        stats = AutoNumChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map)
+        return AutoNumChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=stats)
     if method == ExplanationMethod.FUN:
         return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
 
