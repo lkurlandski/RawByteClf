@@ -239,6 +239,64 @@ class EXEFuncBoundsMap(UserDict):
         return d
 
 
+def bounds_total_slack_space(bounds: np.ndarray) -> int:
+    """
+    Compute the total number of bytes outside of any function boundaries (assuming
+    addresses range from 0 up to the maximum 'end' value found in the bounds array).
+    """
+    if len(bounds) == 0:
+        return 0
+
+    sorted_bounds = bounds[np.argsort(bounds[:, 0])]
+
+    # We'll merge overlapping ranges to find the total coverage.
+    merged = []
+    current_start, current_end = sorted_bounds[0]
+
+    for i in range(1, len(sorted_bounds)):
+        nxt_start, nxt_end = sorted_bounds[i]
+        if nxt_start <= current_end:
+            # Overlaps or touches, extend the current_end if needed
+            current_end = max(current_end, nxt_end)
+        else:
+            # No overlap, push the previous interval and reset
+            merged.append((current_start, current_end))
+            current_start, current_end = nxt_start, nxt_end
+    # Add the last interval
+    merged.append((current_start, current_end))
+
+    # Calculate total covered size
+    covered = sum((end - start) for start, end in merged)
+
+    # The highest address
+    max_end = merged[-1][1]
+
+    # Slack = all addresses up to max_end minus the covered addresses
+    slack = max_end - covered
+    return slack
+
+
+def bounds_contain_totally_overlapping_functions(bounds: np.ndarray) -> bool:
+    """
+    Check if any function lies completely within another function.
+    NOTE: this algorithm is O(N^2) and can be slow for large arrays. Use with care.
+    """
+    # Sort by start (and possibly by end) to simplify checks
+    sorted_bounds = bounds[np.lexsort((bounds[:, 1], bounds[:, 0]))]
+
+    # Naive O(N^2) approach: check each pair
+    for i in range(len(sorted_bounds)):
+        start_i, end_i = sorted_bounds[i]
+        for j in range(len(sorted_bounds)):
+            if i == j:
+                continue
+            start_j, end_j = sorted_bounds[j]
+            # Check if i is contained in j (i.e. start_j <= start_i and end_i <= end_j)
+            if start_j <= start_i and end_i <= end_j:
+                return True
+    return False
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument("--outdir", type=Path, required=True)
