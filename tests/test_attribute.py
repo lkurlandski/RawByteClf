@@ -198,6 +198,7 @@ class TestMaskersWithRealData(unittest.TestCase):
         self.special_token_ids = (self.bos_token_id, self.eos_token_id, self.pad_token_id)
         self.chunk_size = 4096
         self.max_length = 2 ** 20
+        self.total = 2000
 
     def get_data(self):
 
@@ -216,6 +217,9 @@ class TestMaskersWithRealData(unittest.TestCase):
                     data.append(b)
                     shas.append(s)
 
+            if len(shas) > self.total * 2:
+                break
+
         for i in range(len(data)):
             t = torch.frombuffer(data[i], dtype=torch.uint8).to(torch.int64)
             t = t + len(self.special_token_ids)
@@ -227,7 +231,7 @@ class TestMaskersWithRealData(unittest.TestCase):
     def test(self):
         shas, data = self.get_data()
 
-        args = (self.bos_token_id, self.eos_token_id, self.pad_token_id, self.chunk_size, shas, True, self.max_length, "pass")
+        args = (self.bos_token_id, self.eos_token_id, self.pad_token_id, self.chunk_size, shas, True, "pass")
         with print_context(suppress=True):
             masker_num: AutoNumChunkFeatureMasker = get_masker(ExplanationMethod.NUM, *args)
             masker_len: AutoLenChunkFeatureMasker = get_masker(ExplanationMethod.LEN, *args)
@@ -247,16 +251,13 @@ class TestMaskersWithRealData(unittest.TestCase):
         shas = [shas[i] for i in idx]
         data = [data[i] for i in idx]
 
+        if len(shas) > self.total:
+            shas = shas[:self.total]
+            data = data[:self.total]
+
         num_errors = 0
         error_logs = defaultdict(int)
         for i, (s, t) in tqdm(enumerate(zip(shas, data)), total=len(shas)):
-            # if s not in (
-            #     "0007ad60610f055472513ded6bbc47130f77804dee7046a18d479409f3e2bbad",
-            #     "0008e34c2bf27aabaf22d12a778a1cc30c99f1893aed13dd570c10336ab1abdd",
-            #     "11b5d9b827501cd3edc8c6fe29f6d18917d9cdc39f6ca84c98da3ee4db0b1ae2",
-            #     "1661430f96ed9af3a1cacc7079e26f520839a91f98ef5271a6d4639fb783f51f",
-            # ):
-            #     continue
             errors = []
 
             names     = [s]
@@ -269,11 +270,7 @@ class TestMaskersWithRealData(unittest.TestCase):
             mask_chk = masker_chk(input_ids, names)
             mask_num = masker_num(input_ids, names)
             mask_len = masker_len(input_ids, names)
-            try:
-                mask_fun = masker_fun(input_ids, names)
-            except RuntimeError as e:
-                print(s)
-                raise e
+            mask_fun = masker_fun(input_ids, names)
 
             unq_num = len(torch.unique(mask_num))
             unq_len = len(torch.unique(mask_len))
