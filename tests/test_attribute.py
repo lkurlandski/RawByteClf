@@ -192,6 +192,8 @@ class TestMaskers(unittest.TestCase):
 
 class TestMaskersWithRealData(unittest.TestCase):
 
+    # sbatch --account=admalware --job-name=test_attribute --partition=debug --nodes=1 --ntasks=1 --cpus-per-task=4 --mem=128G --time=01:00:00 --output=./logs/test_attribute.log --error=./logs/test_attribute.log --wrap="python -u -m unittest tests.test_attribute.TestMaskersWithRealData"
+
     def setUp(self):
         self.bos_token_id = 1
         self.eos_token_id = 2
