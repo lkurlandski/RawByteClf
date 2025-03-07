@@ -2112,13 +2112,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
             feature_mask = None
             if masker is not None:
-                feature_mask = get_masker(
-                    ExplanationMethod.CHK,
-                    tokenizer.bos_token_id,
-                    tokenizer.eos_token_id,
-                    tokenizer.pad_token_id,
-                    args.max_length // 8,
-                )(input_ids, None).to(device)
+                masker = get_masker(ExplanationMethod.CHK, tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, args.max_length // 8)
+                feature_mask = masker(input_ids, None).to(device)
 
             get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
 
