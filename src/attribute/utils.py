@@ -255,7 +255,7 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         """
         Returns the number of functions, within the length of the input, in the file.
         """
-        max_length = self.get_last_idx(input_ids) - 2
+        max_length = self.get_last_idx(input_ids) - 1
         v = self.select_valid_bounds(self.boundaries[sha], max_length)
         k = len(v)
         return k
