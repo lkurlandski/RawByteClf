@@ -98,6 +98,11 @@ class Masker:
         return mask
 
     def get_last_idx(self, input_ids: Tensor) -> int:
+        """
+        Returns the last index of the input. This is either the position of the EOS token or the PAD token,
+        if present, or the length of the input, in which case, input_ids[get_last_idx(input_ids)] will
+        raise an IndexError.
+        """
         if self.eos_token_id is not None:
             idx = torch.nonzero(input_ids == self.eos_token_id)
             last_idx = idx[0].item()
@@ -110,6 +115,11 @@ class Masker:
         else:
             last_idx = len(input_ids)
         return last_idx
+
+    @staticmethod
+    def select_valid_bounds(bounds: np.ndarray, max_length: int) -> np.ndarray:
+        idx = bounds[:,0] < max_length
+        return bounds[idx]
 
 
 class ChunkFeatureMasker(Masker):
@@ -169,11 +179,6 @@ class AutoChunkFeatureMasker(Masker):
     def compute_stat(self, input_ids: Tensor, sha: str) -> float:  # pylint: disable=unused-argument
         raise NotImplementedError()
 
-    @staticmethod
-    def select_valid_bounds(bounds: np.ndarray, max_length: int) -> np.ndarray:
-        idx = bounds[:,0] < max_length
-        return bounds[idx]
-
 
 class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
 
@@ -194,7 +199,9 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
         """
         Returns the average function length (possibly NaN), out of all functions within the length of the input, in the file.
         """
-        max_length = self.get_last_idx(input_ids) - 2
+        max_length = self.get_last_idx(input_ids)
+        if self.bos_token_id:
+            max_length -= 1
         v = self.select_valid_bounds(self.boundaries[sha], max_length)
         if len(v) == 0:
             return np.NaN
@@ -255,7 +262,9 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         """
         Returns the number of functions, within the length of the input, in the file.
         """
-        max_length = self.get_last_idx(input_ids) - 1
+        max_length = self.get_last_idx(input_ids)
+        if self.bos_token_id:
+            max_length -= 1
         v = self.select_valid_bounds(self.boundaries[sha], max_length)
         k = len(v)
         return k
@@ -365,12 +374,11 @@ class FunctionFeatureMasker(Masker):
         return mask
 
     def number_of_functions_outside_input(self, input_ids: Tensor, sha: str) -> int:
-        # Get the last_idx, i.e., the last non-special token position in the input.
-        last_idx = self.get_last_idx(input_ids)
-
-        # Handle the situation where a function is past the length of the file.
-        last_idx = last_idx - 1 if self.bos_token_id is not None else last_idx
-        return np.sum(self.boundaries[sha][:,0] > last_idx)
+        max_length = self.get_last_idx(input_ids)
+        if self.bos_token_id is not None:
+            max_length -= 1
+        v = self.select_valid_bounds(self.boundaries[sha], max_length)
+        return len(self.boundaries[sha]) - len(v)
 
 
 def get_masker(
