@@ -3,6 +3,7 @@ Test the attribution methods.
 """
 
 from collections import defaultdict
+import gc
 import math
 import os
 from pathlib import Path
@@ -198,7 +199,7 @@ class TestMaskersWithRealData(unittest.TestCase):
         self.special_token_ids = (self.bos_token_id, self.eos_token_id, self.pad_token_id)
         self.chunk_size = 4096
         self.max_length = int(os.environ.get("MASKERS_MAX_LENGTH", "1048576"))
-        self.total = 10000
+        self.total = 16384
 
     def get_data(self):
 
@@ -209,7 +210,9 @@ class TestMaskersWithRealData(unittest.TestCase):
 
         data = []
         shas = []
-        for f in files:
+        pbar = tqdm(files)
+        for f in pbar:
+            pbar.set_description(f"Reading {f}. Progress {len(shas)} / {int(self.total * 1.25)}")
             with zipfile.ZipFile(f, "r") as zp:
                 for name in zp.namelist():
                     b = zp.read(name)[0:self.max_length - 2]
@@ -217,14 +220,16 @@ class TestMaskersWithRealData(unittest.TestCase):
                     data.append(b)
                     shas.append(s)
 
-            if len(shas) > self.total * 2:
+            if len(shas) > self.total * 1.25:
                 break
 
-        for i in range(len(data)):
-            t = torch.frombuffer(data[i], dtype=torch.uint8).to(torch.int64)
+        for i in tqdm(range(len(data)), total=len(data), desc="Converting to tensors..."):
+            t = torch.frombuffer(data[i], dtype=torch.uint8).to(torch.int16)
             t = t + len(self.special_token_ids)
             t = torch.cat([torch.tensor([self.bos_token_id]), t, torch.tensor([self.eos_token_id])])
             data[i] = t
+            if (i + 1) % 100 == 0:
+                gc.collect()
 
         return shas, data
 
@@ -255,13 +260,15 @@ class TestMaskersWithRealData(unittest.TestCase):
             shas = shas[:self.total]
             data = data[:self.total]
 
+        gc.collect()
+
         num_errors = 0
         error_logs = defaultdict(int)
         for i, (s, t) in tqdm(enumerate(zip(shas, data)), total=len(shas)):
             errors = []
 
             names     = [s]
-            input_ids = t.unsqueeze(0)
+            input_ids = t.unsqueeze(0).to(torch.int64)
 
             special_idx = torch.full_like(input_ids[0], False)
             for t in self.special_token_ids:
