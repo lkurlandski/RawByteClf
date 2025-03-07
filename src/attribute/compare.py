@@ -433,12 +433,15 @@ def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.nda
             w_, p_ = kendall(R)
             if any(np.isnan(z) or np.isinf(z) for z in (w_, p_)):
                 should_raise = True
+                unopinionated = []
                 for k in range(num_judges):
                     if len(np.unique(R[:,k])) == 1:
-                        warnings.warn(f"Sample {j} has only one unique rank for judge {k}.")
-                        if num_judges == 2:
-                            w_, p_ = 0, 1
-                            should_raise = False
+                        unopinionated.append(k)
+                if len(unopinionated) > 0:
+                    warnings.warn(f"Sample {j} has only one unique rank for judge(s) {', '.join(map(str, unopinionated))}.")
+                    # Neither test is well defined in this situation, so we just skip it.
+                    if num_judges == 2 or len(unopinionated) == num_judges:
+                        should_raise = False
 
                 if should_raise:
                     raise ValueError(f"Correlation test is NaN/InF for sample {j}. ({w_=} {p_=})")
