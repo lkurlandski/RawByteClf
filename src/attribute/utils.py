@@ -280,9 +280,9 @@ class FunctionFeatureMasker(Masker):
 
             if self.number_of_functions_outside_input(input_ids[i], s) > 0:
                 if self.function_out_of_bounds == "warn":
-                    warnings.warn(f"Function boundary past length of the file detected ({sha})!")
+                    warnings.warn(f"Function boundary past length of the file detected ({s})!")
                 elif self.function_out_of_bounds == "raise":
-                    raise RuntimeError(f"Function boundary past length of the file detected ({sha})!")
+                    raise RuntimeError(f"Function boundary past length of the file detected ({s})!")
 
             # This can fix an issue with the boundaries being out of order, resulting in non-consecutive mask indices.
             bounds = self.boundaries[s]
@@ -312,7 +312,7 @@ class FunctionFeatureMasker(Masker):
         for t in self.special_token_ids:
             mask[input_ids == t] = 0
 
-        for i in range(len(shas)):
+        for i, s in enumerate(shas):
             u = mask[i,:].unique().tolist()
             if set(u) != set(range(len(u))):
                 raise RuntimeError(f"The mask indices are not consecutive ({s}) {u=}")
@@ -434,7 +434,7 @@ def convert_to_overlapping_feature_mask(mask: Tensor) -> Tensor:
     mask = mask.clone()
 
     offset = 0
-    for i in range(len(mask)):
+    for i in range(len(mask)):  # pylint: disable=consider-using-enumerate
         mask[i,:] += offset
         offset = mask[i].max().item() + 1
 
