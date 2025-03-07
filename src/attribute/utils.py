@@ -72,7 +72,6 @@ def infer_chunk_sizes(mask: torch.Tensor) -> list[int]:
     return sizes.tolist()
 
 
-
 class Masker:
     """
     Base class for masking features in input data.
@@ -97,6 +96,20 @@ class Masker:
         for t in self.special_token_ids:
             mask[input_ids == t] = 0
         return mask
+
+    def get_last_idx(self, input_ids: Tensor) -> int:
+        if self.eos_token_id is not None:
+            idx = torch.nonzero(input_ids == self.eos_token_id)
+            last_idx = idx[0].item()
+        elif self.pad_token_id is not None:
+            idx = torch.nonzero(input_ids == self.pad_token_id)
+            if len(idx) == 0:
+                last_idx = len(input_ids)
+            else:
+                last_idx = idx[0].item()
+        else:
+            last_idx = len(input_ids)
+        return last_idx
 
 
 class ChunkFeatureMasker(Masker):
@@ -130,14 +143,12 @@ class ChunkFeatureMasker(Masker):
 
 
 class AutoChunkFeatureMasker(Masker):
-    """
-    Args:
-        stats (dict[str, float]): A dictionary mapping SHAs to statistics about the input data.
-    """
 
-    def __init__(self, *args, stats: dict[str, float]) -> None:
+    boundaries: EXEFuncBoundsMap
+
+    def __init__(self, *args, boundaries: dict[str, np.ndarray]) -> None:
         super().__init__(*args)
-        self.stats = stats
+        self.boundaries = boundaries
 
     def __call__(self, input_ids: Tensor, shas: list[str] = None) -> Tensor:
         if shas is not None and len(shas) != input_ids.shape[0]:
@@ -155,13 +166,16 @@ class AutoChunkFeatureMasker(Masker):
     def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:  # pylint: disable=unused-argument
         raise NotImplementedError()
 
+    def compute_stat(self, input_ids: Tensor, sha: str) -> float:  # pylint: disable=unused-argument
+        raise NotImplementedError()
+
+    @staticmethod
+    def select_valid_bounds(bounds: np.ndarray, max_length: int) -> np.ndarray:
+        idx = bounds[:,0] < max_length
+        return bounds[idx]
+
 
 class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
-    """
-    Args:
-        stats (dict[str, float]): A dictionary mapping SHAs to statistics about the input data.
-            For this class, each value in the dictionary should be the average length of a function.
-    """
 
     def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
@@ -176,20 +190,37 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
 
         return mask
 
+    def compute_stat(self, input_ids: Tensor, sha: str) -> float:
+        """
+        Returns the average function length (possibly NaN), out of all functions within the length of the input, in the file.
+        """
+        max_length = self.get_last_idx(input_ids) - 2
+        v = self.select_valid_bounds(self.boundaries[sha], max_length)
+        if len(v) == 0:
+            return np.NaN
+        k = np.mean(v[:,1] - v[:,0])
+        return k
+
     def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
-        v = self.stats[sha]
+        v = self.compute_stat(input_ids, sha)
         if math.isnan(v):
             return len(input_ids)
         return int(v)
 
     @staticmethod
     def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:
+        """
+        NOTE: this function cannot dynamically account for the possibility of out-of-bounds functions!
+        """
         stats = {}
         for s, v in bounds_map.items():
             if max_length is not None:
                 idx = v[:,0] < max_length
                 v = v[idx]
-            stats[s] = np.mean(v[:,1] - v[:,0])
+            if len(v) == 0:
+                stats[s] = np.NaN
+            else:
+                stats[s] = np.mean(v[:,1] - v[:,0])
         return stats
 
 
@@ -220,6 +251,15 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
 
         return mask
 
+    def compute_stat(self, input_ids: Tensor, sha: str) -> float:
+        """
+        Returns the number of functions, within the length of the input, in the file.
+        """
+        max_length = self.get_last_idx(input_ids) - 2
+        v = self.select_valid_bounds(self.boundaries[sha], max_length)
+        k = len(v)
+        return k
+
     def get_num_chunks(self, input_ids: Tensor, sha: str) -> int:
         if self.eos_token_id is not None:
             msk = input_ids == self.eos_token_id
@@ -238,13 +278,16 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         if self.bos_token_id is not None:
             num_tok -= 1
 
-        num_fun = self.stats[sha]
+        num_fun = self.compute_stat(input_ids, sha)
         if num_fun == 0:
             return 1
         return num_fun + 1
 
     @staticmethod
     def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:
+        """
+        NOTE: this function cannot dynamically account for the possibility of out-of-bounds functions!
+        """
         stats = {}
         for s, v in bounds_map.items():
             if max_length is not None:
@@ -323,17 +366,7 @@ class FunctionFeatureMasker(Masker):
 
     def number_of_functions_outside_input(self, input_ids: Tensor, sha: str) -> int:
         # Get the last_idx, i.e., the last non-special token position in the input.
-        if self.eos_token_id is not None:
-            idx = torch.nonzero(input_ids == self.eos_token_id)
-            last_idx = idx[0].item()
-        elif self.pad_token_id is not None:
-            idx = torch.nonzero(input_ids == self.pad_token_id)
-            if len(idx) == 0:
-                last_idx = len(input_ids)
-            else:
-                last_idx = idx[0].item()
-        else:
-            last_idx = len(input_ids)
+        last_idx = self.get_last_idx(input_ids)
 
         # Handle the situation where a function is past the length of the file.
         last_idx = last_idx - 1 if self.bos_token_id is not None else last_idx
@@ -348,7 +381,6 @@ def get_masker(
     chunk_size: Optional[int] = None,
     shas: Optional[list[str]] = None,
     allow_missing_shas: bool = False,
-    max_length: Optional[int] = None,
     function_out_of_bounds: Literal["warn", "raise", "pass"] = "pass",
 ) -> Masker:
     if any(x is None for x in (bos_token_id, eos_token_id, pad_token_id)):
@@ -361,17 +393,11 @@ def get_masker(
         return ChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, chunk_size=chunk_size)
 
     bounds_map = EXEFuncBoundsMap.from_dataset_name(shas=shas, allow_missing_shas=allow_missing_shas)
-    if bos_token_id is not None and max_length is not None:
-        max_length -= 1
-    if eos_token_id is not None and max_length is not None:
-        max_length -= 1
 
     if method == ExplanationMethod.LEN:
-        stats = AutoLenChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map, max_length)
-        return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=stats)
+        return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
     if method == ExplanationMethod.NUM:
-        stats = AutoNumChunkFeatureMasker.compute_stats_map_from_bounds_map(bounds_map, max_length)
-        return AutoNumChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, stats=stats)
+        return AutoNumChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
     if method == ExplanationMethod.FUN:
         return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map, function_out_of_bounds=function_out_of_bounds)
 
