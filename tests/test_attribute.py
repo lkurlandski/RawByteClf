@@ -36,6 +36,7 @@ from src.attribute.utils import (
     infer_chunk_sizes,
 )
 from src.attribute.compare import kendallw_without_ties, kendallw_with_ties
+from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
 
 torch.random.manual_seed(0)
@@ -217,8 +218,8 @@ class TestMaskersWithRealData(unittest.TestCase):
             pbar.set_description(f"Reading {f}. Progress {len(shas)} / {int(self.total * 1.25)}")
             with zipfile.ZipFile(f, "r") as zp:
                 for name in zp.namelist():
-                    b = zp.read(name)[0:self.max_length - 2]
                     s = name.split(".")[0]
+                    b = zp.read(name)[0:self.max_length - 2]
                     data.append(b)
                     shas.append(s)
 
@@ -286,14 +287,23 @@ class TestMaskersWithRealData(unittest.TestCase):
             unq_fun = len(torch.unique(mask_fun))
             unq_chk = len(torch.unique(mask_chk))
 
-            # num_function_within_max_length = np.sum(masker_fun.boundaries[s][:,0] < self.max_length)
+            totally_overlapping_functions = False
+            if set(torch.unique(mask_fun).tolist()) == {0, 1} and len(masker_fun.boundaries[s]) > 0:
+                max_length = masker_fun.get_last_idx(input_ids[0]) - 1
+                bounds = masker_fun.select_valid_bounds(masker_fun.boundaries[s], max_length)
+                totally_overlapping_functions = bounds_contain_totally_overlapping_functions(bounds)
+                if totally_overlapping_functions:
+                    msg = "totally overlapping functions"
+                    errors.append(f"{msg}")
+                    error_logs[msg] += 1
+
             num_function_within_max_length = len(masker_fun.boundaries[s]) - masker_fun.number_of_functions_outside_input(input_ids[0], s)
-            if unq_fun != num_function_within_max_length + 2:
+            if unq_fun != num_function_within_max_length + 2 and not totally_overlapping_functions:
                 msg = "unq_fun != num_function_within_max_length + 2"
                 errors.append(f"{msg} ({unq_fun} != {num_function_within_max_length + 2})")
                 error_logs[msg] += 1
 
-            if unq_num != unq_fun:
+            if unq_num != unq_fun and not totally_overlapping_functions:
                 msg = "unq_num != unq_fun"
                 errors.append(f"{msg} ({unq_num} != {unq_fun})")
                 error_logs[msg] += 1
