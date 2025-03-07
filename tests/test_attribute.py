@@ -197,8 +197,8 @@ class TestMaskersWithRealData(unittest.TestCase):
         self.pad_token_id = 0
         self.special_token_ids = (self.bos_token_id, self.eos_token_id, self.pad_token_id)
         self.chunk_size = 4096
-        self.max_length = 2 ** 20
-        self.total = 2000
+        self.max_length = int(os.environ.get("MASKERS_MAX_LENGTH", "1048576"))
+        self.total = 10000
 
     def get_data(self):
 
