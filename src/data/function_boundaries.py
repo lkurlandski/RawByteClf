@@ -134,6 +134,9 @@ class EXEFuncBoundsMap(UserDict):
             shas = set(shas)
             data = {k: v for k, v in data.items() if k in shas}
             if not allow_missing_shas and len(data) != len(shas):
+                for s in shas:
+                    if s not in data:
+                        print(s)
                 raise ValueError(f"Missing {len(shas) - len(data)} shas!")
 
         for k, v in data.items():
