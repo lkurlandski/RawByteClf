@@ -248,13 +248,14 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         change_idx = len(input_ids) % num_chunks
 
         i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
-        c = 0 if chunk_size_2 == 1 else 1  # NOTE: this may not work here.
         j = 0
+        v = 1 if self.special_token_ids else 0
         while i < mask.shape[0]:
             chunk_size = chunk_size_2 if j < change_idx else chunk_size_1
-            mask[i:i + chunk_size] = (i // chunk_size) + c  # Start at 1.
+            mask[i:i + chunk_size] = v
             i += chunk_size
             j += 1
+            v += 1
 
         return mask
 
@@ -365,9 +366,7 @@ class FunctionFeatureMasker(Masker):
             mask[input_ids == t] = 0
 
         for i, s in enumerate(shas):
-            u = mask[i,:].unique().tolist()
-            if set(u) != set(range(len(u))):
-                raise RuntimeError(f"The mask indices are not consecutive ({s}) {u=}")
+            assert_feature_mask_indices_are_consecutive(mask[i,:])
 
         assert torch.all(mask >= 0), "Negative values were detected in the mask, which might break `apply_feature_mask`."
 
@@ -412,6 +411,16 @@ def get_masker(
     raise ValueError(f"Explanation method {method} not supported.")
 
 
+def assert_feature_mask_indices_are_consecutive(mask: Tensor) -> int:
+    """
+    Asserts that the feature mask indices are consecutive. Returns the number of unique indices.
+    """
+    u = mask.unique()
+    if set(u.tolist()) != set(range(len(u))):
+        raise RuntimeError("The mask indices are not consecutive.")
+    return len(u)
+
+
 def apply_feature_mask_slow(X: Tensor, M: Tensor) -> Tensor:
     """
     Not really sure how this works, but it passes the tests.
@@ -422,12 +431,7 @@ def apply_feature_mask_slow(X: Tensor, M: Tensor) -> Tensor:
     Y = torch.zeros_like(X)
 
     for i, (x, m) in enumerate(zip(X, M)):
-        u = m.unique()
-        n = u.numel()
-
-        if set(u.tolist()) != set(range(len(u))):
-            raise RuntimeError("The mask indices are not consecutive.")
-
+        n = assert_feature_mask_indices_are_consecutive(m)
         s = torch.zeros(n, dtype=x.dtype, device=x.device)
         s.scatter_add_(0, m, x)
         y = s[m]
@@ -443,20 +447,17 @@ def apply_feature_mask_fast(X: torch.Tensor, M: torch.Tensor) -> torch.Tensor:
     assert X.dim() == 2
     assert M.dim() == 2
 
+    n = assert_feature_mask_indices_are_consecutive(M)
     b = X.shape[0]
-    u = M.unique()
-    n = u.numel()
-
-    if set(u.tolist()) != set(range(len(u))):
-        raise RuntimeError("The mask indices are not consecutive.")
-
     S = torch.zeros(b, n, dtype=X.dtype, device=X.device)
     O = torch.arange(b, device=X.device).unsqueeze(1) * n
     i = (O + M).view(-1)
     Xf = X.view(-1)
     Sf = S.view(-1)
     Sf.scatter_add_(0, i, Xf)
-    return S.gather(1, M)
+    Z = S.gather(1, M)
+
+    return Z
 
 
 apply_feature_mask = apply_feature_mask_fast

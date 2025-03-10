@@ -34,6 +34,8 @@ from src.attribute.utils import (
     FunctionFeatureMasker,
     get_masker,
     infer_chunk_sizes,
+    assert_feature_mask_indices_are_consecutive,
+    ignore_warnings_decorator,
 )
 from src.attribute.compare import kendallw_without_ties, kendallw_with_ties
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
@@ -204,6 +206,13 @@ class TestMaskersWithRealData(unittest.TestCase):
         self.max_length = int(os.environ.get("MASKERS_MAX_LENGTH", "1048576"))
         self.total = 16384
 
+    def should_include(self, s: str) -> bool:
+        # return s in (
+        #     "00001f161d205a8f3c79f7fac7a06782a8eae0f7cf53b8f444644ece9f8aab98",
+        # )
+        return True
+
+    @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^The given buffer is not writable*")
     def get_data(self):
 
         files = []
@@ -219,6 +228,8 @@ class TestMaskersWithRealData(unittest.TestCase):
             with zipfile.ZipFile(f, "r") as zp:
                 for name in zp.namelist():
                     s = name.split(".")[0]
+                    if not self.should_include(s):
+                        continue
                     b = zp.read(name)[0:self.max_length - 2]
                     data.append(b)
                     shas.append(s)
@@ -267,7 +278,7 @@ class TestMaskersWithRealData(unittest.TestCase):
 
         num_errors = 0
         error_logs = defaultdict(int)
-        for i, (s, t) in tqdm(enumerate(zip(shas, data)), total=len(shas)):
+        for i, (s, t) in tqdm(enumerate(zip(shas, data)), total=len(shas), desc="Testing..."):
             errors = []
 
             names     = [s]
@@ -286,6 +297,14 @@ class TestMaskersWithRealData(unittest.TestCase):
             unq_len = len(torch.unique(mask_len))
             unq_fun = len(torch.unique(mask_fun))
             unq_chk = len(torch.unique(mask_chk))
+
+            for mask, name in ((mask_chk, "chk"), (mask_num, "num"), (mask_len, "len"), (mask_fun, "fun")):
+                try:
+                    assert_feature_mask_indices_are_consecutive(mask[0])
+                except RuntimeError:
+                    msg = f"{name} mask indices are not consecutive"
+                    errors.append(msg)
+                    error_logs[msg] += 1
 
             totally_overlapping_functions = False
             if set(torch.unique(mask_fun).tolist()) == {0, 1} and len(masker_fun.boundaries[s]) > 0:
