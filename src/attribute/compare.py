@@ -220,6 +220,17 @@ def kendalltau(R: np.ndarray) -> SignificanceResult:
     return SignificanceResult(res[0], res[1])
 
 
+def scale_downcast(x: np.ndarray, dtype: np.dtype) -> np.ndarray:
+    m = np.finfo(dtype).max
+    v = max(abs(x.min()), abs(x.max()))
+
+    if v > m:
+        scale = m / v
+        x *= scale
+
+    return x.astype(dtype)
+
+
 ####################################################################################################
 # Main
 ####################################################################################################
@@ -292,13 +303,7 @@ def _create_rank_matrices(
             t_i = time.time()
 
         # If the ranks are too large, rescale it to fit within the float16 range.
-        r = annotation.ranks
-        if (overflow := np.finfo(np.float16).max - r.max()) < 0:
-            if verbose:
-                print(f"Downscaling sample due to overflow {r.max()} ({xai_method.value} {xai_algorithm.value} {annotation.name})")
-            factor = np.ceil(-overflow / np.finfo(np.float16).max)
-            r = r / factor
-        r = r.astype(np.float16)
+        r = scale_downcast(annotation.ranks, np.float16)
 
         # If the ranks are too long, resize the cumulative matrix to fit the new length.
         l = len(r)
@@ -331,7 +336,7 @@ def create_rank_matrices(
     verbose: bool = True,
     subset: Optional[int] = None,
     cache_load: bool = True,
-    cache_save: bool = True,
+    cache_save: bool = False,
     skip: Optional[set[str]] = tuple(),
 ) -> tuple[np.ndarray, np.ndarray]:
 
@@ -477,8 +482,8 @@ def main():
 
     SUBSET    = None
     VERBOSE   = True
-    CACHELOAD = False
-    CACHESAVE = True
+    CACHELOAD = True
+    CACHESAVE = False
     SKIP = [
         "94430ac65ede0bd6562674339a24daf507ed3004b41e910ee5ed3a163403f16d",  # Has 2 ** 19 interpretable features.
     ]
