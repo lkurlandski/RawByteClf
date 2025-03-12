@@ -473,6 +473,8 @@ class Configuration:
             f_0 = 1
         if self.xai_method == ExplanationMethod.NUM:
             f_0 = 1
+        if self.xai_method == ExplanationMethod.LEN:
+            f_0 = 2  # TODO: refine.
 
         if self.task == Task.DET:
             f_1 = 8322  / 8322
@@ -481,6 +483,8 @@ class Configuration:
         if self.task == Task.BEH:
             f_1 = 3727  / 8322
 
+        # These values were estimated from the FUN and NUM modes,
+        # which both have the same number of interpretable features.
         if self.xai_algorithm == ExplanationAlgorithm.LIME:
             h = 2
         if self.xai_algorithm == ExplanationAlgorithm.KSHP:
@@ -492,7 +496,7 @@ class Configuration:
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
             h = 24
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-            h = 36  # TODO: refine.
+            h = 60
 
         return seconds_to_slurm_time(3600 * h * f_0 * f_1)
 
@@ -911,10 +915,12 @@ def main():
         [LiftLevel.DEC],
         TokenizationAlgorithm,
         (256, 1024, 4096, 16384),
-        Task,
+        [t for t in Task if t == Task.DET],
         [None, Task.CLM, Task.MLM],
-        [ExplanationMethod.FUN, ExplanationMethod.NUM],
-        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
+        # [ExplanationMethod.LEN, ExplanationMethod.NUM, ExplanationMethod.FUN],
+        [ExplanationMethod.LEN, ExplanationMethod.NUM,],
+        # [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
+        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT, ExplanationAlgorithm.IGRD)],
         [None],
         (0,),
     )
