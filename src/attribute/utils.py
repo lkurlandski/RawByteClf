@@ -242,16 +242,18 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
 
         num_chunks = self.get_num_chunks(input_ids, sha)
+        num_tok    = self.get_last_idx(input_ids) - 1
+        num_tok    = num_tok - 1 if self.bos_token_id is not None else num_tok
 
-        chunk_size_1 = len(input_ids) // num_chunks
+        chunk_size_1 = num_tok // num_chunks
         chunk_size_2 = chunk_size_1 + 1
-        change_idx = len(input_ids) % num_chunks
+        change_idx = num_tok % num_chunks
 
         i = 1 if self.bos_token_id is not None else 0  # Skip the BOS token.
         j = 0
         v = 1 if self.special_token_ids else 0
-        while i < mask.shape[0]:
-            chunk_size = chunk_size_2 if j < change_idx else chunk_size_1
+        while i < num_tok + (1 if self.bos_token_id is not None else 0) + (1 if self.eos_token_id is not None else 0):
+            chunk_size = chunk_size_2 if j <= change_idx else chunk_size_1
             mask[i:i + chunk_size] = v
             i += chunk_size
             j += 1
@@ -271,23 +273,6 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         return k
 
     def get_num_chunks(self, input_ids: Tensor, sha: str) -> int:
-        if self.eos_token_id is not None:
-            msk = input_ids == self.eos_token_id
-            if not torch.any(msk):
-                raise ValueError("No EOS token found in input.")
-            num_tok = torch.argmax(msk.int()).item()
-        elif self.pad_token_id is not None:
-            msk = input_ids == self.pad_token_id
-            if not torch.any(msk):
-                num_tok = len(input_ids)
-            else:
-                num_tok = torch.argmax(msk.int()).item()
-        else:
-            num_tok = len(input_ids)
-
-        if self.bos_token_id is not None:
-            num_tok -= 1
-
         num_fun = self.compute_stat(input_ids, sha)
         if num_fun == 0:
             return 1

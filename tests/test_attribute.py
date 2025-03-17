@@ -205,6 +205,7 @@ class TestMaskersWithRealData(unittest.TestCase):
         self.chunk_size = 4096
         self.max_length = int(os.environ.get("MASKERS_MAX_LENGTH", "1048576"))
         self.total = 16384
+        self.apply_padding = True
 
     def should_include(self, s: str) -> bool:
         # return s in (
@@ -282,7 +283,11 @@ class TestMaskersWithRealData(unittest.TestCase):
             errors = []
 
             names     = [s]
-            input_ids = t.unsqueeze(0).to(torch.int64)
+
+            input_ids = t
+            if self.apply_padding:
+                input_ids = torch.cat([t, torch.zeros(self.max_length - len(t), dtype=torch.int64)])
+            input_ids = input_ids.unsqueeze(0).to(torch.int64)
 
             special_idx = torch.full_like(input_ids[0], False)
             for t in self.special_token_ids:
