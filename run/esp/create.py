@@ -469,12 +469,15 @@ class Configuration:
         if self.max_length != 2 ** 20:
             raise NotImplementedError(f"{self.max_length}")
 
-        if self.xai_method == ExplanationMethod.FUN:
+        if self.xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP):
             f_0 = 1
-        if self.xai_method == ExplanationMethod.NUM:
-            f_0 = 1
-        if self.xai_method == ExplanationMethod.LEN:
-            f_0 = 2  # TODO: refine.
+        else:
+            if self.xai_method == ExplanationMethod.FUN:
+                f_0 = 1
+            if self.xai_method == ExplanationMethod.NUM:
+                f_0 = 1
+            if self.xai_method == ExplanationMethod.LEN:
+                f_0 = 14
 
         if self.task == Task.DET:
             f_1 = 8322  / 8322
