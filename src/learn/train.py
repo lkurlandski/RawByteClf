@@ -2162,6 +2162,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         total = len(materials.files["vl"]) // per_device_attribute_batch_size + 1
         iterable = tqdm(dataset["vl"].iter(per_device_attribute_batch_size), total=total, desc="Explaining...")
         t_start = time.time()
+        t_save  = time.time()
         for step, batch in enumerate(iterable):
             t_start_step = time.time()
 
@@ -2212,10 +2213,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             for z in (all_labels, all_attribs, all_masks if all_masks is not None else []):
                 mem += sum(a.numel() * a.element_size() for a in z)
 
-            if mem > MAX_ATTRIBUTION_MEMORY:
+            if mem > MAX_ATTRIBUTION_MEMORY or (time.time() - t_save > 3600):
                 oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True)
                 io_iteration += 1
                 gc.collect()
+                t_save = time.time()
 
             if step % training_arguments.logging_steps == 0:
                 t_end_step = time.time()
