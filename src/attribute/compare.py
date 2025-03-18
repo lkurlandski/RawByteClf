@@ -2,6 +2,7 @@
 Conduct analysis to compare the attributions of different XAI methods and algorithms.
 """
 
+from argparse import ArgumentParser
 from collections import namedtuple
 from collections.abc import Iterable, Generator
 from copy import deepcopy
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 import multiprocessing as mp
 import os
 from pathlib import Path
+from pprint import pprint, pformat
 import sys
 import time
 from typing import Optional, NamedTuple
@@ -221,6 +223,7 @@ def kendalltau(R: np.ndarray) -> SignificanceResult:
 
 
 def scale_downcast(x: np.ndarray, dtype: np.dtype) -> np.ndarray:
+    # NOTE: this does not preserve a rank matrix!
     m = np.finfo(dtype).max
     v = max(abs(x.min()), abs(x.max()))
 
@@ -260,16 +263,44 @@ def verify_names_are_consistent(xai_methods: Iterable[ExplanationMethod], xai_al
     return names
 
 
-def _create_rank_matrices(
+def rank_matrix_cache(xai_method: ExplanationMethod, xai_algorithm: ExplanationAlgorithm, root: Path, num_samples: int) -> tuple[Path, Path]:
+    # If a previous cache exists, load it and return.
+    for p in root.parts:
+        if p.split("--")[0] == "task":
+            task = p.split("--")[1]
+            break
+    else:
+        raise ValueError(f"Could not find the task in {root}.")
+    s = f"{task}--{xai_method.value}--{xai_algorithm.value}--{num_samples}"
+    cache_file = Path(f"./cache/attribute/{s}")
+    cache_file_A = cache_file.with_suffix(".A.npy")
+    cache_file_L = cache_file.with_suffix(".L.npy")
+    return cache_file_A, cache_file_L
+
+
+def create_rank_matrix(
     xai_method: ExplanationMethod,
     xai_algorithm: ExplanationAlgorithm,
     root: Path,
     num_samples: int,
-    num_judges: int,
-    verbose: bool,
-    subset: Optional[int],
-    skip: set[str],
+    verbose: bool = True,
+    subset: Optional[int] = None,
+    cache_load: bool = True,
+    cache_save: bool = False,
+    cache_only: bool = False,
+    skip: set[str] = tuple(),
 ) -> tuple[np.ndarray, np.ndarray]:
+
+    dtypes = [np.float16, np.float32, np.float64, np.float128]
+    dtype = dtypes.pop(0)
+
+    # If a previous cache exists, load it and return.
+    cache_file_A, cache_file_L = rank_matrix_cache(xai_method, xai_algorithm, root, num_samples)
+    if cache_load and os.path.exists(cache_file_A) and os.path.exists(cache_file_L):
+        A = np.load(cache_file_A)
+        L = np.load(cache_file_L)
+        return A, L
+
     # Logging.
     if verbose:
         print(f"{os.getpid()} creating rank matrices for {xai_method.value} {xai_algorithm.value}.")
@@ -285,7 +316,7 @@ def _create_rank_matrices(
     # Initialize the rank matrix and length matrix. Note the difference in shape
     # between this rank matrix and the one containing ranks for all judges.
     L = np.empty((num_samples,), dtype=np.int64)
-    A = np.full((num_samples, num_features), np.nan, dtype=np.float16)
+    A = np.full((num_samples, num_features), np.nan, dtype=dtype)
 
     # Loop over every annotation in the path and extract ranks.
     t_i = time.time()
@@ -303,16 +334,21 @@ def _create_rank_matrices(
             t_i = time.time()
 
         # If the ranks are too large, rescale it to fit within the float16 range.
-        r = scale_downcast(annotation.ranks, np.float16)
+        r = annotation.ranks
+        l = len(r)
+        if r.max() > np.finfo(dtype).max:
+            while r.max() > np.finfo(dtype).max:
+                dtype = dtypes.pop(0)
+            if verbose:
+                print(f"Upcasting {A.dtype} --> {dtype} to acomidate {l} features {xai_method.value} {xai_algorithm.value} {annotation.name}.")
 
         # If the ranks are too long, resize the cumulative matrix to fit the new length.
-        l = len(r)
         if l > num_features:
             while l > num_features:
                 num_features += feature_incr
             if verbose:
                 print(f"Increasing feature dimensionality {A.shape[1]} --> {num_features} to acomidate {l} features ({xai_method.value} {xai_algorithm.value} {annotation.name})")
-            P = np.full((num_samples, feature_incr), np.nan, dtype=np.float16)
+            P = np.full((num_samples, num_features - A.shape[1]), np.nan, dtype=dtype)
             A = np.concatenate((A, P), axis=1)
 
         # Save the ranks and length.
@@ -324,6 +360,19 @@ def _create_rank_matrices(
             break
         i += 1
 
+    # Save the matrix to a cache file, if requested.
+    if cache_save:
+        cache_file_A.parent.mkdir(parents=True, exist_ok=True)
+        cache_file_L.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cache_file_A, A)
+        np.save(cache_file_L, L)
+
+    # If we are only caching the results, clear the matrix and return.
+    if cache_only:
+        A = np.empty((0, 0), dtype=A.dtype)
+        L = np.empty((0,), dtype=L.dtype)
+        return A, L
+
     return A, L
 
 
@@ -332,48 +381,42 @@ def create_rank_matrices(
     xai_algorithms: Iterable[ExplanationAlgorithm],
     root: Path,
     num_samples: int,
-    num_judges: int,
     verbose: bool = True,
     subset: Optional[int] = None,
     cache_load: bool = True,
     cache_save: bool = False,
-    skip: Optional[set[str]] = tuple(),
+    cache_only: bool = False,
+    skip: set[str] = tuple(),
+    num_workers: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-
-    # If a previous cache exists, load it and return.
-    for p in root.parts:
-        if p.split("--")[0] == "task":
-            task = p.split("--")[1]
-            break
-    else:
-        raise ValueError(f"Could not find the task in {root}.")
-    s = f"{task}--{xai_method.value}--"
-    s += "--".join(sorted([xai_algorithm.value for xai_algorithm in xai_algorithms]))
-    s += f"--{num_samples}"
-    cache_file = Path(f"./cache/attribute/{s}")
-    cache_file_A = cache_file.with_suffix(".A.npy")
-    cache_file_L = cache_file.with_suffix(".L.npy")
-    if cache_load and os.path.exists(cache_file_A) and os.path.exists(cache_file_L):
-        A = np.load(cache_file_A)
-        L = np.load(cache_file_L)
-        return A, L
 
     if subset is not None:
         assert subset == num_samples
 
     skip = set(skip)
 
-    with mp.Pool(len(xai_algorithms)) as pool:
-        results = pool.starmap(
-            _create_rank_matrices,
-            [(xai_method, xai_algorithm, root, num_samples, num_judges, verbose, subset, skip) for xai_algorithm in xai_algorithms]
-        )
+    iterable = [(xai_method, xai_algorithm, root, num_samples, verbose, subset, cache_load, cache_save, skip) for xai_algorithm in xai_algorithms]
+    num_workers = len(xai_algorithms) if num_workers is None else num_workers
+    if num_workers > 1:
+        with mp.Pool(len(xai_algorithms)) as pool:
+            results = pool.starmap(create_rank_matrix, iterable)
+    else:
+        results = [create_rank_matrix(*args) for args in iterable]
+
+    # If we are only caching the results, clear the matrix and return.
+    if cache_only:
+        A = np.empty((0, 0, 0), dtype=A.dtype)
+        L = np.empty((0,), dtype=L.dtype)
+        return A, L
 
     A = np.concatenate([np.expand_dims(r[0], 1) for r in results], axis=1)
     L = results[0][1]
-    for _, L_ in results[1:]:
-        if not np.all(L == L_):
-            raise ValueError("Lengths of samples do not match.")
+    checksums = {
+        xai_algorithms[i].value: hashlib.md5(results[i][1].tobytes()).hexdigest()
+        for i in range(A.shape[1])
+    }
+    if len(set(checksums.values())) != 1:
+        raise ValueError(f"Lengths of samples do not match. Checksums:\n{pformat(checksums)}")
 
     num_features = A.shape[2]
     for k in range(num_features - 1, -1, -1):
@@ -384,24 +427,12 @@ def create_rank_matrices(
         print(f"Determined that the maximum number of features is {num_features}. Removing {A.shape[2] - num_features} empty columns.")
     A = A[:, :, 0:num_features]
 
-    if verbose:
-        print(f"Saving rank matrices and lengths to {cache_file.name}.")
-
-    if cache_save:
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        np.save(cache_file_A, A)
-        np.save(cache_file_L, L)
-
     return A, L
 
 
 def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the agreement scores and p-value for every sample.
-    If the number of interpretable is less than 2, then the agreement score is NaN, so the output will have NaNs in it!
-    If the number of judges is two, use Kendall's tau-b, otherwise use Kendall's W.
-    xai_algorithms allows for the selection of a subset of algorithms to compute agreement.
-     Unlike in previous functions, this is in fact a 1D array of booleans indicating which columns to keep.
     """
     if A.dtype == np.float16:
         warnings.warn("Performing correlation tests in low-precision mode can lead to numerical instability.")
@@ -430,8 +461,7 @@ def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.nda
         if judges is not None:
             R = R[:,judges]
 
-        # If no functions were detected, we wind up with only a single annotation and we cannot compute agreement.
-        # This isn't an error, so we just set the agreement to NaN and move on.
+        # TODO: clean this up.
         if R.shape[0] == 1:
             w_, p_ = np.nan, np.nan
         else:
@@ -451,59 +481,112 @@ def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.nda
                 if should_raise:
                     raise ValueError(f"Correlation test is NaN/InF for sample {j}. ({w_=} {p_=})")
 
+            if num_judges > 2 and w_ < 0:
+                raise ValueError(f"Correlation test is less than 0 sample {j}. ({w_=} {p_=})")
+            elif num_judges == 2 and w_ < -1:
+                raise ValueError(f"Correlation test is less than -1 for sample {j}. ({w_=} {p_=})")
+
         w[j] = w_
         p[j] = p_
 
     return w, p
 
 
+class AgreementStats(NamedTuple):
+    mean: float
+    medn: float
+    stdv: float
+    min: float
+    max: float
+
+
+def compute_agreement_statistics(w: np.ndarray, p: np.ndarray) -> AgreementStats:
+    """
+    Compute the mean, median, and standard deviation of the agreement scores.
+    """
+    w = w[~np.isnan(w)]
+    p = p[~np.isnan(p)]
+    mean = np.mean(w)
+    medn = np.median(w)
+    stdv = np.std(w)
+    min  = np.min(w)
+    max  = np.max(w)
+    return AgreementStats(mean, medn, stdv, min, max)
+
+
 def main():
-    root = Path("/home/lk3591/Documents/code/RawByteClf/output/esp-exe/"
-        "lift_level--nop/lift_level_ddp--dec/packing_protocol--any/bits_in_byte--8/tokenization_algorithm--wdl/vocab_size--256/"
-        "max_length--1048576/"
-        "model_name--malconv/channels--256/stride--64/kernel_size--64/head_num_hidden_layers--1/head_hidden_size--128/embedding_size--8/"
-        "task--det/").rglob("attributions")
-    root = list(root)
-    assert len(root) == 1
-    root = root[0]
 
-    XAI_METHODS = (
-        ExplanationMethod.NUM,
-        ExplanationMethod.FUN,
-    )
-    XAI_ALGORITHMS = (
-        ExplanationAlgorithm.LIME,
-        ExplanationAlgorithm.KSHP,
-        ExplanationAlgorithm.IGRD,
-        ExplanationAlgorithm.GSHP,
-        ExplanationAlgorithm.FABL,
-        ExplanationAlgorithm.SSHP,
+    root = Path(
+        "/home/lk3591/Documents/code/RawByteClf/output/esp-exe/"
+        "lift_level--nop/lift_level_ddp--dec/packing_protocol--any/"
+        "bits_in_byte--8/tokenization_algorithm--wdl/vocab_size--256/"
+        "max_length--1048576/model_name--malconv/channels--256/stride--64/"
+        "kernel_size--64/head_num_hidden_layers--1/head_hidden_size--128/"
+        "embedding_size--8/task--det/weighted_loss--none/split_mode--none/"
+        "max_grad_norm--1.0/weight_decay--0.01/learning_rate--0.001/"
+        "lr_scheduler_type--linear/warmup_ratio--0.05/optim--adamw_torch/"
+        "adam_beta1--0.9/adam_beta2--0.999/adam_epsilon--1e-08/max_steps---1/"
+        "num_train_epochs--5.0/world_size--1/per_device_train_batch_size--64/"
+        "gradient_accumulation_steps--1/tf32--True/fp16--False/bf16--False/"
+        "seed--0/results/attributions/"
     )
 
-    SUBSET    = None
-    VERBOSE   = True
-    CACHELOAD = True
-    CACHESAVE = False
-    SKIP = [
-        "94430ac65ede0bd6562674339a24daf507ed3004b41e910ee5ed3a163403f16d",  # Has 2 ** 19 interpretable features.
-    ]
+    parser = ArgumentParser()
+    parser.add_argument("--root", type=Path, default=root)
+    parser.add_argument("--subset", type=int, default=None)
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--cache_load", action="store_true")
+    parser.add_argument("--cache_save", action="store_true")
+    parser.add_argument("--cache_only", action="store_true")
+    parser.add_argument("--skip", nargs="+", default=[])
+    parser.add_argument("--xai_methods", nargs="+", default=[x.value for x in ExplanationMethod])
+    parser.add_argument("--xai_algorithms", nargs="+", default=[x.value for x in ExplanationAlgorithm])
+    parser.add_argument("--num_workers", type=int, default=None)
+    args = parser.parse_args()
+
+    pprint(args.__dict__)
+
+    root           = args.root
+    subset         = args.subset
+    verbose        = args.verbose
+    cache_load     = args.cache_load
+    cache_save     = args.cache_save
+    cache_only     = args.cache_only
+    skip           = set(args.skip)
+    xai_methods    = [ExplanationMethod(x) for x in args.xai_methods]
+    xai_algorithms = [ExplanationAlgorithm(x) for x in args.xai_algorithms]
 
     print("Verifying that the names are consistent accross experiments.")
-    names = verify_names_are_consistent(XAI_METHODS, XAI_ALGORITHMS, root, VERBOSE)
-    names = [n for n in names if n not in SKIP]
-    num_samples = len(names) if SUBSET is None else SUBSET
-    num_judges = len(XAI_ALGORITHMS)
+    names = verify_names_are_consistent(xai_methods, xai_algorithms, root, verbose)
+    names = [n for n in names if n not in skip]
+    num_samples = len(names) if subset is None else subset
 
-    for xai_method in XAI_METHODS:
-        print("Generating rank matrices.")
-        A, L = create_rank_matrices(xai_method, XAI_ALGORITHMS, root, num_samples, num_judges, VERBOSE, SUBSET, CACHELOAD, CACHESAVE, skip=SKIP)
-        # w, p = auto_compute_agreement(A.astype(np.float32), L, judges=None)
-        # w = w[~np.isnan(w)]
-        # p = p[~np.isnan(p)]
-        # mean = np.mean(w)
-        # medn = np.median(w)
-        # stdv = np.std(w)
-        # print(f"\nMethod={xai_method.value} Mean={mean:.4f} Median={medn:.4f} StdDev={stdv:.4f}")
+    print("Generating multiple rank matrices.")
+    iterable = []
+    for xai_method in xai_methods:
+        for xai_algorithm in xai_algorithms:
+            iterable.append((xai_method, xai_algorithm, root, num_samples, verbose, subset, cache_load, cache_save, cache_only, skip))
+    if args.num_workers is None or args.num_workers < 2:
+        for a in iterable:
+            create_rank_matrix(*a)
+            print("-" * 80)
+    else:
+        with mp.Pool(args.num_workers) as pool:
+            pool.starmap(create_rank_matrix, iterable)
+
+    print("Computing agreement statistics.")
+    for xai_method in xai_methods:
+        try:
+            A, L = create_rank_matrices(xai_method, xai_algorithms, root, num_samples, False, subset, True, False, False, skip, 1)
+        except ValueError as err:
+            err = str(err)
+            if "Lengths of samples do not match" in err:
+                print(f"{xai_method.value}: {err}")
+                continue
+        A = A.astype(np.float32)
+        w, p = auto_compute_agreement(A, L)
+        stats = compute_agreement_statistics(w, p)
+        print(f"{xai_method.value}: {stats}")
 
 
 if __name__ == "__main__":
