@@ -6,9 +6,11 @@ from argparse import ArgumentParser
 from collections import namedtuple
 from collections.abc import Iterable, Generator
 from copy import deepcopy
-import hashlib
-from itertools import chain
 from dataclasses import dataclass
+import hashlib
+from itertools import chain, product
+import json
+import math
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -29,7 +31,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
-from src.enums import ExplanationMethod, ExplanationAlgorithm
+from src.enums import ExplanationMethod, ExplanationAlgorithm, Task
 from src.attribute.utils import Masker
 from src.learn.helpers import OutputHelper
 
@@ -263,19 +265,31 @@ def verify_names_are_consistent(xai_methods: Iterable[ExplanationMethod], xai_al
     return names
 
 
-def rank_matrix_cache(xai_method: ExplanationMethod, xai_algorithm: ExplanationAlgorithm, root: Path, num_samples: int) -> tuple[Path, Path]:
-    # If a previous cache exists, load it and return.
+def infer_task_from_root(root: Path) -> Task:
     for p in root.parts:
         if p.split("--")[0] == "task":
             task = p.split("--")[1]
-            break
-    else:
-        raise ValueError(f"Could not find the task in {root}.")
-    s = f"{task}--{xai_method.value}--{xai_algorithm.value}--{num_samples}"
+            return Task(task)
+    raise ValueError(f"Could not find the task in {root}.")
+
+
+def rank_matrix_cache(xai_method: ExplanationMethod, xai_algorithm: ExplanationAlgorithm, root: Path, num_samples: int) -> tuple[Path, Path]:
+    task = infer_task_from_root(root)
+    s = f"{task.value}--{xai_method.value}--{xai_algorithm.value}--{num_samples}"
     cache_file = Path(f"./cache/attribute/{s}")
     cache_file_A = cache_file.with_suffix(".A.npy")
     cache_file_L = cache_file.with_suffix(".L.npy")
     return cache_file_A, cache_file_L
+
+
+def aggreement_cache(xai_method: ExplanationMethod, xai_algorithms: list[ExplanationAlgorithm], root: Path, num_samples: int) -> Path:
+    task = infer_task_from_root(root)
+    s = f"{task.value}--{xai_method.value}--{'-'.join([x.value for x in xai_algorithms])}--{num_samples}"
+    cache_file = Path(f"./cache/attribute/{s}")
+    cache_file_W = cache_file.with_suffix(".W.npy")
+    cache_file_P = cache_file.with_suffix(".P.npy")
+    cache_file_I = cache_file.with_suffix(".I.json")
+    return cache_file_W, cache_file_P, cache_file_I
 
 
 def create_rank_matrix(
@@ -430,6 +444,54 @@ def create_rank_matrices(
     return A, L
 
 
+def stream_rank_matrices_in_chunks(
+    xai_method: ExplanationMethod,
+    xai_algorithms: Iterable[ExplanationAlgorithm],
+    root: Path,
+    num_samples: int,
+    subset: Optional[int] = None,
+    verbose: bool = True,
+    skip: set[str] = tuple(),
+    chunk_size: int = 1000,
+) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
+
+    # NOTE: this is obviously really fucking ineffecient, as the entire arrays are read everytime...
+
+    if subset is not None:
+        assert subset == num_samples
+
+    skip = set(skip)
+
+    l = 0
+    while l < num_samples:
+        A_s: list[np.ndarray] = []
+        L_s: list[np.ndarray] = []
+        for xai_algorithm in xai_algorithms:
+            if verbose:
+                print(f"Loading rank matrix chunk ({xai_method.value} {xai_algorithm.value} {l})")
+            A, L = create_rank_matrix(xai_method, xai_algorithm, root, num_samples, False, subset, True, False, False, skip)
+            A = A[l:l+chunk_size]
+            L = L[l:l+chunk_size]
+            A_s.append(A)
+            L_s.append(L)
+        l += chunk_size
+
+        A = np.concatenate([np.expand_dims(a, 1) for a in A_s], axis=1)
+        for k in range(A.shape[2] - 1, -1, -1):
+            if not np.all(np.isnan(A[:, :, k])):
+                break
+        A = A[:, :, 0:k + 1]
+
+        checksums = {
+            xai_algorithms[i].value: hashlib.md5(L_s[i].tobytes()).hexdigest()
+            for i in range(A.shape[1])
+        }
+        if len(set(checksums.values())) != 1:
+            raise ValueError(f"Lengths of samples do not match. Checksums:\n{pformat(checksums)}")
+
+        yield A, L
+
+
 def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the agreement scores and p-value for every sample.
@@ -452,39 +514,51 @@ def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.nda
     w = np.empty((A.shape[0],))
     p = np.empty((A.shape[0],))
     for j in range(A.shape[0]):
-        l = L[j]
 
+        # Get the rank matrix and verify its integrity.
+        l = L[j]
         R = A[j].transpose()
-        assert np.all(np.isnan(R[l:,]))
-        assert not np.any(np.isnan(R[:l,]))
+        if not np.all(np.isnan(R[l:,])):
+            raise ValueError(f"Rank matrix is not well-formed for sample {j}. Non-NaN values detected after length {l}.")
+        if np.any(np.isnan(R[:l,])):
+            raise ValueError(f"Rank matrix is not well-formed for sample {j}. NaN values detected before length {l}.")
         R = R[:l,]
         if judges is not None:
             R = R[:,judges]
 
-        # TODO: clean this up.
+        # If only a single interpretable feature exists, then the agreement is not well-defined.
         if R.shape[0] == 1:
-            w_, p_ = np.nan, np.nan
-        else:
-            w_, p_ = kendall(R)
-            if any(np.isnan(z) or np.isinf(z) for z in (w_, p_)):
-                should_raise = True
-                unopinionated = []
-                for k in range(num_judges):
-                    if len(np.unique(R[:,k])) == 1:
-                        unopinionated.append(k)
-                if len(unopinionated) > 0:
-                    warnings.warn(f"Sample {j} has only one unique rank for judge(s) {', '.join(map(str, unopinionated))}.")
-                    # Neither test is well defined in this situation, so we just skip it.
-                    if num_judges == 2 or len(unopinionated) == num_judges:
-                        should_raise = False
+            w[j] = np.nan
+            p[j] = np.nan
+            continue
 
-                if should_raise:
-                    raise ValueError(f"Correlation test is NaN/InF for sample {j}. ({w_=} {p_=})")
+        # If all judges (or one judge, for kendall's tau) cannot rank any item higher or lower than any other
+        # then the agreement is not well-defined.
+        unopinionated = []
+        for k in range(num_judges):
+            if len(np.unique(R[:,k])) == 1:
+                unopinionated.append(k)
+        if len(unopinionated) == num_judges or (num_judges == 2 and len(unopinionated) == 1):
+            w[j] = np.nan
+            p[j] = np.nan
+            continue
 
-            if num_judges > 2 and w_ < 0:
-                raise ValueError(f"Correlation test is less than 0 sample {j}. ({w_=} {p_=})")
-            elif num_judges == 2 and w_ < -1:
-                raise ValueError(f"Correlation test is less than -1 for sample {j}. ({w_=} {p_=})")
+        # Compute the correlation test.
+        w_, p_ = kendall(R)
+
+        # Raise exceptions for invalid values.
+        if np.isinf(w_) or np.isinf(p_):
+            raise ValueError(f"Correlation is InF for sample {j}. ({w_=} {p_=})")
+        if np.isnan(w_) or np.isnan(p_):
+            raise ValueError(f"Correlation is NaN for sample {j}. ({w_=} {p_=})")
+        if p_ < 0 or p_ > 1:
+            raise ValueError(f"Correlation p-value is outside [0, 1] for sample {j}. ({w_=} {p_=})")
+        if w_ > 1:
+            raise ValueError(f"Correlation statistic test is greater than 1 for sample {j}. ({w_=} {p_=})")
+        if num_judges == 2 and w_ < -1:
+            raise ValueError(f"Correlation statistic is less than -1 for sample {j}. ({w_=} {p_=})")
+        if num_judges > 2 and w_ < 0:
+            raise ValueError(f"Correlation statistic is less than 0 for sample {j}. ({w_=} {p_=})")
 
         w[j] = w_
         p[j] = p_
@@ -494,24 +568,25 @@ def auto_compute_agreement(A: np.ndarray, L: np.ndarray, judges: Optional[np.nda
 
 class AgreementStats(NamedTuple):
     mean: float
+    error: float
     medn: float
     stdv: float
     min: float
     max: float
+    support: int
 
 
-def compute_agreement_statistics(w: np.ndarray, p: np.ndarray) -> AgreementStats:
-    """
-    Compute the mean, median, and standard deviation of the agreement scores.
-    """
+def compute_agreement_statistics(w: np.ndarray, alpha: float = 0.05) -> AgreementStats:
     w = w[~np.isnan(w)]
-    p = p[~np.isnan(p)]
+    support = len(w)
     mean = np.mean(w)
     medn = np.median(w)
-    stdv = np.std(w)
+    stdv = np.std(w, ddof=1)
     min  = np.min(w)
     max  = np.max(w)
-    return AgreementStats(mean, medn, stdv, min, max)
+    t_crit = stats.t.ppf(1 - alpha / 2, support - 1)
+    error = t_crit * (stdv / np.sqrt(support))
+    return AgreementStats(mean, error, medn, stdv, min, max, support)
 
 
 def main():
@@ -561,7 +636,7 @@ def main():
     names = [n for n in names if n not in skip]
     num_samples = len(names) if subset is None else subset
 
-    print("Generating multiple rank matrices.")
+    print("Generating rank matrices.")
     iterable = []
     for xai_method in xai_methods:
         for xai_algorithm in xai_algorithms:
@@ -574,19 +649,42 @@ def main():
         with mp.Pool(args.num_workers) as pool:
             pool.starmap(create_rank_matrix, iterable)
 
-    print("Computing agreement statistics.")
+    print("Computing agreement stats.")
+    num_judges = len(xai_algorithms)
+    annotator_groups = list(judges for judges in product([False, True], repeat=num_judges) if sum(judges) > 1)
+    group_index = {k: [x.value for x, j in zip(xai_algorithms, judges) if j] for k, judges in enumerate(annotator_groups)}
+    num_groups = len(annotator_groups)
+
     for xai_method in xai_methods:
-        try:
-            A, L = create_rank_matrices(xai_method, xai_algorithms, root, num_samples, False, subset, True, False, False, skip, 1)
-        except ValueError as err:
-            err = str(err)
-            if "Lengths of samples do not match" in err:
-                print(f"{xai_method.value}: {err}")
-                continue
-        A = A.astype(np.float32)
-        w, p = auto_compute_agreement(A, L)
-        stats = compute_agreement_statistics(w, p)
-        print(f"{xai_method.value}: {stats}")
+
+        W = np.full((num_samples, num_groups), np.nan)
+        P = np.full((num_samples, num_groups), np.nan)
+
+        i = 0
+        for A, L in stream_rank_matrices_in_chunks(xai_method, xai_algorithms, root, num_samples, chunk_size=2048):
+            A = A.astype(np.float32)
+            for k, judges in enumerate(annotator_groups):
+                print(f"Computing agreement stats ({xai_method.value} {group_index[k]}).")
+                w, p = auto_compute_agreement(A, L, judges=np.array(judges))
+                W[i:i+len(w),k] = w
+                P[i:i+len(w),k] = p
+            i += len(w)
+
+        print(f"Caching agreement stats ({xai_method.value}).")
+        cache_file_W, cache_file_P, cache_file_I = aggreement_cache(xai_method, xai_algorithms, root, num_samples)
+        np.save(cache_file_W, W)
+        np.save(cache_file_P, P)
+        json.dump(group_index, open(cache_file_I, "w"))
+
+        print(f"Computing agreement summary ({xai_method.value}).")
+        for k, judges in enumerate(annotator_groups):
+            w = W[:,k]
+            p = P[:,k]
+            idx = np.isnan(w)
+            w = W[~idx]
+            p = P[~idx]
+            stats = compute_agreement_statistics(w)
+            print(" ", group_index[k], stats)
 
 
 if __name__ == "__main__":
