@@ -17,6 +17,7 @@ import lzma
 import math
 import os
 from pathlib import Path
+import random
 import re
 import subprocess
 import sys
@@ -39,6 +40,48 @@ if __name__ == "__main__":
 # pylint: disable=wrong-import-position
 
 from src.enums import CompressionAlgorithm, EncryptionAlgorithm
+
+
+def nanmax(x: Tensor, dim=None, keepdim=False) -> Tensor:
+    min_value = torch.finfo(x.dtype).min
+    output = x.nan_to_num(min_value).max(dim=dim, keepdim=keepdim)
+    return output
+
+
+def nanmin(x: Tensor, dim=None, keepdim=False) -> Tensor:
+    max_value = torch.finfo(x.dtype).max
+    output = x.nan_to_num(max_value).min(dim=dim, keepdim=keepdim)
+    return output
+
+
+def torch_safe_downcast(x: Tensor) -> Tensor:
+
+    mx = nanmax(x)
+    mn = nanmin(x)
+
+    if x.dtype in (torch.int64, torch.int32, torch.int16, torch.int8):
+        if mx <= torch.iinfo(torch.int8).max and mn >= torch.iinfo(torch.int8).min:
+            return x.to(torch.int8)
+        if mx <= torch.iinfo(torch.int16).max and mn >= torch.iinfo(torch.int16).min:
+            return x.to(torch.int16)
+        if mx <= torch.iinfo(torch.int32).max and mn >= torch.iinfo(torch.int32).min:
+            return x.to(torch.int32)
+        return x.to(torch.int64)
+
+    if x.dtype in (torch.float64, torch.float32, torch.float16, torch.float):
+        if mx <= torch.finfo(torch.float16).max and mn >= torch.finfo(torch.float16).min:
+            return x.to(torch.float16)
+        if mx <= torch.finfo(torch.float32).max and mn >= torch.finfo(torch.float32).min:
+            return x.to(torch.float32)
+        return x.to(torch.float64)
+
+    raise ValueError(f"Unexpected dtype: {x.dtype=}")
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.random.manual_seed(seed)
 
 
 def check_model_parameters(model: nn.Module, min_: float = -float("inf"), max_: float = float("inf")) -> list[tuple[str, tuple[Literal["nan", "inf", ">", "<"]]]]:

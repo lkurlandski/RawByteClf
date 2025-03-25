@@ -172,6 +172,7 @@ class Args:
     per_device_attr_batch_size: int               = field(default=8)
     xai_clean: bool                               = field(default=False)
     xai_continue: bool                            = field(default=False)
+    xai_seed: Optional[int]                       = field(default=None)
 
     def __post_init__(self) -> None:
 
@@ -319,6 +320,7 @@ class OutputHelper:
         xai_method: Optional[ExplanationMethod],
         xai_algorithm: Optional[ExplanationAlgorithm],
         xai_chunk_size: Optional[int],
+        xai_seed: Optional[int],
         trainer_config: Optional[dict],
     ) -> None:
 
@@ -364,6 +366,7 @@ class OutputHelper:
             f"xai_method--{xai_method.value if xai_method is not None else 'none'}",
             f"xai_algorithm--{xai_algorithm.value if xai_algorithm is not None else 'none'}",
             f"xai_chunk_size--{xai_chunk_size if xai_chunk_size is not None else 'none'}",
+            f"xai_seed--{xai_seed if xai_seed is not None else 'none'}",
         ]
 
     def __del__(self) -> None:

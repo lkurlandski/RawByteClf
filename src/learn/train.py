@@ -143,6 +143,8 @@ from src.utils import (
     compose_functions,
     remove_empty_directories,
     check_model_parameters,
+    seed_everything,
+    torch_safe_downcast,
 )
 from src.architectures.head_utils import Head, check_for_anomalous_weights
 from src.architectures.other import FocalLoss
@@ -1347,6 +1349,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "xai_method": args.xai_method,
         "xai_algorithm": args.xai_algorithm,
         "xai_chunk_size": args.xai_chunk_size,
+        "xai_seed": args.xai_seed,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     # NOTE: this is quite bad, but args.model_name_or_path might change from a str representing the
@@ -2163,6 +2166,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         iterable = tqdm(dataset["vl"].iter(per_device_attribute_batch_size), total=total, desc="Explaining...")
         t_start = time.time()
         t_save  = time.time()
+        seed_everything(args.xai_seed)
         for step, batch in enumerate(iterable):
             t_start_step = time.time()
 
@@ -2178,7 +2182,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             input_ids: Optional[Tensor] = inputs.pop("input_ids")
             input_ids = input_ids.to(device) if input_ids is not None else None
 
-            inputs_embeds = embedding.indices_to_embeddings(input_ids) if embedding is not None else None
+            inputs_embeds: Optional[Tensor] = embedding.indices_to_embeddings(input_ids) if embedding is not None else None
             inputs_embeds = inputs_embeds.to(device) if inputs_embeds is not None else None
 
             # FIXME: handle models that require token_type_ids and attention_mask.
@@ -2202,12 +2206,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             feature_mask   = feature_mask.to("cpu") if feature_mask is not None else None
             attribs        = attribs.to("cpu") if attribs is not None else None
 
-            # Store critical information as lists of Tensors (only the names are lists of lists!)
+            # Store critical information as lists of small dtype Tensors (only the names are lists of lists!)
             all_names.extend(names)
-            all_labels.extend(list(labels))
-            all_attribs.extend(list(attribs))
+            all_labels.extend([torch_safe_downcast(x) for x in labels])
+            all_attribs.extend([torch_safe_downcast(x) for x in attribs])
             if masker is not None:
-                all_masks.extend(list(feature_mask))
+                all_masks.extend([torch_safe_downcast(x) for x in feature_mask])
 
             mem = 0
             for z in (all_labels, all_attribs, all_masks if all_masks is not None else []):

@@ -122,6 +122,7 @@ def get_body(
     xai_method: ExplanationMethod,
     xai_algorithm: ExplanationAlgorithm,
     xai_chunk_size: int,
+    xai_seed: int,
     seed: int,
 ) -> str: return (
 f"""
@@ -170,6 +171,7 @@ src/learn/train.py \\
 --xai_method={xai_method.value} \\
 --xai_algorithm={xai_algorithm.value} \\
 {f"--xai_chunk_size={xai_chunk_size}" if xai_chunk_size is not None else ""} \\
+{f"--xai_seed={xai_seed}" if xai_seed is not None else ""} \\
 --xai_continue \\
 --output_dir='/tmp' \\
 --save_strategy='{"epoch" if save_steps is None else "steps"}' \\
@@ -292,6 +294,7 @@ class Configuration:
     xai_method: ExplanationMethod
     xai_algorithm: ExplanationAlgorithm
     xai_chunk_size: int
+    xai_seed: int
     seed: int
 
     def __postinit__(self) -> None:
@@ -351,6 +354,12 @@ class Configuration:
         if self.pretraining_task is not None:
             return False
 
+        # Explanation Stuff.
+        if self.xai_method == ExplanationMethod.FUN and self.xai_seed == 0:
+            return False
+        if self.xai_algorithm == ExplanationAlgorithm.IGRD and self.xai_seed != 0:
+            return False
+
         return True
 
     @property
@@ -369,6 +378,7 @@ class Configuration:
             f"{self.xai_method.value}",
             f"{self.xai_algorithm.value}",
             f"{self.xai_chunk_size if self.xai_chunk_size is not None else 'nop'}",
+            f"{self.xai_seed if self.xai_seed is not None else 'nop'}",
             f"{self.seed}",
         ]).replace("--", "-").rstrip("-")
 
@@ -478,6 +488,8 @@ class Configuration:
                 f_0 = 1
             if self.xai_method == ExplanationMethod.LEN:
                 f_0 = 14
+            if self.xai_method == ExplanationMethod.NML:
+                f_0 = 1
 
         if self.task == Task.DET:
             f_1 = 8322  / 8322
@@ -911,21 +923,18 @@ def main():
         ModelName,
         ModelSize,
         ModelMode,
-        # (4096, 8192, 16384, 32768, 65536),
         (2 ** 20,),
-        LiftLevel,
-        # list(LiftLevel) + [None],
+        [LiftLevel.NOP],
         [LiftLevel.DEC],
         TokenizationAlgorithm,
-        (256, 1024, 4096, 16384),
-        [t for t in Task if t == Task.DET],
-        [None, Task.CLM, Task.MLM],
-        # [ExplanationMethod.LEN, ExplanationMethod.NUM, ExplanationMethod.FUN],
-        [ExplanationMethod.LEN, ExplanationMethod.NUM,],
-        # [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
-        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT, ExplanationAlgorithm.IGRD)],
+        [256],
+        [Task.DET],
         [None],
-        (0,),
+        [ExplanationMethod.FUN, ExplanationMethod.NML],
+        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
+        [None],
+        [0, 1, 2, 3, 4],
+        [0],
     )
     configurations = [Configuration(*config) for config in tqdm(configurations)]
     configurations = [config for config in configurations if config.do]
@@ -980,6 +989,7 @@ def main():
             xai_method=config.xai_method,
             xai_algorithm=config.xai_algorithm,
             xai_chunk_size=config.xai_chunk_size,
+            xai_seed=config.xai_seed,
             seed=config.seed,
         )
         if config.outfile.exists():
