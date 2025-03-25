@@ -75,6 +75,7 @@ class ExplanationMethod(Enum):
     CHK = "chk"  # Fixed-size chunks.
     NUM = "num"  # Fixed-size chunks; number of chunks set to one above the number of functions.
     LEN = "len"  # Fixed-size chunks; size of chunks set to the median function length.
+    NML = "nml"  # Fixed-size chunks; combination of NUM and LEN over the region of functions.
     FUN = "fun"  # Function-level.
 
 

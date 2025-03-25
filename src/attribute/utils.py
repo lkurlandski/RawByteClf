@@ -179,8 +179,18 @@ class AutoChunkFeatureMasker(Masker):
     def compute_stat(self, input_ids: Tensor, sha: str) -> float:  # pylint: disable=unused-argument
         raise NotImplementedError()
 
+    @staticmethod
+    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:  # pylint: disable=unused-argument
+        """
+        NOTE: this function cannot dynamically account for the possibility of out-of-bounds functions!
+        """
+        raise NotImplementedError()
+
 
 class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
+    """
+    Creates fixed-size chunk masks such that the size of the interpretable features is equal to the average function length in the file.
+    """
 
     def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:
         mask = torch.full_like(input_ids, -1, dtype=torch.int64)
@@ -199,6 +209,9 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
         """
         Returns the average function length (possibly NaN), out of all functions within the length of the input, in the file.
         """
+        return self.compute_average_function_length(input_ids, sha)
+
+    def compute_average_function_length(self, input_ids: Tensor, sha: str) -> float:
         max_length = self.get_last_idx(input_ids)
         if self.bos_token_id:
             max_length -= 1
@@ -209,16 +222,13 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
         return k
 
     def get_chunk_size(self, input_ids: Tensor, sha: str) -> int:
-        v = self.compute_stat(input_ids, sha)
+        v = self.compute_average_function_length(input_ids, sha)
         if math.isnan(v):
             return len(input_ids)
         return int(v)
 
     @staticmethod
     def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:
-        """
-        NOTE: this function cannot dynamically account for the possibility of out-of-bounds functions!
-        """
         stats = {}
         for s, v in bounds_map.items():
             if max_length is not None:
@@ -233,9 +243,7 @@ class AutoLenChunkFeatureMasker(AutoChunkFeatureMasker):
 
 class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
     """
-    Args:
-        stats (dict[str, float]): A dictionary mapping SHAs to statistics about the input data.
-            For this class, each value in the dictionary should be the number of functions in the file.
+    Creates fixed-size chunk masks such that the number of interpretable features is equal to the number of functions in the file.
     """
 
     def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:
@@ -265,6 +273,9 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         """
         Returns the number of functions, within the length of the input, in the file.
         """
+        return self.compute_number_of_functions(input_ids, sha)
+
+    def compute_number_of_functions(self, input_ids: Tensor, sha: str) -> int:
         max_length = self.get_last_idx(input_ids)
         if self.bos_token_id:
             max_length -= 1
@@ -273,16 +284,13 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
         return k
 
     def get_num_chunks(self, input_ids: Tensor, sha: str) -> int:
-        num_fun = self.compute_stat(input_ids, sha)
+        num_fun = self.compute_number_of_functions(input_ids, sha)
         if num_fun == 0:
             return 1
         return num_fun + 1
 
     @staticmethod
     def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:
-        """
-        NOTE: this function cannot dynamically account for the possibility of out-of-bounds functions!
-        """
         stats = {}
         for s, v in bounds_map.items():
             if max_length is not None:
@@ -290,6 +298,93 @@ class AutoNumChunkFeatureMasker(AutoChunkFeatureMasker):
                 v = v[idx]
             stats[s] = len(v)
         return stats
+
+
+class AutoNumLenChunkFeatureMasker(AutoNumChunkFeatureMasker, AutoLenChunkFeatureMasker):
+    """
+    Creates fixed-size chunk masks such that the number of interpretable features is equal to the number of functions in the file
+       and the size of the interpretable features is equal to the average function length in the file. The masks are created
+       over the region of the input that contains functions.
+    """
+
+    def chunk_mask_for_one_input(self, input_ids: Tensor, sha: str) -> Tensor:
+        mask = torch.full_like(input_ids, -1, dtype=torch.int64)
+
+        start, end = self.get_chunk_mask_region(input_ids, sha)
+        num_chunks = self.get_num_chunks(input_ids, sha) - 1
+        chunk_size = self.compute_average_function_length(input_ids, sha)
+        if math.isnan(chunk_size):
+            chunk_size = end - start
+        else:
+            chunk_size = int(round(chunk_size))
+
+        last_idx = self.get_last_idx(input_ids)
+        num_tok  = end - start
+
+        diff = chunk_size * num_chunks - num_tok
+        if diff > 0:  # Move the start index back.
+            buff  = start - (1 if self.bos_token_id is not None else 0)
+            subt  = min(diff, buff)
+            start -= subt
+            diff  -= subt
+        if diff > 0:  # Move the end index forward.
+            buff = last_idx - end
+            subt = min(diff, buff)
+            end  += subt
+            diff -= subt
+        if diff > 0:
+            warnings.warn(f"The function region is too small to fit {num_chunks} chunks with size {chunk_size}. ({sha} {self.get_chunk_mask_region(input_ids, sha)=} {last_idx=})")
+
+        i = start
+        j = 0
+        v = 1 if self.special_token_ids else 0
+        while i < end and j < num_chunks:
+            mask[i:i + chunk_size] = v
+            i += chunk_size
+            j += 1
+            v += 1
+
+        mask[0:start] = v
+        mask[i:]      = v
+
+        return mask
+
+    def compute_stat(self, input_ids: Tensor, sha: str) -> float:  # pylint: disable=unused-argument
+        raise NotImplementedError("Cannot compute a single statistic for both the number of functions and the average function length.")
+
+    def get_chunk_mask_region(self, input_ids: Tensor, sha: str) -> tuple[int, int]:
+        last_idx = self.get_last_idx(input_ids)
+        if self.eos_token_id is not None:
+            if input_ids[last_idx] != self.eos_token_id:
+                raise RuntimeError(f"The last token in the function is not the EOS token. {last_idx=} {input_ids[last_idx-1:last_idx+2]=}.")
+        elif self.pad_token_id is not None:
+            if last_idx < len(input_ids) and input_ids[last_idx] != self.pad_token_id:
+                raise RuntimeError(f"The last token in the function is not the PAD token. {last_idx=} {input_ids[last_idx-1:last_idx+2]=}.")
+
+        bounds: np.ndarray = self.boundaries[sha]
+        bounds = bounds + 1 if self.bos_token_id is not None else bounds
+
+        if len(bounds) == 0:
+            start = 1 if self.bos_token_id is not None else 0
+            end   = last_idx
+        else:
+            start = max(bounds[:,0].min(), 0 + (1 if self.bos_token_id is not None else 0))
+            end   = min(bounds[:,1].max(), last_idx)
+
+        if start > last_idx:
+            start = 1 if self.bos_token_id is not None else 0
+            end   = last_idx
+
+        if start == end:
+            raise RuntimeError(f"Lower bound is equal to upper bound {sha=} {last_idx=} {start=} {end=} {bounds=}")
+        if start > end:
+            raise RuntimeError(f"Lower bound is greater than upper bound {start=} {end=}.")
+
+        return start, end
+
+    @staticmethod
+    def compute_stats_map_from_bounds_map(bounds_map: dict[str, np.ndarray], max_length: Optional[int] = None) -> dict[str, float]:  # pylint: disable=unused-argument
+        raise NotImplementedError("Cannot compute a single statistic for both the number of functions and the average function length.")
 
 
 class FunctionFeatureMasker(Masker):
@@ -390,6 +485,8 @@ def get_masker(
         return AutoLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
     if method == ExplanationMethod.NUM:
         return AutoNumChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
+    if method == ExplanationMethod.NML:
+        return AutoNumLenChunkFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map)
     if method == ExplanationMethod.FUN:
         return FunctionFeatureMasker(bos_token_id, eos_token_id, pad_token_id, boundaries=bounds_map, function_out_of_bounds=function_out_of_bounds)
 

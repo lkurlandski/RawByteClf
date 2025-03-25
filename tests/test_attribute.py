@@ -31,6 +31,7 @@ from src.attribute.utils import (
     ChunkFeatureMasker,
     AutoLenChunkFeatureMasker,
     AutoNumChunkFeatureMasker,
+    AutoNumLenChunkFeatureMasker,
     FunctionFeatureMasker,
     get_masker,
     infer_chunk_sizes,
@@ -195,7 +196,7 @@ class TestMaskers(unittest.TestCase):
 
 class TestMaskersWithRealData(unittest.TestCase):
 
-    # sbatch --account=admalware --job-name=test_attribute --partition=debug --nodes=1 --ntasks=1 --cpus-per-task=4 --mem=128G --time=01:00:00 --output=./logs/test_attribute.log --error=./logs/test_attribute.log --wrap="python -u -m unittest tests.test_attribute.TestMaskersWithRealData"
+    # sbatch --account=admalware --job-name=test_attribute --partition=debug --nodes=1 --ntasks=1 --cpus-per-task=4 --mem=128G --time=02:00:00 --output=./logs/test_attribute.log --error=./logs/test_attribute.log --wrap="python -u -m unittest tests.test_attribute.TestMaskersWithRealData"
 
     def setUp(self):
         self.bos_token_id = 1
@@ -209,7 +210,7 @@ class TestMaskersWithRealData(unittest.TestCase):
 
     def should_include(self, s: str) -> bool:
         # return s in (
-        #     "00001f161d205a8f3c79f7fac7a06782a8eae0f7cf53b8f444644ece9f8aab98",
+        #     "0000ef6904a7b01d154585d6c06f9f2a7a5ab2b1900fedfcf8b1ccf48e916046",
         # )
         return True
 
@@ -252,9 +253,11 @@ class TestMaskersWithRealData(unittest.TestCase):
         shas, data = self.get_data()
 
         args = (self.bos_token_id, self.eos_token_id, self.pad_token_id, self.chunk_size, shas, True, "pass")
+        print("Building the maskers (this can take a minute or two)...")
         with print_context(suppress=True):
             masker_num: AutoNumChunkFeatureMasker = get_masker(ExplanationMethod.NUM, *args)
             masker_len: AutoLenChunkFeatureMasker = get_masker(ExplanationMethod.LEN, *args)
+            masker_nml: AutoNumLenChunkFeatureMasker = get_masker(ExplanationMethod.NML, *args)
             masker_fun: FunctionFeatureMasker = get_masker(ExplanationMethod.FUN, *args)
             masker_chk: ChunkFeatureMasker = get_masker(ExplanationMethod.CHK, *args)
 
@@ -296,14 +299,16 @@ class TestMaskersWithRealData(unittest.TestCase):
             mask_chk = masker_chk(input_ids, names)
             mask_num = masker_num(input_ids, names)
             mask_len = masker_len(input_ids, names)
+            mask_nml = masker_nml(input_ids, names)
             mask_fun = masker_fun(input_ids, names)
 
             unq_num = len(torch.unique(mask_num))
             unq_len = len(torch.unique(mask_len))
             unq_fun = len(torch.unique(mask_fun))
+            unq_nml = len(torch.unique(mask_nml))
             unq_chk = len(torch.unique(mask_chk))
 
-            for mask, name in ((mask_chk, "chk"), (mask_num, "num"), (mask_len, "len"), (mask_fun, "fun")):
+            for mask, name in ((mask_chk, "chk"), (mask_num, "num"), (mask_len, "len"), (mask_nml, "nml"), (mask_fun, "fun")):
                 try:
                     assert_feature_mask_indices_are_consecutive(mask[0])
                 except RuntimeError:
@@ -332,16 +337,32 @@ class TestMaskersWithRealData(unittest.TestCase):
                 errors.append(f"{msg} ({unq_num} != {unq_fun})")
                 error_logs[msg] += 1
 
+            if unq_nml != unq_fun and not totally_overlapping_functions:
+                msg = "unq_nml != unq_fun"
+                errors.append(f"{msg} ({unq_nml} != {unq_fun})")
+                error_logs[msg] += 1
+
             num_chunk_sizes = infer_chunk_sizes(mask_num[0][~special_idx])
             if len(set(num_chunk_sizes)) not in (1, 2):
                 msg = "len(set(num_chunk_sizes)) not in (1, 2)"
                 errors.append(f"{msg} ({len(set(num_chunk_sizes))} not in (1, 2))")
                 error_logs[msg] += 1
 
+            nml_chunk_sizes = infer_chunk_sizes(mask_nml[0][~special_idx])
+            if len(set(nml_chunk_sizes)) not in (1, 2):
+                msg = "len(set(nml_chunk_sizes)) not in (1, 2)"
+                errors.append(f"{msg} ({len(set(nml_chunk_sizes))} not in (1, 2))")
+                error_logs[msg] += 1
+
             len_chunk_sizes = infer_chunk_sizes(mask_len[0][~special_idx])
             if len(set(len_chunk_sizes)) not in (1, 2):
                 msg = "len(set(len_chunk_sizes)) not in (1, 2)"
                 errors.append(f"{msg} ({len(set(len_chunk_sizes))} not in (1, 2))")
+                error_logs[msg] += 1
+
+            if set(nml_chunk_sizes) != set(len_chunk_sizes):
+                msg = "set(nml_chunk_sizes) != set(len_chunk_sizes)"
+                errors.append(f"{msg} ({set(nml_chunk_sizes)} != {set(len_chunk_sizes)})")
                 error_logs[msg] += 1
 
             if errors:
