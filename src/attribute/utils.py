@@ -321,19 +321,27 @@ class AutoNumLenChunkFeatureMasker(AutoNumChunkFeatureMasker, AutoLenChunkFeatur
         last_idx = self.get_last_idx(input_ids)
         num_tok  = end - start
 
-        diff = chunk_size * num_chunks - num_tok
-        if diff > 0:  # Move the start index back.
-            buff  = start - (1 if self.bos_token_id is not None else 0)
-            subt  = min(diff, buff)
-            start -= subt
-            diff  -= subt
-        if diff > 0:  # Move the end index forward.
-            buff = last_idx - end
-            subt = min(diff, buff)
-            end  += subt
-            diff -= subt
-        if diff > 0:
-            warnings.warn(f"The function region is too small to fit {num_chunks} chunks with size {chunk_size}. ({sha} {self.get_chunk_mask_region(input_ids, sha)=} {last_idx=})")
+        while True:
+            diff = chunk_size * num_chunks - num_tok
+            if diff > 0:  # Move the start index back.
+                buff  = start - (1 if self.bos_token_id is not None else 0)
+                subt  = min(diff, buff)
+                start -= subt
+                diff  -= subt
+            if diff > 0:  # Move the end index forward.
+                buff = last_idx - end
+                subt = min(diff, buff)
+                end  += subt
+                diff -= subt
+            if diff > 0:
+                warnings.warn(
+                    f"The function region is too small to fit {num_chunks} chunks with size {chunk_size}. "
+                    f"Reducing chunk_size to {chunk_size - 1}. "
+                    f"({sha} {self.get_chunk_mask_region(input_ids, sha)=} {last_idx=})"
+                )
+                chunk_size -= 1
+            else:
+                break
 
         i = start
         j = 0
