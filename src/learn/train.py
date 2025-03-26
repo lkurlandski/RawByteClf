@@ -255,6 +255,7 @@ NUM_PROC = None
 KEEP_IN_MEMORY = False
 
 MAX_ATTRIBUTION_MEMORY = 2 ** 32  # 4 GB
+ATTRIBUTION_MEMORY_CLEANUP = 64
 
 # Variables for hyperparameter tuning.
 N_INITIAL_POINTS = 16
@@ -2198,13 +2199,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             attribs: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
 
             # Move everything to the CPU.
-            labels         = labels.to("cpu") if labels is not None else None
-            input_ids      = input_ids.to("cpu") if input_ids is not None else None
-            inputs_embeds  = inputs_embeds.to("cpu") if inputs_embeds is not None else None
-            attention_mask = attention_mask.to("cpu") if attention_mask is not None else None
-            token_type_ids = token_type_ids.to("cpu") if token_type_ids is not None else None
-            feature_mask   = feature_mask.to("cpu") if feature_mask is not None else None
-            attribs        = attribs.to("cpu") if attribs is not None else None
+            labels         = labels.detach().to("cpu") if labels is not None else None
+            input_ids      = input_ids.detach().to("cpu") if input_ids is not None else None
+            inputs_embeds  = inputs_embeds.detach().to("cpu") if inputs_embeds is not None else None
+            attention_mask = attention_mask.detach().to("cpu") if attention_mask is not None else None
+            token_type_ids = token_type_ids.detach().to("cpu") if token_type_ids is not None else None
+            feature_mask   = feature_mask.detach().to("cpu") if feature_mask is not None else None
+            attribs        = attribs.detach().to("cpu") if attribs is not None else None
 
             # Store critical information as lists of small dtype Tensors (only the names are lists of lists!)
             all_names.extend(names)
@@ -2233,6 +2234,11 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     "time_total": round(t_end_step - t_start, 2),
                 }
                 print(d)
+
+            # Clear the CUDA cache's after processing `ATTRIBUTION_MEMORY_CLEANUP` samples.
+            if (step * per_device_attribute_batch_size) % ATTRIBUTION_MEMORY_CLEANUP == 0:
+                clear_cuda_caches()
+                gc.collect()
 
 
         if embedding is not None:
