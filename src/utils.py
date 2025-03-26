@@ -42,24 +42,24 @@ if __name__ == "__main__":
 from src.enums import CompressionAlgorithm, EncryptionAlgorithm
 
 
-def nanmax(x: Tensor, dim=None, keepdim=False) -> Tensor:
+def nanmax(x: Tensor) -> Tensor:
     min_value = torch.finfo(x.dtype).min
-    output = x.nan_to_num(min_value).max(dim=dim, keepdim=keepdim)
+    output = x.nan_to_num(min_value).max()
     return output
 
 
-def nanmin(x: Tensor, dim=None, keepdim=False) -> Tensor:
+def nanmin(x: Tensor) -> Tensor:
     max_value = torch.finfo(x.dtype).max
-    output = x.nan_to_num(max_value).min(dim=dim, keepdim=keepdim)
+    output = x.nan_to_num(max_value).min()
     return output
 
 
 def torch_safe_downcast(x: Tensor) -> Tensor:
 
-    mx = nanmax(x)
-    mn = nanmin(x)
-
     if x.dtype in (torch.int64, torch.int32, torch.int16, torch.int8):
+        mx = torch.max(x)
+        mn = torch.min(x)
+
         if mx <= torch.iinfo(torch.int8).max and mn >= torch.iinfo(torch.int8).min:
             return x.to(torch.int8)
         if mx <= torch.iinfo(torch.int16).max and mn >= torch.iinfo(torch.int16).min:
@@ -69,6 +69,9 @@ def torch_safe_downcast(x: Tensor) -> Tensor:
         return x.to(torch.int64)
 
     if x.dtype in (torch.float64, torch.float32, torch.float16, torch.float):
+        mx = nanmax(x)
+        mn = nanmin(x)
+
         if mx <= torch.finfo(torch.float16).max and mn >= torch.finfo(torch.float16).min:
             return x.to(torch.float16)
         if mx <= torch.finfo(torch.float32).max and mn >= torch.finfo(torch.float32).min:
