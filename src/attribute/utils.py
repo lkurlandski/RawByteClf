@@ -321,6 +321,7 @@ class AutoNumLenChunkFeatureMasker(AutoNumChunkFeatureMasker, AutoLenChunkFeatur
         last_idx = self.get_last_idx(input_ids)
         num_tok  = end - start
 
+        r = 0
         while True:
             diff = chunk_size * num_chunks - num_tok
             if diff > 0:  # Move the start index back.
@@ -334,14 +335,17 @@ class AutoNumLenChunkFeatureMasker(AutoNumChunkFeatureMasker, AutoLenChunkFeatur
                 end  += subt
                 diff -= subt
             if diff > 0:
-                warnings.warn(
-                    f"The function region is too small to fit {num_chunks} chunks with size {chunk_size}. "
-                    f"Reducing chunk_size to {chunk_size - 1}. "
-                    f"({sha} {self.get_chunk_mask_region(input_ids, sha)=} {last_idx=})"
-                )
                 chunk_size -= 1
+                r += 1
             else:
                 break
+
+        if r > 0:
+            warnings.warn(
+                f"The function region is too small to fit {num_chunks} chunks with size {chunk_size + r}. "
+                f"Reducing chunk_size to {chunk_size}. "
+                f"({sha} {self.get_chunk_mask_region(input_ids, sha)=} {last_idx=})"
+            )
 
         i = start
         j = 0
