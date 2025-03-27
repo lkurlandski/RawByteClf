@@ -313,14 +313,11 @@ class Configuration:
         if self.tokenization_algorithm not in (TokenizationAlgorithm.BPE, TokenizationAlgorithm.UNIGRAM):
             if self.lift_level != LiftLevel.NOP:
                 return False
-        # Pretraining and detection does not required random runs.
-        if self.task in (Task.CLM, Task.MLM, Task.DET) and self.seed != 0:
+        # Pretraining and does not required random runs.
+        if self.task in (Task.CLM, Task.MLM) and self.seed != 0:
             return False
         # Pretraining cannot be pretrained.
         if self.task in (Task.CLM, Task.MLM) and self.pretraining_task is not None:
-            return False
-        # At the moment, none of the ESP loaders support different seeds.
-        if self.seed != 0:
             return False
         # Cannot pretrain with multi representations
         if self.lift_level == LiftLevel.ALL and self.task in (Task.CLM, Task.MLM):
@@ -355,10 +352,22 @@ class Configuration:
             return False
 
         # Explanation Stuff.
-        if self.xai_method == ExplanationMethod.FUN and self.xai_seed == 0:
+        # These take a long time, and I want to get some analysis done before running them.
+        if self.xai_algorithm in (ExplanationAlgorithm.FABL, ExplanationAlgorithm.SSHP):
             return False
+        # Integrated Gradients is deterministic.
         if self.xai_algorithm == ExplanationAlgorithm.IGRD and self.xai_seed != 0:
             return False
+        if self.xai_algorithm != ExplanationAlgorithm.KSHP:
+            return False
+        if (self.xai_seed, self.seed) not in [(4, 0), (0, 4), (0, 2)]:
+            return False
+
+        # None of the ESP loaders fully support different seeds.
+        if self.seed != 0:
+            warnings.warn(f"Using nonzero seed will not change the train test split.")
+            if self.streaming:
+                warnings.warn(f"Using nonzero seed with streaming will not change the order in which data is sampled.")
 
         return True
 
@@ -503,7 +512,7 @@ class Configuration:
         if self.xai_algorithm == ExplanationAlgorithm.LIME:
             h = 2
         if self.xai_algorithm == ExplanationAlgorithm.KSHP:
-            h = 3
+            h = 4
         if self.xai_algorithm == ExplanationAlgorithm.IGRD:
             h = 1.5
         if self.xai_algorithm == ExplanationAlgorithm.GSHP:
@@ -934,7 +943,7 @@ def main():
         [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
         [None],
         [0, 1, 2, 3, 4],
-        [0],
+        [0, 1, 2, 3, 4],
     )
     configurations = [Configuration(*config) for config in tqdm(configurations)]
     configurations = [config for config in configurations if config.do]
