@@ -38,7 +38,7 @@ from src.attribute.utils import (
     assert_feature_mask_indices_are_consecutive,
     ignore_warnings_decorator,
 )
-from src.attribute.compare import kendallw_without_ties, kendallw_with_ties
+from src.attribute.statistical import kendallw_without_ties, kendallw_with_ties
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
 
