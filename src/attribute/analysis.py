@@ -18,7 +18,7 @@ import queue
 import sys
 import threading
 import time
-from typing import Optional, NamedTuple
+from typing import Optional, NamedTuple, Callable, Literal
 import warnings
 
 import numpy as np
@@ -259,11 +259,15 @@ class AttributionPathManager:
 
         names   = self.names_files[file_id].read_text().splitlines()
         labels  = torch.load(self.labels_files[file_id], map_location="cpu")
-        scores  = torch.load(self.attribs_files[file_id], map_location="cpu")
+        scores  = torch.load(self.scores_files[file_id], map_location="cpu")
         ranks   = torch.load(self.ranks_files[file_id], map_location="cpu")
 
         idx = names.index(name)
-        return Annotations(names[idx], labels[idx], scores[idx], ranks[idx])
+        labels = labels[idx].numpy(force=True)
+        scores = scores[idx].numpy(force=True)
+        ranks  = ranks[idx].numpy(force=True)
+
+        return Annotations(name, labels, scores, ranks)
 
     def generate_ranks(self, disable_tqdm: bool = False, verbose: bool = True) -> AttributionPathManager:
 
@@ -452,9 +456,10 @@ class AgreementCoordinator:
         rank of the i-th interpretable feature in the k-th sample by the j-th judge.
     """
 
-    def __init__(self, paths: list[Path], judge_names: Optional[list[str]] = None) -> None:
+    def __init__(self, paths: list[Path], judge_names: list[str], remove_incongruent_samples: bool = False) -> None:
         self.paths = paths
         self.judge_names = judge_names
+        self.remove_incongruent_samples = remove_incongruent_samples
         self.managers = [AttributionPathManager(p) for p in paths]
         self.name_to_idx: dict[str, int] = None
         self.idx_to_name: dict[int, str] = None
@@ -469,6 +474,11 @@ class AgreementCoordinator:
             if not p.exists():
                 raise FileNotFoundError(f"Path {p} does not exist.")
 
+        if len(judge_names) != len(paths):
+            raise ValueError("Number of judge names must match the number of paths.")
+        if not all(isinstance(name, str) for name in judge_names):
+            raise ValueError("Judge names must be strings.")
+
     def __call__(self) -> AgreementCoordinator:
         self.determine_samples()
         print(f"Determined {self.I} samples for which all {self.J} judges have ranked.")
@@ -481,8 +491,6 @@ class AgreementCoordinator:
         return self
 
     def judge_subset(self, judges: np.ndarray) -> str:
-        if self.judge_names is None:
-            return " ".join(list(map(str, judges.tolist())))
         return " ".join(sorted(np.array(self.judge_names)[judges].tolist()))
 
     def judge_groups(self) -> list[np.ndarray]:
@@ -493,12 +501,22 @@ class AgreementCoordinator:
         return list(groups)
 
     def get_cachefile(self, judges: np.ndarray) -> Path:
+        """
+        Returns a unique cachefile considering the names of samples and the experiment paths indicated by judges.
+        """
         data_1 = "".join(self.name_to_idx.keys())
         hash_1 = hashlib.blake2s(data_1.encode()).hexdigest()
         data_2 = "".join(manager.path.as_posix() for judge, manager in zip(judges, self.managers) if judge)
         hash_2 = hashlib.blake2s(data_2.encode()).hexdigest()
         cachefile = Path(f"./cache/attribute/agreement--{hash_1}--{hash_2}.npy")
         return cachefile
+
+    def remove_cachefiles(self) -> None:
+        for judges in self.judge_groups():
+            cachefile = self.get_cachefile(judges)
+            if cachefile.exists():
+                os.remove(cachefile)
+                print("Removed cachefile:", cachefile)
 
     def determine_samples(self) -> AgreementCoordinator:
         for j, manager in enumerate(self.managers):
@@ -518,6 +536,7 @@ class AgreementCoordinator:
     def create_rank_matrices(self) -> AgreementCoordinator:
         self.ranks = [None for _ in range(self.I)]
 
+        incongruent = []
         for j, manager in enumerate(self.managers):
             for name, rank in zip(manager.names, manager.ranks):
                 if (i := self.name_to_idx.get(name)) is not None:
@@ -527,8 +546,20 @@ class AgreementCoordinator:
                         self.ranks[i][:,j] = rank
                     else:
                         if self.K[i] != len(rank):
-                            raise RuntimeError(f"Got {len(rank)} ranks but expected {self.K[i]} ({j} {i} {name}).")
+                            incongruent.append((i, j, len(rank), name))
+                            continue
                         self.ranks[i][:,j] = rank
+
+        if incongruent:
+            for i, j, k, name in incongruent:
+                print(f"Sample {i} ({name}) was found to be incongruent with judge {j} who ranked {k} interpretable features when {self.K[i]} were expected.")
+            if not self.remove_incongruent_samples:
+                raise RuntimeError("Incongruent samples were detected. Set `remove_incongruent_samples` to True to remove them.")
+            remove = tuple(set(i for i, _, _, _ in incongruent))
+            print(f"Removing incongruent {len(remove)} samples.")
+            self.ranks = [r for i, r in enumerate(self.ranks) if i not in remove]
+            self.I = len(self.ranks)
+            self.K = np.delete(self.K, np.array(remove))
 
         for i in range(self.I):
             if np.any(np.isnan(self.ranks[i])):
@@ -544,11 +575,12 @@ class AgreementCoordinator:
 
         cachefile = self.get_cachefile(judges)
         if cachefile.exists():
-            return np.load(cachefile)
+            W, P = np.load(cachefile)
+            assert W.shape == (self.I,) and P.shape == (self.I,)
 
-        W = np.empty((len(self.idx_to_name),))
-        P = np.empty((len(self.idx_to_name),))
-        for i in range(len(self.idx_to_name)):
+        W = np.empty((self.I,))
+        P = np.empty((self.I,))
+        for i in range(self.I):
             R = self.ranks[i]
             R = R[:,judges]
             w, p = compute_agreement(R)
@@ -578,6 +610,12 @@ class AttributionConfiguration:
         self.xai_algorithm = xai_algorithm
         self.xai_chunk_size = xai_chunk_size
         self.xai_seed = xai_seed
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}(None, {self.seed}, {self.xai_method.value}, {self.xai_algorithm.value}, {self.xai_chunk_size}, {self.xai_seed})"
 
     def ensure_root_valid(self) -> None:
         if self.root is None:
@@ -651,6 +689,35 @@ class AttributionConfiguration:
             raise ValueError(f"Could not parse the {err.name} attribute from the path {path}.") from err
 
 
+ConfigurationPredicate = Callable[[AttributionConfiguration], bool]
+
+
+class ConfigurationFilter:
+
+    def __init__(
+        self,
+        f_seed: ConfigurationPredicate = lambda c: True,
+        f_method: ConfigurationPredicate = lambda c: True,
+        f_algorithm: ConfigurationPredicate = lambda c: True,
+        f_chunk_size: ConfigurationPredicate = lambda c: True,
+        f_xai_seed: ConfigurationPredicate = lambda c: True,
+    ) -> None:
+        self.f_seed = f_seed
+        self.f_method = f_method
+        self.f_algorithm = f_algorithm
+        self.f_chunk_size = f_chunk_size
+        self.f_xai_seed = f_xai_seed
+
+    def __call__(self, config: AttributionConfiguration) -> bool:
+        return (
+            self.f_seed(config) and
+            self.f_method(config) and
+            self.f_algorithm(config) and
+            self.f_chunk_size(config) and
+            self.f_xai_seed(config)
+        )
+
+
 def main():
 
     base = Path("/home/lk3591/Documents/code/RawByteClf/output/esp-exe/")
@@ -682,21 +749,19 @@ def main():
     # safe_downcast_files(masks_files, num_workers=0, disable_tqdm=False, verbose=True)
 
     # Compute the agreement.
-    exps: list[AttributionConfiguration] = []
-    for e in experiments:
-        if e.seed != 0:
-            continue
-        if e.xai_method != ExplanationMethod.FUN:
-            continue
-        if e.xai_chunk_size is not None:
-            continue
-        if e.xai_seed != 0:
-            continue
-        exps.append(e)
-
+    configutation_filter = ConfigurationFilter(
+        lambda c: c.seed in [0, 1, 2, 3, 4],
+        lambda c: c.xai_method == ExplanationMethod.FUN,
+        lambda c: c.xai_algorithm in [ExplanationAlgorithm.GSHP],
+        lambda c: c.xai_chunk_size is None,
+        lambda c: c.xai_seed == 0,
+    )
+    exps: list[AttributionConfiguration] = list(filter(configutation_filter, experiments))
+    for i, e in enumerate(exps):
+        print(f"{i}: {e}")
     roots = [e.path for e in exps]
-    judge_names = [e.xai_algorithm.value for e in exps]
-    coordinator = AgreementCoordinator(roots, judge_names)
+    judge_names = [str(e.seed) for e in exps]
+    coordinator = AgreementCoordinator(roots, judge_names, True)
     coordinator = coordinator()
 
 
