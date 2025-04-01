@@ -112,29 +112,33 @@ def compute_agreement(R: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     if R.shape[0] == 1:
         return np.nan, np.nan
 
-    # If all judges (or one judge, for kendall's tau) cannot rank any item higher or lower than any other then the agreement is not well-defined.
-    unopinionated = []
+    # If any judge cannot rank any item higher or lower than any other then the agreement is not well-defined.
+    # It is the responsibility of the caller to select annotators that are not unopinionated.
+    # In practice, when unopinionated judges are present, `kendallw_with_ties` can return negative values.
     for k in range(num_judges):
         if len(np.unique(R[:,k])) == 1:
-            unopinionated.append(k)
-    if len(unopinionated) == num_judges or (num_judges == 2 and len(unopinionated) == 1):
-        return np.nan, np.nan
+            return np.nan, np.nan
 
     # Compute the correlation test.
     w, p = agreement_function(R)
 
     # Raise exceptions for invalid values.
-    if np.isinf(w) or np.isinf(p):
-        raise ValueError(f"Correlation is InF ({w=} {p=})")
-    if np.isnan(w) or np.isnan(p):
-        raise ValueError(f"Correlation is NaN ({w=} {p=})")
-    if p < 0 or p > 1:
-        raise ValueError(f"Correlation p-value is outside [0, 1] ({w=} {p=})")
-    if w > 1:
-        raise ValueError(f"Correlation statistic test is greater than 1 ({w=} {p=})")
-    if num_judges == 2 and w < -1:
-        raise ValueError(f"Correlation statistic is less than -1 ({w=} {p=})")
-    if num_judges > 2 and w < 0:
-        raise ValueError(f"Correlation statistic is less than 0 ({w=} {p=})")
+    try:
+        if np.isinf(w) or np.isinf(p):
+            raise ValueError(f"Correlation is InF ({w=} {p=})")
+        if np.isnan(w) or np.isnan(p):
+            raise ValueError(f"Correlation is NaN ({w=} {p=})")
+        if p < 0 or p > 1:
+            raise ValueError(f"Correlation p-value is outside [0, 1] ({w=} {p=})")
+        if w > 1:
+            raise ValueError(f"Correlation statistic test is greater than 1 ({w=} {p=})")
+        if num_judges == 2 and w < -1:
+            raise ValueError(f"Correlation statistic is less than -1 ({w=} {p=})")
+        if num_judges > 2 and w < 0:
+            raise ValueError(f"Correlation statistic is less than 0 ({w=} {p=})")
+    except ValueError as err:
+        file = "/tmp/R.npy"
+        np.save(file, R)
+        raise ValueError(f"Correlation test failed. Rank matrix has been saved to {file}") from err
 
     return w, p
