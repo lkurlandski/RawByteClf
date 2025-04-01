@@ -456,10 +456,11 @@ class AgreementCoordinator:
         rank of the i-th interpretable feature in the k-th sample by the j-th judge.
     """
 
-    def __init__(self, paths: list[Path], judge_names: list[str], remove_incongruent_samples: bool = False) -> None:
+    def __init__(self, paths: list[Path], judge_names: list[str], remove_incongruent_samples: bool = False, tolerance: float = 0.0) -> None:
         self.paths = paths
         self.judge_names = judge_names
         self.remove_incongruent_samples = remove_incongruent_samples
+        self.tolerance = tolerance
         self.managers = [AttributionPathManager(p) for p in paths]
         self.name_to_idx: dict[str, int] = None
         self.idx_to_name: dict[int, str] = None
@@ -479,15 +480,17 @@ class AgreementCoordinator:
         if not all(isinstance(name, str) for name in judge_names):
             raise ValueError("Judge names must be strings.")
 
-    def __call__(self) -> AgreementCoordinator:
+    def __call__(self, remove_cachefiles: bool = False) -> AgreementCoordinator:
         self.determine_samples()
         print(f"Determined {self.I} samples for which all {self.J} judges have ranked.")
+        if remove_cachefiles:
+            self.remove_cachefiles()
         self.create_rank_matrices()
         print(f"Created rank matrices with between {self.K.min()} and {self.K.max()} interpretable features.")
         for judges in self.judge_groups():
             _, _ = self.compute_per_sample_agreement(judges)
             stat = self.compute_agreement_statistic(judges)
-            print(f"{stat.mean:.5f} +/ {stat.error:.5f} ({self.judge_subset(judges)})")
+            print(f"{stat.mean:.5f} +/ {stat.error:.5f} N={stat.support} ({self.judge_subset(judges)})")
         return self
 
     def judge_subset(self, judges: np.ndarray) -> str:
@@ -583,7 +586,8 @@ class AgreementCoordinator:
         for i in range(self.I):
             R = self.ranks[i]
             R = R[:,judges]
-            w, p = compute_agreement(R)
+            w, p = compute_agreement(R, self.tolerance)
+
             W[i] = w
             P[i] = p
 
@@ -592,7 +596,7 @@ class AgreementCoordinator:
         return W, P
 
     def compute_agreement_statistic(self, judges: Optional[np.ndarray] = None) -> StatisticalSummary:
-        W, P = self.compute_per_sample_agreement(judges)  # Load from cache.
+        W, P = self.compute_per_sample_agreement(judges)
         idx = np.isnan(W)
         W = W[~idx]
         P = P[~idx]
