@@ -1659,8 +1659,8 @@ def _get_materials_esp_lm(
     if purge_empty_samples:
         shas_that_are_empty = set(Path("./cache/empty_shas.txt").read_text().split("\n"))
 
-    shas_that_are_valid = set()
-    if lift_level == LiftLevel.ALL:
+    shas_that_are_valid: Optional[set[str]] = None
+    if lift_level in (LiftLevel.ALL, LiftLevel.NOP):
         shas_that_are_valid = set(Path("./cache/processedShas.txt").read_text().split("\n"))
 
     sha_digest_map = {}
@@ -1685,7 +1685,7 @@ def _get_materials_esp_lm(
             if s in shas_that_are_empty:
                 skipped_cause_empty += 1
                 continue
-            if s not in shas_that_are_valid:
+            if shas_that_are_valid is not None and s not in shas_that_are_valid:
                 skipped_cause_invalid += 1
                 continue
             if s in shas_for_finetuning:
