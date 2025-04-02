@@ -68,6 +68,8 @@ class TokenizerIOHelper:
             pass
         elif self.lift_level == LiftLevel.DEC:
             pass
+        elif self.lift_level == LiftLevel.NOP:
+            pass
         else:
             raise ValueError(f"{self.lift_level=}")
 
@@ -83,6 +85,8 @@ class TokenizerIOHelper:
         elif self.lift_level == LiftLevel.DIS:
             pass
         elif self.lift_level == LiftLevel.DEC:
+            pass
+        elif self.lift_level == LiftLevel.NOP:
             pass
         else:
             raise ValueError(f"{self.lift_level=}")
