@@ -203,3 +203,59 @@ def compute_agreement(R: np.ndarray, tolerance: float = 0.0) -> tuple[np.ndarray
         raise ValueError(f"Correlation test failed. Rank matrix has been saved to {file}") from err
 
     return w, p
+
+
+class DescriptiveSparsity:
+
+    def __init__(self, n_bins: int = 100, n_points: int = 100):
+        self.n_bins   = n_bins
+        self.n_points = n_points
+
+    def __call__(self, scores: np.ndarray) -> np.ndarray:
+        self.n_bins = min(self.n_bins, len(scores))
+
+        scores = self.squeeze(scores)
+
+        hist, bin_edges = np.histogram(scores, bins=self.n_bins, density=True)
+        cdf_vals = self.build_cdf(hist, bin_edges)
+
+        maz = np.empty(self.n_points)
+        for i, r in enumerate(np.linspace(0, 1, self.n_points)):
+            m = self.mass_around_zero(r, hist, bin_edges, cdf_vals)
+            maz[i] = m
+
+        return maz
+
+    @staticmethod
+    def build_cdf(hist: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
+        cdf_vals = np.zeros(len(bin_edges))
+        for i in range(1, len(bin_edges)):
+            bin_width = bin_edges[i] - bin_edges[i-1]
+            cdf_vals[i] = cdf_vals[i-1] + hist[i-1] * bin_width
+        return cdf_vals
+
+    @staticmethod
+    def squeeze(arr: np.ndarray) -> np.ndarray:
+        min_val = np.min(arr)
+        max_val = np.max(arr)
+        if max_val == min_val:
+            return np.zeros_like(arr)
+        scaled = 2.0 * (arr - min_val) / (max_val - min_val) - 1.0
+        return scaled
+
+    @staticmethod
+    def mass_around_zero(r: float, hist: np.ndarray, bin_edges: np.ndarray, cdf_vals: np.ndarray) -> float:
+
+        def cdf_from_hist(x: float) -> float:
+            x = max(x, bin_edges[0])
+            x = min(x, bin_edges[-1])
+            i = np.searchsorted(bin_edges, x, side="right") - 1
+            i = max(i, 0)
+            i = min(i, len(hist) - 1)
+            dx = x - bin_edges[i]
+            partial_area = hist[i] * dx
+            return cdf_vals[i] + partial_area
+
+        cdf_pos_r = cdf_from_hist(r)
+        cdf_neg_r = cdf_from_hist(-r)
+        return cdf_pos_r - cdf_neg_r

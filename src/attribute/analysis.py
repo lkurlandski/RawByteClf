@@ -35,7 +35,7 @@ if __name__ == "__main__":
 from src.enums import ExplanationMethod, ExplanationAlgorithm, Task
 from src.utils import torch_safe_downcast
 from src.learn.helpers import OutputHelper
-from src.attribute.statistical import compute_agreement
+from src.attribute.statistical import compute_agreement, DescriptiveSparsity
 
 
 class Annotations(NamedTuple):
@@ -204,6 +204,9 @@ class AttributionPathManager:
                 self.id_to_name[i] = name
                 self.name_to_id[name] = i
                 i += 1
+
+    def __len__(self):
+        return len(self.id_to_name)
 
     def __repr__(self):
         return str(self)
@@ -375,6 +378,22 @@ class AttributionPathManager:
     @property
     def has_scores_files(self) -> bool:
         return len(self.scores) == len(self.names)
+
+    def descriptive_sparsity(self, n_bins: int = 100, n_points: int = 100, num_workers: int = 0) -> np.ndarray:
+        # M = np.full((len(self), n_points), np.nan, dtype=np.float32)
+        # for i, s in enumerate(self.scores):
+        #     n_bins = min(n_bins, len(s))
+        #     m = DescriptiveSparsity(n_bins=n_bins, n_points=n_points)(s)
+        #     M[i] = m
+        # return M
+        func = DescriptiveSparsity(n_bins=n_bins, n_points=n_points)
+        if num_workers == 0:
+            M = [func(s) for s in self.scores]
+        else:
+            with mp.Pool(num_workers) as pool:
+                M = pool.map(func, self.scores)
+        M = np.stack(M, axis=0)
+        return M
 
 
 def safe_downcast_file(f: Path) -> tuple[bool, int, float]:
@@ -752,21 +771,30 @@ def main():
     #     masks_files.extend(manager.masks_files)
     # safe_downcast_files(masks_files, num_workers=0, disable_tqdm=False, verbose=True)
 
+    # Descriptive Sparsity.
+    for e in experiments:
+        manager = AttributionPathManager(e.path)
+        if not (manager.has_ranks_files and manager.has_scores_files):
+            continue
+        M = manager.descriptive_sparsity(n_bins=100, n_points=100)
+        stat = compute_statistical_summary(np.mean(M, axis=1))
+        print(f"{e}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support}")
+
     # Compute the agreement.
-    configutation_filter = ConfigurationFilter(
-        lambda c: c.seed in [0, 1, 2, 3, 4],
-        lambda c: c.xai_method == ExplanationMethod.FUN,
-        lambda c: c.xai_algorithm in [ExplanationAlgorithm.GSHP],
-        lambda c: c.xai_chunk_size is None,
-        lambda c: c.xai_seed == 0,
-    )
-    exps: list[AttributionConfiguration] = list(filter(configutation_filter, experiments))
-    for i, e in enumerate(exps):
-        print(f"{i}: {e}")
-    roots = [e.path for e in exps]
-    judge_names = [str(e.seed) for e in exps]
-    coordinator = AgreementCoordinator(roots, judge_names, True)
-    coordinator = coordinator()
+    # configutation_filter = ConfigurationFilter(
+    #     lambda c: c.seed in [0, 1, 2, 3, 4],
+    #     lambda c: c.xai_method == ExplanationMethod.FUN,
+    #     lambda c: c.xai_algorithm in [ExplanationAlgorithm.GSHP],
+    #     lambda c: c.xai_chunk_size is None,
+    #     lambda c: c.xai_seed == 0,
+    # )
+    # exps: list[AttributionConfiguration] = list(filter(configutation_filter, experiments))
+    # for i, e in enumerate(exps):
+    #     print(f"{i}: {e}")
+    # roots = [e.path for e in exps]
+    # judge_names = [str(e.seed) for e in exps]
+    # coordinator = AgreementCoordinator(roots, judge_names, True)
+    # coordinator = coordinator()
 
 
 if __name__ == "__main__":
