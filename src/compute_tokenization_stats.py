@@ -1,21 +1,27 @@
 """
+Compute statistics about the tokenizers.
 """
 
+from argparse import ArgumentParser
 from collections import Counter, defaultdict
 from itertools import chain
 import json
 import os
 import sys
+from typing import Optional
 
+from datasets import Dataset
 import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# pylint: enable=wrong-import-position
 
-import src
 from src.enums import LiftLevel, TokenizationAlgorithm, BitsInByte, Task
-from src.data.loaders_core import get_materials_esp_clm
+from src.data.loaders_core import _get_materials_esp_lm, Materials
 from src.data.loaders_hf import get_dataset_hf
 from src.tokenization.api import get_fast_tokenizer
 from src.tokenization.helpers import TokenizerIOHelper
@@ -23,70 +29,74 @@ from src.learn.helpers import Args
 from src.learn.train import get_processed_dataset_hf
 
 
-N_TR = 10000
-N_VL = 0
-
-bits_in_byte       = BitsInByte.EIGHT
-task               = Task.CLM
-num_shards         = 1
-batch_size         = 64
-src.BATCH_SIZE_ITR = batch_size
+NUM_FILES = 10000
 
 
-# for lift_level in [LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC]:
-for lift_level in [LiftLevel.RAW]:
-# for lift_level in [LiftLevel.DIS]:
-# for lift_level in [LiftLevel.DEC]:
+def compute_sequence_lengths(dataset: Dataset, field: str, num_files: int = NUM_FILES, batch_size: int = 250) -> list[int]:
+    lengths = []
+    for d in tqdm(dataset.take(num_files).iter(batch_size), total=num_files // batch_size):
+        lengths.extend([len(i) for i in d[field]])
+    return lengths
 
-    materials = get_materials_esp_clm(lift_level=lift_level, rm_finetuning_files=False)
-    total = (len(materials.files["tr"]) + len(materials.files["vl"]))
-    if N_TR is not None:
-        total = N_TR
-    if N_VL is not None:
-        total += N_VL
-    total = total // batch_size
 
-    args = Args(
-        task=task,
+def get_args(lift_level: LiftLevel, algorithm: TokenizationAlgorithm, vocab_size: int) -> Args:
+    return Args(
+        lift_level=lift_level,
+        tokenization_algorithm=algorithm,
+        vocab_size=vocab_size,
+        task=Task.CLM,
         streaming=True,
         max_length=sys.maxsize,
-        lift_level=lift_level,
-        bits_in_byte=bits_in_byte,
+        bits_in_byte=BitsInByte.EIGHT,
     )
 
-    dataset = get_dataset_hf(materials, args.streaming, num_shards, max_length=sys.maxsize)
-    dataset["tr"] = dataset["tr"].take(N_TR)
-    dataset["vl"] = dataset["vl"].take(N_VL)
-    stream  = chain(dataset["tr"].iter(batch_size), dataset["vl"].iter(batch_size))
-    lengths = []
-    for d in tqdm(stream, desc=f"Computing baseline for {lift_level}...", total=total):
-        lengths.extend([len(b) for b in d["bytes"]])
-    io_helper = TokenizerIOHelper(lift_level, TokenizationAlgorithm.WORDLEVEL, 256, 0)
+
+def run(lift_level: LiftLevel, algorithm: TokenizationAlgorithm, vocab_size: int, materials: Optional[Materials] = None) -> None:
+    print(f"Computing tokenization stats ({lift_level.value} {algorithm.value} {vocab_size})...")
+
+    if materials is None:
+        materials = _get_materials_esp_lm(lift_level=lift_level)
+        materials.files["tr"] = sorted(materials.files["tr"], key=lambda af: af.name)[0:NUM_FILES]
+        materials.files["vl"] = []
+
+    if algorithm == TokenizationAlgorithm.WORDLEVEL and vocab_size == 256:
+        dataset = get_dataset_hf(materials, streaming=True, max_length=sys.maxsize)["tr"]
+        lengths = compute_sequence_lengths(dataset, "bytes")
+    else:
+        tokenizer = get_fast_tokenizer(lift_level, algorithm, BitsInByte.EIGHT, vocab_size)
+        tokenizer.model_input_names = ["input_ids"]
+        args = get_args(lift_level, algorithm, vocab_size)
+        dataset = get_processed_dataset_hf(materials, lift_level, args, None, tokenizer)["tr"]
+        lengths = compute_sequence_lengths(dataset, "input_ids")
+
+    io_helper = TokenizerIOHelper(lift_level, algorithm, vocab_size, 0)
     io_helper.path.mkdir(parents=True, exist_ok=True)
     io_helper.save_sequence_lengths(lengths)
 
-    for algorithm in TokenizationAlgorithm.BPE, TokenizationAlgorithm.UNIGRAM:
-        # for vocab_size in [1024, 4096, 16384]:
-        for vocab_size in [16384]:
-            tokenizer = get_fast_tokenizer(lift_level, algorithm, bits_in_byte, vocab_size)
-            tokenizer.model_input_names = ["input_ids"]
-            args = Args(
-                task=task,
-                streaming=True,
-                max_length=sys.maxsize,
-                lift_level=lift_level,
-                bits_in_byte=bits_in_byte,
-                tokenization_algorithm=algorithm,
-                vocab_size=vocab_size,
-            )
 
-            dataset = get_processed_dataset_hf(materials, args, num_shards, tokenizer)
-            dataset["tr"] = dataset["tr"].take(N_TR)
-            dataset["vl"] = dataset["vl"].take(N_VL)
-            stream  = chain(dataset["tr"].iter(batch_size), dataset["vl"].iter(batch_size))
-            lengths = []
-            for d in tqdm(stream, desc=f"Computing tokenized for {lift_level}-{algorithm}-{vocab_size}...", total=total):
-                lengths.extend([len(i) for i in d["input_ids"]])
 
-            io_helper = TokenizerIOHelper.fromdisk(lift_level, algorithm, vocab_size, None)
-            io_helper.save_sequence_lengths(lengths)
+def main():
+
+    for lift_level in [LiftLevel.NOP, LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC]:
+
+        materials = _get_materials_esp_lm(lift_level=lift_level)
+        materials.files["tr"] = sorted(materials.files["tr"], key=lambda af: af.name)[0:NUM_FILES]
+        materials.files["vl"] = []
+
+        algorithm  = TokenizationAlgorithm.WORDLEVEL
+        vocab_size = 256
+        run(lift_level, algorithm, vocab_size, materials)
+
+        for algorithm in [TokenizationAlgorithm.BPE, TokenizationAlgorithm.UNIGRAM]:
+            for vocab_size in [1024, 4096, 16384]:
+                run(lift_level, algorithm, vocab_size, materials)
+
+
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--lift_level", type=LiftLevel, required=True)
+    parser.add_argument("--algorithm", type=TokenizationAlgorithm, required=True)
+    parser.add_argument("--vocab_size", type=int, required=True)
+    args = parser.parse_args()
+    run(args.lift_level, args.algorithm, args.vocab_size)
+    # main()
