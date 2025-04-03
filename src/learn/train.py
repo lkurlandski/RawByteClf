@@ -1235,7 +1235,7 @@ def get_processed_dataset_hf(
         dataset = dataset.map(**kwds)
     else:
         # The RAW level contains raw-bytes whereas DIS and DEC contains encoded strings.
-        hf_tokenize = hf_tokenize_bytes if lift_level == LiftLevel.RAW else hf_tokenize_str
+        hf_tokenize = hf_tokenize_bytes if lift_level in (LiftLevel.RAW, LiftLevel.NOP) else hf_tokenize_str
         func = partial(hf_tokenize, tokenizer=tokenizer, max_length=args.max_length)
         desc = "Tokenizing bytes..."
         kwds = get_map_kwds_for_hf_datasets(function=func, dataset=dataset, desc=desc, remove_columns=remove_columns, num_proc=None)
