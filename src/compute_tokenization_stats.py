@@ -32,9 +32,9 @@ from src.learn.train import get_processed_dataset_hf
 NUM_FILES = 10000
 
 
-def compute_sequence_lengths(dataset: Dataset, field: str, num_files: int = NUM_FILES, batch_size: int = 250) -> list[int]:
+def compute_sequence_lengths(dataset: Dataset, field: str, batch_size: int = 250) -> list[int]:
     lengths = []
-    for d in tqdm(dataset.take(num_files).iter(batch_size), total=num_files // batch_size):
+    for d in tqdm(dataset.iter(batch_size)):
         lengths.extend([len(i) for i in d[field]])
     return lengths
 
@@ -51,28 +51,45 @@ def get_args(lift_level: LiftLevel, algorithm: TokenizationAlgorithm, vocab_size
     )
 
 
-def run(lift_level: LiftLevel, algorithm: TokenizationAlgorithm, vocab_size: int, materials: Optional[Materials] = None) -> None:
-    print(f"Computing tokenization stats ({lift_level.value} {algorithm.value} {vocab_size})...")
+def run(lift_level: LiftLevel, algorithm: TokenizationAlgorithm, vocab_size: int, idx: Optional[int] = None, materials: Optional[Materials] = None) -> None:
+
+    print(f"run: lift_level={lift_level.value}")
+    print(f"run: algorithm={algorithm.value}")
+    print(f"run: {vocab_size=}")
+    print(f"run: {idx=}")
+
+    if idx is not None:
+        if not idx >= 0 or not idx <= 9:
+            raise RuntimeError("idx must be between 0 and 9, inclusive.")
+        siz = int(NUM_FILES / 10)
+        low = siz * idx
+        upp = low + siz
+        print(f"run: {siz=}")
+        print(f"run: {low=}")
+        print(f"run: {upp=}")
 
     if materials is None:
         materials = _get_materials_esp_lm(lift_level=lift_level)
-        materials.files["tr"] = sorted(materials.files["tr"], key=lambda af: af.name)[0:NUM_FILES]
+        materials.files["tr"] = sorted(materials.files["tr"], key=lambda af: af.name)[0:NUM_FILES][low:upp]
         materials.files["vl"] = []
 
     if algorithm == TokenizationAlgorithm.WORDLEVEL and vocab_size == 256:
         dataset = get_dataset_hf(materials, streaming=True, max_length=sys.maxsize)["tr"]
+        print("run: compute_sequence_lengths")
         lengths = compute_sequence_lengths(dataset, "bytes")
+        num_files = 0
     else:
         tokenizer = get_fast_tokenizer(lift_level, algorithm, BitsInByte.EIGHT, vocab_size)
         tokenizer.model_input_names = ["input_ids"]
         args = get_args(lift_level, algorithm, vocab_size)
         dataset = get_processed_dataset_hf(materials, lift_level, args, None, tokenizer)["tr"]
+        print("run: compute_sequence_lengths")
         lengths = compute_sequence_lengths(dataset, "input_ids")
+        num_files = 4096
 
-    io_helper = TokenizerIOHelper(lift_level, algorithm, vocab_size, 0)
+    io_helper = TokenizerIOHelper(lift_level, algorithm, vocab_size, num_files)
     io_helper.path.mkdir(parents=True, exist_ok=True)
-    io_helper.save_sequence_lengths(lengths)
-
+    io_helper.save_sequence_lengths(lengths, idx)
 
 
 def main():
@@ -97,6 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--lift_level", type=LiftLevel, required=True)
     parser.add_argument("--algorithm", type=TokenizationAlgorithm, required=True)
     parser.add_argument("--vocab_size", type=int, required=True)
+    parser.add_argument("--idx", type=int, required=False)
     args = parser.parse_args()
-    run(args.lift_level, args.algorithm, args.vocab_size)
+    run(args.lift_level, args.algorithm, args.vocab_size, args.idx, None)
     # main()

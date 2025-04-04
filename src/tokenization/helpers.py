@@ -101,14 +101,21 @@ class TokenizerIOHelper:
         with open(self.unigrams, "r") as fp:
             return json.load(fp)
 
-    def save_sequence_lengths(self, sequence_lengths: list[int]) -> None:
-        with open(self.sequence_lengths, "w") as fp:
+    def save_sequence_lengths(self, sequence_lengths: list[int], idx: Optional[int] = None) -> None:
+        file = self.sequence_lengths
+        if idx is not None:
+            file = file.with_stem(f"{file.stem}-{idx}")
+        with open(file, "w") as fp:
             for length in sequence_lengths:
                 fp.write(f"{length}\n")
 
     def load_sequence_lengths(self) -> list[int]:
-        with open(self.sequence_lengths, "r") as fp:
-            return [int(line) for line in fp.readlines()]
+        files = self.sequence_lengths.parent.glob(f"{self.sequence_lengths.suffix}*")
+        lengths = []
+        for file in files:
+            with open(file, "r") as fp:
+                lengths.extend([int(line) for line in fp.readlines()])
+        return lengths
 
     @classmethod
     def fromdisk(
