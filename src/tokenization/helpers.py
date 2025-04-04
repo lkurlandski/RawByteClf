@@ -110,7 +110,7 @@ class TokenizerIOHelper:
                 fp.write(f"{length}\n")
 
     def load_sequence_lengths(self) -> list[int]:
-        files = self.sequence_lengths.parent.glob(f"{self.sequence_lengths.suffix}*")
+        files = self.sequence_lengths.parent.glob(f"{self.sequence_lengths.stem}*")
         lengths = []
         for file in files:
             with open(file, "r") as fp:
