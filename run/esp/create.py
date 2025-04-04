@@ -321,7 +321,7 @@ class Configuration:
             return False
         if self.vocab_size != 256:
             return False
-        if self.lift_level_ddp != LiftLevel.DEC:
+        if self.lift_level_ddp is not None:
             return False
         if self.max_length != 2**20:
             return False
@@ -786,7 +786,8 @@ def main():
     ARMITAGE = args.armitage
 
     if not args.no_remove:
-        shutil.rmtree(outpath(), ignore_errors=True)
+        for f in outpath().iterdir():
+            f.unlink()
     outpath().mkdir(parents=True, exist_ok=True)
 
     configurations = product(
