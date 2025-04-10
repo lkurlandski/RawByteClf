@@ -9,9 +9,11 @@ sections named "UPX", which contains references to functions that are out of bou
 """
 
 from __future__ import annotations
+import asyncio
 from array import array
 from argparse import ArgumentParser
 from collections import UserDict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from copy import deepcopy
 from functools import partial
 from itertools import islice
@@ -48,6 +50,13 @@ def dis_file_to_exe_func_bounds(content: Path | str | bytes, errors: Literal["ra
     """
     if errors not in {"raise", "pass"}:
         raise ValueError(f"Invalid value for errors: {errors}")
+
+    func      = None
+    signature = None
+    first     = None
+    lower     = None
+    final     = None
+    upper     = None
 
     try:
 
@@ -151,6 +160,31 @@ class EXEFuncBoundsMap(UserDict):
 
         super().__init__(data)
 
+    @staticmethod
+    def _load_npz(file_path: Path, shas: Optional[list[str]], auto: bool) -> dict[str, np.ndarray]:
+        """
+        This executes in a separate *process*, so keep it self‑contained.
+        """
+        if auto and shas is not None:
+            if file_path.name == "function_boundaries.npz":
+                shas_subset = shas
+            elif file_path.parent.name == "function_boundaries":
+                h = file_path.stem
+                shas_subset = [s for s in shas if s.startswith(h)]
+            else:
+                raise RuntimeError(f"Unexpected file: {file_path}")
+        else:
+            shas_subset = None
+
+        raw = np.load(file_path, mmap_mode=None)
+
+        if shas_subset is not None:
+            raw = {s: raw[s] for s in shas_subset if s in raw}
+        else:
+            raw = dict(raw)
+
+        return {k: np.reshape(v, (len(v), 2)) if v.shape == (0,) else v for k, v in raw.items()}
+
     @classmethod
     def from_files(cls, files: list[Path], shas: Optional[list[str]] = None, allow_missing_shas: bool = False, auto: bool = False) -> EXEFuncBoundsMap:
         """
@@ -196,7 +230,101 @@ class EXEFuncBoundsMap(UserDict):
         return cls(data, shas, allow_missing_shas)
 
     @classmethod
-    def from_dataset_name(cls, dnms: Optional[list[DatasetName]] = None, shas: Optional[list[str]] = None, allow_missing_shas: bool = False) -> EXEFuncBoundsMap:
+    async def from_files_async(cls, files: list[Path], shas: Optional[list[str]] = None, allow_missing_shas: bool = False, auto: bool = False) -> EXEFuncBoundsMap:
+        """
+        Same as from_files, but using async IO to load the files in parallel.
+        """
+        # Freeze and sort the SHA list once – shared by all workers
+        if shas is not None:
+            shas = sorted(deepcopy(shas))
+
+        async def _load_one(f: Path) -> dict[str, np.ndarray]:
+            """Blocking file read wrapped in a thread via asyncio.to_thread."""
+            t0 = time.time()
+
+            # Decide which SHAs this file could contain
+            if auto and shas is not None:
+                if f.name == "function_boundaries.npz":
+                    shas_subset = shas
+                elif f.parent.name == "function_boundaries":
+                    h = f.stem
+                    shas_subset = [s for s in shas if s.startswith(h)]
+                else:
+                    raise RuntimeError(f"Unexpected file: {f}")
+            else:
+                shas_subset = None  # means “take everything”
+
+            # ── Actual blocking work in a background thread ────────────────
+            def _blocking_read() -> dict[str, np.ndarray]:
+                raw = np.load(f, mmap_mode=None)
+
+                if shas_subset is not None:
+                    raw = {s: raw[s] for s in shas_subset if s in raw}
+                else:
+                    raw = dict(raw)  # materialise the lazy map
+
+                # Ensure empty arrays come back with shape (0, 2)
+                return {
+                    k: np.reshape(v, (len(v), 2)) if v.shape == (0,) else v
+                    for k, v in raw.items()
+                }
+
+            data_chunk = await asyncio.to_thread(_blocking_read)
+            print(f"Loading {f} … ", end="", flush=True)
+            print(f"done. Elapsed: {round(time.time() - t0)} s")
+            return data_chunk
+
+        # Kick off all reads at once
+        chunks = await asyncio.gather(*(_load_one(f) for f in files))
+
+        # Flatten the list of dicts into a single dict
+        merged: dict[str, np.ndarray] = {}
+        for c in chunks:
+            merged.update(c)
+
+        return cls(merged, shas, allow_missing_shas)
+
+    @classmethod
+    def from_files_multiprocessing(cls, files: list[Path], shas: Optional[list[str]] = None, allow_missing_shas: bool = False, auto: bool = False, num_workers: int = 4) -> EXEFuncBoundsMap:
+        """
+        Same as from_files, but using async IO to load the files in parallel.
+        """
+        if shas is not None:
+            shas = sorted(deepcopy(shas))
+
+        num_workers = min(num_workers, os.cpu_count())
+        num_workers = max(num_workers, 1)
+        print(f"Using {num_workers} worker process{'es' if num_workers > 1 else ''}.")
+
+        t0_global = time.time()
+        merged: dict[str, np.ndarray] = {}
+
+        with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            futures = {
+                pool.submit(EXEFuncBoundsMap._load_npz, f, shas, auto): f for f in files
+            }
+
+            for fut in as_completed(futures):
+                f = futures[fut]
+                try:
+                    t0 = time.time()
+                    chunk = fut.result()  # raises if the worker blew up
+                    merged.update(chunk)
+                    print(
+                        f"{f} → {len(chunk):>5} keys "
+                        f"(elapsed {round(time.time() - t0)} s)"
+                    )
+                except Exception as e:
+                    # Surface the exact file that failed
+                    raise RuntimeError(f"Worker failed on {f}: {e}") from e
+
+        print(f"TOTAL elapsed: {round(time.time() - t0_global)} s")
+
+        # Construct your return type (unchanged from original signature)
+        return cls(merged, shas, allow_missing_shas)
+
+    @classmethod
+    def from_dataset_name(cls, dnms: Optional[list[DatasetName]] = None, shas: Optional[list[str]] = None, allow_missing_shas: bool = False, impl: Literal["naive", "asyncio", "multiprocessing"] = "multiprocessing") -> EXEFuncBoundsMap:
         dnms = dnms if dnms is not None else list(DatasetName)
         files = []
         for dnm in dnms:
@@ -205,7 +333,15 @@ class EXEFuncBoundsMap(UserDict):
                 files.append(f)
             else:
                 files.extend(sorted(f.rglob("*.npz")))
-        return cls.from_files(files, shas, allow_missing_shas, auto=True)
+
+        if impl == "naive":
+            return cls.from_files(files, shas, allow_missing_shas, auto=True)
+        if impl == "asyncio":
+            return asyncio.run(cls.from_files_async(files, shas, allow_missing_shas, auto=True))
+        if impl == "multiprocessing":
+            return cls.from_files_multiprocessing(files, shas, allow_missing_shas, auto=True, num_workers=os.cpu_count())
+
+        raise ValueError(f"Invalid impl: {impl}")
 
     def get_stats(self, r: Optional[int] = None) -> dict[str, float]:
         """
