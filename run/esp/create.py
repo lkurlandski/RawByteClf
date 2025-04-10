@@ -351,16 +351,15 @@ class Configuration:
         if self.pretraining_task is not None:
             return False
 
-        # Explanation Stuff.
-        # These take a long time, and I want to get some analysis done before running them.
-        if self.xai_algorithm in (ExplanationAlgorithm.FABL, ExplanationAlgorithm.SSHP):
-            return False
         # Integrated Gradients is deterministic.
         if self.xai_algorithm == ExplanationAlgorithm.IGRD and self.xai_seed != 0:
             return False
-        if self.xai_algorithm != ExplanationAlgorithm.KSHP:
+        # Only run nonzero model seeds with zeroed explanation seed.
+        if self.seed != 0 and self.xai_seed != 0:
             return False
-        if (self.xai_seed, self.seed) not in [(4, 0), (0, 4), (0, 2)]:
+        if self.xai_algorithm not in (ExplanationAlgorithm.FABL, ExplanationAlgorithm.SSHP):
+            return False
+        if self.xai_method == ExplanationMethod.FUN and self.seed == 0 and self.xai_seed == 0:
             return False
 
         # None of the ESP loaders fully support different seeds.
