@@ -518,7 +518,7 @@ class AgreementCoordinator:
     def judge_groups(self) -> list[np.ndarray]:
         groups = product([False, True], repeat=len(self.managers))
         groups = filter(lambda judges: sum(judges) > 1, groups)
-        groups = sorted(groups, key=lambda judges: sum(judges), reverse=False)
+        groups = sorted(groups, key=lambda judges: sum(judges), reverse=False)  # pylint: disable=unnecessary-lambda
         groups = map(np.array, groups)
         return list(groups)
 
@@ -709,7 +709,7 @@ class AttributionConfiguration:
         try:
             return cls(root, seed, xai_method, xai_algorithm, xai_chunk_size, xai_seed)
         except NameError as err:
-            raise ValueError(f"Could not parse the {err.name} attribute from the path {path}.") from err
+            raise ValueError(f"Could not parse the {err.name} attribute from the path {path}.") from err  # pylint: disable=no-member
 
 
 ConfigurationPredicate = Callable[[AttributionConfiguration], bool]

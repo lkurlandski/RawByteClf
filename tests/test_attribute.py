@@ -159,8 +159,7 @@ class TestMaskers(unittest.TestCase):
         assert torch.equal(mask, correct), f"Got:\n{pformat(mask.tolist())}\nExpected:\n{pformat(correct.tolist())}"
 
     def test_chunk_feature_masker_len(self):
-        stats = {s: np.mean(b[:,1] - b[:,0]) for s, b in self.boundaries.items()}  # {'sha1': 2.0, 'sha2': 2.0, 'sha3': nan}
-        m = AutoLenChunkFeatureMasker(self.bos_token_id, self.eos_token_id, self.pad_token_id, stats=stats)
+        m = AutoLenChunkFeatureMasker(self.bos_token_id, self.eos_token_id, self.pad_token_id, boundaries=self.boundaries)
         assert m.special_token_ids == self.special_token_ids
         mask = m(self.input_ids, list(self.boundaries.keys()))
         correct = torch.tensor([
@@ -171,8 +170,7 @@ class TestMaskers(unittest.TestCase):
         assert torch.equal(mask, correct), f"Got:\n{pformat(mask.tolist())}\nExpected:\n{pformat(correct.tolist())}"
 
     def test_chunk_feature_masker_num(self):
-        stats = {s: len(b) for s, b in self.boundaries.items()}  # {'sha1': 3, 'sha2': 2, 'sha3': 0}
-        m = AutoNumChunkFeatureMasker(self.bos_token_id, self.eos_token_id, self.pad_token_id, stats=stats)
+        m = AutoNumChunkFeatureMasker(self.bos_token_id, self.eos_token_id, self.pad_token_id, boundaries=self.boundaries)
         assert m.special_token_ids == self.special_token_ids
         mask = m(self.input_ids, list(self.boundaries.keys()))
         correct = torch.tensor([
@@ -208,7 +206,7 @@ class TestMaskersWithRealData(unittest.TestCase):
         self.total = 16384
         self.apply_padding = True
 
-    def should_include(self, s: str) -> bool:
+    def should_include(self, s: str) -> bool:  # pylint: disable=unused-argument
         # return s in (
         #     "0000ef6904a7b01d154585d6c06f9f2a7a5ab2b1900fedfcf8b1ccf48e916046",
         # )
@@ -303,10 +301,10 @@ class TestMaskersWithRealData(unittest.TestCase):
             mask_fun = masker_fun(input_ids, names)
 
             unq_num = len(torch.unique(mask_num))
-            unq_len = len(torch.unique(mask_len))
+            unq_len = len(torch.unique(mask_len))  # pylint: disable=unused-variable
             unq_fun = len(torch.unique(mask_fun))
             unq_nml = len(torch.unique(mask_nml))
-            unq_chk = len(torch.unique(mask_chk))
+            unq_chk = len(torch.unique(mask_chk))  # pylint: disable=unused-variable
 
             for mask, name in ((mask_chk, "chk"), (mask_num, "num"), (mask_len, "len"), (mask_nml, "nml"), (mask_fun, "fun")):
                 try:
@@ -384,6 +382,7 @@ class TestKendallW(unittest.TestCase):
             [17.0, 17.0, 20.0, 14.5, 15.5, 13.0, 19.5, 16.0, 21.0, 20.0, 18.0, 22.0],
         ]).T
 
+    @unittest.skip("Error handling has been moved outside of the stat function.")
     def test_0(self):  # Errors
         A = [0, 1, 2, 3, 4]
         R = np.array([A,]).T
@@ -392,6 +391,7 @@ class TestKendallW(unittest.TestCase):
         with self.assertRaises(ValueError):
             kendallw_with_ties(R)
 
+    @unittest.skip("Error handling has been moved outside of the stat function.")
     def test_1(self):  # Warnings
         A = [0, 1, 2, 3, 4]
         B = [0, 1, 2, 3, 4]
