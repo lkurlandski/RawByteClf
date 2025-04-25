@@ -279,6 +279,16 @@ def add_ensemble_checkpoints():
 add_ensemble_checkpoints()
 
 
+FUNCTION_STATISTICS = {
+    'fun-len-med': 46.0,
+    'fun-len-men': 294.32046437646966,
+    'fun-len-std': 833426.950981421,
+    'fun-num-med': 140.0,
+    'fun-num-men': 1129.4334057793635,
+    'fun-num-std': 2570.293286740029,
+}
+
+
 @dataclass
 class Configuration:
     model_name: ModelName
@@ -351,15 +361,13 @@ class Configuration:
         if self.pretraining_task is not None:
             return False
 
-        # Integrated Gradients is deterministic.
-        if self.xai_algorithm == ExplanationAlgorithm.IGRD and self.xai_seed != 0:
+        # IGRD and FABL are deterministic.
+        if self.xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.FABL) and self.xai_seed != 0:
             return False
         # Only run nonzero model seeds with zeroed explanation seed.
         if self.seed != 0 and self.xai_seed != 0:
             return False
         if self.xai_algorithm not in (ExplanationAlgorithm.FABL, ExplanationAlgorithm.SSHP):
-            return False
-        if self.xai_method == ExplanationMethod.FUN and self.seed == 0 and self.xai_seed == 0:
             return False
 
         # None of the ESP loaders fully support different seeds.
@@ -498,6 +506,12 @@ class Configuration:
                 f_0 = 14
             if self.xai_method == ExplanationMethod.NML:
                 f_0 = 1
+            if self.xai_method == ExplanationMethod.CHK:
+                f_0 = (self.max_length / self.xai_chunk_size) / FUNCTION_STATISTICS["fun-num-men"]
+                # This doesn't really make sense, but it seems like the SSHP calculation
+                # was only about 1/3 as long as it needed to be when self.xai_chunk_size == 1024
+                if self.xai_algorithm == ExplanationAlgorithm.SSHP:
+                    f_0 *= 3
 
         if self.task == Task.DET:
             f_1 = 8322  / 8322
@@ -938,9 +952,9 @@ def main():
         [256],
         [Task.DET],
         [None],
-        [ExplanationMethod.FUN, ExplanationMethod.NML],
+        [ExplanationMethod.CHK],
         [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
-        [None],
+        [1024],
         [0, 1, 2, 3, 4],
         [0, 1, 2, 3, 4],
     )
