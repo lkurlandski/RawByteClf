@@ -169,6 +169,7 @@ logs
 figures
 *.ipynb
 *.sh
+*.sbatch
 ./config/.system
 config/.system
 cache/*
