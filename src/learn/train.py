@@ -179,7 +179,9 @@ from src.architectures.rwkv import (
     RwkvConfig,
     RwkvForSequenceClassification,
 )
-from src.attribute.utils import get_attributor, get_attribution, get_masker, Masker, FunctionFeatureMasker, ignore_warnings_decorator, REQUIRES_INTERPRETABLE_EMBEDDINGS
+from src.attribute.masking import get_masker, Masker, FunctionFeatureMasker
+from src.attribute.attribution import get_attributor, get_attribution, REQUIRES_INTERPRETABLE_EMBEDDINGS
+from src.attribute.utils import ignore_warnings_decorator
 from src.data.loaders_core import (
     Materials,
     get_materials_esp_clm,

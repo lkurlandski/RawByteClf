@@ -24,7 +24,7 @@ if __name__ == "__main__":
 
 from src.enums import ExplanationMethod
 from src.utils import rglob, print_context
-from src.attribute.utils import (
+from src.attribute.masking import (
     apply_feature_mask_slow,
     apply_feature_mask_fast,
     Masker,
@@ -36,8 +36,8 @@ from src.attribute.utils import (
     get_masker,
     infer_chunk_sizes,
     assert_feature_mask_indices_are_consecutive,
-    ignore_warnings_decorator,
 )
+from src.attribute.utils import ignore_warnings_decorator
 from src.attribute.statistical import kendallw_without_ties, kendallw_with_ties
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
