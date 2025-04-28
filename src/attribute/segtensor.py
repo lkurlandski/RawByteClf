@@ -146,6 +146,8 @@ class ConvertSavedTensors:
         return results
 
     def convert(self, input_path: Path, output_path: Path) -> bool:
+        # TQDM sometimes does not work well on RC?
+        # print(f"{os.getpid()} -- {input_path.name}", flush=True)
         if self.to_segmented:
             return self.convert_to_segmented(input_path, output_path)
         if self.to_dense:
@@ -157,7 +159,15 @@ class ConvertSavedTensors:
         return self.convert(input_path, output_path)
 
     def convert_to_segmented(self, input_path: Path, output_path: Path) -> bool:
-        t = torch.load(input_path)
+        try:
+            t = torch.load(input_path)
+        except EOFError as err:
+            message = f"Encountered EOFError when reading file ({input_path})."
+            if self.errors == "raise":
+                raise EOFError(message) from err
+            if self.errors == "warn":
+                warnings.warn(message)
+            return False
 
         if isinstance(t, SegmentedTensor) or (isinstance(t, list) and all(isinstance(t_i, SegmentedTensor) for t_i in t)):
             return True
@@ -186,7 +196,15 @@ class ConvertSavedTensors:
         return False
 
     def convert_to_dense(self, input_path: Path, output_path: Path) -> bool:
-        s = torch.load(input_path)
+        try:
+            s = torch.load(input_path)
+        except EOFError as err:
+            message = f"Encountered EOFError when reading file ({input_path})."
+            if self.errors == "raise":
+                raise EOFError(message) from err
+            if self.errors == "warn":
+                warnings.warn(message)
+            return False
 
         if isinstance(s, Tensor) or (isinstance(s, list) and all(isinstance(s_i, Tensor) for s_i in s)):
             return True
