@@ -35,6 +35,7 @@ if __name__ == "__main__":
 from src.enums import ExplanationMethod, ExplanationAlgorithm, Task
 from src.utils import torch_safe_downcast
 from src.learn.helpers import OutputHelper
+from src.attribute.segtensor import SegmentedTensor
 from src.attribute.statistical import compute_agreement, DescriptiveSparsity
 
 
@@ -73,8 +74,16 @@ class AnnotationStreamConstructor:
     """
 
     @staticmethod
-    def from_iterables(names: Iterable[str], labels: Iterable[Tensor], attribs: Iterable[Tensor], masks: Iterable[Tensor]) -> AnnotationStream:
+    def from_iterables(names: Iterable[str], labels: Iterable[Tensor | SegmentedTensor], attribs: Iterable[Tensor | SegmentedTensor], masks: Iterable[Tensor | SegmentedTensor]) -> AnnotationStream:
         for name, label, attrib, mask in zip(names, labels, attribs, masks):
+            if isinstance(label, SegmentedTensor):
+                raise RuntimeError("Label is a SegmentedTensor, but we were expected a Tensor.")
+                # label = label.to_dense()
+            if isinstance(attrib, SegmentedTensor):
+                attrib = attrib.to_dense()
+            if isinstance(mask, SegmentedTensor):
+                mask = mask.to_dense()
+
             idx    = mask != 0
             attrib = attrib[idx]
             mask   = mask[idx]
