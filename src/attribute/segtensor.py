@@ -113,43 +113,53 @@ class SegmentedTensor:
         return cls(state["values"], state["lengths"])
 
 
-class ConvertSavedTensorsToSegmentedTensors:
+class ConvertSavedTensors:
 
-    def __init__(self, num_workers: int = 1):
-        self.num_workers = num_workers
+    def __init__(self, to_segmented: bool, to_dense: bool, num_workers: int = 1, errors: Literal["raise", "warn", "ignore"] = "raise"):
+        self.to_segmented = to_segmented
+        self.to_dense     = to_dense
+        self.num_workers  = num_workers
+        self.errors       = errors
+        if bool(to_segmented) == bool(to_dense):
+            raise ValueError("Either `to_segmented` or `to_dense` must be True.")
+        if errors not in ("raise", "warn", "ignore"):
+            raise ValueError("`errors` must be one of 'raise', 'warn', or 'ignore'.")
 
     def __call__(self, inputs: list[Path], outputs: list[Path]) -> list[bool]:
         if len(inputs) != len(outputs):
             raise ValueError("`inputs` and `outputs` must have the same length.")
 
         total    = len(inputs)
-        desc     = "Converting tensors to segmented tensors"
-        iterable = zip(inputs, outputs, repeat("warn", total), strict=True)
+        desc     = "Converting tensors..."
+        iterable = zip(inputs, outputs, strict=True)
 
         if self.num_workers > 1:
             with mp.Pool(self.num_workers) as pool:
-                results = list(tqdm(
-                    pool.imap(self._convert, iterable),
-                    total=len(inputs),
-                    desc="Converting tensors to segmented tensors"
-                ))
-
+                results = list(tqdm(pool.imap(self.convert_, iterable), total=total, desc=desc))
         else:
             results  = []
             iterable = tqdm(iterable, total=total, desc=desc)
-            for inp, out, err in iterable:
-                ok = self.convert(inp, out, err)
+            for inp, out in iterable:
+                ok = self.convert(inp, out)
                 results.append(ok)
 
         return results
 
-    def convert(self, input_path: Path, output_path: Path, errors: Literal["raise", "warn", "ignore"] = "raise") -> bool:
-        if errors not in ["raise", "warn", "ignore"]:
-            raise ValueError("Invalid value for `errors`. Must be 'raise' or 'warn'.")
+    def convert(self, input_path: Path, output_path: Path) -> bool:
+        if self.to_segmented:
+            return self.convert_to_segmented(input_path, output_path)
+        if self.to_dense:
+            return self.convert_to_dense(input_path, output_path)
+        raise RuntimeError()
 
+    def convert_(self, args: tuple[Path, Path]) -> bool:
+        input_path, output_path = args
+        return self.convert(input_path, output_path)
+
+    def convert_to_segmented(self, input_path: Path, output_path: Path) -> bool:
         t = torch.load(input_path)
 
-        if isinstance(t, SegmentedTensor):
+        if isinstance(t, SegmentedTensor) or (isinstance(t, list) and all(isinstance(t_i, SegmentedTensor) for t_i in t)):
             return True
 
         if isinstance(t, Tensor):
@@ -168,13 +178,33 @@ class ConvertSavedTensorsToSegmentedTensors:
             return True
 
         message = f"Expected 1D or 2D Tensor or list of 1D Tensors ({input_path})."
-        if errors == "raise":
+        if self.errors == "raise":
             raise TypeError(message)
-        if errors == "warn":
+        if self.errors == "warn":
             warnings.warn(message)
 
         return False
 
-    def _convert(self, args: tuple[Path, Path, Literal["raise", "warn", "ignore"]]) -> bool:
-        input_path, output_path, errors = args
-        return self.convert(input_path, output_path, errors)
+    def convert_to_dense(self, input_path: Path, output_path: Path) -> bool:
+        s = torch.load(input_path)
+
+        if isinstance(s, Tensor) or (isinstance(s, list) and all(isinstance(s_i, Tensor) for s_i in s)):
+            return True
+
+        if isinstance(s, SegmentedTensor):
+            t = s.to_dense()
+            torch.save(t, output_path)
+            return True
+
+        if isinstance(s, list) and all(isinstance(s_i, SegmentedTensor) for s_i in s):
+            t = [s_i.to_dense() for s_i in s]
+            torch.save(t, output_path)
+            return True
+
+        message = f"Expected Tensor or SegmentedTensor ({input_path})."
+        if self.errors == "raise":
+            raise TypeError(message)
+        if self.errors == "warn":
+            warnings.warn(message)
+
+        return False
