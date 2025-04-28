@@ -24,6 +24,7 @@ import sys
 from typing import Any, Literal, Optional
 
 import torch
+from torch import Tensor
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -48,6 +49,7 @@ from src.enums import (
     ExplanationMethod,
 )
 from src.utils import get_highest_path, is_jsonable
+from src.attribute.segtensor import SegmentedTensor
 from src.data.labeling import KEYS
 from src.learn.utils import str_or_bool_to_str, float_to_int
 
@@ -673,10 +675,10 @@ class OutputHelper:
     def save_attribution_data(
         self,
         io_iteration: int,
-        all_names: list[torch.Tensor],
-        all_labels: list[torch.Tensor],
-        all_attribs: list[torch.Tensor],
-        all_masks: Optional[list[torch.Tensor]] = None,
+        all_names: list[str],
+        all_labels: list[Tensor],
+        all_attribs: list[Tensor | SegmentedTensor],
+        all_masks: Optional[list[Tensor | SegmentedTensor]] = None,
         clear: bool = False,
     ) -> None:
         """
