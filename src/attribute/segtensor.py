@@ -149,6 +149,9 @@ class ConvertSavedTensorsToSegmentedTensors:
 
         t = torch.load(input_path)
 
+        if isinstance(t, SegmentedTensor):
+            return True
+
         if isinstance(t, Tensor):
             if t.ndim == 1:
                 s = SegmentedTensor.from_dense(t)
