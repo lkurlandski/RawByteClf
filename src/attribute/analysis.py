@@ -182,6 +182,15 @@ class Attributions(NamedTuple):
     attrib: Tensor
     mask:   Tensor
 
+    def __post_init__(self):
+        if isinstance(self.attrib, SegmentedTensor):
+            self.attrib = self.attrib.to_dense()
+        if isinstance(self.mask, SegmentedTensor):
+            self.mask = self.mask.to_dense()
+        assert isinstance(self.label, Tensor), f"Expected a Tensor, but got {type(self.label)=} {self.label=}"
+        assert isinstance(self.attrib, Tensor), f"Expected a Tensor, but got {type(self.attrib)=} {self.attrib=}"
+        assert isinstance(self.mask, Tensor), f"Expected a Tensor, but got {type(self.mask)=} {self.mask=}"
+
 
 class AttributionPathManager:
     """
