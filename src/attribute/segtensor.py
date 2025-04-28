@@ -1,5 +1,8 @@
 """
 An efficient tensor representation for storing tensors with repeated values.
+
+WARNING: Any modification to this script (or its location) may break the ability
+to load the SegmentedTensor class from a saved file using torch.load()
 """
 
 from __future__ import annotations
