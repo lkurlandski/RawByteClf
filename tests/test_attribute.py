@@ -4,11 +4,13 @@ Test the attribution methods.
 
 from collections import defaultdict
 import gc
+import io
 import math
 import os
 from pathlib import Path
 from pprint import pformat, pprint
 import sys
+import tempfile
 import unittest
 import zipfile
 
@@ -38,6 +40,7 @@ from src.attribute.masking import (
     assert_feature_mask_indices_are_consecutive,
 )
 from src.attribute.utils import ignore_warnings_decorator
+from src.attribute.segtensor import SegmentedTensor
 from src.attribute.statistical import kendallw_without_ties, kendallw_with_ties
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
@@ -429,3 +432,125 @@ class TestKendallW(unittest.TestCase):
         w_1 = kendallw_without_ties(R)[0]
         w_2 = kendallw_with_ties(R)[0]
         assert math.isclose(w_1, w_2, abs_tol=0.00005), f"Got: {w_1} != {w_2}, Expected: {w_1} == {w_2}"
+
+
+def mequal(*args):
+    """Check if all tensors are equal."""
+    for i in range(1, len(args)):
+        if not torch.equal(args[0], args[i]):
+            return False
+    return True
+
+
+class SegmentedTensorTest(unittest.TestCase):
+
+    @staticmethod
+    def dense_sample():
+        """0–1023=0, 1024–16383=1, 16384–24575=17 (float32)"""
+        return torch.cat(
+            [
+                torch.zeros(1024),
+                torch.ones(15360),
+                torch.full((8192,), 17.0),
+            ]
+        ).float()
+
+    # ---------- construction / round-trip -----------------------------------
+    def test_from_dense_roundtrip(self):
+        x = SegmentedTensorTest.dense_sample()
+        seg = SegmentedTensor.from_dense(x)
+        self.assertEqual(len(seg), x.numel())
+        self.assertListEqual(seg.lengths.tolist(), [1024, 15360, 8192])
+        self.assertTrue(torch.equal(seg.values, torch.tensor([0.0, 1.0, 17.0])))
+        self.assertTrue(torch.equal(seg.to_dense(), x))
+
+    def test_single_segment(self):
+        x = torch.full((5000,), 7, dtype=torch.int32)
+        seg = SegmentedTensor.from_dense(x)
+        self.assertListEqual(seg.lengths.tolist(), [5000])
+        self.assertListEqual(seg.values.tolist(), [7])
+        self.assertTrue(torch.equal(seg.to_dense(), x))
+
+    def test_empty(self):
+        x = torch.empty(0)
+        seg = SegmentedTensor.from_dense(x)
+        self.assertEqual(len(seg), 0)
+        self.assertEqual(seg.lengths.numel(), 0)
+        self.assertEqual(seg.values.numel(), 0)
+        self.assertTrue(torch.equal(seg.to_dense(), x))
+
+    # ---------- scalar indexing ---------------------------------------------
+    def test_scalar_indexing(self):
+        seg = SegmentedTensor.from_dense(SegmentedTensorTest.dense_sample())
+        self.assertEqual(seg[0].item(), 0.0)
+        self.assertEqual(seg[2048].item(), 1.0)
+        self.assertEqual(seg[len(seg) - 1].item(), 17.0)
+        self.assertEqual(seg[-1].item(), 17.0)
+        with self.assertRaises(IndexError):
+            _ = seg[len(seg)]
+        with self.assertRaises(IndexError):
+            _ = seg[-len(seg) - 1]
+
+    # ---------- slicing ------------------------------------------------------
+    def test_slice_variants(self):
+        den = SegmentedTensorTest.dense_sample()
+        seg = SegmentedTensor.from_dense(den)
+
+        # full slice
+        sub = seg[:]
+        self.assertIsInstance(sub, SegmentedTensor)
+        self.assertEqual(len(sub), len(seg))
+        self.assertTrue(mequal(sub.to_dense(), seg.to_dense(), den))
+
+        # aligned slice
+        sub = seg[1024:17408]
+        self.assertListEqual(sub.lengths.tolist(), SegmentedTensor.from_dense(den[1024:17408]).lengths.tolist())
+        self.assertTrue(mequal(sub.to_dense(), seg.to_dense()[1024:17408], den[1024:17408]))
+
+        # mid-segment slice
+        sub = seg[512:1536]
+        self.assertTrue(torch.equal(sub.to_dense(), seg.to_dense()[512:1536]))
+        self.assertTrue(torch.all(sub.lengths > 0))
+
+    def test_step_slice_fallback(self):
+        seg = SegmentedTensor.from_dense(SegmentedTensorTest.dense_sample())
+        dense_sub = seg[::2]
+        self.assertTrue(torch.is_tensor(dense_sub))
+        self.assertTrue(torch.equal(dense_sub, seg.to_dense()[::2]))
+
+    # ---------- IO (path & file object) --------------------------------------
+    def test_save_load_path(self):
+        seg = SegmentedTensor.from_dense(SegmentedTensorTest.dense_sample())
+        with tempfile.TemporaryDirectory() as tmp:
+            fname = os.path.join(tmp, "seg.pt")
+            seg.save(fname)
+            re = SegmentedTensor.load(fname)
+            self.assertTrue(torch.equal(re.to_dense(), seg.to_dense()))
+
+    def test_save_load_fileobj(self):
+        seg = SegmentedTensor.from_dense(SegmentedTensorTest.dense_sample())
+        buf = io.BytesIO()
+        seg.save(buf)
+        buf.seek(0)
+        re = SegmentedTensor.load(buf)
+        self.assertTrue(torch.equal(re.to_dense(), seg.to_dense()))
+
+    def test_save_cpu_load_gpu(self):
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA not available")
+        cpu_seg = SegmentedTensor.from_dense(SegmentedTensorTest.dense_sample())
+        with tempfile.TemporaryDirectory() as tmp:
+            fname = os.path.join(tmp, "gpu.pt")
+            cpu_seg.save(fname)
+            gpu_seg = SegmentedTensor.load(fname, map_location="cuda:0")
+            self.assertEqual(gpu_seg.device.type, "cuda")
+            self.assertTrue(
+                torch.equal(gpu_seg.to_dense().cpu(), cpu_seg.to_dense())
+            )
+
+    def test_private_slice_helpers(self):
+        seg = SegmentedTensor.from_dense(SegmentedTensorTest.dense_sample())
+        left = seg._slice(512, len(seg))
+        right = seg._slice(0, len(seg) - 512)
+        self.assertEqual(len(left) + 512, len(seg))
+        self.assertEqual(len(right) + 512, len(seg))
