@@ -181,7 +181,6 @@ from src.architectures.rwkv import (
 )
 from src.attribute.masking import get_masker, Masker, FunctionFeatureMasker
 from src.attribute.attribution import get_attributor, get_attribution, REQUIRES_INTERPRETABLE_EMBEDDINGS
-from src.attribute.segtensor import SegmentedTensor
 from src.attribute.utils import ignore_warnings_decorator
 from src.data.loaders_core import (
     Materials,
@@ -2145,8 +2144,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # Getting attribution for ~65536 tokens from ~4096 samples only requires ~1GB memory, so we can just do it all at once.
         all_names:    list[str]    = []
         all_labels:   list[Tensor] = []
-        all_attribs:  list[SegmentedTensor] = []
-        all_masks:    Optional[list[SegmentedTensor]] = [] if masker is not None else None
+        all_attribs:  list[Tensor] = []
+        all_masks:    Optional[list[Tensor]] = [] if masker is not None else None
 
         io_iteration = 0
         oh.attribution_path.mkdir(exist_ok=True, parents=True)
@@ -2213,9 +2212,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             # Store critical information as lists of small dtype Tensors (only the names are lists of lists!)
             all_names.extend(names)
             all_labels.extend([torch_safe_downcast(x) for x in labels])
-            all_attribs.extend([SegmentedTensor.from_dense(torch_safe_downcast(x)) for x in attribs])
+            all_attribs.extend([torch_safe_downcast(x) for x in attribs])
             if masker is not None:
-                all_masks.extend([SegmentedTensor.from_dense(torch_safe_downcast(x)) for x in feature_mask])
+                all_masks.extend([torch_safe_downcast(x) for x in feature_mask])
 
             mem = 0
             for z in (all_labels, all_attribs, all_masks if all_masks is not None else []):

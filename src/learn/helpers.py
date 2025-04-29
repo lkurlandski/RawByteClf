@@ -677,8 +677,8 @@ class OutputHelper:
         io_iteration: int,
         all_names: list[str],
         all_labels: list[Tensor],
-        all_attribs: list[Tensor | SegmentedTensor],
-        all_masks: Optional[list[Tensor | SegmentedTensor]] = None,
+        all_attribs: list[Tensor],
+        all_masks: Optional[list[Tensor]] = None,
         clear: bool = False,
     ) -> None:
         """
@@ -693,6 +693,10 @@ class OutputHelper:
         The labels, attribs, and masks are saved as torch tensors.
         The names are saved as a text file with one name per line, no newline at the end.
         """
+
+        all_attribs = [SegmentedTensor.from_dense(x) for x in all_attribs]
+        if all_masks is not None:
+            all_masks = [SegmentedTensor.from_dense(x) for x in all_masks]
 
         suffix = f".{'0' * (3 - len(str(io_iteration)))}{io_iteration}"
 
