@@ -326,6 +326,11 @@ class Configuration:
         # Pretraining and does not required random runs.
         if self.task in (Task.CLM, Task.MLM) and self.seed != 0:
             return False
+        # None of the ESP loaders fully support different seeds.
+        if self.seed != 0:
+            warnings.warn(f"Using nonzero seed will not change the train test split.")
+            if self.streaming:
+                warnings.warn(f"Using nonzero seed with streaming will not change the order in which data is sampled.")
         # Pretraining cannot be pretrained.
         if self.task in (Task.CLM, Task.MLM) and self.pretraining_task is not None:
             return False
@@ -367,14 +372,6 @@ class Configuration:
         # Only run nonzero model seeds with zeroed explanation seed.
         if self.seed != 0 and self.xai_seed != 0:
             return False
-        if self.xai_algorithm not in (ExplanationAlgorithm.FABL, ExplanationAlgorithm.SSHP):
-            return False
-
-        # None of the ESP loaders fully support different seeds.
-        if self.seed != 0:
-            warnings.warn(f"Using nonzero seed will not change the train test split.")
-            if self.streaming:
-                warnings.warn(f"Using nonzero seed with streaming will not change the order in which data is sampled.")
 
         return True
 
@@ -953,8 +950,8 @@ def main():
         [Task.DET],
         [None],
         [ExplanationMethod.CHK],
-        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.DLFT,)],
-        [1024],
+        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.SSHP, ExplanationAlgorithm.DLFT,)],
+        [256],
         [0, 1, 2, 3, 4],
         [0, 1, 2, 3, 4],
     )
