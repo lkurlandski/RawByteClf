@@ -698,8 +698,12 @@ class OutputHelper:
         """
 
         if as_segmented:
-            all_attribs = [SegmentedTensor.from_dense(x) for x in all_attribs]
-            all_masks = [SegmentedTensor.from_dense(x) for x in all_masks] if all_masks is not None else None
+            # In-place modification is nessecary for the clear operation to work.
+            for i in range(len(all_attribs)):
+                all_attribs[i] = SegmentedTensor.from_dense(all_attribs[i])
+            if all_masks is not None:
+                for i in range(len(all_masks)):
+                    all_masks[i] = SegmentedTensor.from_dense(all_masks[i])
 
         suffix = f".{'0' * (3 - len(str(io_iteration)))}{io_iteration}"
 
