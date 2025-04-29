@@ -2147,6 +2147,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         all_attribs:  list[Tensor] = []
         all_masks:    Optional[list[Tensor]] = [] if masker is not None else None
 
+        # attribs and masks will be stored using a special memory-compact format under these conditions.
+        as_segmented = args.xai_method != ExplanationMethod.TOK
+
         io_iteration = 0
         oh.attribution_path.mkdir(exist_ok=True, parents=True)
 
@@ -2221,7 +2224,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 mem += sum(a.numel() * a.element_size() for a in z)
 
             if mem > MAX_ATTRIBUTION_MEMORY or (time.time() - t_save > 3600):
-                oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True)
+                oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True, as_segmented=as_segmented)
                 io_iteration += 1
                 gc.collect()
                 t_save = time.time()
@@ -2247,7 +2250,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             remove_interpretable_embedding_layer(model, embedding)
 
         if len(all_names) > 0:
-            oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True)
+            oh.save_attribution_data(io_iteration, all_names, all_labels, all_attribs, all_masks, clear=True, as_segmented=as_segmented)
             io_iteration += 1
             gc.collect()
 

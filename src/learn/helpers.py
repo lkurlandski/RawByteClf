@@ -680,6 +680,7 @@ class OutputHelper:
         all_attribs: list[Tensor],
         all_masks: Optional[list[Tensor]] = None,
         clear: bool = False,
+        as_segmented: bool = False,
     ) -> None:
         """
         Save each macro-batch of attribution materials to disk.
@@ -690,13 +691,15 @@ class OutputHelper:
             - attribs.000.pt
             - masks.000.pt
 
-        The labels, attribs, and masks are saved as torch tensors.
-        The names are saved as a text file with one name per line, no newline at the end.
+        The `names` are saved as a text file with one name per line, no newline at the end.
+        The `labels` are saved as Tensor.
+        The `attribs` and `masks` will be saved as SegmentedTensor if `as_segmented` is True,
+          otherwise, they will be saved as Tensor.
         """
 
-        all_attribs = [SegmentedTensor.from_dense(x) for x in all_attribs]
-        if all_masks is not None:
-            all_masks = [SegmentedTensor.from_dense(x) for x in all_masks]
+        if as_segmented:
+            all_attribs = [SegmentedTensor.from_dense(x) for x in all_attribs]
+            all_masks = [SegmentedTensor.from_dense(x) for x in all_masks] if all_masks is not None else None
 
         suffix = f".{'0' * (3 - len(str(io_iteration)))}{io_iteration}"
 
