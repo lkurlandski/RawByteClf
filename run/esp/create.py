@@ -949,9 +949,10 @@ def main():
         [256],
         [Task.DET],
         [None],
-        [ExplanationMethod.CHK],
-        [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.SSHP, ExplanationAlgorithm.DLFT,)],
-        [256],
+        [ExplanationMethod.TOK],
+        [ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP],
+        # [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.SSHP, ExplanationAlgorithm.DLFT,)],
+        [None],
         [0, 1, 2, 3, 4],
         [0, 1, 2, 3, 4],
     )
