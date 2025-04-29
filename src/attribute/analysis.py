@@ -8,7 +8,7 @@ from collections.abc import Iterable, Generator
 from collections import defaultdict, Counter
 from copy import deepcopy
 import hashlib
-from itertools import product
+from itertools import chain, product
 import json
 import multiprocessing as mp
 import os
@@ -35,6 +35,7 @@ if __name__ == "__main__":
 from src.enums import ExplanationMethod, ExplanationAlgorithm, Task
 from src.utils import torch_safe_downcast
 from src.learn.helpers import OutputHelper
+from src.attribute.masking import apply_feature_mask
 from src.attribute.segtensor import SegmentedTensor
 from src.attribute.statistical import compute_agreement, DescriptiveSparsity
 
@@ -207,7 +208,8 @@ class AttributionPathManager:
         self.scores_files  = self._attain_files(path / "scores.pt")
         self.ranks_files   = self._attain_files(path / "ranks.pt")
 
-        assert len(self.names_files) == len(self.labels_files) == len(self.attribs_files) == len(self.masks_files)
+        assert len(self.names_files) == len(self.labels_files) == len(self.attribs_files)
+        assert len(self.masks_files) == 0 or len(self.masks_files) == len(self.names_files)
         assert len(self.scores_files) == len(self.ranks_files)
 
         self.file_id_to_ids   = defaultdict(set)
@@ -728,6 +730,90 @@ class AttributionConfiguration:
             return cls(root, seed, xai_method, xai_algorithm, xai_chunk_size, xai_seed)
         except NameError as err:
             raise ValueError(f"Could not parse the {err.name} attribute from the path {path}.") from err  # pylint: disable=no-member
+
+
+class TOK2AnyAttributionConverter:
+    """
+    Takes the output of a experiment with feature-level explanations and applies new feature masks.
+
+    Example
+    -------
+    >>> root = Path("/path/to/root/bf16--False")
+    >>> # Exists: TOK + IGRD
+    >>> cfg_1 = AttributionConfiguration.from_path(root / "seed--0/results/attributions/xai_method--tok/xai_algorithm--igrd/xai_chunk_size--256/xai_seed--0/")
+    >>> # Exists: FUN + LIME
+    >>> cfg_2 = AttributionConfiguration.from_path(root / "seed--0/results/attributions/xai_method--fun/xai_algorithm--lime/xai_chunk_size--256/xai_seed--0/")
+    >>> # Create: FUN + IGRD
+    >>> cfg_3 = AttributionConfiguration(root, cfg_1.seed, ExplanationMethod.FUN, ExplanationAlgorithm.IGRD, None, cfg_1.xai_seed)
+    >>> TOK2AnyAttributionConverter(cfg_1, cfg_2)(cfg_3.path)
+    """
+
+    MAX_ATTRIBUTION_MEMORY = 2 ** 32  # 4 GB
+
+    def __init__(self, tok_cfg: AttributionConfiguration, any_cfg: AttributionConfiguration) -> None:
+        """
+        Core initializer.
+        """
+        if not tok_cfg.exists:
+            raise FileNotFoundError(tok_cfg.path)
+        if not any_cfg.exists:
+            raise FileNotFoundError(any_cfg.path)
+
+        self.tok_cfg = tok_cfg
+        self.any_cfg = any_cfg
+
+        self.tok_mng = AttributionPathManager(tok_cfg.path)
+        self.any_mng = AttributionPathManager(any_cfg.path)
+        if not np.array_equal(self.tok_mng.names, self.any_mng.names):
+            raise ValueError("The names of the two configurations do not match. The streamed samples will not correspond to each other.")
+
+    def __call__(self, outdir: Path) -> None:
+
+        def get_tensors(f: Path | str) -> Generator[Tensor, None, None]:
+            l = torch.load(f, map_location="cpu")
+            for t in l:
+                yield t.to_dense() if isinstance(t, SegmentedTensor) else t
+
+        # Attributions for every feature; feature masks for every interpretable feature.
+        names   = chain.from_iterable(f.read_text().split("\n") for f in self.tok_mng.names_files)
+        labels  = chain.from_iterable(get_tensors(f) for f in self.tok_mng.labels_files)
+        attribs = chain.from_iterable(get_tensors(f) for f in self.tok_mng.attribs_files)
+        masks   = chain.from_iterable(get_tensors(f) for f in self.any_mng.masks_files)
+
+        outdir.mkdir(parents=True, exist_ok=True)
+        io_iteration = 0
+
+        N: list[str]    = []
+        L: list[Tensor] = []
+        A: list[Tensor] = []
+        M: list[Tensor] = []
+        for i, (n, l, r, m) in tqdm(enumerate(zip(names, labels, attribs, masks, strict=True)), total=len(self.tok_mng), desc="Converting attributions"):  # pylint: disable=unused-variable
+            # Depending how they were padded, the lengths of the attributions and the masks can differ,
+            # so we need to take the minimum length.
+            length = min(r.shape[0], m.shape[0])
+            r = r[:length].to(torch.float32).unsqueeze(0)
+            m = m[:length].to(torch.int64).unsqueeze(0)
+            # print(f"{i} {io_iteration} {n} {l.shape} {r.shape} {m.shape}")
+            a = apply_feature_mask(r, m).squeeze(0)
+            N.append(n)
+            L.append(l)
+            A.append(torch_safe_downcast(a))
+            M.append(torch_safe_downcast(m))
+            mem_N = 0
+            mem_L = sum(x.numel() * x.element_size() for x in L)
+            mem_A = sum(x.numel() * x.element_size() for x in A)
+            mem_M = sum(x.numel() * x.element_size() for x in M)
+            if mem_N + mem_L + mem_A + mem_M > TOK2AnyAttributionConverter.MAX_ATTRIBUTION_MEMORY:
+                suffix = f".{'0' * (3 - len(str(io_iteration)))}{io_iteration}"
+                torch.save(N, outdir / f"names{suffix}.txt")
+                torch.save(L, outdir / f"labels{suffix}.pt")
+                torch.save(A, outdir / f"attribs{suffix}.pt")
+                torch.save(M, outdir / f"masks{suffix}.pt")
+                N.clear()
+                L.clear()
+                A.clear()
+                M.clear()
+                io_iteration += 1
 
 
 ConfigurationPredicate = Callable[[AttributionConfiguration], bool]
