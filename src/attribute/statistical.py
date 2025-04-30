@@ -31,14 +31,7 @@ def kendallw(R: np.ndarray) -> SignificanceResult:
     # Number of items (n) and number of judges (m)
     n, m = R.shape
 
-    # Sum of ranks across judges for each item
-    sum_of_ranks = np.sum(R, axis=1)
-
-    # Compute the "variance" term S
-    mean_ranks = np.mean(sum_of_ranks)
-    S = np.sum((sum_of_ranks - mean_ranks)**2)
-
-    # Correction for ties (how many items share the same rank under judge j)
+    # Correction for ties.
     T = 0
     for j in range(m):
         rank_counts = Counter(R[:, j])
@@ -46,11 +39,14 @@ def kendallw(R: np.ndarray) -> SignificanceResult:
             if count > 1:
                 T += (count**3 - count)
 
-    # Kendall's W with tie correction
+    # Kendall's W.
+    sum_of_ranks = np.sum(R, axis=1)
+    mean_ranks = np.mean(sum_of_ranks)
+    S = np.sum((sum_of_ranks - mean_ranks)**2)
     denom = m**2 * (n**3 - n) - m * T
     w = (12.0 * S) / denom
 
-    # P-value via chi-square distribution with (n-1) degrees of freedom
+    # P-value via chi-square distribution.
     chi2_val = m * (n - 1) * w
     p_val = 1.0 - stats.chi2.cdf(chi2_val, df=n - 1)
 
