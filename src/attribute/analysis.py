@@ -79,11 +79,12 @@ class AnnotationStreamConstructor:
         for name, label, attrib, mask in zip(names, labels, attribs, masks):
             if isinstance(label, SegmentedTensor):
                 raise RuntimeError("Label is a SegmentedTensor, but we were expected a Tensor.")
-                # label = label.to_dense()
             if isinstance(attrib, SegmentedTensor):
                 attrib = attrib.to_dense()
             if isinstance(mask, SegmentedTensor):
                 mask = mask.to_dense()
+            if mask.shape != attrib.shape:
+                raise RuntimeError(f"Mask shape {mask.shape} does not match attribution shape {attrib.shape}.")
 
             idx    = mask != 0
             attrib = attrib[idx]
@@ -135,6 +136,7 @@ class AnnotationStreamConstructor:
 
     @staticmethod
     def from_files_singlethread(names: Path | Iterable[Path], labels: Path | Iterable[Path], attribs: Path | Iterable[Path], masks: Path | Iterable[Path]) -> AnnotationStream:
+
         names = [names] if isinstance(names, Path) else names
         labels = [labels] if isinstance(labels, Path) else labels
         attribs = [attribs] if isinstance(attribs, Path) else attribs
@@ -159,12 +161,16 @@ class AnnotationStreamConstructor:
         masks = path / "masks.pt"
         masks = OutputHelper.get_attribution_data_files(masks, None) if not masks.exists() else masks
 
-        for i, f in enumerate([names, labels, attribs, masks]):
+        def check(f: Path | list[Path]):
             if isinstance(f, list) and len(f) == 0:
-                print(f"{i=}")
                 raise FileNotFoundError(path)
             if isinstance(f, Path) and not f.exists():
                 raise FileNotFoundError(f)
+
+        check(names)
+        check(labels)
+        check(attribs)
+        check(masks)
 
         yield from AnnotationStreamConstructor.from_files(names, labels, attribs, masks)
 
@@ -788,13 +794,18 @@ class TOK2AnyAttributionConverter:
         A: list[Tensor] = []
         M: list[Tensor] = []
         for i, (n, l, r, m) in tqdm(enumerate(zip(names, labels, attribs, masks, strict=True)), total=len(self.tok_mng), desc="Converting attributions"):  # pylint: disable=unused-variable
-            # Depending how they were padded, the lengths of the attributions and the masks can differ,
-            # so we need to take the minimum length.
+            if l.ndim not in (0, 1):
+                raise ValueError(tuple(l.shape))
+            if r.ndim not in (1,):
+                raise ValueError(tuple(r.shape))
+            if m.ndim not in (1,):
+                raise ValueError(tuple(m.shape))
+
+            # The lengths of the attributions and the masks can differ from padding so we need to take the minimum length.
             length = min(r.shape[0], m.shape[0])
-            r = r[:length].to(torch.float32).unsqueeze(0)
-            m = m[:length].to(torch.int64).unsqueeze(0)
-            # print(f"{i} {io_iteration} {n} {l.shape} {r.shape} {m.shape}")
-            a = apply_feature_mask(r, m).squeeze(0)
+            r = r[:length].to(torch.float32)
+            m = m[:length].to(torch.int64)
+            a = apply_feature_mask(r.unsqueeze(0), m.unsqueeze(0)).squeeze(0)
             N.append(n)
             L.append(l)
             A.append(torch_safe_downcast(a))
@@ -805,10 +816,10 @@ class TOK2AnyAttributionConverter:
             mem_M = sum(x.numel() * x.element_size() for x in M)
             if mem_N + mem_L + mem_A + mem_M > TOK2AnyAttributionConverter.MAX_ATTRIBUTION_MEMORY:
                 suffix = f".{'0' * (3 - len(str(io_iteration)))}{io_iteration}"
-                torch.save(N, outdir / f"names{suffix}.txt")
+                (outdir / f"names{suffix}.txt").write_text("\n".join(N))
                 torch.save(L, outdir / f"labels{suffix}.pt")
-                torch.save(A, outdir / f"attribs{suffix}.pt")
-                torch.save(M, outdir / f"masks{suffix}.pt")
+                torch.save([SegmentedTensor.from_dense(x) for x in A], outdir / f"attribs{suffix}.pt")
+                torch.save([SegmentedTensor.from_dense(x) for x in M], outdir / f"masks{suffix}.pt")
                 N.clear()
                 L.clear()
                 A.clear()
@@ -848,24 +859,25 @@ class ConfigurationFilter:
 def main():
 
     base = Path("/home/lk3591/Documents/code/RawByteClf/output/esp-exe/")
-    experiments: list[AttributionConfiguration] = []
+    configs: list[AttributionConfiguration] = []
     for root in sorted(base.rglob("xai_seed--*")):
         config = AttributionConfiguration.from_path(root)
         if not config.exists:
-            print("Skipping non-existing path:", root)
+            print("Skipping non-existing path:", config)
             continue
         if config.empty:
-            print("Skipping empty path:", root)
+            print("Skipping empty path:", config)
             continue
-        experiments.append(AttributionConfiguration.from_path(root))
+        configs.append(config)
 
     # Generate ranks.
-    # roots = [e.path for e in experiments]
-    # for root in tqdm(roots, desc="Generating Ranks..."):
-    #     manager = AttributionPathManager(root)
-    #     if manager.has_ranks_files and manager.has_scores_files:
-    #         continue
-    #     manager = manager.generate_ranks(disable_tqdm=False, verbose=False)
+    for config in tqdm(configs, desc="Generating Ranks..."):
+        manager = AttributionPathManager(config.path)
+        if manager.has_ranks_files and manager.has_scores_files:
+            print(f"Skipping already generated path:", config)
+            continue
+        print(f"Generating ranks for path:", config)
+        manager = manager.generate_ranks(disable_tqdm=False, verbose=False)
 
     # Generate masks.
     # masks_files = []
@@ -876,13 +888,13 @@ def main():
     # safe_downcast_files(masks_files, num_workers=0, disable_tqdm=False, verbose=True)
 
     # Descriptive Sparsity.
-    for e in experiments:
-        manager = AttributionPathManager(e.path)
-        if not (manager.has_ranks_files and manager.has_scores_files):
-            continue
-        M = manager.descriptive_sparsity(n_bins=100, n_points=100)
-        stat = compute_statistical_summary(np.mean(M, axis=1))
-        print(f"{e}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support}")
+    # for e in experiments:
+    #     manager = AttributionPathManager(e.path)
+    #     if not (manager.has_ranks_files and manager.has_scores_files):
+    #         continue
+    #     M = manager.descriptive_sparsity(n_bins=100, n_points=100)
+    #     stat = compute_statistical_summary(np.mean(M, axis=1))
+    #     print(f"{e}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support}")
 
     # Compute the agreement.
     # configutation_filter = ConfigurationFilter(
