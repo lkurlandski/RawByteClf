@@ -18,126 +18,43 @@ SignificanceResult = namedtuple("SignificanceResult", ["statistic", "pvalue"])
 
 
 def kendalltau(R: np.ndarray) -> SignificanceResult:
-    assert R.shape[1] == 2
     res = stats.kendalltau(R[:,0], R[:,1], alternative=ALTERNATIVE)
     return SignificanceResult(res[0], res[1])
 
 
-def kendallw_without_ties(R: np.ndarray) -> SignificanceResult:
-    """
-    Implementation of Kendall's Coefficient for Concordance (Kendall's W).
-
-    See Wikipedia (https://en.wikipedia.org/wiki/Kendall%27s_W) for details.
-    """
-
-    n = R.shape[0]  # number of samples
-    m = R.shape[1]  # number of judges
-
-    # Edge cases match the behavior of scipy.stats.kendalltau
-    if n < 2:
-        return SignificanceResult(np.nan, np.nan)
-    if m < 2:
-        raise ValueError("Kendall's W requires at least two judges.")
-    if m == 2:
-        warnings.warn("Kendall's W is less appropriate for only two judges. Use `kendalltau` instead.")
-
-    # Compute Kendall's W
-    R_sum  = np.sum(R, axis=1)              # (n,)
-    R_mean = np.mean(R_sum)                 # (,)
-    S = np.sum(np.square(R_sum - R_mean))   # (,)
-    W = 12 * S / (m ** 2 * (n ** 3 - n))
-
-    # Compute the significance
-    s = m * (n - 1) * W         # Chi-squared statistic
-    f = n - 1                   # Degrees of freedom
-    p = stats.chi2.sf(s, f)
-
-    return SignificanceResult(W, p)
+def spearmanr(R: np.ndarray) -> SignificanceResult:
+    res = stats.spearmanr(R[:,0], R[:,1], alternative=ALTERNATIVE)
+    return SignificanceResult(res[0], res[1])
 
 
-def kendallw_with_ties_me(R: np.ndarray) -> SignificanceResult:
-    """
-    Implementation of Kendall's Coefficient for Concordance (Kendall's W) accounting for ties.
-
-    See Wikipedia (https://en.wikipedia.org/wiki/Kendall%27s_W) for details.
-    """
-
-    n = R.shape[0]  # number of samples
-    m = R.shape[1]  # number of judges
-
-    # Edge cases match the behavior of scipy.stats.kendalltau
-    if n < 2:
-        return SignificanceResult(np.nan, np.nan)
-    if m < 2:
-        raise ValueError("Kendall's W requires at least two judges.")
-    if m == 2:
-        warnings.warn("Kendall's W is less appropriate for only two judges. Use `kendalltau` instead.")
-
-    # Correction for ties
-    T = np.zeros((m,))
-    for j in range(m):
-        _, counts = np.unique(R[:,j], return_counts=True)
-        counts = counts[counts > 1]
-        T[j] = np.sum(np.power(counts, 3) - counts)
-
-    # Compute Kendall's W
-    R_sum     = np.sum(R, axis=1)         # (n,)
-    R_sqr_sum = np.sum(np.square(R_sum))  # (,)
-    W = (
-        ( (12 * R_sqr_sum) - (3 * m ** 2 * n * (n + 1) ** 2) )
-        /
-        ( m ** 2 * n * (n ** 2 - 1) - (m * np.sum(T)))
-    )
-
-    # Compute the significance
-    s = m * (n - 1) * W         # Chi-squared statistic
-    f = n - 1                   # Degrees of freedom
-    p = stats.chi2.sf(s, f)
-
-    return SignificanceResult(W, p)
-
-
-def kendallw_with_ties_gpt(R: np.ndarray) -> SignificanceResult:
-    """
-    Implementation of Kendall's Coefficient of Concordance (Kendall's W) accounting for ties.
-
-    Produced by ChatGPT-4.
-    """
+def kendallw(R: np.ndarray) -> SignificanceResult:
     # Number of items (n) and number of judges (m)
     n, m = R.shape
 
-    # 1) Sum of ranks across judges for each item
+    # Sum of ranks across judges for each item
     sum_of_ranks = np.sum(R, axis=1)
 
-    # 2) Compute the "variance" term S = sum( (R_i - mean_R)^2 )
+    # Compute the "variance" term S
     mean_ranks = np.mean(sum_of_ranks)
     S = np.sum((sum_of_ranks - mean_ranks)**2)
 
-    # 3) Correction for ties: T = sum_j sum_g(t_{jg}^3 - t_{jg})
-    #    where t_{jg} = size of a tie group g under judge j.
+    # Correction for ties (how many items share the same rank under judge j)
     T = 0
     for j in range(m):
-        # Count how many items share the same rank under judge j
         rank_counts = Counter(R[:, j])
         for count in rank_counts.values():
             if count > 1:
                 T += (count**3 - count)
 
-    # 4) Kendall's W with tie correction
-    #    W = [12 * S] / [m^2 * (n^3 - n) - m * T]
+    # Kendall's W with tie correction
     denom = m**2 * (n**3 - n) - m * T
     w = (12.0 * S) / denom
 
-    # 5) p-value via chi-square distribution with (n-1) degrees of freedom
-    #    chi^2 = m * (n - 1) * W
+    # P-value via chi-square distribution with (n-1) degrees of freedom
     chi2_val = m * (n - 1) * w
     p_val = 1.0 - stats.chi2.cdf(chi2_val, df=n - 1)
 
     return SignificanceResult(w, p_val)
-
-
-# Basically, it looks like my implementation of Kendall's W may not work when the data is not centered properly.
-kendallw_with_ties = kendallw_with_ties_gpt
 
 
 def try_to_clip(x: float, tolerance: float, min_: float = float("inf"), max_: float = -float("inf")) -> float:
@@ -164,7 +81,7 @@ def compute_agreement(R: np.ndarray, tolerance: float = 0.0) -> tuple[np.ndarray
 
     num_judges = R.shape[1]
     if num_judges > 2:
-        agreement_function = kendallw_with_ties
+        agreement_function = kendallw
     elif num_judges == 2:
         agreement_function = kendalltau
     else:

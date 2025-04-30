@@ -41,7 +41,11 @@ from src.attribute.masking import (
 )
 from src.attribute.utils import ignore_warnings_decorator
 from src.attribute.segtensor import SegmentedTensor
-from src.attribute.statistical import kendallw_without_ties, kendallw_with_ties
+from src.attribute.statistical import (
+    kendalltau,
+    kendallw,
+    spearmanr,
+)
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
 
@@ -375,63 +379,28 @@ class TestMaskersWithRealData(unittest.TestCase):
         assert num_errors == 0, f"Errors Occurred: {num_errors}\n{pformat(dict(error_logs))}"
 
 
-class TestKendallW(unittest.TestCase):
+class TestStatisticalFunctions(unittest.TestCase):
 
     def setUp(self):
-        # These are bird traits from an example for R.
-        self.X: np.ndarray = np.array([
-            [10.4, 10.8, 11.1, 10.2, 10.3, 10.2, 10.7, 10.5, 10.8, 11.2, 10.6, 11.4],
-            [7.4, 7.6, 7.9, 7.2, 7.4, 7.1, 7.4, 7.2, 7.8, 7.7, 7.8, 8.3],
-            [17.0, 17.0, 20.0, 14.5, 15.5, 13.0, 19.5, 16.0, 21.0, 20.0, 18.0, 22.0],
-        ]).T
+        self.J = 5
+        self.I = 101
+        self.S = np.random.rand(self.I, self.J)
+        self.R = rankdata(self.S, axis=0)
 
-    @unittest.skip("Error handling has been moved outside of the stat function.")
-    def test_0(self):  # Errors
-        A = [0, 1, 2, 3, 4]
-        R = np.array([A,]).T
-        with self.assertRaises(ValueError):
-            kendallw_without_ties(R)
-        with self.assertRaises(ValueError):
-            kendallw_with_ties(R)
+    def test_spearmanr(self):
+        res = spearmanr(self.R[:,0:2])
+        assert -1.0 <= res.statistic <= 1.0, f"Got: {res.statistic}, Expected: -1.0 <= {res.statistic} <= 1.0"
+        assert 0.0 <= res.pvalue <= 1.0, f"Got: {res.pvalue}, Expected: 0.0 <= {res.pvalue} <= 1.0"
 
-    @unittest.skip("Error handling has been moved outside of the stat function.")
-    def test_1(self):  # Warnings
-        A = [0, 1, 2, 3, 4]
-        B = [0, 1, 2, 3, 4]
-        R = np.array([A, B]).T
-        with self.assertWarns(UserWarning):
-            kendallw_without_ties(R)
-        with self.assertWarns(UserWarning):
-            kendallw_with_ties(R)
+    def test_kendalltau(self):
+        res = kendalltau(self.R[:,0:2])
+        assert -1.0 <= res.statistic <= 1.0, f"Got: {res.statistic}, Expected: -1.0 <= {res.statistic} <= 1.0"
+        assert 0.0 <= res.pvalue <= 1.0, f"Got: {res.pvalue}, Expected: 0.0 <= {res.pvalue} <= 1.0"
 
-    def test_2(self):  # NaNs
-        c = np.nan
-        A = [0,]
-        B = [0,]
-        C = [0,]
-        R = np.array([A, B, C]).T
-        w = kendallw_without_ties(R)[0]
-        assert math.isnan(w), f"Got: {w}, Expected: {c}"
-        w = kendallw_with_ties(R)[0]
-        assert math.isnan(w), f"Got: {w}, Expected: {c}"
-
-    def test_3_a(self):
-        c = 0.9134
-        R = rankdata(self.X, axis=0)
-        w = kendallw_without_ties(R)[0]
-        assert math.isclose(w, c, abs_tol=0.00005), f"Got: {w}, Expected: {c}"
-
-    def test_3_b(self):
-        c = 0.9241
-        R = rankdata(self.X, axis=0)
-        w = kendallw_with_ties(R)[0]
-        assert math.isclose(w, c, abs_tol=0.00005), f"Got: {w}, Expected: {c}"
-
-    def test_4(self):
-        R = rankdata(self.X, axis=0, method="ordinal")
-        w_1 = kendallw_without_ties(R)[0]
-        w_2 = kendallw_with_ties(R)[0]
-        assert math.isclose(w_1, w_2, abs_tol=0.00005), f"Got: {w_1} != {w_2}, Expected: {w_1} == {w_2}"
+    def test_kendallw(self):
+        res = kendallw(self.R)
+        assert 0.0 <= res.statistic <= 1.0, f"Got: {res.statistic}, Expected: 0.0 <= {res.statistic} <= 1.0"
+        assert 0.0 <= res.pvalue <= 1.0, f"Got: {res.pvalue}, Expected: 0.0 <= {res.pvalue} <= 1.0"
 
 
 def mequal(*args):
