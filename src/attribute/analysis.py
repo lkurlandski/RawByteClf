@@ -868,6 +868,9 @@ def main():
         if config.empty:
             print("Skipping empty path:", config)
             continue
+        if config.xai_method == ExplanationMethod.TOK:
+            print("Skipping TOK path:", config)
+            continue
         configs.append(config)
 
     # Generate ranks.
