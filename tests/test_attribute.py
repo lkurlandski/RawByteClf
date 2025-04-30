@@ -45,6 +45,7 @@ from src.attribute.statistical import (
     kendalltau,
     kendallw,
     spearmanr,
+    topk_rank_matrix,
 )
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
@@ -377,6 +378,68 @@ class TestMaskersWithRealData(unittest.TestCase):
                     print(f"\t{e}")
 
         assert num_errors == 0, f"Errors Occurred: {num_errors}\n{pformat(dict(error_logs))}"
+
+
+class TestTopkRankMatrix(unittest.TestCase):
+
+    def test_no_k_returns_full_matrix(self):
+        R = np.array([[1, 2, 3], [4, 5, 6]])
+        result = topk_rank_matrix(R, k=None, lower_is_higher=True)
+        np.testing.assert_array_equal(result, R)
+        result = topk_rank_matrix(R, k=None, lower_is_higher=False)
+        np.testing.assert_array_equal(result, R)
+
+    def test_scalar_k_lower_true(self):
+        # R is a rank matrix: smaller is better
+        R = np.array([[1, 2], [2, 1], [3, 3]])
+        # k = 1: pick the single best per column
+        result = topk_rank_matrix(R, k=1, lower_is_higher=True)
+        expected = np.array([[1, 2], [2, 1]])
+        np.testing.assert_array_equal(result, expected)
+
+    def test_scalar_k_lower_false(self):
+        # R are raw scores: larger is better
+        R = np.array([[10, 20], [30, 15], [5, 25]])
+        # k = 1: pick the single highest per column
+        result = topk_rank_matrix(R, k=1, lower_is_higher=False)
+        expected = np.array([[30, 15], [5, 25]])
+        np.testing.assert_array_equal(result, expected)
+
+    def test_array_k_mixed(self):
+        # R is a rank matrix: smaller is better
+        R = np.array([[1, 3], [2, 1], [3, 2]])
+        # k = [1, 2]: first judge picks top1, second picks top2
+        result = topk_rank_matrix(R, k=[1, 2], lower_is_higher=True)
+        # first judge keeps row0, second keeps rows1&2 -> union is all rows
+        expected = R.copy()
+        np.testing.assert_array_equal(result, expected)
+
+    def test_ties_inclusion(self):
+        # Test tie handling for lower_is_higher=True
+        R = np.array([[1], [2], [2], [3]])
+        result = topk_rank_matrix(R, k=2, lower_is_higher=True)
+        expected = np.array([[1], [2], [2]])
+        np.testing.assert_array_equal(result, expected)
+
+    def test_invalid_R_dimension(self):
+        with self.assertRaises(ValueError):
+            topk_rank_matrix(np.array([1, 2, 3]), k=1, lower_is_higher=True)
+
+    def test_invalid_k_shape(self):
+        R = np.zeros((3, 2))
+        with self.assertRaises(ValueError):
+            topk_rank_matrix(R, k=[1, 2, 3], lower_is_higher=True)
+
+    def test_k_clamped(self):
+        # Large k should be clamped to n
+        R = np.array([[1], [2], [3]])
+        result = topk_rank_matrix(R, k=10, lower_is_higher=True)
+        np.testing.assert_array_equal(result, R)  # k>n behaves like no truncation
+
+        # Small k (<1) should be clamped to 1
+        result = topk_rank_matrix(R, k=0, lower_is_higher=True)
+        # only the single best per column => only row0
+        np.testing.assert_array_equal(result, np.array([[1]]))
 
 
 class TestStatisticalFunctions(unittest.TestCase):
