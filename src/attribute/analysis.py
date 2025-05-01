@@ -625,6 +625,7 @@ class AgreementCoordinator:
         if cachefile.exists():
             W, P = np.load(cachefile)
             assert W.shape == (self.I,) and P.shape == (self.I,)
+            return W, P
 
         W = np.empty((self.I,))
         P = np.empty((self.I,))
