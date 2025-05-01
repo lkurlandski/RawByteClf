@@ -39,7 +39,7 @@ from src.attribute.masking import (
     infer_chunk_sizes,
     assert_feature_mask_indices_are_consecutive,
 )
-from src.attribute.utils import ignore_warnings_decorator
+from src.attribute.utils import ignore_warnings_decorator, is_proper_rank_matrix
 from src.attribute.segtensor import SegmentedTensor
 from src.attribute.statistical import (
     kendalltau,
@@ -381,65 +381,109 @@ class TestMaskersWithRealData(unittest.TestCase):
 
 
 class TestTopkRankMatrix(unittest.TestCase):
+    # ---------- correctness for lower_is_higher = True -----------------
+    def test_lower_is_higher_selection_and_rerank(self):
+        """
+        Col-0 ascending ranks, col-1 descending ranks just to make
+        the selection non-trivial.  k = [2, 3] should keep rows
+        (0, 1) for col-0 and (2, 3, 4) for col-1 → every row once.
+        """
+        S = np.array([
+            [1, 5],
+            [2, 4],
+            [3, 3],
+            [4, 2],
+            [5, 1],
+        ])
+        R = rankdata(S, axis=0)
+        self.assertTrue(is_proper_rank_matrix(R))
+        out = topk_rank_matrix(R, k=[2, 3], lower_is_higher=True)
 
-    def test_no_k_returns_full_matrix(self):
-        R = np.array([[1, 2, 3], [4, 5, 6]])
-        result = topk_rank_matrix(R, k=None, lower_is_higher=True)
-        np.testing.assert_array_equal(result, R)
-        result = topk_rank_matrix(R, k=None, lower_is_higher=False)
-        np.testing.assert_array_equal(result, R)
+        # Same *set* of rows as input, but re-ranked
+        self.assertEqual(out.shape, R.shape)
+        self.assertTrue(is_proper_rank_matrix(out))
 
-    def test_scalar_k_lower_true(self):
-        # R is a rank matrix: smaller is better
-        R = np.array([[1, 2], [2, 1], [3, 3]])
-        # k = 1: pick the single best per column
-        result = topk_rank_matrix(R, k=1, lower_is_higher=True)
-        expected = np.array([[1, 2], [2, 1]])
-        np.testing.assert_array_equal(result, expected)
+        # Ordering relation preserved: row 0 better than row 1 for judge-0
+        # (rank 1 < rank 2), etc.
+        self.assertLess(out[0, 0], out[1, 0])
+        self.assertLess(out[4, 1], out[3, 1])
 
-    def test_scalar_k_lower_false(self):
-        # R are raw scores: larger is better
-        R = np.array([[10, 20], [30, 15], [5, 25]])
-        # k = 1: pick the single highest per column
-        result = topk_rank_matrix(R, k=1, lower_is_higher=False)
-        expected = np.array([[30, 15], [5, 25]])
-        np.testing.assert_array_equal(result, expected)
+    # ---------- correctness for lower_is_higher = False ----------------
+    def test_higher_is_better_selection_and_rerank(self):
+        """
+        Largest values are best.  Keep global k = 2.  We expect rows
+        with original values 5 and 4 only, re-ranked to 1 and 2.
+        """
+        S = np.array([
+            [5, 5],
+            [4, 4],
+            [3, 3],
+            [2, 2],
+            [1, 1],
+        ])
+        R = rankdata(S, axis=0)
+        self.assertTrue(is_proper_rank_matrix(R))
+        out = topk_rank_matrix(R, k=2, lower_is_higher=False)
 
-    def test_array_k_mixed(self):
-        # R is a rank matrix: smaller is better
-        R = np.array([[1, 3], [2, 1], [3, 2]])
-        # k = [1, 2]: first judge picks top1, second picks top2
-        result = topk_rank_matrix(R, k=[1, 2], lower_is_higher=True)
-        # first judge keeps row0, second keeps rows1&2 -> union is all rows
-        expected = R.copy()
-        np.testing.assert_array_equal(result, expected)
+        self.assertEqual(out.shape, (2, 2))
+        self.assertTrue(is_proper_rank_matrix(out))
+        # The row with the original value 5 should now have rank 1
+        self.assertTrue(np.all(out[0] == 1))
 
-    def test_ties_inclusion(self):
-        # Test tie handling for lower_is_higher=True
-        R = np.array([[1], [2], [2], [3]])
-        result = topk_rank_matrix(R, k=2, lower_is_higher=True)
-        expected = np.array([[1], [2], [2]])
-        np.testing.assert_array_equal(result, expected)
+    # ---------- tie handling ------------------------------------------
+    def test_ties_are_kept(self):
+        """
+        Two items tie for rank 1; k = 1 must keep *both*.
+        """
+        S = np.array([
+            [1, 1],
+            [1, 1],
+            [2, 2],
+            [3, 3],
+        ])
+        R = rankdata(S, axis=0)
+        self.assertTrue(is_proper_rank_matrix(R))
+        out = topk_rank_matrix(R, k=1, lower_is_higher=True)
 
-    def test_invalid_R_dimension(self):
+        self.assertEqual(out.shape, (2, 2))
+        self.assertTrue(is_proper_rank_matrix(out))
+
+    # ---------- k = None returns an identical copy --------------------
+    def test_k_none_returns_copy(self):
+        S = np.random.rand(6, 4)
+        R = rankdata(S, axis=0)
+        self.assertTrue(is_proper_rank_matrix(R))
+        out = topk_rank_matrix(R, k=None)
+
+        self.assertTrue(np.array_equal(out, R))
+        self.assertIsNot(out, R)          # must be a *copy*
+
+    # ---------- per-judge k vector accepted and validated -------------
+    def test_per_judge_k_vector(self):
+        S = np.random.rand(10, 3)
+        R = rankdata(S, axis=0)
+        self.assertTrue(is_proper_rank_matrix(R))
+        out = topk_rank_matrix(R, k=[1, 2, 3])
+
+        self.assertTrue(is_proper_rank_matrix(out))
+        # Each judge should have ≤ k[j] items with rank 1 … k[j]
+        self.assertLessEqual((out[:, 0] <= 1).sum(), 1)
+        self.assertLessEqual((out[:, 1] <= 2).sum(), 2)
+        self.assertLessEqual((out[:, 2] <= 3).sum(), 3)
+
+    # ---------- invalid inputs raise ValueError -----------------------
+    def test_bad_k_shape_raises(self):
+        S = np.random.rand(5, 2)
+        R = rankdata(S, axis=0)
+        self.assertTrue(is_proper_rank_matrix(R))
         with self.assertRaises(ValueError):
-            topk_rank_matrix(np.array([1, 2, 3]), k=1, lower_is_higher=True)
+            topk_rank_matrix(R, k=[1, 2, 3])   # wrong length
 
-    def test_invalid_k_shape(self):
-        R = np.zeros((3, 2))
+    def test_non_2d_input_raises(self):
+        S = np.arange(5)          # 1-D
+        R = rankdata(S)
         with self.assertRaises(ValueError):
-            topk_rank_matrix(R, k=[1, 2, 3], lower_is_higher=True)
-
-    def test_k_clamped(self):
-        # Large k should be clamped to n
-        R = np.array([[1], [2], [3]])
-        result = topk_rank_matrix(R, k=10, lower_is_higher=True)
-        np.testing.assert_array_equal(result, R)  # k>n behaves like no truncation
-
-        # Small k (<1) should be clamped to 1
-        result = topk_rank_matrix(R, k=0, lower_is_higher=True)
-        # only the single best per column => only row0
-        np.testing.assert_array_equal(result, np.array([[1]]))
+            topk_rank_matrix(R, k=1)
 
 
 class TestStatisticalFunctions(unittest.TestCase):

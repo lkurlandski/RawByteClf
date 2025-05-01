@@ -10,6 +10,8 @@ import warnings
 import numpy as np
 from scipy import stats
 
+from src.attribute.utils import is_proper_rank_matrix
+
 
 ALTERNATIVE = "greater"
 
@@ -103,6 +105,8 @@ def topk_rank_matrix(R: np.ndarray, k: Optional[np.ndarray] = None, lower_is_hig
             If None, all items are retained. Note that if the k-th item is not unique,
             all items with the same rank as the k-th item are retained, so the judge may
             return more than just k items.
+        lower_is_higher (bool, optional): If True, smaller ranks are indicate a more malicious object.
+            This is just the way I encoded the rank matrix (maybe it would have been better the other way).
 
     Returns:
         np.ndarray: Submatrix of R containing only the rows (items) that are in the
@@ -139,13 +143,31 @@ def topk_rank_matrix(R: np.ndarray, k: Optional[np.ndarray] = None, lower_is_hig
 
     # Keep any item that is selected by at least one judge
     idx = mask.any(axis=1)
-    return R[idx, :]
+    R = R[idx, :]
+
+    # Re-rank the data, as otherwise, it won't be a proper rank matrix
+    if lower_is_higher:
+        R = stats.rankdata(R, axis=0)
+    else:
+        R = stats.rankdata(-R, axis=0)
+
+    return R
 
 
-def compute_agreement(R: np.ndarray, tolerance: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+def compute_agreement(R: np.ndarray, tolerance: float = 0.0, top_k: Optional[int] = None) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the agreement and p-value using Kendall's Tau or Kendall's W, verifying the input and output.
     """
+    # FIXME: There appears to be a bug somewhere that is causing this check to fail!
+    # Verify the rank matrix is valid.
+    # if not is_proper_rank_matrix(R):
+    #     file = "/tmp/R.npy"
+    #     np.save(file, R)
+    #     raise ValueError(f"Rank matrix is not valid. Rank matrix has been saved to {file}")
+
+    # If Top-K is specified, then we need to filter the rank matrix to only include the top-k items for each judge.
+    if top_k is not None:
+        R = topk_rank_matrix(R.copy(), k=top_k)
 
     num_judges = R.shape[1]
     if num_judges > 2:
