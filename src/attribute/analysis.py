@@ -525,7 +525,7 @@ class AgreementCoordinator:
         if not all(isinstance(name, str) for name in judge_names):
             raise ValueError("Judge names must be strings.")
 
-    def __call__(self, remove_cachefiles: bool = False) -> AgreementCoordinator:
+    def __call__(self, remove_cachefiles: bool = False, top_k: Optional[int] = None) -> AgreementCoordinator:
         self.determine_samples()
         print(f"Determined {self.I} samples for which all {self.J} judges have ranked.")
         if remove_cachefiles:
@@ -533,8 +533,8 @@ class AgreementCoordinator:
         self.create_rank_matrices()
         print(f"Created rank matrices with between {self.K.min()} and {self.K.max()} interpretable features.")
         for judges in self.judge_groups():
-            _, _ = self.compute_per_sample_agreement(judges)
-            stat = self.compute_agreement_statistic(judges)
+            _, _ = self.compute_per_sample_agreement(judges, top_k)
+            stat = self.compute_agreement_statistic(judges, top_k)
             print(f"{stat.mean:.5f} +/ {stat.error:.5f} N={stat.support} ({self.judge_subset(judges)})")
         return self
 
@@ -548,7 +548,7 @@ class AgreementCoordinator:
         groups = map(np.array, groups)
         return list(groups)
 
-    def get_cachefile(self, judges: np.ndarray) -> Path:
+    def get_cachefile(self, judges: np.ndarray, top_k: Optional[int] = None) -> Path:
         """
         Returns a unique cachefile considering the names of samples and the experiment paths indicated by judges.
         """
@@ -556,15 +556,18 @@ class AgreementCoordinator:
         hash_1 = hashlib.blake2s(data_1.encode()).hexdigest()
         data_2 = "".join(manager.path.as_posix() for judge, manager in zip(judges, self.managers) if judge)
         hash_2 = hashlib.blake2s(data_2.encode()).hexdigest()
-        cachefile = Path(f"./cache/attribute/agreement--{hash_1}--{hash_2}.npy")
+        top_k_ = "" if top_k is None else f"--{top_k}"
+        cachefile = Path(f"./cache/attribute/agreement--{hash_1}--{hash_2}{top_k_}.npy")
         return cachefile
 
     def remove_cachefiles(self) -> None:
+        # Removes all cachefiles for all judges for all top_k values.
         for judges in self.judge_groups():
             cachefile = self.get_cachefile(judges)
-            if cachefile.exists():
-                os.remove(cachefile)
-                print("Removed cachefile:", cachefile)
+            parent = cachefile.parent
+            for f in parent.glob(f"{cachefile.stem}*{cachefile.suffix}"):
+                os.remove(f)
+                print("Removed cachefile:", f)
 
     def determine_samples(self) -> AgreementCoordinator:
         for j, manager in enumerate(self.managers):
@@ -617,11 +620,12 @@ class AgreementCoordinator:
             if self.ranks[i].shape != (self.K[i], self.J):
                 raise RuntimeError(f"Rank matrix {i} has shape {self.ranks[i].shape}, expected ({self.K[i]}, {self.J}).")
 
-    def compute_per_sample_agreement(self, judges: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray]:
+    def compute_per_sample_agreement(self, judges: Optional[np.ndarray] = None, top_k: Optional[int] = None) -> tuple[np.ndarray, np.ndarray]:
         if judges is None:
             judges = np.full((len(self.managers),), True)
 
-        cachefile = self.get_cachefile(judges)
+        cachefile = self.get_cachefile(judges, top_k)
+
         if cachefile.exists():
             W, P = np.load(cachefile)
             assert W.shape == (self.I,) and P.shape == (self.I,)
@@ -632,7 +636,7 @@ class AgreementCoordinator:
         for i in range(self.I):
             R = self.ranks[i]
             R = R[:,judges]
-            w, p = compute_agreement(R, self.tolerance)
+            w, p = compute_agreement(R, self.tolerance, top_k)
 
             W[i] = w
             P[i] = p
@@ -641,8 +645,8 @@ class AgreementCoordinator:
 
         return W, P
 
-    def compute_agreement_statistic(self, judges: Optional[np.ndarray] = None) -> StatisticalSummary:
-        W, P = self.compute_per_sample_agreement(judges)
+    def compute_agreement_statistic(self, judges: Optional[np.ndarray] = None, top_k: Optional[int] = None) -> StatisticalSummary:
+        W, P = self.compute_per_sample_agreement(judges, top_k)
         idx = np.isnan(W)
         W = W[~idx]
         P = P[~idx]
