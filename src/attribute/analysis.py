@@ -325,10 +325,15 @@ class AttributionPathManager:
             print(f"{os.getpid()} generating ranks...", flush=True)
             t_i = time.time()
 
-        for annotation in iterable:
+        for i, annotation in enumerate(iterable):  # pylint: disable=unused-variable
             name  = annotation.name
-            rank  = torch_safe_downcast(torch.from_numpy(annotation.ranks))
-            score = torch_safe_downcast(torch.from_numpy(annotation.scores))
+            rank  = torch.from_numpy(annotation.ranks)
+            score = torch.from_numpy(annotation.scores)
+            # NOTE: rank is a floating point tensor with large values, so downcasting
+            # signficantly reduces the precision of the larger-valued ranks. Downcasting
+            # score seems safe, as its already essentially saved from training in fp16 anyway.
+            # rank  = torch_safe_downcast(rank)
+            score = torch_safe_downcast(score)
 
             # Checks if the next name belongs to a different group of outputs,
             # in which case, we save and move on to the next group.
@@ -887,6 +892,20 @@ def main():
             continue
         pbar.set_description(f"Generate: {config}")
         manager = manager.generate_ranks(disable_tqdm=False, verbose=False)
+
+    # Check ranks.
+    # for config in configs:
+    #     manager = AttributionPathManager(config.path)
+    #     if not manager.has_ranks_files or not manager.has_scores_files:
+    #         print(f"Skiping {config}")
+    #         continue
+    #     print(f"Checking {config} ... ", end="")
+    #     ranks = manager.ranks
+    #     nequal = np.full(len(ranks), True)
+    #     for i, r in enumerate(ranks):
+    #         r_ = stats.rankdata(r)
+    #         nequal[i] = not np.array_equal(r, r_)
+    #     print(f"Found {nequal.sum()} differences.")
 
     # Generate masks.
     # masks_files = []
