@@ -875,12 +875,13 @@ def main():
         configs.append(config)
 
     # Generate ranks.
-    for config in tqdm(configs, desc="Generating Ranks..."):
+    pbar = tqdm(configs)
+    for config in pbar:
         manager = AttributionPathManager(config.path)
         if manager.has_ranks_files and manager.has_scores_files:
-            print(f"Skipping already generated path:", config)
+            pbar.set_description(f"Skip: {config}")
             continue
-        print(f"Generating ranks for path:", config)
+        pbar.set_description(f"Generate: {config}")
         manager = manager.generate_ranks(disable_tqdm=False, verbose=False)
 
     # Generate masks.
