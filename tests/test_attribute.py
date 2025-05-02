@@ -46,6 +46,7 @@ from src.attribute.statistical import (
     kendallw,
     spearmanr,
     topk_rank_matrix,
+    descriptive_sparsity,
 )
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
@@ -508,6 +509,86 @@ class TestStatisticalFunctions(unittest.TestCase):
         res = kendallw(self.R)
         assert 0.0 <= res.statistic <= 1.0, f"Got: {res.statistic}, Expected: 0.0 <= {res.statistic} <= 1.0"
         assert 0.0 <= res.pvalue <= 1.0, f"Got: {res.pvalue}, Expected: 0.0 <= {res.pvalue} <= 1.0"
+
+
+class TestDescriptiveSparsity(unittest.TestCase):
+    """
+    Each test checks an intuitive mathematical property that must hold if the
+    code reproduces Definition 3 in the paper.
+    """
+
+    # ---------- 1.  Uniform distribution on [-1,1]  --------------------------
+    def test_uniform_linear_curve(self):
+        """
+        For a *uniform* pdf on [-1,1] we have  h(x)=½,  so
+
+            MAZ(r) = ∫_{-r}^{r} ½ dx = r      (for r∈[0,1])
+
+        Hence the MAZ curve should be (close to) the identity line and the area
+        under the curve should be ≈0.5.
+        """
+        rng = np.random.default_rng(0)
+        rel = rng.uniform(-100, 100, size=100_000)   # any scale, we rescale inside
+        r_grid = np.linspace(0, 1, 21)               # 0.0, 0.05, …, 1.0
+
+        r, maz, auc = descriptive_sparsity(rel, r_grid=r_grid, num_bins=400)
+
+        # Curve ~ r  (allow small numerical error)
+        np.testing.assert_allclose(maz, r, atol=3e-2)
+
+        # Area under curve ~ 0.5
+        self.assertAlmostEqual(auc, 0.5, delta=3e-2)
+
+    # ---------- 2.  “Sparse” signal: many zeros, few large values ------------
+    def test_sparse_signal_high_mass_near_zero(self):
+        """
+        If 90 % of the relevance scores are exactly zero, almost all probability
+        mass sits at 0; MAZ(r) should jump steeply near the origin.
+        Concretely, by r = 0.05 we expect ≥80 % of the mass to be captured.
+        """
+        rng = np.random.default_rng(1)
+        n = 10_000
+        rel = np.zeros(n)
+        rel[:1_000] = rng.normal(scale=10.0, size=1_000)   # ± large values
+
+        _, maz, auc = descriptive_sparsity(rel, r_grid=np.array([0.01, 0.05, 0.1]),
+                                      num_bins=400)
+
+        self.assertGreater(maz[1], 0.80)   # MAZ(0.05) > 0.8
+
+    # ---------- 3.  Monotonicity & bounds  -----------------------------------
+    def test_monotone_and_bounds(self):
+        """
+        MAZ(r) is a cumulative probability → must be non‑decreasing, between
+        0 and 1, and equal to 1 when r = 1.
+        """
+        rng = np.random.default_rng(2)
+        rel = rng.standard_normal(5_000)
+
+        r, maz, auc = descriptive_sparsity(rel)
+
+        # Non‑decreasing
+        self.assertTrue(np.all(np.diff(maz) >= -1e-6))
+        # Bounds
+        self.assertGreaterEqual(maz.min(), 0.0)
+        self.assertLessEqual(maz.max(), 1.0 + 1e-6)
+        # MAZ(1) ≈ 1
+        self.assertAlmostEqual(maz[-1], 1.0, places=3)
+
+    # ---------- 4.  Scale invariance  ----------------------------------------
+    def test_scale_invariance(self):
+        """
+        Because we rescale by max|r_i|, multiplying the input by any constant
+        factor must leave the MAZ curve unchanged.
+        """
+        rng = np.random.default_rng(3)
+        rel = rng.normal(size=2_000)
+
+        r1, maz1, auc1 = descriptive_sparsity(rel)
+        r2, maz2, auc2 = descriptive_sparsity(rel * 42.0)
+
+        np.testing.assert_allclose(r1, r2, rtol=0, atol=0)   # grids identical
+        np.testing.assert_allclose(maz1, maz2, rtol=1e-6)
 
 
 def mequal(*args):

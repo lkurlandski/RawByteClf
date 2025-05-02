@@ -38,7 +38,7 @@ from src.utils import torch_safe_downcast
 from src.learn.helpers import OutputHelper
 from src.attribute.masking import apply_feature_mask
 from src.attribute.segtensor import SegmentedTensor
-from src.attribute.statistical import compute_agreement, DescriptiveSparsity
+from src.attribute.statistical import compute_agreement, descriptive_sparsity
 
 
 class Annotations(NamedTuple):
@@ -411,21 +411,28 @@ class AttributionPathManager:
     def has_scores_files(self) -> bool:
         return len(self.scores) == len(self.names)
 
-    def descriptive_sparsity(self, n_bins: int = 100, n_points: int = 100, num_workers: int = 0) -> np.ndarray:
-        # M = np.full((len(self), n_points), np.nan, dtype=np.float32)
-        # for i, s in enumerate(self.scores):
-        #     n_bins = min(n_bins, len(s))
-        #     m = DescriptiveSparsity(n_bins=n_bins, n_points=n_points)(s)
-        #     M[i] = m
-        # return M
-        func = DescriptiveSparsity(n_bins=n_bins, n_points=n_points)
-        if num_workers == 0:
-            M = [func(s) for s in self.scores]
+    def descriptive_sparsity(self, num_workers: Optional[int] = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Computes the descriptive sparsity for each sample in the dataset.
+
+        Returns:
+          R (np.ndarray): For each sample, grid of r values. Shape (I, 200).
+          M (np.ndarray): For each sample, MAZ(r) evaluated at each r. Shape (I, 200).
+          A (np.ndarray): Area under the MAZ curve for each sample. Shape (I,).
+        """
+        scores = self.scores
+
+        if num_workers is None or num_workers < 2:
+            R_M_A = [descriptive_sparsity(s) for s in scores]
         else:
             with mp.Pool(num_workers) as pool:
-                M = pool.map(func, self.scores)
-        M = np.stack(M, axis=0)
-        return M
+                R_M_A = list(pool.imap(descriptive_sparsity, scores))
+
+        R = np.stack([r for r, m, a in R_M_A], axis=0)
+        M = np.stack([m for r, m, a in R_M_A], axis=0)
+        A = np.stack([a for r, m, a in R_M_A], axis=0)
+
+        return R, M, A
 
 
 def safe_downcast_file(f: Path) -> tuple[bool, int, float]:
@@ -894,14 +901,14 @@ def main():
         configs.append(config)
 
     # Generate ranks.
-    pbar = tqdm(configs)
-    for config in pbar:
-        manager = AttributionPathManager(config.path)
-        if manager.has_ranks_files and manager.has_scores_files:
-            pbar.set_description(f"Skip: {config}")
-            continue
-        pbar.set_description(f"Generate: {config}")
-        manager = manager.generate_ranks(disable_tqdm=False, verbose=False)
+    # pbar = tqdm(configs)
+    # for config in pbar:
+    #     manager = AttributionPathManager(config.path)
+    #     if manager.has_ranks_files and manager.has_scores_files:
+    #         pbar.set_description(f"Skip: {config}")
+    #         continue
+    #     pbar.set_description(f"Generate: {config}")
+    #     manager = manager.generate_ranks(disable_tqdm=False, verbose=False)
 
     # Check ranks.
     # for config in configs:
@@ -917,7 +924,7 @@ def main():
     #         nequal[i] = not np.array_equal(r, r_)
     #     print(f"Found {nequal.sum()} differences.")
 
-    # Generate masks.
+    # Downsize the masks.
     # masks_files = []
     # roots = [e.path for e in experiments]
     # for root in roots:
@@ -925,14 +932,17 @@ def main():
     #     masks_files.extend(manager.masks_files)
     # safe_downcast_files(masks_files, num_workers=0, disable_tqdm=False, verbose=True)
 
-    # Descriptive Sparsity.
-    # for e in experiments:
-    #     manager = AttributionPathManager(e.path)
-    #     if not (manager.has_ranks_files and manager.has_scores_files):
-    #         continue
-    #     M = manager.descriptive_sparsity(n_bins=100, n_points=100)
-    #     stat = compute_statistical_summary(np.mean(M, axis=1))
-    #     print(f"{e}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support}")
+    # Compute Descriptive Sparsity.
+    for config in configs:
+        manager = AttributionPathManager(config.path)
+        if not (manager.has_ranks_files and manager.has_scores_files):
+            print(f"Skiping {config}")
+            continue
+        t_i = time.time()
+        R, M, A = manager.descriptive_sparsity(num_workers=16)
+        t_f = time.time()
+        stat = compute_statistical_summary(A)
+        print(f"{config}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support} T={round(t_f - t_i, 1)}")
 
     # Compute the agreement.
     # configutation_filter = ConfigurationFilter(

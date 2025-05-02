@@ -158,8 +158,7 @@ def compute_agreement(R: np.ndarray, tolerance: float = 0.0, top_k: Optional[int
     """
     Compute the agreement and p-value using Kendall's Tau or Kendall's W, verifying the input and output.
     """
-    # FIXME: There appears to be a bug somewhere that is causing this check to fail!
-    # Verify the rank matrix is valid.
+    # Verify the rank matrix is valid (we don't need to do this, usually, but it may be helpful later).
     # if not is_proper_rank_matrix(R):
     #     file = "/tmp/R.npy"
     #     np.save(file, R)
@@ -212,57 +211,61 @@ def compute_agreement(R: np.ndarray, tolerance: float = 0.0, top_k: Optional[int
     return w, p
 
 
-class DescriptiveSparsity:
+def descriptive_sparsity(
+    relevances: np.ndarray,
+    *,
+    r_grid: np.ndarray | tuple = tuple(np.linspace(0.0, 1.0, 201).tolist()),
+    num_bins: int = 500,
+    eps: float = 1e-12,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """
+    Compute the descriptive sparsity curve (MAZ) for a 1-D relevance vector.
 
-    def __init__(self, n_bins: int = 100, n_points: int = 100):
-        self.n_bins   = n_bins
-        self.n_points = n_points
+    Parameters
+    ----------
+    relevances : np.ndarray
+        Raw relevance scores for a single explanation (shape: N,).
+    r_grid : np.ndarray, optional
+        Points in [0,1] at which to evaluate MAZ.  Defaults to 201
+        uniformly-spaced points.
+    num_bins : int, default=500
+        Number of histogram bins used to approximate the pdf h(x).
+    eps : float, default=1e-12
+        Small constant to avoid divide-by-zero.
 
-    def __call__(self, scores: np.ndarray) -> np.ndarray:
-        self.n_bins = min(self.n_bins, len(scores))
+    Returns
+    -------
+    r_grid : np.ndarray
+        Grid of r values in [0,1].
+    maz : np.ndarray
+        MAZ(r) evaluated at each r in `r_grid`.
+    auc : float
+        Area under the MAZ curve.
+    """
 
-        scores = self.squeeze(scores)
+    r_grid = np.asarray(r_grid)
+    if not np.all((r_grid >= 0.0) & (r_grid <= 1.0)):
+        raise ValueError("r_grid must be in [0, 1]")
 
-        hist, bin_edges = np.histogram(scores, bins=self.n_bins, density=True)
-        cdf_vals = self.build_cdf(hist, bin_edges)
+    # 1. Rescale to [-1, 1]
+    max_abs = np.maximum(np.max(np.abs(relevances)), eps)
+    rel_scaled = relevances / max_abs
 
-        maz = np.empty(self.n_points)
-        for i, r in enumerate(np.linspace(0, 1, self.n_points)):
-            m = self.mass_around_zero(r, hist, bin_edges, cdf_vals)
-            maz[i] = m
+    # 2. Normalized histogram → pdf h(x)
+    hist, bin_edges = np.histogram(
+        rel_scaled, bins=num_bins, range=(-1.0, 1.0), density=True
+    )
+    bin_width = bin_edges[1] - bin_edges[0]
+    cdf = np.cumsum(hist) * bin_width  # F(x) = ∫_{‑1}^x h(t) dt
 
-        return maz
+    # helper to map a value x∈[‑1,1] to CDF(x)
+    def _cdf_at(x: float) -> float:
+        idx = np.clip(((x + 1.0) / 2.0) * num_bins, 0, num_bins - 1e-9).astype(int)
+        return cdf[idx]
 
-    @staticmethod
-    def build_cdf(hist: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
-        cdf_vals = np.zeros(len(bin_edges))
-        for i in range(1, len(bin_edges)):
-            bin_width = bin_edges[i] - bin_edges[i-1]
-            cdf_vals[i] = cdf_vals[i-1] + hist[i-1] * bin_width
-        return cdf_vals
+    # 3. Evaluate MAZ(r) = F(r) – F(‑r)
+    maz = np.array([_cdf_at(r) - _cdf_at(-r) for r in r_grid])
 
-    @staticmethod
-    def squeeze(arr: np.ndarray) -> np.ndarray:
-        min_val = np.min(arr)
-        max_val = np.max(arr)
-        if max_val == min_val:
-            return np.zeros_like(arr)
-        scaled = 2.0 * (arr - min_val) / (max_val - min_val) - 1.0
-        return scaled
+    auc = np.trapz(maz, r_grid)
 
-    @staticmethod
-    def mass_around_zero(r: float, hist: np.ndarray, bin_edges: np.ndarray, cdf_vals: np.ndarray) -> float:
-
-        def cdf_from_hist(x: float) -> float:
-            x = max(x, bin_edges[0])
-            x = min(x, bin_edges[-1])
-            i = np.searchsorted(bin_edges, x, side="right") - 1
-            i = max(i, 0)
-            i = min(i, len(hist) - 1)
-            dx = x - bin_edges[i]
-            partial_area = hist[i] * dx
-            return cdf_vals[i] + partial_area
-
-        cdf_pos_r = cdf_from_hist(r)
-        cdf_neg_r = cdf_from_hist(-r)
-        return cdf_pos_r - cdf_neg_r
+    return r_grid, maz, auc
