@@ -7,6 +7,7 @@ from argparse import ArgumentParser
 from collections.abc import Iterable, Generator
 from collections import defaultdict, Counter
 from copy import deepcopy
+from functools import partial
 import hashlib
 from itertools import chain, product
 import json
@@ -506,11 +507,12 @@ class AgreementCoordinator:
         rank of the i-th interpretable feature in the k-th sample by the j-th judge.
     """
 
-    def __init__(self, paths: list[Path], judge_names: list[str], remove_incongruent_samples: bool = False, tolerance: float = 0.0) -> None:
+    def __init__(self, paths: list[Path], judge_names: list[str], remove_incongruent_samples: bool = False, tolerance: float = 0.0, num_workers: Optional[int] = None) -> None:
         self.paths = paths
         self.judge_names = judge_names
         self.remove_incongruent_samples = remove_incongruent_samples
         self.tolerance = tolerance
+        self.num_workers = num_workers
         self.managers = [AttributionPathManager(p) for p in paths]
         self.name_to_idx: dict[str, int] = None
         self.idx_to_name: dict[int, str] = None
@@ -636,16 +638,24 @@ class AgreementCoordinator:
             assert W.shape == (self.I,) and P.shape == (self.I,)
             return W, P
 
-        W = np.empty((self.I,))
-        P = np.empty((self.I,))
-        for i in range(self.I):
-            R = self.ranks[i]
-            R = R[:,judges]
-            w, p = compute_agreement(R, self.tolerance, top_k)
+        if self.num_workers is None or self.num_workers < 2:
+            W = np.empty((self.I,))
+            P = np.empty((self.I,))
+            for i in range(self.I):
+                R = self.ranks[i]
+                R = R[:,judges]
+                w, p = compute_agreement(R, self.tolerance, top_k)
+                W[i] = w
+                P[i] = p
+        else:
+            func = partial(compute_agreement, tolerance=self.tolerance, top_k=top_k)
+            iterable = (R[:, judges] for R in self.ranks)
+            with mp.Pool(self.num_workers) as pool:
+                W_P = list(pool.imap(func, iterable))
+                W = np.array([w for w, p in W_P])
+                P = np.array([p for w, p in W_P])
 
-            W[i] = w
-            P[i] = p
-
+        assert W.shape == (self.I,) and P.shape == (self.I,)
         np.save(cachefile, (W, P))
 
         return W, P
