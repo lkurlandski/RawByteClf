@@ -40,16 +40,13 @@ def get_agreement_function(method: AgreementMethod) -> AgreementFunction:
         return compute_agreement_jaccard
     if method == AgreementMethod.DICE:
         return compute_agreement_dice
+    if method == AgreementMethod.SPEARMAN:
+        return compute_agreement_spearman
     raise ValueError(f"Unknown agreement method: {method}")
 
 
 def kendalltau(R: np.ndarray) -> SignificanceResult:
     res = stats.kendalltau(R[:,0], R[:,1], alternative=ALTERNATIVE)
-    return SignificanceResult(res[0], res[1])
-
-
-def spearmanr(R: np.ndarray) -> SignificanceResult:
-    res = stats.spearmanr(R[:,0], R[:,1], alternative=ALTERNATIVE)
     return SignificanceResult(res[0], res[1])
 
 
@@ -134,6 +131,23 @@ def compute_agreement_kendall(R: np.ndarray, top_k: Optional[int] = None, tolera
         raise ValueError(f"Correlation test failed. Rank matrix has been saved to {file}") from err
 
     return w, p
+
+
+def spearmanr(R: np.ndarray) -> SignificanceResult:
+    res = stats.spearmanr(R[:,0], R[:,1], alternative=ALTERNATIVE)
+    return SignificanceResult(res[0], res[1])
+
+
+def compute_agreement_spearman(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:
+    raise NotImplementedError()
+
+
+def compute_agreement_jaccard(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:
+    raise NotImplementedError()
+
+
+def compute_agreement_dice(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:
+    raise NotImplementedError()
 
 
 def descriptive_sparsity(
