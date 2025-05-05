@@ -38,7 +38,7 @@ from src.utils import torch_safe_downcast
 from src.learn.helpers import OutputHelper
 from src.attribute.masking import apply_feature_mask
 from src.attribute.segtensor import SegmentedTensor
-from src.attribute.statistical import compute_agreement, descriptive_sparsity
+from src.attribute.statistical import AgreementMethod, AgreementFunction, get_agreement_function, descriptive_sparsity
 
 
 class Annotations(NamedTuple):
@@ -506,84 +506,106 @@ def compute_statistical_summary(x: np.ndarray, alpha: float = 0.05) -> Statistic
 class AgreementCoordinator:
     """
     Manages the agreement computations between several different annotators.
-
-    Attributes:
-      ranks: A list of rank matrices gathered from the input paths. Each rank matrix
-        corresponds to a sample. Each row in the matrix corresponds to an interpretable
-        feature. Each column corresponds to a judge. In other words, ranks[k,i,j] is the
-        rank of the i-th interpretable feature in the k-th sample by the j-th judge.
     """
 
-    def __init__(self, paths: list[Path], judge_names: list[str], remove_incongruent_samples: bool = False, tolerance: float = 0.0, num_workers: Optional[int] = None) -> None:
-        self.paths = paths
+    def __init__(
+        self,
+        paths: list[Path],
+        judge_names: list[str],
+        method: AgreementMethod,
+        top_k: Optional[int] = None,
+        act_judges: Optional[list[np.ndarray]] = None,
+        incongruent: bool = False,
+        tolerance: float = 0.0,
+        num_workers: int = 0,
+        load_cache: bool = True,
+        save_cache: bool = True,
+    ) -> None:
+        """
+        Initialization.
+        """
+        self.paths       = paths
         self.judge_names = judge_names
-        self.remove_incongruent_samples = remove_incongruent_samples
-        self.tolerance = tolerance
+        self._method     = AgreementMethod(method)
+        self.aggfunction = get_agreement_function(self.method)
+        self._top_k      = top_k
+        self._act_judges = np.full(len(paths), True) if act_judges is None else np.asarray(act_judges)
+        self.incongruent = incongruent
+        self.tolerance   = tolerance
         self.num_workers = num_workers
-        self.managers = [AttributionPathManager(p) for p in paths]
+        self.load_cache  = load_cache
+        self.save_cache  = save_cache
+
         self.name_to_idx: dict[str, int] = None
         self.idx_to_name: dict[int, str] = None
-        self.I: int = None                   # Number of samples.
-        self.J: int = len(self.managers)     # Number of judges.
-        self.K: np.ndarray = None            # Number of interpretable features per sample.
-        self.ranks: list[np.ndarray] = None  # Shape: (I, K, J)
+        self.managers = [AttributionPathManager(p) for p in paths]
+        self.I: int = None                    # Number of samples.
+        self.J: int = len(self.managers)      # Number of judges.
+        self.K: np.ndarray = None             # Number of interpretable features per sample.
+        self.ranks: list[np.ndarray]  = None  # Shape: (I, K, J)
+        self.scores: list[np.ndarray] = None  # Shape: (I, K, J)
 
-        if len(paths) == 0:
+        self.W: np.ndarray = None  # Agreement matrix (I,)
+        self.P: np.ndarray = None  # P-values matrix (I,)
+
+        if len(self.paths) == 0:
             raise ValueError("No paths provided.")
-        for p in paths:
+        for p in self.paths:
             if not p.exists():
                 raise FileNotFoundError(f"Path {p} does not exist.")
-
-        if len(judge_names) != len(paths):
+        if len(self.judge_names) != len(self.paths):
             raise ValueError("Number of judge names must match the number of paths.")
-        if not all(isinstance(name, str) for name in judge_names):
+        if not all(isinstance(name, str) for name in self.judge_names):
             raise ValueError("Judge names must be strings.")
+        if self.top_k is not None and self.top_k <= 0:
+            raise ValueError("Top-K must be greater than 0.")
+        if self.act_judges.shape != (self.J,):
+            raise ValueError(f"Judges shape {self.act_judges.shape} does not match number of judges {self.J}.")
 
-    def __call__(self, remove_cachefiles: bool = False, top_k: Optional[int] = None) -> AgreementCoordinator:
+    @property
+    def method(self) -> AgreementMethod:
+        return self._method
+
+    @method.setter
+    def method(self, method: AgreementMethod) -> None:
+        self._method = AgreementMethod(method)
+
+    @property
+    def act_judges(self) -> np.ndarray:
+        return self._act_judges
+
+    @act_judges.setter
+    def act_judges(self, act_judges: np.ndarray) -> None:
+        if act_judges is not None and act_judges.shape != (self.J,):
+            raise ValueError(f"Judges shape {act_judges.shape} does not match number of judges {self.J}.")
+        self._act_judges = np.full(self.J, True) if act_judges is None else np.asarray(act_judges)
+
+    @property
+    def top_k(self) -> Optional[int]:
+        return self._top_k
+
+    @top_k.setter
+    def top_k(self, top_k: Optional[int]) -> None:
+        if top_k is not None and top_k <= 0:
+            raise ValueError("Top-K must be greater than 0.")
+        self._top_k = top_k
+
+    def __call__(self) -> AgreementCoordinator:
+        """
+        Preparation.
+        """
         self.determine_samples()
         print(f"Determined {self.I} samples for which all {self.J} judges have ranked.")
-        if remove_cachefiles:
-            self.remove_cachefiles()
-        self.create_rank_matrices()
-        print(f"Created rank matrices with between {self.K.min()} and {self.K.max()} interpretable features.")
-        for judges in self.judge_groups():
-            _, _ = self.compute_per_sample_agreement(judges, top_k)
-            stat = self.compute_agreement_statistic(judges, top_k)
-            print(f"{stat.mean:.5f} +/ {stat.error:.5f} N={stat.support} ({self.judge_subset(judges)})")
+        self.create_matrices()
+        print(f"Created rank matrices with between {self.K.min()} and {self.K.max()} features.")
+        self.compute_agreement()
+        print(f"Computed a well-defined agreement for {self.I - np.isnan(self.W).sum()} / {self.I} samples.")
         return self
 
-    def judge_subset(self, judges: np.ndarray) -> str:
-        return " ".join(sorted(np.array(self.judge_names)[judges].tolist()))
-
-    def judge_groups(self) -> list[np.ndarray]:
-        groups = product([False, True], repeat=len(self.managers))
-        groups = filter(lambda judges: sum(judges) > 1, groups)
-        groups = sorted(groups, key=lambda judges: sum(judges), reverse=False)  # pylint: disable=unnecessary-lambda
-        groups = map(np.array, groups)
-        return list(groups)
-
-    def get_cachefile(self, judges: np.ndarray, top_k: Optional[int] = None) -> Path:
-        """
-        Returns a unique cachefile considering the names of samples and the experiment paths indicated by judges.
-        """
-        data_1 = "".join(self.name_to_idx.keys())
-        hash_1 = hashlib.blake2s(data_1.encode()).hexdigest()
-        data_2 = "".join(manager.path.as_posix() for judge, manager in zip(judges, self.managers) if judge)
-        hash_2 = hashlib.blake2s(data_2.encode()).hexdigest()
-        top_k_ = "" if top_k is None else f"--{top_k}"
-        cachefile = Path(f"./cache/attribute/agreement--{hash_1}--{hash_2}{top_k_}.npy")
-        return cachefile
-
-    def remove_cachefiles(self) -> None:
-        # Removes all cachefiles for all judges for all top_k values.
-        for judges in self.judge_groups():
-            cachefile = self.get_cachefile(judges)
-            parent = cachefile.parent
-            for f in parent.glob(f"{cachefile.stem}*{cachefile.suffix}"):
-                os.remove(f)
-                print("Removed cachefile:", f)
-
     def determine_samples(self) -> AgreementCoordinator:
+        """
+        Determines the samples that are present in all the paths.
+        """
         for j, manager in enumerate(self.managers):
             names = set(manager.names)
             if j == 0:
@@ -598,81 +620,137 @@ class AgreementCoordinator:
         self.I = len(allnames)
         self.K = np.full((self.I,), -1, dtype=np.int32)
 
-    def create_rank_matrices(self) -> AgreementCoordinator:
-        self.ranks = [None for _ in range(self.I)]
+    def create_matrices(self) -> AgreementCoordinator:
+        """
+        Creates the rank and score matrices for each sample.
+        """
 
+        # Create the rank and score matrices for each sample.
+        self.ranks  = [None for _ in range(self.I)]
+        self.scores = [None for _ in range(self.I)]
         incongruent = []
         for j, manager in enumerate(self.managers):
-            for name, rank in zip(manager.names, manager.ranks):
-                if (i := self.name_to_idx.get(name)) is not None:
-                    if j == 0:
-                        self.K[i] = len(rank)
-                        self.ranks[i] = np.full((self.K[i], self.J), np.nan, np.float32)
-                        self.ranks[i][:,j] = rank
-                    else:
-                        if self.K[i] != len(rank):
-                            incongruent.append((i, j, len(rank), name))
-                            continue
-                        self.ranks[i][:,j] = rank
+            for name, rank, score in zip(manager.names, manager.ranks, manager.scores):
+                if rank.shape != score.shape:
+                    raise RuntimeError(f"Rank shape {rank.shape} does not match score shape {score.shape}.")
+                i = self.name_to_idx.get(name)
+                if i is None:
+                    continue
+                if j == 0:
+                    self.K[i] = len(rank)
+                    self.ranks[i]  = np.full((self.K[i], self.J), np.nan, np.float32)
+                    self.scores[i] = np.full((self.K[i], self.J), np.nan, np.float32)
+                    self.ranks[i][:,j]  = rank
+                    self.scores[i][:,j] = score
+                    continue
+                if self.K[i] != len(rank):
+                    incongruent.append((i, j, len(rank), name))
+                    continue
+                self.ranks[i][:,j]  = rank
+                self.scores[i][:,j] = score
 
-        if incongruent:
+        # Address incongruences (samples with different number of interpretable features).
+        if len(incongruent) > 0:
             for i, j, k, name in incongruent:
-                print(f"Sample {i} ({name}) was found to be incongruent with judge {j} who ranked {k} interpretable features when {self.K[i]} were expected.")
-            if not self.remove_incongruent_samples:
-                raise RuntimeError("Incongruent samples were detected. Set `remove_incongruent_samples` to True to remove them.")
+                print(f"Incongruence: sample {i} name {name} judge {j} features {k} expected {self.K[i]}.")
+            if not self.incongruent:
+                raise RuntimeError("Incongruent samples were detected. Set `incongruent=True` to remove them.")
             remove = tuple(set(i for i, _, _, _ in incongruent))
-            print(f"Removing incongruent {len(remove)} samples.")
             self.ranks = [r for i, r in enumerate(self.ranks) if i not in remove]
+            self.scores = [s for i, s in enumerate(self.scores) if i not in remove]
             self.I = len(self.ranks)
             self.K = np.delete(self.K, np.array(remove))
+            print(f"Incongruent samples were detected. Removed {len(remove)} samples.")
 
-        for i in range(self.I):
-            if np.any(np.isnan(self.ranks[i])):
-                raise RuntimeError(f"Rank matrix {i} contains NaN values.")
-            if np.any(np.isinf(self.ranks[i])):
-                raise RuntimeError(f"Rank matrix {i} contains inf values.")
-            if self.ranks[i].shape != (self.K[i], self.J):
-                raise RuntimeError(f"Rank matrix {i} has shape {self.ranks[i].shape}, expected ({self.K[i]}, {self.J}).")
+        # Check for NaN and inf values in the ranks and scores matrices.
+        def _validate(matrix: list[np.ndarray], which: Literal["rank", "score"]) -> None:
+            if len(matrix) != self.I:
+                raise RuntimeError(f"Expected {self.I} {which} matrices, but got {len(matrix)}.")
+            for i, m in enumerate(matrix):
+                if np.any(np.isnan(m)):
+                    raise RuntimeError(f"{which} matrix {i} contains NaN values.")
+                if np.any(np.isinf(m)):
+                    raise RuntimeError(f"{which} matrix {i} contains inf values.")
+                if m.shape != (self.K[i], self.J):
+                    raise RuntimeError(f"{which} matrix {i} has shape {m.shape}, expected ({self.K[i]}, {self.J}).")
 
-    def compute_per_sample_agreement(self, judges: Optional[np.ndarray] = None, top_k: Optional[int] = None) -> tuple[np.ndarray, np.ndarray]:
-        if judges is None:
-            judges = np.full((len(self.managers),), True)
+        _validate(self.ranks,  "rank")
+        _validate(self.scores, "score")
 
-        cachefile = self.get_cachefile(judges, top_k)
+        return self
 
-        if cachefile.exists():
-            W, P = np.load(cachefile)
-            assert W.shape == (self.I,) and P.shape == (self.I,)
-            return W, P
+    def compute_agreement(self) -> AgreementCoordinator:
+        """
+        Computes the agreement between every sample.
+        """
+        def _validate(x: np.ndarray, which: Literal["W", "P"]) -> None:
+            if x.shape != (self.I,):
+                raise RuntimeError(f"Expected {which} to have shape ({self.I},) but got {x.shape}.")
 
-        if self.num_workers is None or self.num_workers < 2:
+        ranks = (r[:,self.act_judges] for r in self.ranks)
+        aggfunction = partial(self.aggfunction, top_k=self.top_k, tolerance=self.tolerance)
+
+        if self.load_cache and self.cachefile.exists():
+            W, P = np.load(self.cachefile)
+
+        elif self.num_workers < 2:
             W = np.empty((self.I,))
             P = np.empty((self.I,))
-            for i in range(self.I):
-                R = self.ranks[i]
-                R = R[:,judges]
-                w, p = compute_agreement(R, self.tolerance, top_k)
+            for i, r in enumerate(ranks):
+                w, p = aggfunction(r)
                 W[i] = w
                 P[i] = p
+
         else:
-            func = partial(compute_agreement, tolerance=self.tolerance, top_k=top_k)
-            iterable = (R[:, judges] for R in self.ranks)
             with mp.Pool(self.num_workers) as pool:
-                W_P = list(pool.imap(func, iterable))
-                W = np.array([w for w, p in W_P])
-                P = np.array([p for w, p in W_P])
+                W_P = list(pool.imap(aggfunction, ranks))
+                W = np.array([w for w, _ in W_P])
+                P = np.array([p for _, p in W_P])
 
-        assert W.shape == (self.I,) and P.shape == (self.I,)
-        np.save(cachefile, (W, P))
+        _validate(W, "W")
+        _validate(P, "P")
+        self.W = W
+        self.P = P
+        if self.save_cache:
+            np.save(self.cachefile, (self.W, self.P))
 
-        return W, P
+        return self
 
-    def compute_agreement_statistic(self, judges: Optional[np.ndarray] = None, top_k: Optional[int] = None) -> StatisticalSummary:
-        W, P = self.compute_per_sample_agreement(judges, top_k)
-        idx = np.isnan(W)
-        W = W[~idx]
-        P = P[~idx]
+    @property
+    def agreement_statistic(self) -> StatisticalSummary:
+        """
+        Computes the statistical summary of the agreement statistic W.
+        """
+        idx = np.isnan(self.W)
+        W = self.W[~idx]
+        P = self.P[~idx]  # pylint: disable=unused-variable
         return compute_statistical_summary(W)
+
+    @property
+    def cachefile(self) -> Path:
+        """
+        Returns a unique cachefile for the agreement scores between samples.
+        """
+        data_1 = "".join(self.name_to_idx.keys()).encode()
+        data_2 = "".join(manager.path.as_posix() for manager in self.managers).encode()
+        data_3 = self.method.value.encode()
+        data_4 = str(self.top_k).encode()
+        data_5 = self.act_judges.tobytes()
+        data = data_1 + data_2 + data_3 + data_4 + data_5
+        hash_ = hashlib.blake2s(data).hexdigest()
+        cachefile = Path(f"./cache/attribute/agreement--{hash_}.npy")
+        return cachefile
+
+    @property
+    def act_judge_names(self) -> list[str]:
+        return [j for j, b in zip(self.judge_names, self.act_judges) if b]
+
+    def judge_groups(self) -> list[np.ndarray]:
+        groups = product([False, True], repeat=len(self.managers))
+        groups = filter(lambda judges: sum(judges) > 1, groups)
+        groups = sorted(groups, key=sum, reverse=False)
+        groups = map(np.array, groups)
+        return list(groups)
 
 
 class AttributionConfiguration:
@@ -939,7 +1017,7 @@ def main():
             print(f"Skiping {config}")
             continue
         t_i = time.time()
-        R, M, A = manager.descriptive_sparsity(num_workers=16)
+        R, M, A = manager.descriptive_sparsity(num_workers=16)  # pylint: disable=unused-variable
         t_f = time.time()
         stat = compute_statistical_summary(A)
         print(f"{config}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support} T={round(t_f - t_i, 1)}")
