@@ -515,6 +515,7 @@ class AgreementCoordinator:
         method: AgreementMethod,
         top_k: Optional[int] = None,
         act_judges: Optional[list[np.ndarray]] = None,
+        num_feature: tuple[int, int] = (1, sys.maxsize),
         incongruent: bool = False,
         tolerance: float = 0.0,
         num_workers: int = 0,
@@ -530,6 +531,7 @@ class AgreementCoordinator:
         self.aggfunction = get_agreement_function(self.method)
         self._top_k      = top_k
         self._act_judges = np.full(len(paths), True) if act_judges is None else np.asarray(act_judges)
+        self.num_feature = num_feature
         self.incongruent = incongruent
         self.tolerance   = tolerance
         self.num_workers = num_workers
@@ -561,6 +563,8 @@ class AgreementCoordinator:
             raise ValueError("Top-K must be greater than 0.")
         if self.act_judges.shape != (self.J,):
             raise ValueError(f"Judges shape {self.act_judges.shape} does not match number of judges {self.J}.")
+        if self.num_feature[0] < 1 or self.num_feature[1] < 1:
+            raise ValueError("Number of features must be greater than 0.")
 
     @property
     def method(self) -> AgreementMethod:
@@ -614,11 +618,16 @@ class AgreementCoordinator:
                 allnames = allnames.intersection(names)
                 warnings.warn("Not all experiments contain data for the same samples.")
 
-        allnames = sorted(allnames)
+        lengths  = {name: len(rank) for name, rank in zip(self.managers[0].names, self.managers[0].ranks) if name in allnames}
+        allnames = sorted(filter(lambda name: self.num_feature[0] <= lengths[name] <= self.num_feature[1], allnames))
+        print(f"Removed {len(lengths) - len(allnames)} samples with num interpretable features outside of [{self.num_feature}].")
+
         self.idx_to_name = {i: name for i, name in enumerate(allnames)}  # pylint: disable=unnecessary-comprehension
         self.name_to_idx = {name: i for i, name in enumerate(allnames)}
         self.I = len(allnames)
         self.K = np.full((self.I,), -1, dtype=np.int32)
+
+        return self
 
     def create_matrices(self) -> AgreementCoordinator:
         """
@@ -736,7 +745,8 @@ class AgreementCoordinator:
         data_3 = self.method.value.encode()
         data_4 = str(self.top_k).encode()
         data_5 = self.act_judges.tobytes()
-        data = data_1 + data_2 + data_3 + data_4 + data_5
+        data_6 = str(self.num_feature).encode()
+        data = data_1 + data_2 + data_3 + data_4 + data_5 + data_6
         hash_ = hashlib.blake2s(data).hexdigest()
         cachefile = Path(f"./cache/attribute/agreement--{hash_}.npy")
         return cachefile
