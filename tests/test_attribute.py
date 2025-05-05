@@ -47,6 +47,8 @@ from src.attribute.statistical import (
     spearmanr,
     topk_rank_matrix,
     descriptive_sparsity,
+    compute_agreement_dice,
+    compute_agreement_jaccard,
 )
 from src.data.function_boundaries import bounds_contain_totally_overlapping_functions
 
@@ -589,6 +591,19 @@ class TestDescriptiveSparsity(unittest.TestCase):
 
         np.testing.assert_allclose(r1, r2, rtol=0, atol=0)   # grids identical
         np.testing.assert_allclose(maz1, maz2, rtol=1e-6)
+
+
+class TestDiceAndJaccard(unittest.TestCase):
+
+    def setUp(self):
+        self.S = np.random.rand(100, 5)
+        self.R = rankdata(self.S, axis=0)
+
+    def test_dice(self):
+        result = compute_agreement_dice(self.R, 10)
+
+    def test_jaccard(self):
+        result = compute_agreement_jaccard(self.R, 10)
 
 
 def mequal(*args):

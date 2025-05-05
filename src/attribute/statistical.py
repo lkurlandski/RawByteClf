@@ -142,12 +142,62 @@ def compute_agreement_spearman(R: np.ndarray, top_k: Optional[int] = None, toler
     raise NotImplementedError()
 
 
-def compute_agreement_jaccard(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:
-    raise NotImplementedError()
+def compute_agreement_jaccard(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:  # pylint: disable=unused-argument
+    if top_k is None:
+        warnings.warn("Set overlap is trivially 1.0 when top_k is None.")
+        return SignificanceResult(1.0, 0.0)
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than 0")
+    top_k = min(top_k, R.shape[0])
+
+    n_items, n_judges = R.shape
+    if n_items == 0 or n_judges == 0:
+        raise ValueError(f"Set overlap requiress at least two judges, but only {n_judges} were provided.")
+
+    # Boolean matrix S[i, j] indicates item i is in judge j's (tied) top‑k set
+    kth_largest = np.partition(R, n_items - top_k, axis=0)[-top_k, :]
+    S = R >= kth_largest
+
+    intersection = np.count_nonzero(S.all(axis=1))
+    union        = np.count_nonzero(S.any(axis=1))
+
+    if union == 0:
+        print("Warning: No items in top-k sets. Set overlap is trivially 1.0.")
+        return SignificanceResult(1.0, 0.0)
+
+    statistic = intersection / union
+    pvalue = float("nan")  # TODO: compute p-value
+
+    return SignificanceResult(statistic, pvalue)
 
 
-def compute_agreement_dice(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:
-    raise NotImplementedError()
+def compute_agreement_dice(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:  # pylint: disable=unused-argument
+    if top_k is None:
+        warnings.warn("Set overlap is trivially 1.0 when top_k is None.")
+        return SignificanceResult(1.0, 0.0)
+    if top_k < 0:
+        raise ValueError("top_k must be greater than 0")
+    top_k = min(top_k, R.shape[0])
+
+    n_items, n_judges = R.shape
+    if n_items == 0 or n_judges == 0:
+        raise ValueError()
+
+    # Boolean matrix S[i, j] indicates item i is in judge j's (tied) top‑k set
+    kth_largest = np.partition(R, n_items - top_k, axis=0)[-top_k, :]
+    S = R >= kth_largest
+
+    intersection = np.count_nonzero(S.all(axis=1))
+    total_items  = S.sum(axis=0, dtype=np.int64).sum()
+
+    if total_items == 0:
+        print("Warning: No items in top-k sets. Set overlap is trivially 1.0.")
+        return SignificanceResult(1.0, 0.0)
+
+    statistic = (n_judges * intersection) / total_items
+    pvalue = float("nan")  # TODO: compute p-value
+
+    return SignificanceResult(statistic, pvalue)
 
 
 def descriptive_sparsity(
