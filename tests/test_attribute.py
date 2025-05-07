@@ -592,6 +592,21 @@ class TestDescriptiveSparsity(unittest.TestCase):
         np.testing.assert_allclose(r1, r2, rtol=0, atol=0)   # grids identical
         np.testing.assert_allclose(maz1, maz2, rtol=1e-6)
 
+    def test_constant_relevances(self):
+        """
+        If all relevance scores are zero, the MAZ curve is flat at 0.
+        """
+        rel = np.zeros(1000)
+        with self.assertRaises(ValueError):
+            r, maz, auc = descriptive_sparsity(rel, constant_relevances="raise")
+        with self.assertWarns(Warning):
+            r, maz, auc = descriptive_sparsity(rel, constant_relevances="warn")
+
+        r, maz, auc = descriptive_sparsity(rel, constant_relevances="ignore")
+        self.assertEqual(auc, 0.9975)
+        r, maz, auc = descriptive_sparsity(rel, constant_relevances="auto")
+        self.assertEqual(auc, 0.0)
+
 
 class TestDiceAndJaccard(unittest.TestCase):
 

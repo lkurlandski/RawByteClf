@@ -4,7 +4,7 @@ Math and statistical functions for attribute analysis.
 
 from collections import namedtuple, Counter
 from enum import Enum
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Literal
 import sys
 import warnings
 
@@ -100,6 +100,7 @@ def compute_agreement_kendall(R: np.ndarray, top_k: Optional[int] = None, tolera
 
     # If only a single interpretable feature exists, then the agreement is not well-defined.
     if R.shape[0] == 1:
+        warnings.warn("Rank matrix has only one row. Agreement is not well-defined.")
         return np.nan, np.nan
 
     # If any judge cannot rank any item higher or lower than any other then the agreement is not well-defined.
@@ -107,6 +108,7 @@ def compute_agreement_kendall(R: np.ndarray, top_k: Optional[int] = None, tolera
     # In practice, when unopinionated judges are present, `kendallw_with_ties` can return negative values.
     for k in range(num_judges):
         if len(np.unique(R[:,k])) == 1:
+            warnings.warn("Judge cannot rank any item higher or lower than any other. Agreement is not well-defined.")
             return np.nan, np.nan
 
     # Compute the correlation test.
@@ -206,6 +208,7 @@ def descriptive_sparsity(
     r_grid: np.ndarray | tuple = tuple(np.linspace(0.0, 1.0, 201).tolist()),
     num_bins: int = 500,
     eps: float = 1e-12,
+    constant_relevances: Literal["raise", "warn", "auto", "ignore"] = "warn",
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """
     Compute the descriptive sparsity curve (MAZ) for a 1-D relevance vector.
@@ -231,6 +234,14 @@ def descriptive_sparsity(
     auc : float
         Area under the MAZ curve.
     """
+    if constant_relevances != "ignore":
+        if np.all(np.isclose(relevances, relevances[0])):
+            msg = ("All relevances scores have constant value. The MAZ curve is well-defined, but the AUC is misleading. "
+                  "Use `constant_relevances='ignore'` to suppress this warning/error or `constant_relevances='auto'` to set the AUC to 0.0.")
+            if constant_relevances == "raise":
+                raise ValueError(msg)
+            if constant_relevances == "warn":
+                warnings.warn(msg)
 
     r_grid = np.asarray(r_grid)
     if not np.all((r_grid >= 0.0) & (r_grid <= 1.0)):
@@ -256,5 +267,7 @@ def descriptive_sparsity(
     maz = np.array([_cdf_at(r) - _cdf_at(-r) for r in r_grid])
 
     auc = np.trapz(maz, r_grid)
+    if constant_relevances == "auto" and np.all(np.isclose(relevances, relevances[0])):
+        auc = 0.0
 
     return r_grid, maz, auc

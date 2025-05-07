@@ -419,18 +419,26 @@ class AttributionPathManager:
           R (np.ndarray): For each sample, grid of r values. Shape (I, 200).
           M (np.ndarray): For each sample, MAZ(r) evaluated at each r. Shape (I, 200).
           A (np.ndarray): Area under the MAZ curve for each sample. Shape (I,).
+            For samples with constant relevance score, A is set to 0.0.
         """
         scores = self.scores
 
         if num_workers is None or num_workers < 2:
-            R_M_A = [descriptive_sparsity(s) for s in scores]
+            R_M_A = [descriptive_sparsity(s, constant_relevances="auto") for s in scores]
         else:
             with mp.Pool(num_workers) as pool:
-                R_M_A = list(pool.imap(descriptive_sparsity, scores))
+                R_M_A = list(pool.imap(partial(descriptive_sparsity, constant_relevances="auto"), scores))
 
         R = np.stack([r for r, m, a in R_M_A], axis=0)
         M = np.stack([m for r, m, a in R_M_A], axis=0)
         A = np.stack([a for r, m, a in R_M_A], axis=0)
+
+        # rows = []
+        # for i in range(len(scores)):
+        #     if np.unique(scores[i]).size == 1:
+        #         rows.append(i)
+        # A[np.array(rows)] = 0.0
+        # print(f"Cannot rank any item higher or lower than any other for {len(rows)} / {len(self.scores)} samples.")
 
         return R, M, A
 
