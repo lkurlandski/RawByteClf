@@ -399,6 +399,17 @@ class AttributionPathManager:
             scores.extend(data)
         return scores
 
+    def degenerates(self, num_feature: tuple[int, int] = (1, sys.maxsize),) -> np.ndarray:
+        """
+        Returns the indices of the elements for which the relevance score is constant.
+        """
+        rows = []
+        for i, s in enumerate(self.scores):
+            if num_feature[0] <= len(s) <= num_feature[1]:
+                if np.unique(s).size == 1:
+                    rows.append(i)
+        return np.array(rows)
+
     @property
     def has_names_files(self) -> bool:
         return len(self.names_files) > 0
@@ -411,9 +422,13 @@ class AttributionPathManager:
     def has_scores_files(self) -> bool:
         return len(self.scores) == len(self.names)
 
-    def descriptive_sparsity(self, num_workers: Optional[int] = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def descriptive_sparsity(self, num_feature: tuple[int, int] = (1, sys.maxsize), num_workers: Optional[int] = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Computes the descriptive sparsity for each sample in the dataset.
+
+        Arguments:
+            num_feature (tuple[int, int]): The range of interpretable features to consider.
+                Samples outside of this range will be ignored and the output arrays will not correspond to samples.
 
         Returns:
           R (np.ndarray): For each sample, grid of r values. Shape (I, 200).
@@ -422,6 +437,7 @@ class AttributionPathManager:
             For samples with constant relevance score, A is set to 0.0.
         """
         scores = self.scores
+        scores = [s for s in scores if num_feature[0] <= len(s) <= num_feature[1]]
 
         if num_workers is None or num_workers < 2:
             R_M_A = [descriptive_sparsity(s, constant_relevances="auto") for s in scores]
@@ -1035,10 +1051,10 @@ def main():
             print(f"Skiping {config}")
             continue
         t_i = time.time()
-        R, M, A = manager.descriptive_sparsity(num_workers=16)  # pylint: disable=unused-variable
+        R, M, A = manager.descriptive_sparsity(num_feature=(2, sys.maxsize), num_workers=16)  # pylint: disable=unused-variable
         t_f = time.time()
         stat = compute_statistical_summary(A)
-        print(f"{config}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support} T={round(t_f - t_i, 1)}")
+        print(f"{str(config).replace('AttributionConfiguration', '')}: {stat.mean:.5f} +/ {stat.error:.5f} N={stat.support} F={(A==0.0).sum()} T={round(t_f - t_i, 1)}")
 
     # Compute the agreement.
     # configutation_filter = ConfigurationFilter(
