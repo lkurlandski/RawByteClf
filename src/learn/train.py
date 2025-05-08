@@ -2086,58 +2086,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if isinstance(masker, FunctionFeatureMasker):
             print(f"{masker.boundaries.get_stats(2)=}")
 
-        # Figure out the batch size
-        @find_executable_batch_size(starting_batch_size=args.per_device_attr_batch_size)
-        def determine_max_attribution_batch_size(batch_size: int) -> int:
-            print(f"Running pseudo attribution to determine max batch size {batch_size=}.")
-
-            input_ids = torch.randint(len(tokenizer.all_special_ids), len(tokenizer), (batch_size, args.max_length - 2)).to(device)
-            input_ids[:, 0]  = tokenizer.bos_token_id
-            input_ids[:, -1] = tokenizer.eos_token_id
-
-            labels = torch.randint(0, materials.num_classes, (batch_size,))
-            if materials.problem_type == "multi_label_classification":
-                labels = torch.randint(0, 2, (batch_size, materials.num_classes))
-            labels = labels.to(device)
-
-            token_type_ids = None
-            if MODEL_NAME in REQ_TOKEN_TYPE_IDS:
-                token_type_ids = torch.zeros_like(input_ids).to(device)
-                token_type_ids[:, 0]  = 1
-                token_type_ids[:, -1] = 1
-
-            attention_mask = None
-            if MODEL_NAME in REQ_ATTENTION_MASK:
-                attention_mask = torch.ones_like(input_ids).to(device)
-                attention_mask[:, 0]  = 0
-                attention_mask[:, -1] = 0
-
-            inputs_embeds = None
-            if embedding is not None:
-                inputs_embeds = embedding.indices_to_embeddings(input_ids)
-
-            feature_mask = None
-            if masker is not None:
-                masker = get_masker(ExplanationMethod.CHK, tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, args.max_length // 8)
-                feature_mask = masker(input_ids, None).to(device)
-
-            get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
-
-            # TODO: implement something a bit better.
-            # if batch_size % 4 == 0:
-            #     return 3 * (batch_size // 4)
-            # if batch_size % 3 == 0:
-            #     return 2 * (batch_size // 3)
-            # if batch_size % 2 == 0:
-            #     return 1 * (batch_size // 2)
-            # return batch_size
-            return max(batch_size // 2, 1)
-
-
-        per_device_attribute_batch_size = args.per_device_attr_batch_size
-        if args.auto_find_batch_size_and_gradient_accumulation_steps:
-            per_device_attribute_batch_size = determine_max_attribution_batch_size()  # pylint: disable=no-value-for-parameter
-        print(f"Performing attribution with batch size {per_device_attribute_batch_size=}.")
+        if args.xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP, ExplanationAlgorithm.DLFT):
+            outer_batch_size = args.per_device_attr_batch_size
+            inner_batch_size = 1
+        elif args.xai_algorithm in (ExplanationAlgorithm.FABL, ExplanationAlgorithm.KSHP, ExplanationAlgorithm.LIME):
+            outer_batch_size = 1
+            inner_batch_size = args.per_device_attr_batch_size
+        else:
+            warnings.warn(f"Batch size protocol not defined for {args.xai_algorithm=}.")
+        print(f"Performing attribution with batch sizes: {outer_batch_size=} {inner_batch_size=}")
 
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down
         # because we won't be able to use prefetching or concurrent preprocessing, but its probably ok for now.
@@ -2168,8 +2125,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                         skip |= set(f.read_text().splitlines())
                 print(f"Continuing from iteration {io_iteration} with {len(skip)} files skipped.")
 
-        total = len(materials.files["vl"]) // per_device_attribute_batch_size + 1
-        iterable = tqdm(dataset["vl"].iter(per_device_attribute_batch_size), total=total, desc="Explaining...")
+        total = len(materials.files["vl"]) // outer_batch_size + 1
+        iterable = dataset["vl"].iter(outer_batch_size)
+        iterable = tqdm(iterable, total=total, desc="Explaining...")
         t_start = time.time()
         t_save  = time.time()
         seed_everything(args.xai_seed)
@@ -2201,7 +2159,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             feature_mask: Optional[Tensor] = masker(input_ids, names) if masker is not None else None
             feature_mask = feature_mask.to(device) if feature_mask is not None else None
 
-            attribs: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask)
+            attribs: Tensor = get_attribution(alg, input_ids, inputs_embeds, labels, model, feature_mask, inner_batch_size)
 
             # Move everything to the CPU.
             labels         = labels.detach().to("cpu") if labels is not None else None
@@ -2235,13 +2193,13 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     "step": step,
                     "epoch": round(step / total, 2),
                     "io_iteration": io_iteration,
-                    "time_per_sample": round((t_end_step - t_start_step) / (training_arguments.logging_steps * per_device_attribute_batch_size), 2),
+                    "time_per_sample": round((t_end_step - t_start_step) / (training_arguments.logging_steps * outer_batch_size), 2),
                     "time_total": round(t_end_step - t_start, 2),
                 }
                 print(d)
 
             # Clear the CUDA cache's after processing `ATTRIBUTION_MEMORY_CLEANUP` samples.
-            if (step * per_device_attribute_batch_size) % ATTRIBUTION_MEMORY_CLEANUP == 0:
+            if (step * outer_batch_size * inner_batch_size) % ATTRIBUTION_MEMORY_CLEANUP == 0:
                 clear_cuda_caches()
                 gc.collect()
 
