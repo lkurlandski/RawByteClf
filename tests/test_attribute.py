@@ -14,6 +14,7 @@ import tempfile
 import unittest
 import zipfile
 
+from captum.attr import configure_interpretable_embedding_layer
 import numpy as np
 from scipy.stats import rankdata
 import torch
@@ -24,8 +25,10 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 # pylint: enable=wrong-import-position
 
-from src.enums import ExplanationMethod
+from src.enums import ExplanationMethod, ExplanationAlgorithm
 from src.utils import rglob, print_context
+from src.architectures.malconv import MalConvForSequenceClassification, MalConvConfig
+from src.attribute.attribution import get_attribution, get_attributor
 from src.attribute.masking import (
     apply_feature_mask_slow,
     apply_feature_mask_fast,
@@ -38,6 +41,7 @@ from src.attribute.masking import (
     get_masker,
     infer_chunk_sizes,
     assert_feature_mask_indices_are_consecutive,
+    chunk_mask,
 )
 from src.attribute.utils import ignore_warnings_decorator, is_proper_rank_matrix
 from src.attribute.segtensor import SegmentedTensor
@@ -741,3 +745,191 @@ class SegmentedTensorTest(unittest.TestCase):
         right = seg._slice(0, len(seg) - 512)
         self.assertEqual(len(left) + 512, len(seg))
         self.assertEqual(len(right) + 512, len(seg))
+
+
+class TestGetAttribution(unittest.TestCase):
+
+    def setUp(self):
+        self.V = 264
+        self.H = 8
+        self.B = 16
+        self.T = 2 ** 10
+        self.C = 2 ** 8
+        self.P = 2
+        self.N = 24
+
+        self.input_ids    = torch.randint(0, self.V, (self.B, self.T), dtype=torch.int64)
+        self.feature_mask = torch.stack([chunk_mask(input_ids, self.C) for input_ids in self.input_ids])
+
+    @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^In order to make embedding layers more interpretable they will be replaced with an interpretable embedding layer*")
+    def _get_materials(self, task: str, embeds: bool):
+        if task == "det":
+            num_labels = 2
+            labels     = torch.randint(0, 2, (self.B,), dtype=torch.int64)
+        if task == "fam":
+            num_labels = 5
+            labels     = torch.randint(0, num_labels, (self.B,), dtype=torch.int64)
+        if task == "beh":
+            num_labels = 3
+            labels     = torch.randint(0, 2, (self.B, num_labels), dtype=torch.float32)
+
+        config = MalConvConfig(vocab_size=self.V, embedding_size=self.H, num_labels=num_labels)
+        model  = MalConvForSequenceClassification(config).eval()
+
+        input_embeds = None
+        input_ids    = self.input_ids
+        if embeds:
+            embedding    = configure_interpretable_embedding_layer(model, "backbone.embeddings")
+            input_embeds = embedding.indices_to_embeddings(self.input_ids)
+            input_ids    = None
+
+        return input_ids, input_embeds, labels, model
+
+    def _check_att(self, att: torch.Tensor):
+        assert att is not None, "Attribution is None"
+        assert att.shape[0] == self.B, f"Got: {att.shape[0]}, Expected: {self.B}"
+        assert att.shape[1] == self.T, f"Got: {att.shape[1]}, Expected: {self.T}"
+        assert att.dtype == torch.float32, f"Got: {att.dtype}, Expected: torch.float32"
+
+    ################################################################
+
+    def test_fabl_det(self):
+        input_ids, input_embeds, labels, model = self._get_materials("det", False)
+        alg = get_attributor(ExplanationAlgorithm.FABL, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_fabl_fam(self):
+        input_ids, input_embeds, labels, model = self._get_materials("fam", False)
+        alg = get_attributor(ExplanationAlgorithm.FABL, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_fabl_beh(self):
+        input_ids, input_embeds, labels, model = self._get_materials("beh", False)
+        alg = get_attributor(ExplanationAlgorithm.FABL, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    ################################################################
+
+    def test_kshp_det(self):
+        input_ids, input_embeds, labels, model = self._get_materials("det", False)
+        alg = get_attributor(ExplanationAlgorithm.KSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_kshp_fam(self):
+        input_ids, input_embeds, labels, model = self._get_materials("fam", False)
+        alg = get_attributor(ExplanationAlgorithm.KSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_kshp_beh(self):
+        input_ids, input_embeds, labels, model = self._get_materials("beh", False)
+        alg = get_attributor(ExplanationAlgorithm.KSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    ################################################################
+
+    def test_lime_det(self):
+        input_ids, input_embeds, labels, model = self._get_materials("det", False)
+        alg = get_attributor(ExplanationAlgorithm.LIME, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_lime_fam(self):
+        input_ids, input_embeds, labels, model = self._get_materials("fam", False)
+        alg = get_attributor(ExplanationAlgorithm.LIME, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_lime_beh(self):
+        input_ids, input_embeds, labels, model = self._get_materials("beh", False)
+        alg = get_attributor(ExplanationAlgorithm.LIME, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    ################################################################
+
+    def test_sshp_det(self):
+        input_ids, input_embeds, labels, model = self._get_materials("det", False)
+        alg = get_attributor(ExplanationAlgorithm.SSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_sshp_fam(self):
+        input_ids, input_embeds, labels, model = self._get_materials("fam", False)
+        alg = get_attributor(ExplanationAlgorithm.SSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    def test_sshp_beh(self):
+        input_ids, input_embeds, labels, model = self._get_materials("beh", False)
+        alg = get_attributor(ExplanationAlgorithm.SSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        self._check_att(att)
+
+    ################################################################
+
+    def test_dlft_det(self):
+        input_ids, input_embeds, labels, model = self._get_materials("det", True)
+        alg = get_attributor(ExplanationAlgorithm.DLFT, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    def test_dlft_fam(self):
+        input_ids, input_embeds, labels, model = self._get_materials("fam", True)
+        alg = get_attributor(ExplanationAlgorithm.DLFT, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    def test_dlft_beh(self):
+        input_ids, input_embeds, labels, model = self._get_materials("beh", True)
+        alg = get_attributor(ExplanationAlgorithm.DLFT, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    ################################################################
+
+    def test_gshp_det(self):
+        input_ids, input_embeds, labels, model = self._get_materials("det", True)
+        alg = get_attributor(ExplanationAlgorithm.GSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    def test_gshp_fam(self):
+        input_ids, input_embeds, labels, model = self._get_materials("fam", True)
+        alg = get_attributor(ExplanationAlgorithm.GSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    def test_ghsp_beh(self):
+        input_ids, input_embeds, labels, model = self._get_materials("beh", True)
+        alg = get_attributor(ExplanationAlgorithm.GSHP, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    ################################################################
+
+    def test_igrd_det(self):
+        input_ids, input_embeds, labels, model = self._get_materials("det", True)
+        alg = get_attributor(ExplanationAlgorithm.IGRD, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    def test_igrd_fam(self):
+        input_ids, input_embeds, labels, model = self._get_materials("fam", True)
+        alg = get_attributor(ExplanationAlgorithm.IGRD, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    def test_igrd_beh(self):
+        input_ids, input_embeds, labels, model = self._get_materials("beh", True)
+        alg = get_attributor(ExplanationAlgorithm.IGRD, model)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        self._check_att(att)
+
+    ################################################################
+

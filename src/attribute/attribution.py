@@ -3,6 +3,7 @@ Core attribution interface.
 """
 
 from __future__ import annotations
+import math
 import os
 import sys
 from typing import Optional
@@ -153,7 +154,72 @@ def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrain
     raise TypeError(f"Explanation algorithm {xai_algorithm} not supported.")
 
 
-@ignore_warnings_decorator("ignore", category=UserWarning, message=r"^You are providing multiple inputs for Lime / Kernel SHAP attributions.*")
+def get_n_samples(num_features: int) -> int:
+    assert num_features > 0, "Number of features must be greater than 0."
+    return 512 * int(math.log2(num_features + 1))
+
+
+def get_attribution_with_input_ids(
+    alg: FeatureAblation | Lime | KernelShap | ShapleyValueSampling,
+    input_ids: Tensor,
+    labels: Tensor,
+    model: PreTrainedModel,
+    feature_mask: Optional[Tensor],
+    perturbations_per_eval: int = 64,
+    n_samples: Optional[int] = None,
+) -> Tensor:
+    is_multilabel = labels.dim() == 2
+
+    attribs       = torch.zeros_like(input_ids, dtype=torch.float32)
+    for i in range(input_ids.shape[0]):
+        _input_ids    = input_ids[i].unsqueeze(0)
+        _baselines    = torch.zeros_like(_input_ids)
+        _labels       = labels[i].unsqueeze(0)
+        _feature_mask = feature_mask[i].unsqueeze(0) if feature_mask is not None else None
+        _target       = None if is_multilabel else _labels
+        _forward_args = (model, _labels) if is_multilabel else (model,)
+        _n_features   = _feature_mask.unique().shape[0] if _feature_mask is not None else _input_ids.shape[1]
+        _n_samples    = get_n_samples(_n_features) if n_samples is None else n_samples
+        attribs[i]    = alg.attribute(
+            _input_ids,
+            baselines=_baselines,
+            target=_target,
+            additional_forward_args=_forward_args,
+            feature_mask=_feature_mask,
+            perturbations_per_eval=perturbations_per_eval,
+            n_samples=_n_samples,
+        )
+
+    return attribs
+
+
+def get_attribution_with_inputs_embeds(
+    alg: IntegratedGradients | GradientShap | DeepLift,
+    inputs_embeds: Tensor,
+    labels: Tensor,
+    model: PreTrainedModel,
+    feature_mask: Optional[Tensor],
+) -> Tensor:
+    is_multilabel = labels.dim() == 2
+    if isinstance(alg, DeepLift):
+        additional_forward_args = (labels,) if is_multilabel else None
+    else:
+        additional_forward_args = (model, labels) if is_multilabel else (model,)
+
+    # TODO: GSHP takes a n_samples argument. Should this be used?
+    attribs = alg.attribute(
+        inputs_embeds,
+        baselines=torch.zeros_like(inputs_embeds),
+        target=None if is_multilabel else labels,
+        additional_forward_args=additional_forward_args,
+    )
+    attribs = attribs.mean(dim=2)
+    if feature_mask is not None:
+        attribs = apply_feature_mask(attribs, feature_mask)
+
+    return attribs
+
+
 @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^Attempting to construct interpretable model with > 10000 features.*")
 @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^Setting forward, backward hooks and attributes on non-linear*")
 def get_attribution(
@@ -163,120 +229,23 @@ def get_attribution(
     labels: Tensor,
     model: PreTrainedModel,
     feature_mask: Optional[Tensor] = None,
+    **kwds,
 ) -> Tensor:
+    if isinstance(alg, (FeatureAblation, Lime, KernelShap, ShapleyValueSampling)):
+        attribs =  get_attribution_with_input_ids(alg, input_ids, labels, model, feature_mask, **kwds)
+    elif isinstance(alg, (IntegratedGradients, GradientShap, DeepLift)):
+        attribs = get_attribution_with_inputs_embeds(alg, inputs_embeds, labels, model, feature_mask, **kwds)
+    else:
+        raise TypeError(f"Explanation algorithm {alg} not supported.")
 
-    is_multilabel = labels.dim() == 2
+    if isinstance(alg, IntegratedGradients):  # For some reason, IGRD returns float64.
+        attribs = attribs.to(torch.float32)
 
-    # Surrogate methods.
-    if isinstance(alg, Lime):
-        apply_pooling = False
-        apply_masking = False
-        attribs = alg.attribute(
-            input_ids,
-            baselines=torch.zeros_like(input_ids),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-            feature_mask=feature_mask,
-        )
-    if isinstance(alg, KernelShap):
-        apply_pooling = False
-        apply_masking = False
-        attribs = alg.attribute(
-            input_ids,
-            baselines=torch.zeros_like(input_ids),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-            feature_mask=feature_mask,
-        )
-
-    # Gradient methods.
-    if isinstance(alg, IntegratedGradients):
-        apply_pooling = True
-        apply_masking = feature_mask is not None
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-        )
-    if isinstance(alg, GradientShap):
-        apply_pooling = True
-        apply_masking = feature_mask is not None
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-        )
-    if isinstance(alg, DeepLift):
-        apply_pooling = True
-        apply_masking = feature_mask is not None
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(labels,) if is_multilabel else None,
-        )
-
-    # Perturbation methods.
-    if isinstance(alg, FeatureAblation):
-        apply_pooling = False
-        apply_masking = False
-        attribs = alg.attribute(
-            input_ids,
-            baselines=0,
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-            feature_mask=feature_mask,
-        )
-    if isinstance(alg, ShapleyValueSampling):
-        # This algorithm has complexity O(num_features * n_samples * batch_size / perturbations_per_eval).
-        # The number of features is the number of unique indices in the feature_mask.
-        # If we convert the feature_mask into a non-overlapping one with convert_to_overlapping_feature_mask,
-        # we wind up with num_features=batch_size * num_features_per_sample. This is a problem because
-        # then the complexity is O(batch_size^2 * num_features_per_sample * n_samples / perturbations_per_eval).
-        # In other words, increasing the batch_size to improve performance will actually make it performance worse.
-        # Upon deeper investigation, I'm fairly confident that converting to a non-overlapping feature mask is
-        # not necessary. The features indicated by the same mask value will be perturbed together, but since
-        # the model has no interaction between samples of a batch (dropout and batch norm are disabled during eval),
-        # this ultimately does not matter.
-        apply_pooling = False
-        apply_masking = False
-        n_samples = 32
-        perturbations_per_eval = 32
-        if os.environ.get("BATCH_SHAPLEY_VALUE_SAMPLING", "1") == "0":
-            attribs = []
-            for i in range(input_ids.shape[0]):
-                attrib = alg.attribute(
-                    input_ids[i].unsqueeze(0),
-                    baselines=0,
-                    target=None if is_multilabel else labels[i].unsqueeze(0),
-                    additional_forward_args=(model, labels[i].unsqueeze(0)) if is_multilabel else (model,),
-                    feature_mask=feature_mask[i].unsqueeze(0) if feature_mask is not None else None,
-                    n_samples=n_samples,
-                    perturbations_per_eval=perturbations_per_eval,
-                )
-                attribs.append(attrib)
-            attribs = torch.cat(attribs, axis=0)
-        else:
-            if os.environ.get("NOOVERLAP_SHAPLEY_VALUE_SAMPLING", "0") == "1":
-                feature_mask = convert_to_overlapping_feature_mask(feature_mask)
-            attribs = alg.attribute(
-                input_ids,
-                baselines=0,
-                target=None if is_multilabel else labels,
-                additional_forward_args=(model, labels) if is_multilabel else (model,),
-                feature_mask=feature_mask,
-                n_samples=n_samples,
-                perturbations_per_eval=perturbations_per_eval,
-            )
-
-    if apply_pooling:
-        attribs = attribs.mean(dim=2)
-    if apply_masking:
-        attribs = apply_feature_mask(attribs, feature_mask)
-
-    if tuple(attribs.shape) != (tuple(input_ids.shape)):
+    if attribs.dtype != torch.float32:
+        raise TypeError(f"Expected float32, got {attribs.dtype}.")
+    if input_ids is not None and tuple(attribs.shape) != (tuple(input_ids.shape)):
+        raise RuntimeError(attribs.shape)
+    if inputs_embeds is not None and tuple(attribs.shape) != (tuple(inputs_embeds.shape)[0:2]):
         raise RuntimeError(attribs.shape)
 
     return attribs
