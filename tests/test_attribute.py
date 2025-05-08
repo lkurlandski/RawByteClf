@@ -796,19 +796,19 @@ class TestGetAttribution(unittest.TestCase):
     def test_fabl_det(self):
         input_ids, input_embeds, labels, model = self._get_materials("det", False)
         alg = get_attributor(ExplanationAlgorithm.FABL, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_fabl_fam(self):
         input_ids, input_embeds, labels, model = self._get_materials("fam", False)
         alg = get_attributor(ExplanationAlgorithm.FABL, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_fabl_beh(self):
         input_ids, input_embeds, labels, model = self._get_materials("beh", False)
         alg = get_attributor(ExplanationAlgorithm.FABL, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     ################################################################
@@ -816,19 +816,19 @@ class TestGetAttribution(unittest.TestCase):
     def test_kshp_det(self):
         input_ids, input_embeds, labels, model = self._get_materials("det", False)
         alg = get_attributor(ExplanationAlgorithm.KSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_kshp_fam(self):
         input_ids, input_embeds, labels, model = self._get_materials("fam", False)
         alg = get_attributor(ExplanationAlgorithm.KSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_kshp_beh(self):
         input_ids, input_embeds, labels, model = self._get_materials("beh", False)
         alg = get_attributor(ExplanationAlgorithm.KSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     ################################################################
@@ -836,19 +836,19 @@ class TestGetAttribution(unittest.TestCase):
     def test_lime_det(self):
         input_ids, input_embeds, labels, model = self._get_materials("det", False)
         alg = get_attributor(ExplanationAlgorithm.LIME, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_lime_fam(self):
         input_ids, input_embeds, labels, model = self._get_materials("fam", False)
         alg = get_attributor(ExplanationAlgorithm.LIME, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_lime_beh(self):
         input_ids, input_embeds, labels, model = self._get_materials("beh", False)
         alg = get_attributor(ExplanationAlgorithm.LIME, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     ################################################################
@@ -856,19 +856,19 @@ class TestGetAttribution(unittest.TestCase):
     def test_sshp_det(self):
         input_ids, input_embeds, labels, model = self._get_materials("det", False)
         alg = get_attributor(ExplanationAlgorithm.SSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_sshp_fam(self):
         input_ids, input_embeds, labels, model = self._get_materials("fam", False)
         alg = get_attributor(ExplanationAlgorithm.SSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_sshp_beh(self):
         input_ids, input_embeds, labels, model = self._get_materials("beh", False)
         alg = get_attributor(ExplanationAlgorithm.SSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, perturbations_per_eval=self.P, n_samples=self.N)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     ################################################################
@@ -876,19 +876,19 @@ class TestGetAttribution(unittest.TestCase):
     def test_dlft_det(self):
         input_ids, input_embeds, labels, model = self._get_materials("det", True)
         alg = get_attributor(ExplanationAlgorithm.DLFT, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_dlft_fam(self):
         input_ids, input_embeds, labels, model = self._get_materials("fam", True)
         alg = get_attributor(ExplanationAlgorithm.DLFT, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_dlft_beh(self):
         input_ids, input_embeds, labels, model = self._get_materials("beh", True)
         alg = get_attributor(ExplanationAlgorithm.DLFT, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     ################################################################
@@ -896,19 +896,19 @@ class TestGetAttribution(unittest.TestCase):
     def test_gshp_det(self):
         input_ids, input_embeds, labels, model = self._get_materials("det", True)
         alg = get_attributor(ExplanationAlgorithm.GSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_gshp_fam(self):
         input_ids, input_embeds, labels, model = self._get_materials("fam", True)
         alg = get_attributor(ExplanationAlgorithm.GSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_ghsp_beh(self):
         input_ids, input_embeds, labels, model = self._get_materials("beh", True)
         alg = get_attributor(ExplanationAlgorithm.GSHP, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     ################################################################
@@ -916,19 +916,19 @@ class TestGetAttribution(unittest.TestCase):
     def test_igrd_det(self):
         input_ids, input_embeds, labels, model = self._get_materials("det", True)
         alg = get_attributor(ExplanationAlgorithm.IGRD, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_igrd_fam(self):
         input_ids, input_embeds, labels, model = self._get_materials("fam", True)
         alg = get_attributor(ExplanationAlgorithm.IGRD, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     def test_igrd_beh(self):
         input_ids, input_embeds, labels, model = self._get_materials("beh", True)
         alg = get_attributor(ExplanationAlgorithm.IGRD, model)
-        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask)
+        att = get_attribution(alg, input_ids, input_embeds, labels, model, self.feature_mask, batch_size=self.P, n_samples=self.N)
         self._check_att(att)
 
     ################################################################

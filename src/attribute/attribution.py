@@ -165,7 +165,7 @@ def get_attribution_with_input_ids(
     labels: Tensor,
     model: PreTrainedModel,
     feature_mask: Optional[Tensor],
-    perturbations_per_eval: int = 64,
+    batch_size: int = 1,
     n_samples: Optional[int] = None,
 ) -> Tensor:
     is_multilabel = labels.dim() == 2
@@ -186,7 +186,7 @@ def get_attribution_with_input_ids(
             target=_target,
             additional_forward_args=_forward_args,
             feature_mask=_feature_mask,
-            perturbations_per_eval=perturbations_per_eval,
+            perturbations_per_eval=batch_size,
             n_samples=_n_samples,
         )
 
@@ -201,18 +201,31 @@ def get_attribution_with_inputs_embeds(
     feature_mask: Optional[Tensor],
 ) -> Tensor:
     is_multilabel = labels.dim() == 2
-    if isinstance(alg, DeepLift):
-        additional_forward_args = (labels,) if is_multilabel else None
-    else:
-        additional_forward_args = (model, labels) if is_multilabel else (model,)
 
-    # TODO: GSHP takes a n_samples argument. Should this be used?
-    attribs = alg.attribute(
-        inputs_embeds,
-        baselines=torch.zeros_like(inputs_embeds),
-        target=None if is_multilabel else labels,
-        additional_forward_args=additional_forward_args,
-    )
+    if isinstance(alg, IntegratedGradients):
+        attribs = alg.attribute(
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+        )
+    elif isinstance(alg, GradientShap):
+        attribs = alg.attribute(
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(model, labels) if is_multilabel else (model,),
+        )
+    elif isinstance(alg, DeepLift):
+        attribs = alg.attribute(
+            inputs_embeds,
+            baselines=torch.zeros_like(inputs_embeds),
+            target=None if is_multilabel else labels,
+            additional_forward_args=(labels,) if is_multilabel else None,
+        )
+    else:
+        raise TypeError(f"Explanation algorithm {alg} not supported.")
+
     attribs = attribs.mean(dim=2)
     if feature_mask is not None:
         attribs = apply_feature_mask(attribs, feature_mask)
@@ -229,12 +242,13 @@ def get_attribution(
     labels: Tensor,
     model: PreTrainedModel,
     feature_mask: Optional[Tensor] = None,
-    **kwds,
+    batch_size: int = 1,
+    n_samples: Optional[int] = None,
 ) -> Tensor:
     if isinstance(alg, (FeatureAblation, Lime, KernelShap, ShapleyValueSampling)):
-        attribs =  get_attribution_with_input_ids(alg, input_ids, labels, model, feature_mask, **kwds)
+        attribs =  get_attribution_with_input_ids(alg, input_ids, labels, model, feature_mask, batch_size, n_samples)
     elif isinstance(alg, (IntegratedGradients, GradientShap, DeepLift)):
-        attribs = get_attribution_with_inputs_embeds(alg, inputs_embeds, labels, model, feature_mask, **kwds)
+        attribs = get_attribution_with_inputs_embeds(alg, inputs_embeds, labels, model, feature_mask)
     else:
         raise TypeError(f"Explanation algorithm {alg} not supported.")
 
