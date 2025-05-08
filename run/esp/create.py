@@ -26,8 +26,9 @@ from src.enums import (
 )
 
 
-ARMITAGE = False
-ROOT     = Path(os.path.dirname(os.path.realpath(__file__)))
+ARMITAGE   = False
+UNBUFFERED = False
+ROOT        = Path(os.path.dirname(os.path.realpath(__file__)))
 
 
 GB = 1024 ** 3
@@ -146,7 +147,7 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if sort_when_making_archives_contiguous else "export SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0"}
 
 {"" if gpu <= 1 else torchrun_str(gpu)}
-python -u \\
+python {'-u' if UNBUFFERED else ''} \\
 src/learn/train.py \\
 --root='./output/esp-exe' \\
 --streaming={bool_to_str(streaming)} \\
@@ -182,7 +183,7 @@ src/learn/train.py \\
 {"--num_train_epochs=" + str(num_train_epochs) if max_steps is None else ""} \\
 {"--saves_per_epoch=" + str(saves_per_epoch) if save_steps is None else ""} \\
 {"--evals_per_epoch=" + str(evals_per_epoch) if eval_steps is None else ""} \\
---logging_steps=1 \\
+--logging_steps={1 if xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP) else at_per_device_batch_size} \\
 --dataloader_num_workers={dataloader_num_workers} \\
 --optim="adamw_torch" \\
 --learning_rate={learning_rate:.6f} \\
@@ -366,6 +367,9 @@ class Configuration:
         if self.pretraining_task is not None:
             return False
 
+        # CHK requires non-null chunk_size.
+        if self.xai_method == ExplanationMethod.CHK and self.xai_chunk_size is None:
+            return False
         # IGRD and FABL are deterministic.
         if self.xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.FABL) and self.xai_seed != 0:
             return False
@@ -794,15 +798,15 @@ class Configuration:
             raise NotImplementedError(f"{self.max_length}")
 
         if self.xai_algorithm == ExplanationAlgorithm.LIME:
-            return 128
+            return 128 + 64
         if self.xai_algorithm == ExplanationAlgorithm.KSHP:
-            return 128
+            return 128 + 64
         if self.xai_algorithm == ExplanationAlgorithm.IGRD:
             return 2
         if self.xai_algorithm == ExplanationAlgorithm.GSHP:
             return 16
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
-            return 128
+            return 128 + 64
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
             return 8
 
@@ -917,15 +921,18 @@ class Product:
 
 def main():
 
-    global ARMITAGE  # pylint: disable=global-statement
+    global ARMITAGE    # pylint: disable=global-statement
+    global UNBUFFERED  # pylint: disable=global-statement
 
     parser = ArgumentParser()
     parser.add_argument("--armitage", action="store_true")
     parser.add_argument("--no_remove", action="store_true")
     parser.add_argument("--dependencies", action="store_true")
+    parser.add_argument("--unbuffered", action="store_true")
     args = parser.parse_args()
 
-    ARMITAGE = args.armitage
+    ARMITAGE   = args.armitage
+    UNBUFFERED = args.unbuffered
 
     if not args.no_remove:
         for f in outpath().iterdir():
@@ -943,10 +950,9 @@ def main():
         TokenizationAlgorithm,
         [256],
         [Task.DET],
-        [None],
-        [ExplanationMethod.TOK],
-        [ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP],
-        # [a for a in ExplanationAlgorithm if a not in (ExplanationAlgorithm.SSHP, ExplanationAlgorithm.DLFT,)],
+        [None, 1024, 256],
+        [ExplanationMethod.FUN, ExplanationMethod.CHK],
+        [ExplanationAlgorithm.FABL, ExplanationAlgorithm.KSHP, ExplanationAlgorithm.LIME],
         [None],
         [0, 1, 2, 3, 4],
         [0, 1, 2, 3, 4],
@@ -1012,27 +1018,29 @@ def main():
         config.outfile.write_text(body)
 
     with open(ROOT / "execute.sh", "w") as fp:
+        fp.write("#!/bin/bash\n")
         for i, config in enumerate(configurations):
-            if args.dependencies:
-                var = "j"
-                dep = ""
+            f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
+            s = f"sbatch {f}\n"
+            fp.write(s)
 
-                newlines = 1 if config.task == Task.MLM and i > 0 else 0
+    with open(ROOT / "execute-deps.sh", "w") as fp:
+        fp.write("#!/bin/bash\n")
+        mth = None
+        alg = None
+        for i, config in enumerate(configurations):
+            f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
 
-                if config.pretraining_task is None:
-                    var = f"j_{config.task.value[0]}"
-                if config.pretraining_task is not None:
-                    dep = f"--dependency=\"afterok:$j_{config.pretraining_task.value[0]}:$j_{config.task.value[0]}\""
-
-                f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
-                awk = "awk '{print $4}'"
-                new = "\n" * newlines
-                s = f"{new}{var}=$(sbatch{' ' + dep if dep else ''} '{f}' | {awk})\n"
-                fp.write(s)
+            if mth != config.xai_method or alg != config.xai_algorithm:
+                fp.write("\n")
+                fp.write("j=$(sbatch \"" + f + "\" | awk '{print $4}')\n")
+                fp.write("echo \"Submitted batch job $j\"\n")
             else:
-                f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
-                s = f"sbatch {f}\n"
-                fp.write(s)
+                fp.write(f"sbatch --dependency=\"afterok:$j\" \"{f}\"\n")
+
+            mth = config.xai_method
+            alg = config.xai_algorithm
+
 
 
 if __name__ == "__main__":
