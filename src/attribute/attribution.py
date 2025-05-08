@@ -156,7 +156,7 @@ def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrain
 
 def get_n_samples(num_features: int) -> int:
     assert num_features > 0, "Number of features must be greater than 0."
-    return 512 * int(math.log2(num_features + 1))
+    return 64 * int(math.log2(num_features + 1))
 
 
 def get_attribution_with_input_ids(
