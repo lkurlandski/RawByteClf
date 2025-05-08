@@ -492,9 +492,8 @@ class Configuration:
         if self.max_length != 2 ** 20:
             raise NotImplementedError(f"{self.max_length}")
 
-        if self.xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP):
-            f_0 = 1
-        else:
+        f_0 = 1
+        if self.xai_algorithm not in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP):
             if self.xai_method == ExplanationMethod.FUN:
                 f_0 = 1
             if self.xai_method == ExplanationMethod.NUM:
@@ -505,10 +504,6 @@ class Configuration:
                 f_0 = 1
             if self.xai_method == ExplanationMethod.CHK:
                 f_0 = (self.max_length / self.xai_chunk_size) / FUNCTION_STATISTICS["fun-num-men"]
-                # This doesn't really make sense, but it seems like the SSHP calculation
-                # was only about 1/3 as long as it needed to be when self.xai_chunk_size == 1024
-                if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-                    f_0 *= 3
 
         if self.task == Task.DET:
             f_1 = 8322  / 8322
@@ -520,15 +515,15 @@ class Configuration:
         # These values were estimated from the FUN and NUM modes,
         # which both have the same number of interpretable features.
         if self.xai_algorithm == ExplanationAlgorithm.LIME:
-            h = 2
+            h = 12
         if self.xai_algorithm == ExplanationAlgorithm.KSHP:
-            h = 4
+            h = 12
         if self.xai_algorithm == ExplanationAlgorithm.IGRD:
             h = 1.5
         if self.xai_algorithm == ExplanationAlgorithm.GSHP:
             h = 1.5
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
-            h = 24
+            h = 4
         if self.xai_algorithm == ExplanationAlgorithm.SSHP:
             h = 60
 
