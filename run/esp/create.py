@@ -329,9 +329,9 @@ class Configuration:
             return False
         # None of the ESP loaders fully support different seeds.
         if self.seed != 0:
-            warnings.warn(f"Using nonzero seed will not change the train test split.")
+            warnings.warn("Using nonzero seed will not change the train test split.")
             if self.streaming:
-                warnings.warn(f"Using nonzero seed with streaming will not change the order in which data is sampled.")
+                warnings.warn("Using nonzero seed with streaming will not change the order in which data is sampled.")
         # Pretraining cannot be pretrained.
         if self.task in (Task.CLM, Task.MLM) and self.pretraining_task is not None:
             return False
@@ -369,6 +369,8 @@ class Configuration:
 
         # CHK requires non-null chunk_size.
         if self.xai_method == ExplanationMethod.CHK and self.xai_chunk_size is None:
+            return False
+        if self.xai_method != ExplanationMethod.CHK and self.xai_chunk_size is not None:
             return False
         # IGRD and FABL are deterministic.
         if self.xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.FABL) and self.xai_seed != 0:
@@ -419,9 +421,9 @@ class Configuration:
             if self.lift_level == LiftLevel.DEC:
                 h = 260
             if self.lift_level == LiftLevel.ALL:
-                h = 520 + 208 + 260  # TODO: measure
+                h = 520 + 208 + 260  # NOTE: guess
             if self.lift_level == LiftLevel.NOP:
-                h = 1000  # TODO: measure
+                h = 1000  # NOTE: guess
 
             h /= (65536 / self.max_length)
             h /= self.gpu
@@ -462,11 +464,11 @@ class Configuration:
             tr_f = 0.760 / 2.978
             vl_f = 3.192 / 13.02
         if self.lift_level == LiftLevel.ALL:
-            tr_f = 1.0 + 0.760 / 3.617 + 0.760 / 2.978   # TODO: measure
-            vl_f = 1.0 + 3.192 / 16.163 + 3.192 / 13.02  # TODO: measure
+            tr_f = 1.0 + 0.760 / 3.617 + 0.760 / 2.978   # NOTE: guess
+            vl_f = 1.0 + 3.192 / 16.163 + 3.192 / 13.02  # NOTE: guess
         if self.lift_level == LiftLevel.NOP:
-            tr_f = 2.0  # TODO: measure
-            vl_f = 2.0  # TODO: measure
+            tr_f = 2.0  # NOTE: guess
+            vl_f = 2.0  # NOTE: guess
 
         if self.model_name == ModelName.HRR and self.model_mode == ModelMode.BI:
             tr_samples_per_second = 0.766
@@ -491,47 +493,65 @@ class Configuration:
 
     @property
     def time_for_attribution(self) -> str:
+
+        # FABL - 1024 - 3:00
+        # FABL - 256  - 6:30
+        # FABL - FUN  - 3:00
+        # KSHP - 1024 - 3:30
+        # KSHP - 256  - 4:30
+        # KSHP - FUN  - 3:30
+        # LIME - 1024 - 3:30
+        # LIME - 256  - 4:00
+        # LIME - FUN  - 3:00
+
         if self.model_name != ModelName.MAL:
             raise NotImplementedError(f"{self.model_name=}")
         if self.max_length != 2 ** 20:
             raise NotImplementedError(f"{self.max_length}")
 
-        f_0 = 1
-        if self.xai_algorithm not in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP):
-            if self.xai_method == ExplanationMethod.FUN:
-                f_0 = 1
-            if self.xai_method == ExplanationMethod.NUM:
-                f_0 = 1
-            if self.xai_method == ExplanationMethod.LEN:
-                f_0 = 14
-            if self.xai_method == ExplanationMethod.NML:
-                f_0 = 1
-            if self.xai_method == ExplanationMethod.CHK:
-                f_0 = (self.max_length / self.xai_chunk_size) / FUNCTION_STATISTICS["fun-num-men"]
-
-        if self.task == Task.DET:
-            f_1 = 8322  / 8322
-        if self.task == Task.FAM:
-            f_1 = 12698 / 8322
-        if self.task == Task.BEH:
-            f_1 = 3727  / 8322
-
-        # These values were estimated from the FUN and NUM modes,
-        # which both have the same number of interpretable features.
-        if self.xai_algorithm == ExplanationAlgorithm.LIME:
-            h = 12
-        if self.xai_algorithm == ExplanationAlgorithm.KSHP:
-            h = 12
+        h = None
         if self.xai_algorithm == ExplanationAlgorithm.IGRD:
             h = 1.5
-        if self.xai_algorithm == ExplanationAlgorithm.GSHP:
-            h = 1.5
+        if self.xai_algorithm == ExplanationAlgorithm.KSHP:
+            h = 3.5
         if self.xai_algorithm == ExplanationAlgorithm.FABL:
-            h = 4
-        if self.xai_algorithm == ExplanationAlgorithm.SSHP:
-            h = 60
+            if self.xai_method in (ExplanationMethod.FUN, ExplanationMethod.NUM, ExplanationMethod.NML):
+                h = 3.0
+            if self.xai_method == ExplanationMethod.CHK:
+                if self.xai_chunk_size == 1024:
+                    h = 3.0
+                if self.xai_chunk_size == 256:
+                    h = 6.5
+        if self.xai_algorithm == ExplanationAlgorithm.KSHP:
+            if self.xai_method in (ExplanationMethod.FUN, ExplanationMethod.NUM, ExplanationMethod.NML):
+                h = 3.5
+            if self.xai_method == ExplanationMethod.CHK:
+                if self.xai_chunk_size == 1024:
+                    h = 3.5
+                if self.xai_chunk_size == 256:
+                    h = 4.5
+        if self.xai_algorithm == ExplanationAlgorithm.LIME:
+            if self.xai_method in (ExplanationMethod.FUN, ExplanationMethod.NUM, ExplanationMethod.NML):
+                h = 3.0
+            if self.xai_method == ExplanationMethod.CHK:
+                if self.xai_chunk_size == 1024:
+                    h = 3.5
+                if self.xai_chunk_size == 256:
+                    h = 4.0
+        if h is None:
+            raise NotImplementedError(f"{self.xai_method.value} {self.xai_algorithm.value} {self.xai_chunk_size}")
 
-        return seconds_to_slurm_time(3600 * h * f_0 * f_1)
+        f = None
+        if self.task == Task.DET:
+            f = 8322  / 8322
+        if self.task == Task.FAM:
+            f = 12698 / 8322
+        if self.task == Task.BEH:
+            f = 3727  / 8322
+        if f is None:
+            raise NotImplementedError(f"{self.task.value}")
+
+        return seconds_to_slurm_time(3600 * h * f, 900)
 
     @property
     def cpu(self) -> int:
@@ -950,10 +970,10 @@ def main():
         TokenizationAlgorithm,
         [256],
         [Task.DET],
-        [None, 1024, 256],
+        [None],
         [ExplanationMethod.FUN, ExplanationMethod.CHK],
         [ExplanationAlgorithm.FABL, ExplanationAlgorithm.KSHP, ExplanationAlgorithm.LIME],
-        [None],
+        [None, 256, 1024],
         [0, 1, 2, 3, 4],
         [0, 1, 2, 3, 4],
     )
@@ -1019,7 +1039,7 @@ def main():
 
     with open(ROOT / "execute.sh", "w") as fp:
         fp.write("#!/bin/bash\n")
-        for i, config in enumerate(configurations):
+        for i, config in enumerate(configurations):  # pylint: disable=unused-variable
             f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
             s = f"sbatch {f}\n"
             fp.write(s)
@@ -1028,10 +1048,11 @@ def main():
         fp.write("#!/bin/bash\n")
         mth = None
         alg = None
+        chk = None
         for i, config in enumerate(configurations):
             f = config.outfile.as_posix().replace("/home/lk3591/Documents/code/RawByteClf/", "./")
 
-            if mth != config.xai_method or alg != config.xai_algorithm:
+            if mth != config.xai_method or alg != config.xai_algorithm or chk != config.xai_chunk_size:
                 fp.write("\n")
                 fp.write("j=$(sbatch \"" + f + "\" | awk '{print $4}')\n")
                 fp.write("echo \"Submitted batch job $j\"\n")
@@ -1040,7 +1061,7 @@ def main():
 
             mth = config.xai_method
             alg = config.xai_algorithm
-
+            chk = config.xai_chunk_size
 
 
 if __name__ == "__main__":
