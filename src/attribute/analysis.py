@@ -39,6 +39,7 @@ from src.learn.helpers import OutputHelper
 from src.attribute.masking import apply_feature_mask
 from src.attribute.segtensor import SegmentedTensor
 from src.attribute.statistical import AgreementMethod, AgreementFunction, get_agreement_function, descriptive_sparsity
+from src.attribute.utils import ignore_warnings_decorator
 
 
 class Annotations(NamedTuple):
@@ -685,7 +686,7 @@ class AgreementCoordinator:
         # Address incongruences (samples with different number of interpretable features).
         if len(incongruent) > 0:
             for i, j, k, name in incongruent:
-                print(f"Incongruence: sample {i} name {name} judge {j} features {k} expected {self.K[i]}.")
+                print(f"Incongruence: judge {j} ({self.judge_names[j]}) ranked {k} features when {self.K[i]} were expected on sample {i} ({name}).")
             if not self.incongruent:
                 raise RuntimeError("Incongruent samples were detected. Set `incongruent=True` to remove them.")
             remove = tuple(set(i for i, _, _, _ in incongruent))
@@ -712,6 +713,7 @@ class AgreementCoordinator:
 
         return self
 
+    @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^Judge cannot rank any item higher or lower than any other*")
     def compute_agreement(self) -> AgreementCoordinator:
         """
         Computes the agreement between every sample.
