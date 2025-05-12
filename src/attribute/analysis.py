@@ -789,7 +789,8 @@ class AgreementCoordinator:
 
 class AttributionConfiguration:
 
-    last_path_attribute: str = "bf16"
+    last_path_attribute: str  = "bf16"
+    final_path_attribute: str = "xai_seed"
 
     def __init__(self, root: Optional[Path], seed: int, xai_method: ExplanationMethod, xai_algorithm: ExplanationAlgorithm, xai_chunk_size: Optional[int], xai_seed: int) -> None:
         self.root = root
@@ -875,6 +876,32 @@ class AttributionConfiguration:
             return cls(root, seed, xai_method, xai_algorithm, xai_chunk_size, xai_seed)
         except NameError as err:
             raise ValueError(f"Could not parse the {err.name} attribute from the path {path}.") from err  # pylint: disable=no-member
+
+    @staticmethod
+    def collect(path: Path, filter_fn: Optional[ConfigurationFilter] = None, verbose: bool = False) -> list[AttributionConfiguration]:
+        configs: list[AttributionConfiguration] = []
+        for root in sorted(path.rglob(f"{AttributionConfiguration.final_path_attribute}--*")):
+            try:
+                config = AttributionConfiguration.from_path(root)
+            except ValueError as err:
+                if "is not a valid" in str(err):
+                    if verbose:
+                        print("Skipping invalid algorithm:", str(err))
+                    continue
+            if not config.exists:
+                if verbose:
+                    print("Skipping non-existing path:", config)
+                continue
+            if config.empty:
+                if verbose:
+                    print("Skipping empty path:", config)
+                continue
+            if filter_fn is not None and not filter_fn(config):
+                if verbose:
+                    print("Skipping filtered path:", config)
+                continue
+            configs.append(config)
+        return configs
 
 
 class TOK2AnyAttributionConverter:
@@ -998,19 +1025,8 @@ class ConfigurationFilter:
 def main():
 
     base = Path("/home/lk3591/Documents/code/RawByteClf/output/esp-exe/")
-    configs: list[AttributionConfiguration] = []
-    for root in sorted(base.rglob("xai_seed--*")):
-        config = AttributionConfiguration.from_path(root)
-        if not config.exists:
-            print("Skipping non-existing path:", config)
-            continue
-        if config.empty:
-            print("Skipping empty path:", config)
-            continue
-        if config.xai_method == ExplanationMethod.TOK:
-            print("Skipping TOK path:", config)
-            continue
-        configs.append(config)
+    configuration_filter = ConfigurationFilter(f_method=lambda c: c.xai_method != ExplanationMethod.TOK)
+    configs = AttributionConfiguration.collect(base, configuration_filter, verbose=True)
 
     # Generate ranks.
     # pbar = tqdm(configs)
