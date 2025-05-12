@@ -542,7 +542,6 @@ class AgreementCoordinator:
         act_judges: Optional[list[np.ndarray]] = None,
         num_feature: tuple[int, int] = (1, sys.maxsize),
         incongruent: bool = False,
-        tolerance: float = 0.0,
         num_workers: int = 0,
         load_cache: bool = True,
         save_cache: bool = True,
@@ -558,7 +557,6 @@ class AgreementCoordinator:
         self._act_judges = np.full(len(paths), True) if act_judges is None else np.asarray(act_judges)
         self.num_feature = num_feature
         self.incongruent = incongruent
-        self.tolerance   = tolerance
         self.num_workers = num_workers
         self.load_cache  = load_cache
         self.save_cache  = save_cache
@@ -723,7 +721,7 @@ class AgreementCoordinator:
                 raise RuntimeError(f"Expected {which} to have shape ({self.I},) but got {x.shape}.")
 
         ranks = (r[:,self.act_judges] for r in self.ranks)
-        aggfunction = partial(self.aggfunction, top_k=self.top_k, tolerance=self.tolerance)
+        aggfunction = partial(self.aggfunction, top_k=self.top_k)
 
         if self.load_cache and self.cachefile.exists():
             W, P = np.load(self.cachefile)

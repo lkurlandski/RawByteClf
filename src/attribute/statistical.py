@@ -29,7 +29,7 @@ class AgreementMethod(Enum):
 
 class AgreementFunction(Protocol):
 
-    def __call__(self, R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:
+    def __call__(self, R: np.ndarray, top_k: Optional[int] = None) -> SignificanceResult:
         pass
 
 
@@ -76,7 +76,7 @@ def kendallw(R: np.ndarray) -> SignificanceResult:
     return SignificanceResult(w, p_val)
 
 
-def compute_agreement_kendall(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+def compute_agreement_kendall(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.00001) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the agreement and p-value using Kendall's Tau or Kendall's W, verifying the input and output.
     """
@@ -140,11 +140,11 @@ def spearmanr(R: np.ndarray) -> SignificanceResult:
     return SignificanceResult(res[0], res[1])
 
 
-def compute_agreement_spearman(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:
+def compute_agreement_spearman(R: np.ndarray, top_k: Optional[int] = None) -> SignificanceResult:
     raise NotImplementedError()
 
 
-def compute_agreement_jaccard(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:  # pylint: disable=unused-argument
+def compute_agreement_jaccard(R: np.ndarray, top_k: Optional[int] = None) -> SignificanceResult:  # pylint: disable=unused-argument
     if top_k is None:
         warnings.warn("Set overlap is trivially 1.0 when top_k is None.")
         return SignificanceResult(1.0, 0.0)
@@ -173,7 +173,7 @@ def compute_agreement_jaccard(R: np.ndarray, top_k: Optional[int] = None, tolera
     return SignificanceResult(statistic, pvalue)
 
 
-def compute_agreement_dice(R: np.ndarray, top_k: Optional[int] = None, tolerance: float = 0.0) -> SignificanceResult:  # pylint: disable=unused-argument
+def compute_agreement_dice(R: np.ndarray, top_k: Optional[int] = None) -> SignificanceResult:
     if top_k is None:
         warnings.warn("Set overlap is trivially 1.0 when top_k is None.")
         return SignificanceResult(1.0, 0.0)
