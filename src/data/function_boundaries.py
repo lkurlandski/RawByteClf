@@ -27,6 +27,7 @@ import re
 import sys
 import time
 from typing import Optional, Iterable, Literal
+import warnings
 import zipfile
 
 import numpy as np
@@ -84,10 +85,15 @@ def dis_file_to_exe_func_bounds(content: Path | str | bytes, errors: Literal["ra
 
             final = body[-1].split("\t")
             addr  = int(final[1].strip(), 16)
-            leng  = len(final[3].strip().split(" ")) if len(final) == 4 else 0
+            leng  = len(final[3].strip().split(" ")) if len(final) == 5 else 0
             upper = addr + leng
 
             bounds.append([lower, upper])
+
+            if len(first) != 5:
+                warnings.warn(f"first line does not have five parts (write a new unittest): {first}")
+            if len(final) != 5:
+                warnings.warn(f"final line does not have five parts (write a new unittest): {final}")
 
         bounds = np.array(bounds, dtype=np.uint32)
         bounds = np.reshape(bounds, (len(bounds), 2))
