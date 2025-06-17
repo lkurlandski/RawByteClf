@@ -30,6 +30,21 @@ CODE        \t0000063c    \t0040123c    \tff 25 ac 31 48 00                     
 )
 
 
+def get_disassembly_archives(n: int = 16) -> list[Path]:
+    root_a = Path("/home/lk3591/Documents/datasets")
+    root_b = Path("/shared/rc/admalware")
+    archives = []
+    for dnm in ["Assemblage", "BODMAS", "Sorel", "Windows"]:
+        p = root_a / dnm
+        p = root_b / dnm if not p.exists() else p
+        p = p / "ghidra/disassembled"
+        if not p.exists():
+            continue
+        archives.extend(list(rglob(p, "*.zip")))
+    archives = random.sample(archives, min(n, len(archives)))
+    return archives
+
+
 class TestDisFileToExeFuncBounds(unittest.TestCase):
 
     def test_snippet_typical(self):
@@ -42,18 +57,12 @@ class TestDisFileToExeFuncBounds(unittest.TestCase):
         raise NotImplementedError("Find a snippet that has a line that does not have five parts.")
 
     def test_snippets(self):
-        root_a = Path("/home/lk3591/Documents/datasets")
-        root_b = Path("/shared/rc/admalware")
-        archives = []
-        for dnm in ["Assemblage", "BODMAS", "Sorel", "Windows"]:
-            p = root_a / dnm
-            p = root_b / dnm if not p.exists() else p
-            p = p / "ghidra/disassembled"
-            if not p.exists():
-                continue
-            archives.extend(list(rglob(p, "*.zip")))
-        archives = random.sample(archives, min(16, len(archives)))
+        archives = get_disassembly_archives(16)
         bounds = dis_files_archives_to_exe_func_bounds_map(archives, 1)
         assert isinstance(bounds, dict)
         assert isinstance(next(iter(bounds.keys())), str)
         assert isinstance(next(iter(bounds.values())), np.ndarray)
+
+
+class TestExeFuncBoundsMap(unittest.TestCase):
+    ...
