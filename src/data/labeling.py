@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from typing import Optional
+import warnings
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -424,12 +425,25 @@ class Labeler:
 
     def parse_avclass_family(self) -> None:
 
+        # TODO: There is a bug here which results in some samples being
+        # unlabeled when they do in fact have a label. Concretely, the first
+        # branch does not set the sha argument, so the sha from the previous
+        # iteration of the for loop is used and its family is set to None.
+        if os.environ.get("USE_UPDATED_AVCLASS_FAMILY_PARSER") != "1":
+            warnings.warn(
+                "Using a variant of parse_avclass_family that has a small bug in it for backwards compatibility. "
+                f"{os.environ.get('USE_UPDATED_AVCLASS_FAMILY_PARSER')=}."
+                "Use USE_UPDATED_AVCLASS_FAMILY_PARSER=1 to use the updated version."
+            )
+
         with open(self.avclass_family_cache, "r") as fp:
             for line in fp:
                 line = re.sub(r'\s+', ' ', line).strip()
                 args = line.split()
                 if len(args) != 2:
                     if args[1:] == ["-", "[]"]:
+                        if os.environ.get("USE_UPDATED_AVCLASS_FAMILY_PARSER") == "1":
+                            sha = args[0]
                         fam = None
                     else:
                         raise ValueError(f"Unexpected line: {line=}")
