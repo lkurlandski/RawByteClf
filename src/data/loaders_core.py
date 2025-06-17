@@ -69,6 +69,12 @@ class ArchivedFile:
         self.archive = archive
         self.name = name
 
+    def __repr__(self) -> str:
+        return f"ArchiveFile({self.archive}, {self.name})"
+
+    def __str__(self) -> str:
+        return f"{str(self.archive)} --> {self.name}"
+
     @staticmethod
     def list_from_archives(archives: list[str | Path]) -> list[ArchivedFile]:
         archived_files = []
