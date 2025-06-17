@@ -39,6 +39,7 @@ from src.learn.helpers import OutputHelper
 from src.attribute.masking import apply_feature_mask
 from src.attribute.segtensor import SegmentedTensor
 from src.attribute.statistical import AgreementMethod, AgreementFunction, get_agreement_function, descriptive_sparsity
+from src.attribute.utils import ignore_warnings_decorator
 
 
 class Annotations(NamedTuple):
@@ -541,7 +542,6 @@ class AgreementCoordinator:
         act_judges: Optional[list[np.ndarray]] = None,
         num_feature: tuple[int, int] = (1, sys.maxsize),
         incongruent: bool = False,
-        tolerance: float = 0.0,
         num_workers: int = 0,
         load_cache: bool = True,
         save_cache: bool = True,
@@ -557,7 +557,6 @@ class AgreementCoordinator:
         self._act_judges = np.full(len(paths), True) if act_judges is None else np.asarray(act_judges)
         self.num_feature = num_feature
         self.incongruent = incongruent
-        self.tolerance   = tolerance
         self.num_workers = num_workers
         self.load_cache  = load_cache
         self.save_cache  = save_cache
@@ -685,7 +684,7 @@ class AgreementCoordinator:
         # Address incongruences (samples with different number of interpretable features).
         if len(incongruent) > 0:
             for i, j, k, name in incongruent:
-                print(f"Incongruence: sample {i} name {name} judge {j} features {k} expected {self.K[i]}.")
+                print(f"Incongruence: judge {j} ({self.judge_names[j]}) ranked {k} features when {self.K[i]} were expected on sample {i} ({name}).")
             if not self.incongruent:
                 raise RuntimeError("Incongruent samples were detected. Set `incongruent=True` to remove them.")
             remove = tuple(set(i for i, _, _, _ in incongruent))
@@ -712,6 +711,7 @@ class AgreementCoordinator:
 
         return self
 
+    @ignore_warnings_decorator("ignore", category=UserWarning, message=r"^Judge cannot rank any item higher or lower than any other*")
     def compute_agreement(self) -> AgreementCoordinator:
         """
         Computes the agreement between every sample.
@@ -721,7 +721,7 @@ class AgreementCoordinator:
                 raise RuntimeError(f"Expected {which} to have shape ({self.I},) but got {x.shape}.")
 
         ranks = (r[:,self.act_judges] for r in self.ranks)
-        aggfunction = partial(self.aggfunction, top_k=self.top_k, tolerance=self.tolerance)
+        aggfunction = partial(self.aggfunction, top_k=self.top_k)
 
         if self.load_cache and self.cachefile.exists():
             W, P = np.load(self.cachefile)
@@ -789,7 +789,8 @@ class AgreementCoordinator:
 
 class AttributionConfiguration:
 
-    last_path_attribute: str = "bf16"
+    last_path_attribute: str  = "bf16"
+    final_path_attribute: str = "xai_seed"
 
     def __init__(self, root: Optional[Path], seed: int, xai_method: ExplanationMethod, xai_algorithm: ExplanationAlgorithm, xai_chunk_size: Optional[int], xai_seed: int) -> None:
         self.root = root
@@ -875,6 +876,32 @@ class AttributionConfiguration:
             return cls(root, seed, xai_method, xai_algorithm, xai_chunk_size, xai_seed)
         except NameError as err:
             raise ValueError(f"Could not parse the {err.name} attribute from the path {path}.") from err  # pylint: disable=no-member
+
+    @staticmethod
+    def collect(path: Path, filter_fn: Optional[ConfigurationFilter] = None, verbose: bool = False) -> list[AttributionConfiguration]:
+        configs: list[AttributionConfiguration] = []
+        for root in sorted(path.rglob(f"{AttributionConfiguration.final_path_attribute}--*")):
+            try:
+                config = AttributionConfiguration.from_path(root)
+            except ValueError as err:
+                if "is not a valid" in str(err):
+                    if verbose:
+                        print("Skipping invalid algorithm:", str(err))
+                    continue
+            if not config.exists:
+                if verbose:
+                    print("Skipping non-existing path:", config)
+                continue
+            if config.empty:
+                if verbose:
+                    print("Skipping empty path:", config)
+                continue
+            if filter_fn is not None and not filter_fn(config):
+                if verbose:
+                    print("Skipping filtered path:", config)
+                continue
+            configs.append(config)
+        return configs
 
 
 class TOK2AnyAttributionConverter:
@@ -998,19 +1025,8 @@ class ConfigurationFilter:
 def main():
 
     base = Path("/home/lk3591/Documents/code/RawByteClf/output/esp-exe/")
-    configs: list[AttributionConfiguration] = []
-    for root in sorted(base.rglob("xai_seed--*")):
-        config = AttributionConfiguration.from_path(root)
-        if not config.exists:
-            print("Skipping non-existing path:", config)
-            continue
-        if config.empty:
-            print("Skipping empty path:", config)
-            continue
-        if config.xai_method == ExplanationMethod.TOK:
-            print("Skipping TOK path:", config)
-            continue
-        configs.append(config)
+    configuration_filter = ConfigurationFilter(f_method=lambda c: c.xai_method != ExplanationMethod.TOK)
+    configs = AttributionConfiguration.collect(base, configuration_filter, verbose=True)
 
     # Generate ranks.
     # pbar = tqdm(configs)

@@ -180,7 +180,7 @@ from src.architectures.rwkv import (
     RwkvForSequenceClassification,
 )
 from src.attribute.masking import get_masker, Masker, FunctionFeatureMasker
-from src.attribute.attribution import get_attributor, get_attribution, REQUIRES_INTERPRETABLE_EMBEDDINGS
+from src.attribute.attribution import get_attributor, get_attribution, REQUIRES_INTERPRETABLE_EMBEDDINGS, SINGLE_SAMPLE_ATTRIBUTORS
 from src.attribute.utils import ignore_warnings_decorator
 from src.data.loaders_core import (
     Materials,
@@ -2086,14 +2086,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         if isinstance(masker, FunctionFeatureMasker):
             print(f"{masker.boundaries.get_stats(2)=}")
 
-        if args.xai_algorithm in (ExplanationAlgorithm.IGRD, ExplanationAlgorithm.GSHP, ExplanationAlgorithm.DLFT):
-            outer_batch_size = args.per_device_attr_batch_size
-            inner_batch_size = 1
-        elif args.xai_algorithm in (ExplanationAlgorithm.FABL, ExplanationAlgorithm.KSHP, ExplanationAlgorithm.LIME):
+        if args.xai_algorithm in SINGLE_SAMPLE_ATTRIBUTORS:
             outer_batch_size = 1
             inner_batch_size = args.per_device_attr_batch_size
         else:
-            warnings.warn(f"Batch size protocol not defined for {args.xai_algorithm=}.")
+            outer_batch_size = args.per_device_attr_batch_size
+            inner_batch_size = 1
         print(f"Performing attribution with batch sizes: {outer_batch_size=} {inner_batch_size=}")
 
         # We need the names, so we can't use a dataloader (I think). This is going to slow us down

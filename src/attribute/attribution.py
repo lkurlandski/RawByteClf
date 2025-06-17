@@ -15,6 +15,7 @@ from captum.attr import (
     GradientShap,
     KernelShap,
     FeatureAblation,
+    FeaturePermutation,
     DeepLift,
     ShapleyValueSampling,
 )
@@ -40,6 +41,12 @@ REQUIRES_INTERPRETABLE_EMBEDDINGS = (
     ExplanationAlgorithm.IGRD,
     ExplanationAlgorithm.GSHP,
     ExplanationAlgorithm.DLFT,
+)
+
+SINGLE_SAMPLE_ATTRIBUTORS = (
+    ExplanationAlgorithm.KSHP,
+    ExplanationAlgorithm.LIME,
+    ExplanationAlgorithm.SSHP,
 )
 
 
@@ -154,82 +161,119 @@ def get_attributor(xai_algorithm: ExplanationAlgorithm, model: Optional[PreTrain
     raise TypeError(f"Explanation algorithm {xai_algorithm} not supported.")
 
 
-def get_n_samples(num_features: int) -> int:
-    assert num_features > 0, "Number of features must be greater than 0."
-    return 64 * int(math.log2(num_features + 1))
-
-
-def get_attribution_with_input_ids(
-    alg: FeatureAblation | Lime | KernelShap | ShapleyValueSampling,
-    input_ids: Tensor,
-    labels: Tensor,
-    model: PreTrainedModel,
-    feature_mask: Optional[Tensor],
-    batch_size: int = 1,
-    n_samples: Optional[int] = None,
-) -> Tensor:
+def get_attribution_fabl(alg: FeatureAblation, input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:
     is_multilabel = labels.dim() == 2
-
-    attribs       = torch.zeros_like(input_ids, dtype=torch.float32)
-    for i in range(input_ids.shape[0]):
-        _input_ids    = input_ids[i].unsqueeze(0)
-        _baselines    = torch.zeros_like(_input_ids)
-        _labels       = labels[i].unsqueeze(0)
-        _feature_mask = feature_mask[i].unsqueeze(0) if feature_mask is not None else None
-        _target       = None if is_multilabel else _labels
-        _forward_args = (model, _labels) if is_multilabel else (model,)
-        _n_features   = _feature_mask.unique().shape[0] if _feature_mask is not None else _input_ids.shape[1]
-        _n_samples    = get_n_samples(_n_features) if n_samples is None else n_samples
-        attribs[i]    = alg.attribute(
-            _input_ids,
-            baselines=_baselines,
-            target=_target,
-            additional_forward_args=_forward_args,
-            feature_mask=_feature_mask,
-            perturbations_per_eval=batch_size,
-            n_samples=_n_samples,
-        )
-
+    baselines     = torch.zeros_like(input_ids)
+    target        = None if is_multilabel else labels
+    forward_args  = (model, labels) if is_multilabel else (model,)
+    attribs       = alg.attribute(input_ids, baselines, target, forward_args, feature_mask)
     return attribs
 
 
-def get_attribution_with_inputs_embeds(
-    alg: IntegratedGradients | GradientShap | DeepLift,
-    inputs_embeds: Tensor,
-    labels: Tensor,
-    model: PreTrainedModel,
-    feature_mask: Optional[Tensor],
-) -> Tensor:
+def get_attribution_fprm(alg: FeaturePermutation, input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:
+    is_multilabel = labels.dim() == 2
+    target        = None if is_multilabel else labels
+    forward_args  = (model, labels) if is_multilabel else (model,)
+    attribs       = alg.attribute(input_ids, target, forward_args, feature_mask)
+    return attribs
+
+
+def get_attribution_kshp(alg: KernelShap, input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor], batch_size: int = 1) -> Tensor:
     is_multilabel = labels.dim() == 2
 
-    if isinstance(alg, IntegratedGradients):
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-        )
-    elif isinstance(alg, GradientShap):
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(model, labels) if is_multilabel else (model,),
-        )
-    elif isinstance(alg, DeepLift):
-        attribs = alg.attribute(
-            inputs_embeds,
-            baselines=torch.zeros_like(inputs_embeds),
-            target=None if is_multilabel else labels,
-            additional_forward_args=(labels,) if is_multilabel else None,
-        )
-    else:
-        raise TypeError(f"Explanation algorithm {alg} not supported.")
+    def get_attrib(input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:
+        input_ids    = input_ids.unsqueeze(0)
+        labels       = labels.unsqueeze(0)
+        baselines    = torch.zeros_like(input_ids)
+        feature_mask = feature_mask.unsqueeze(0) if feature_mask is not None else None
+        target       = None if is_multilabel else labels
+        forward_args = (model, labels) if is_multilabel else (model,)
+        n_features   = len(feature_mask.unique()) if feature_mask is not None else input_ids.shape[1]
+        n_samples    = 64 * int(math.log2(n_features + 1))
+        attribs      = alg.attribute(input_ids, baselines, target, forward_args, feature_mask, n_samples, batch_size)
+        return attribs[0]
 
-    attribs = attribs.mean(dim=2)
-    if feature_mask is not None:
-        attribs = apply_feature_mask(attribs, feature_mask)
+    attribs = torch.zeros_like(input_ids, dtype=torch.float32)
+    for i in range(input_ids.shape[0]):
+        attribs[i] = get_attrib(input_ids[i], labels[i], model, feature_mask[i] if feature_mask is not None else None)
+    return attribs
 
+
+def get_attribution_lime(alg: Lime, input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor], batch_size: int = 1) -> Tensor:
+    is_multilabel = labels.dim() == 2
+
+    def get_attrib(input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:
+        input_ids    = input_ids.unsqueeze(0)
+        labels       = labels.unsqueeze(0)
+        baselines    = torch.zeros_like(input_ids)
+        feature_mask = feature_mask.unsqueeze(0) if feature_mask is not None else None
+        target       = None if is_multilabel else labels
+        forward_args = (model, labels) if is_multilabel else (model,)
+        n_features   = len(feature_mask.unique()) if feature_mask is not None else input_ids.shape[1]
+        n_samples    = 64 * int(math.log2(n_features + 1))
+        attribs      = alg.attribute(input_ids, baselines, target, forward_args, feature_mask, n_samples, batch_size)
+        return attribs[0]
+
+    attribs = torch.zeros_like(input_ids, dtype=torch.float32)
+    for i in range(input_ids.shape[0]):
+        attribs[i] = get_attrib(input_ids[i], labels[i], model, feature_mask[i] if feature_mask is not None else None)
+    return attribs
+
+
+def get_attribution_sshp(alg: KernelShap, input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor], batch_size: int = 1) -> Tensor:
+    is_multilabel = labels.dim() == 2
+
+    def get_attrib(input_ids: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:
+        input_ids    = input_ids.unsqueeze(0)
+        labels       = labels.unsqueeze(0)
+        baselines    = torch.zeros_like(input_ids)
+        feature_mask = feature_mask.unsqueeze(0) if feature_mask is not None else None
+        target       = None if is_multilabel else labels
+        forward_args = (model, labels) if is_multilabel else (model,)
+        n_features   = len(feature_mask.unique()) if feature_mask is not None else input_ids.shape[1]
+        n_samples    = 64 * int(math.log2(n_features + 1))
+        attribs      = alg.attribute(input_ids, baselines, target, forward_args, feature_mask, n_samples, batch_size)
+        return attribs[0]
+
+    attribs = torch.zeros_like(input_ids, dtype=torch.float32)
+    for i in range(input_ids.shape[0]):
+        attribs[i] = get_attrib(input_ids[i], labels[i], model, feature_mask[i] if feature_mask is not None else None)
+    return attribs
+
+
+def get_attribution_dlft(alg: DeepLift, inputs_embeds: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:  # pylint: disable=unused-argument
+    is_multilabel = labels.dim() == 2
+    baselines     = torch.zeros_like(inputs_embeds)
+    target        = None if is_multilabel else labels
+    forward_args  = (labels,) if is_multilabel else None
+    attribs       = alg.attribute(inputs_embeds, baselines, target, forward_args)
+    attribs       = attribs.mean(dim=2)
+    attribs       = apply_feature_mask(attribs, feature_mask) if feature_mask is not None else attribs
+    return attribs
+
+
+def get_attribution_igrd(alg: IntegratedGradients, inputs_embeds: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:
+    is_multilabel = labels.dim() == 2
+    baselines     = torch.zeros_like(inputs_embeds)
+    target        = None if is_multilabel else labels
+    forward_args  = (model, labels) if is_multilabel else (model,)
+    attribs       = alg.attribute(inputs_embeds, baselines, target, forward_args)
+    attribs       = attribs.mean(dim=2)
+    attribs       = attribs.to(torch.float32)
+    attribs       = apply_feature_mask(attribs, feature_mask) if feature_mask is not None else attribs
+    return attribs
+
+
+def get_attribution_gshp(alg: GradientShap, inputs_embeds: Tensor, labels: Tensor, model: PreTrainedModel, feature_mask: Optional[Tensor]) -> Tensor:
+    is_multilabel = labels.dim() == 2
+    baselines     = torch.zeros_like(inputs_embeds)
+    n_samples     = 5
+    stdevs        = 0.0
+    target        = None if is_multilabel else labels
+    forward_args  = (model, labels) if is_multilabel else (model,)
+    attribs       = alg.attribute(inputs_embeds, baselines, n_samples, stdevs, target, forward_args)
+    attribs       = attribs.mean(dim=2)
+    attribs       = apply_feature_mask(attribs, feature_mask) if feature_mask is not None else attribs
     return attribs
 
 
@@ -243,17 +287,25 @@ def get_attribution(
     model: PreTrainedModel,
     feature_mask: Optional[Tensor] = None,
     batch_size: int = 1,
-    n_samples: Optional[int] = None,
 ) -> Tensor:
-    if isinstance(alg, (FeatureAblation, Lime, KernelShap, ShapleyValueSampling)):
-        attribs =  get_attribution_with_input_ids(alg, input_ids, labels, model, feature_mask, batch_size, n_samples)
-    elif isinstance(alg, (IntegratedGradients, GradientShap, DeepLift)):
-        attribs = get_attribution_with_inputs_embeds(alg, inputs_embeds, labels, model, feature_mask)
+    if isinstance(alg, FeatureAblation):
+        attribs = get_attribution_fabl(alg, input_ids, labels, model, feature_mask)
+    elif isinstance(alg, FeaturePermutation):
+        attribs = get_attribution_fprm(alg, input_ids, labels, model, feature_mask)
+    elif isinstance(alg, KernelShap):
+        attribs = get_attribution_kshp(alg, input_ids, labels, model, feature_mask, batch_size)
+    elif isinstance(alg, Lime):
+        attribs = get_attribution_lime(alg, input_ids, labels, model, feature_mask, batch_size)
+    elif isinstance(alg, ShapleyValueSampling):
+        attribs = get_attribution_sshp(alg, input_ids, labels, model, feature_mask, batch_size)
+    elif isinstance(alg, IntegratedGradients):
+        attribs = get_attribution_igrd(alg, inputs_embeds, labels, model, feature_mask)
+    elif isinstance(alg, GradientShap):
+        attribs = get_attribution_gshp(alg, inputs_embeds, labels, model, feature_mask)
+    elif isinstance(alg, DeepLift):
+        attribs = get_attribution_dlft(alg, inputs_embeds, labels, model, feature_mask)
     else:
-        raise TypeError(f"Explanation algorithm {alg} not supported.")
-
-    if isinstance(alg, IntegratedGradients):  # For some reason, IGRD returns float64.
-        attribs = attribs.to(torch.float32)
+        raise TypeError(f"Attribution algorithm {alg} not supported.")
 
     if attribs.dtype != torch.float32:
         raise TypeError(f"Expected float32, got {attribs.dtype}.")
