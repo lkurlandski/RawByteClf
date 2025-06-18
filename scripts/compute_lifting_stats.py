@@ -235,14 +235,17 @@ def prepare(num_files: int) -> None:
         raise ValueError("No archives found in ./data/")
     random.shuffle(archives)
 
-    iterable = enumerate(islice(get_data_from_archives(archives), num_files))
+    iterable = enumerate(get_data_from_archives(archives))
     i = 0
-    for i, (n, b) in tqdm(iterable, desc="Preparing test data...", total=num_files):
+    for n, b in tqdm(iterable, desc="Preparing test data...", total=num_files):
+        if i == num_files:
+            break
         if n.split(".")[0] not in valid:
             print(f"Skipping {n} as it is not in the valid set.")
             continue
         f: Path = PATH_BINARIES / n
         f.write_bytes(b)
+        i += 1
 
     if i != num_files - 1:
         warnings.warn("Not enough files found in the archives.")
