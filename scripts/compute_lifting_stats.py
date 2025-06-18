@@ -146,7 +146,7 @@ def run_dis(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
         report["script-success"] += text.count("run: finished (success)")
     print(f"Status: {report}")
 
-    print(f"Processed {len(files)} files in {end - start:.3f}s")
+    print(f"Processed {sum(len(f) for f in files)} files in {end - start:.3f}s")
 
 
 def run_dec(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
