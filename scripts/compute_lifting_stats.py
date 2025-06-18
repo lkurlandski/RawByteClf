@@ -22,6 +22,9 @@ import time
 from typing import Literal, Optional
 import warnings
 
+# Importing lief here, then importing it again in src.data.ember
+# or in src.data.executable_sections will cause a Segmentation fault (lief==0.12.0).
+# import lief
 from tqdm import tqdm
 
 # pylint: disable=wrong-import-position
@@ -32,11 +35,13 @@ if __name__ == "__main__":
 from src.enums import LiftLevel
 from src.utils import rglob, batched
 from src.data.cfg import ASSEMBLAGE_PATH, BODMAS_PATH, SOREL_PATH, WINDOWS_PATH
+from src.data.ember import PEFeatureExtractor
 from src.data.executable_sections import get_executable_section_bounds
 from src.data.utils import get_data_from_archives, read_binary_files_asynch
 
 
 random.seed(0)
+
 
 ROOT = Path("./tmp/time-lifting")
 PATH_BINARIES = ROOT / "binaries"
@@ -52,7 +57,42 @@ TIMEOUT_PER_FUNC_DISASSEMBLY = 30
 TIMEOUT_PER_FUNC_DECOMPILATION = 60
 
 
+def run_tab(files: list[Path], num_workers: int = 1):
+
+    import lief  # pylint: disable=import-outside-toplevel
+
+    if lief.__version__[0:len("0.12.0")] != "0.12.0":
+        raise RuntimeError(f"Expected lief version 0.12.0, but got {lief.__version__}. Please install the correct version.")
+
+    start = time.perf_counter()
+
+    loop = asyncio.get_event_loop()
+    future = read_binary_files_asynch(files, disable_tqdm=False)
+    data = loop.run_until_complete(future)
+
+    extractor = PEFeatureExtractor()
+    func = extractor.feature_vector
+    if num_workers > 1:
+        with mp.Pool(20) as pool:
+            out = pool.map(func, data)
+    else:
+        out = list(map(func, data))
+
+    end = time.perf_counter()
+
+    report = Counter([o.shape for o in out])
+    print(f"Status: {report}")
+
+    print(f"Processed {len(files)} files in {end - start:.3f}s")
+
+
 def run_raw(files: list[Path], num_workers: int = 1):
+
+    import lief  # pylint: disable=import-outside-toplevel
+
+    if lief.__version__[0:len("0.15.1")] != "0.15.1":
+        raise RuntimeError(f"Expected lief version 0.15.1, but got {lief.__version__}. Please install the correct version.")
+
     start = time.perf_counter()
 
     loop = asyncio.get_event_loop()
@@ -72,6 +112,14 @@ def run_raw(files: list[Path], num_workers: int = 1):
     print(f"Status: {report}")
 
     print(f"Processed {len(files)} files in {end - start:.3f}s")
+
+
+def run_dis(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
+    return run_dis_or_dec("dis", files, num_workers, max_cpu)
+
+
+def run_dec(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
+    return run_dis_or_dec("dec", files, num_workers, max_cpu)
 
 
 def _run_dis_or_dec(dis_or_dec: Literal["dis", "dec"], files: list[Path], location: Path, logfile: Path, max_cpu: int = 1):
@@ -230,7 +278,7 @@ def check_and_set_max_mem(new: Optional[int] = None) -> None:
 def main():
     parser = ArgumentParser()
     parser.add_argument("--prepare", action="store_true")
-    parser.add_argument("--lift_level", type=LiftLevel, required=False)
+    parser.add_argument("--representation", type=str, choices=["tab", "raw", "dis", "dec"])
     parser.add_argument("--num_files", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--max_cpu", type=int, default=1)
@@ -248,12 +296,14 @@ def main():
 
     check_and_set_max_mem(args.max_mem)
 
-    if args.lift_level == LiftLevel.RAW:
+    if args.representation == "tab":
+        run_tab(files, args.num_workers)
+    if args.representation == "raw":
         run_raw(files, args.num_workers)
-    if args.lift_level == LiftLevel.DIS:
-        run_dis_or_dec("dis", files, args.num_workers, args.max_cpu)
-    if args.lift_level == LiftLevel.DEC:
-        run_dis_or_dec("dec", files, args.num_workers, args.max_cpu)
+    if args.representation == "dis":
+        run_dis(files, args.num_workers, args.max_cpu)
+    if args.representation == "dec":
+        run_dec(files, args.num_workers, args.max_cpu)
 
 
 if __name__ == "__main__":
