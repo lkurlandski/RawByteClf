@@ -185,6 +185,32 @@ def prepare(num_files: int) -> None:
     print(f"Prepared {i + 1} files in {PATH_BINARIES}")
 
 
+def check_and_set_max_mem(new: Optional[int] = None) -> None:
+    path = Path(shutil.which("analyzeHeadless")).resolve()
+
+    cur = None
+    with open(path, "r") as fp:
+        for line in fp:
+            if line.startswith("MAXMEM"):
+                cur = int(line.split("=")[1].strip().replace("G", ""))
+                break
+    if cur is None:
+        raise RuntimeError("Could not find MAXMEM in analyzeHeadless script.")
+
+    if new is not None and cur != new:
+        with open(path, "r") as fp:
+            lines = fp.readlines()
+        with open(path, "w") as fp:
+            for line in lines:
+                if line.startswith("MAXMEM"):
+                    line = f"MAXMEM={new}G\n"
+                fp.write(line)
+        print(f"Current max memory: {cur}G")
+        cur = new
+
+    print(f"Current max memory: {cur}G")
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument("--prepare", action="store_true")
@@ -192,6 +218,7 @@ def main():
     parser.add_argument("--num_files", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--max_cpu", type=int, default=1)
+    parser.add_argument("--max_mem", type=int, default=None)
     args = parser.parse_args()
 
     ROOT.mkdir(exist_ok=True)
@@ -202,6 +229,8 @@ def main():
     files = [f.resolve() for f in files]
     if not files:
         raise ValueError(f"No files found in {PATH_BINARIES}. Please prepare the data first.")
+
+    check_and_set_max_mem(args.max_mem)
 
     if args.lift_level == LiftLevel.RAW:
         run_raw(files, args.num_workers)
