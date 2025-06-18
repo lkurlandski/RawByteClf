@@ -94,7 +94,7 @@ def _run_dis(files: list[Path], location: Path, logfile: Path, max_cpu: int = 1)
         "-import", str(directory),
         "-max-cpu", str(max_cpu),
         "-analysisTimeoutPerFile", str(TIMEOUT_PER_FILE_ANALYSIS),
-        # "-preScript", "SetAnalysisOptionsForDisassembly.java",
+        "-preScript", "SetAnalysisOptionsForDisassembly.java",
         "-postScript", "Disassembler.java", str(PATH_DISASSEMBLED), str(TIMEOUT_PER_FILE_DISASSEMBLY), str(TIMEOUT_PER_FUNC_DISASSEMBLY)
     ]
 
