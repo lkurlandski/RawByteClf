@@ -243,7 +243,7 @@ def prepare(num_files: int, dnm: Optional[Literal["ass", "bod", "sor", "win"]] =
         archives.extend(list(map(Path, rglob(d, "*.zip"))))
     if not archives:
         raise ValueError("No archives found in ./data/")
-    random.shuffle(archives)
+    archives.sort()
     print(f"Found {len(archives)} valid archives: ")
     for a in archives:
         print(f"  - {a}")
@@ -261,6 +261,7 @@ def prepare(num_files: int, dnm: Optional[Literal["ass", "bod", "sor", "win"]] =
         f.write_bytes(b)
         i += 1
     print(f"Skipped {skipped} files that were not among in the valid digests.")
+    print(f"Last sha: {n}")
 
     if i != num_files:
         warnings.warn("Not enough files found in the archives.")
