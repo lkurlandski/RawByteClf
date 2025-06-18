@@ -217,37 +217,47 @@ def run_dis_or_dec(dis_or_dec: Literal["dis", "dec"], files: list[Path], num_wor
     print(f"Processed {sum(len(f) for f in files)} files in {end - start:.3f}s")
 
 
-def prepare(num_files: int) -> None:
+def prepare(num_files: int, dnm: Optional[Literal["ass", "bod", "sor", "win"]] = None) -> None:
+
+    print(f"Preparing {num_files} file from {dnm if dnm is not None else 'all'} dataset{'s' if dnm is None else ''}.")
 
     shutil.rmtree(PATH_BINARIES, ignore_errors=True)
     PATH_BINARIES.mkdir()
 
-    with open("data/sor/dis/digests.json") as fp:
+    with open(f"data/{dnm}/dis/digests.json") as fp:
         d = json.load(fp)
     valid = set(d.keys())
+    print(f"Found {len(valid)} valid digests.")
 
     archives = []
     for d in map(Path, rglob("./data/", "nop")):
         if not d.is_dir():
             continue
+        if dnm is not None and d.parent.name != dnm:
+            continue
         archives.extend(list(map(Path, rglob(d, "*.zip"))))
     if not archives:
         raise ValueError("No archives found in ./data/")
     random.shuffle(archives)
+    print(f"Found {len(archives)} valid archives: ")
+    for a in archives:
+        print(f"  - {a}")
 
     iterable = get_data_from_archives(archives)
     i = 0
-    for n, b in tqdm(iterable, desc="Preparing test data...", total=num_files):
+    skipped = 0
+    for n, b in tqdm(iterable, desc="Reading archives...", total=num_files, leave=False):
         if i == num_files:
             break
         if n.split(".")[0] not in valid:
-            print(f"Skipping {n} as it is not in the valid set.")
+            skipped += 1
             continue
         f: Path = PATH_BINARIES / n
         f.write_bytes(b)
         i += 1
+    print(f"Skipped {skipped} files that were not among in the valid digests.")
 
-    if i != num_files - 1:
+    if i != num_files:
         warnings.warn("Not enough files found in the archives.")
     print(f"Prepared {i} files in {PATH_BINARIES}")
 
@@ -272,32 +282,45 @@ def check_and_set_max_mem(new: Optional[int] = None) -> None:
                 if line.startswith("MAXMEM"):
                     line = f"MAXMEM={new}G\n"
                 fp.write(line)
-        print(f"Current max memory: {cur}G")
+        print(f"Current max memory (analyzeHeadless): {cur}G")
         cur = new
 
-    print(f"Current max memory: {cur}G")
+    print(f"Current max memory for (analyzeHeadless): {cur}G")
 
 
 def main():
     parser = ArgumentParser()
     parser.add_argument("--prepare", action="store_true")
-    parser.add_argument("--representation", type=str, choices=["tab", "raw", "dis", "dec"])
-    parser.add_argument("--num_files", type=int, default=16)
+    parser.add_argument("--representation", type=str, choices=["tab", "raw", "dis", "dec"], default=None)
+    parser.add_argument("--dnm", type=str, choices=["ass", "bod", "sor", "win"], default=None)
+    parser.add_argument("--num_files", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--max_cpu", type=int, default=1)
     parser.add_argument("--max_mem", type=int, default=None)
     args = parser.parse_args()
 
+    print("Command line arguments:")
+    print(f"  - prepare: {args.prepare}")
+    print(f"  - representation: {args.representation}")
+    print(f"  - dataset: {args.dnm}")
+    print(f"  - num_files: {args.num_files}")
+    print(f"  - num_workers: {args.num_workers}")
+    print(f"  - max_cpu: {args.max_cpu}")
+    print(f"  - max_mem: {args.max_mem}")
+
     ROOT.mkdir(exist_ok=True)
 
     if args.prepare:
-        prepare(args.num_files)
+        if args.num_files is None:
+            raise ValueError("Please specify the number of files to prepare with --num_files.")
+        prepare(args.num_files, args.dnm)
     files: list[Path] = sorted(PATH_BINARIES.iterdir())
     files = [f.resolve() for f in files]
     if not files:
         raise ValueError(f"No files found in {PATH_BINARIES}. Please prepare the data first.")
 
-    check_and_set_max_mem(args.max_mem)
+    if args.representation in ("dis", "dec"):
+        check_and_set_max_mem(args.max_mem)
 
     if args.representation == "tab":
         run_tab(files, args.num_workers)
@@ -307,6 +330,9 @@ def main():
         run_dis(files, args.num_workers, args.max_cpu)
     if args.representation == "dec":
         run_dec(files, args.num_workers, args.max_cpu)
+
+    print("FINISHED")
+    print("-" * 80)
 
 
 if __name__ == "__main__":
