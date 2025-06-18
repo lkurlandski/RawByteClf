@@ -124,6 +124,8 @@ def run_dec(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
 
 def _run_dis_or_dec(dis_or_dec: Literal["dis", "dec"], files: list[Path], location: Path, logfile: Path, max_cpu: int = 1):
 
+    print(f"{os.getpid()}: Running {dis_or_dec} on {len(files)} files with {max_cpu} max CPU cores.")
+
     shutil.rmtree(location, ignore_errors=True)
     location.mkdir(exist_ok=True)
 
@@ -160,6 +162,7 @@ def _run_dis_or_dec(dis_or_dec: Literal["dis", "dec"], files: list[Path], locati
         timeout = len(files) * (TIMEOUT_PER_FILE_ANALYSIS + TIMEOUT_PER_FILE_DECOMPILATION + 60)
 
     try:
+        print(f"{os.getpid()}: Executing subprocess with timeout {timeout} and command {' '.join(args)}")
         with open(logfile, "w") as fp:
             subprocess.run(args, check=True, stdout=fp, stderr=fp, timeout=timeout)
     except subprocess.CalledProcessError:
@@ -175,6 +178,8 @@ def run_dis_or_dec(dis_or_dec: Literal["dis", "dec"], files: list[Path], num_wor
 
     if dis_or_dec not in ("dis", "dec"):
         raise ValueError(f"Invalid dis_or_dec value: {dis_or_dec}. Must be 'dis' or 'dec'.")
+
+    print(f"{os.getpid()}: Running {dis_or_dec} on {len(files)} files with {num_workers} workers and {max_cpu} max CPU cores.")
 
     start = time.perf_counter()
 
