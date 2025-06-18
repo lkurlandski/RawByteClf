@@ -112,28 +112,19 @@ class GetExecutableSectionBounds:
             raise ValueError("One and only one of `file` or `content` must be provided.")
 
         self.file = file
-        self.content = content
+        self.content = Path(file).read_bytes() if content is None else content
         self.toolkit = Toolkit(toolkit)
         self.length = len(content) if file is None else os.path.getsize(file)
 
     def __call__(self) -> tuple[Boundaries, ExitCode]:
-        if self.file is None:
-            self.file = tempfile.NamedTemporaryFile(delete=False).name  # pylint: disable=consider-using-with
-            with open(self.file, "wb") as fp:
-                fp.write(self.content)
-
-        try:
-            if self.toolkit == Toolkit.LIEF:
-                return self._get_boundaries_lief()
-            if self.toolkit == Toolkit.PEFILE:
-                return self._get_boundaries_pefile()
-            raise TypeError(f"{type(self.toolkit)}")
-        finally:
-            if self.content is not None:
-                os.unlink(self.file)
+        if self.toolkit == Toolkit.LIEF:
+            return self._get_boundaries_lief()
+        if self.toolkit == Toolkit.PEFILE:
+            return self._get_boundaries_pefile()
+        raise TypeError(f"{type(self.toolkit)}")
 
     def _get_boundaries_lief(self) -> tuple[Boundaries, ExitCode]:
-        binary = lief.parse(self.file)  # pylint: disable=no-member,c-extension-no-member
+        binary = lief.parse(self.content)  # pylint: disable=no-member,c-extension-no-member
         if binary is None:
             return [], ExitCode.COULD_NOT_PARSE
 
@@ -152,7 +143,7 @@ class GetExecutableSectionBounds:
 
     def _get_boundaries_pefile(self) -> tuple[Boundaries, ExitCode]:
         try:
-            binary = pefile.PE(self.file)
+            binary = pefile.PE(data=self.content)
         except pefile.PEFormatError:
             return [], ExitCode.COULD_NOT_PARSE
 
@@ -259,6 +250,14 @@ class GetExecutableSectionBounds:
             code = code | ExitCode.SECTION_LOWER_OVER_UPPER
 
         return (lower, upper), code
+
+
+def get_executable_section_bounds(
+    file: Optional[str] = None,
+    content: Optional[bytes] = None,
+    toolkit: Toolkit | str = Toolkit.LIEF,
+) -> tuple[Boundaries, ExitCode]:
+    return GetExecutableSectionBounds(file, content, toolkit)()
 
 
 class Runner:
