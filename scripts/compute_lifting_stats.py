@@ -6,7 +6,7 @@ from argparse import ArgumentParser
 import asyncio
 from collections import Counter, defaultdict
 import functools
-from itertools import islice
+from itertools import islice, repeat
 import json
 import math
 import multiprocessing as mp
@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Optional
+from typing import Literal, Optional
 import warnings
 
 from tqdm import tqdm
@@ -74,7 +74,7 @@ def run_raw(files: list[Path], num_workers: int = 1):
     print(f"Processed {len(files)} files in {end - start:.3f}s")
 
 
-def _run_dis(files: list[Path], location: Path, logfile: Path, max_cpu: int = 1):
+def _run_dis_or_dec(dis_or_dec: Literal["dis", "dec"], files: list[Path], location: Path, logfile: Path, max_cpu: int = 1):
 
     shutil.rmtree(location, ignore_errors=True)
     location.mkdir(exist_ok=True)
@@ -94,11 +94,23 @@ def _run_dis(files: list[Path], location: Path, logfile: Path, max_cpu: int = 1)
         "-import", str(directory),
         "-max-cpu", str(max_cpu),
         "-analysisTimeoutPerFile", str(TIMEOUT_PER_FILE_ANALYSIS),
-        "-preScript", "SetAnalysisOptionsForDisassembly.java",
-        "-postScript", "Disassembler.java", str(PATH_DISASSEMBLED), str(TIMEOUT_PER_FILE_DISASSEMBLY), str(TIMEOUT_PER_FUNC_DISASSEMBLY)
     ]
+    if dis_or_dec == "dis":
+        args += [
+            "-preScript", "SetAnalysisOptionsForDisassembly.java",
+            "-postScript", "Disassembler.java", str(PATH_DISASSEMBLED), str(TIMEOUT_PER_FILE_DISASSEMBLY), str(TIMEOUT_PER_FUNC_DISASSEMBLY),
+        ]
+    if dis_or_dec == "dec":
+        args += [
+            # "-preScript", "SetAnalysisOptionsForDecompilation.java",
+            "-postScript", "Decompiler.java", str(PATH_DECOMPILED), str(TIMEOUT_PER_FILE_DECOMPILATION), str(TIMEOUT_PER_FUNC_DECOMPILATION),
+        ]
 
-    timeout = len(files) * (TIMEOUT_PER_FILE_ANALYSIS + TIMEOUT_PER_FILE_DISASSEMBLY + 60)
+    if dis_or_dec == "dis":
+        timeout = len(files) * (TIMEOUT_PER_FILE_ANALYSIS + TIMEOUT_PER_FILE_DISASSEMBLY + 60)
+    if dis_or_dec == "dec":
+        timeout = len(files) * (TIMEOUT_PER_FILE_ANALYSIS + TIMEOUT_PER_FILE_DECOMPILATION + 60)
+
     try:
         with open(logfile, "w") as fp:
             subprocess.run(args, check=True, stdout=fp, stderr=fp, timeout=timeout)
@@ -111,24 +123,31 @@ def _run_dis(files: list[Path], location: Path, logfile: Path, max_cpu: int = 1)
     shutil.rmtree(directory, ignore_errors=True)
 
 
-def run_dis(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
+def run_dis_or_dec(dis_or_dec: Literal["dis", "dec"], files: list[Path], num_workers: int = 1, max_cpu: int = 1):
+
+    if dis_or_dec not in ("dis", "dec"):
+        raise ValueError(f"Invalid dis_or_dec value: {dis_or_dec}. Must be 'dis' or 'dec'.")
 
     start = time.perf_counter()
 
     shutil.rmtree(PATH_LOCATION, ignore_errors=True)
     PATH_LOCATION.mkdir()
 
-    shutil.rmtree(PATH_DISASSEMBLED, ignore_errors=True)
-    PATH_DISASSEMBLED.mkdir(exist_ok=True)
+    if dis_or_dec == "dis":
+        shutil.rmtree(PATH_DISASSEMBLED, ignore_errors=True)
+        PATH_DISASSEMBLED.mkdir(exist_ok=True)
+    if dis_or_dec == "dec":
+        shutil.rmtree(PATH_DECOMPILED, ignore_errors=True)
+        PATH_DECOMPILED.mkdir(exist_ok=True)
 
     PATH_LOGFILES.mkdir(exist_ok=True)
 
     files: list[list[Path]] = list(batched(files, int(math.ceil(len(files) / num_workers))))
     locations: list[Path]   = [PATH_LOCATION / f"{i}" for i in range(len(files))]
-    logfiles: list[Path]    = [PATH_LOGFILES / f"dis-{i}.log" for i in range(len(files))]
+    logfiles: list[Path]    = [PATH_LOGFILES / f"{dis_or_dec}-{i}.log" for i in range(len(files))]
 
-    func = functools.partial(_run_dis, max_cpu=max_cpu)
-    iterable = list(zip(files, locations, logfiles))
+    func = functools.partial(_run_dis_or_dec, max_cpu=max_cpu)
+    iterable = list(zip(repeat(dis_or_dec, len(files)), files, locations, logfiles))
     if num_workers > 1:
         with mp.Pool(num_workers) as pool:
             out = pool.starmap(func, iterable)  # pylint: disable=unused-variable
@@ -144,13 +163,10 @@ def run_dis(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
         report["script-timeout"] += text.count("run: finished (timeout)")
         report["script-crash"] += text.count("run: finished (crash)")
         report["script-success"] += text.count("run: finished (success)")
+    report = dict(report)
     print(f"Status: {report}")
 
     print(f"Processed {sum(len(f) for f in files)} files in {end - start:.3f}s")
-
-
-def run_dec(files: list[Path], num_workers: int = 1, max_cpu: int = 1):
-    ...
 
 
 def prepare(num_files: int) -> None:
@@ -235,9 +251,9 @@ def main():
     if args.lift_level == LiftLevel.RAW:
         run_raw(files, args.num_workers)
     if args.lift_level == LiftLevel.DIS:
-        run_dis(files, args.num_workers, args.max_cpu)
+        run_dis_or_dec("dis", files, args.num_workers, args.max_cpu)
     if args.lift_level == LiftLevel.DEC:
-        run_dec(files, args.num_workers, args.max_cpu)
+        run_dis_or_dec("dec", files, args.num_workers, args.max_cpu)
 
 
 if __name__ == "__main__":
