@@ -235,7 +235,7 @@ def prepare(num_files: int) -> None:
         raise ValueError("No archives found in ./data/")
     random.shuffle(archives)
 
-    iterable = enumerate(get_data_from_archives(archives))
+    iterable = get_data_from_archives(archives)
     i = 0
     for n, b in tqdm(iterable, desc="Preparing test data...", total=num_files):
         if i == num_files:
@@ -249,7 +249,7 @@ def prepare(num_files: int) -> None:
 
     if i != num_files - 1:
         warnings.warn("Not enough files found in the archives.")
-    print(f"Prepared {i + 1} files in {PATH_BINARIES}")
+    print(f"Prepared {i} files in {PATH_BINARIES}")
 
 
 def check_and_set_max_mem(new: Optional[int] = None) -> None:
