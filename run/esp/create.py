@@ -317,22 +317,6 @@ class Configuration:
                 return False
 
         # Adjust as desired.
-        if self.tokenization_algorithm != TokenizationAlgorithm.WORDLEVEL:
-            return False
-        if self.vocab_size != 256:
-            return False
-        if self.lift_level_ddp is not None:
-            return False
-        if self.max_length != 2**20:
-            return False
-        if self.model_name != ModelName.MAL:
-            return False
-        if self.model_size != ModelSize.CO:
-            return False
-        if self.lift_level != LiftLevel.NOP:
-            return False
-        if self.pretraining_task is not None:
-            return False
 
         return True
 
@@ -466,9 +450,9 @@ class Configuration:
                 return 2
             return 1
         if self.task == Task.FAM:
-            return 4
+            return 1
         if self.task == Task.DET:
-            return 2
+            return 1
         if self.task == Task.BEH:
             return 1
         raise RuntimeError()
@@ -787,22 +771,22 @@ def main():
 
     if not args.no_remove:
         for f in outpath().iterdir():
-            f.unlink()
+            if not f.name[0] == ".":
+                f.unlink()
     outpath().mkdir(parents=True, exist_ok=True)
 
     configurations = product(
-        ModelName,
-        ModelSize,
-        ModelMode,
-        # (4096, 8192, 16384, 32768, 65536),
-        (2 ** 20,),
-        LiftLevel,
-        list(LiftLevel) + [None],
+        [ModelName.MAM],
+        [ModelSize.CO],
+        [ModelMode.BI],
+        [65536],
+        [LiftLevel.RAW],
+        [LiftLevel.DEC],
         TokenizationAlgorithm,
-        (256, 1024, 4096, 16384),
-        Task,
-        [None, Task.CLM, Task.MLM],
-        (0, 1, 2, 3, 4),
+        (1024, 4096, 16384),
+        [Task.DET],
+        [None],
+        [0],
     )
     configurations = [Configuration(*config) for config in tqdm(configurations)]
     configurations = [config for config in configurations if config.do]
