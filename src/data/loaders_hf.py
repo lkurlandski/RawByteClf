@@ -93,9 +93,9 @@ def generator_from_zipfiles(
     name_label_map = None
     if labels is not None:
         name_label_map: dict[str, int] = {}
-        for a, l in zip(files, labels):
+        for a, l in zip(files, labels, strict=True):
             name_label_map[a.name.split(".")[0]] = l
-        assert len(name_label_map) == len(files) == len(labels)
+        assert len(name_label_map) == len(files) == len(labels), f"{len(name_label_map)=} {len(files)=} {len(labels)=}"
         del labels
 
     # Sort the archives so we can read them in a contiguous fashion.
