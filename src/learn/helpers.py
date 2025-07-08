@@ -153,6 +153,7 @@ class Args:
     top_k: Optional[str]                = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
     tr_samples_per_class: Optional[str] = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
     max_imbalance_ratio: Optional[str]  = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
+    ratio_pos_split: Optional[str]      = field(default=None)  # We use str to allow for "None" (makes it easier to parse)
 
     # Finetuning
     pretraining_task: Optional[Task]          = field(default=None)
@@ -179,6 +180,7 @@ class Args:
         self.min_freq             = str_to_int(self.min_freq)
         self.tr_samples_per_class = str_to_int(self.tr_samples_per_class)
         self.max_imbalance_ratio  = str_to_int(self.max_imbalance_ratio)
+        self.ratio_pos_split      = str_to_float(self.ratio_pos_split)
 
         self.streaming       = str_to_bool(self.streaming)
         self.exit_after_map  = str_to_bool(self.exit_after_map)
@@ -298,6 +300,7 @@ class OutputHelper:
         task: Task,
         split_mode: Optional[SplitMode],
         weighted_loss: Optional[WeightedLossAlgorithm],
+        ratio_pos_split: Optional[float] = None,
         trainer_config: Optional[dict],
     ) -> None:
 
@@ -331,6 +334,7 @@ class OutputHelper:
             f"task--{task.value}",
             f"weighted_loss--{weighted_loss.value if weighted_loss is not None else 'none'}",
             f"split_mode--{split_mode.value if split_mode is not None else 'none'}",
+            f"ratio_pos_split--{ratio_pos_split if ratio_pos_split is not None else 'none'}",
         ]
 
         if "world_size" not in trainer_config:

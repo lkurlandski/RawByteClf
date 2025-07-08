@@ -1378,6 +1378,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "arch_config": args.arch_config,
         "split_mode": args.split_mode,
         "weighted_loss": args.weighted_loss,
+        "ratio_pos_split": args.ratio_pos_split,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     # NOTE: this is quite bad, but args.model_name_or_path might change from a str representing the
@@ -1468,12 +1469,17 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
+    kwds = {
+        "lift_level_ddp": args.lift_level_ddp,
+    }
     if args.task == Task.CLM:
         get_materials = get_materials_esp_clm
     elif args.task == Task.MLM:
         get_materials = get_materials_esp_mlm
     elif args.task == Task.DET:
         get_materials = get_materials_esp_det
+        if args.ratio_pos_split is not None:
+            kwds["ratio_pos_split"] = args.ratio_pos_split
     elif args.task == Task.FAM:
         get_materials = get_materials_esp_fam
     elif args.task == Task.BEH:
@@ -1483,12 +1489,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     multimaterials: dict[LiftLevel, Materials]
     if args.lift_level == LiftLevel.ALL:
         multimaterials = {
-            lift_level: get_materials(lift_level, lift_level_ddp=args.lift_level_ddp)
+            lift_level: get_materials(lift_level, **kwds)
             for lift_level in (LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC)
         }
         materials = multimaterials[LiftLevel.RAW]
     else:
-        materials = get_materials(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        materials = get_materials(args.lift_level, **kwds)
         multimaterials = {args.lift_level: materials}
 
     print(f"Dataset Multimaterials:\n{list(multimaterials.keys())}")

@@ -29,10 +29,15 @@ parser = ArgumentParser()
 parser.add_argument("--task", type=Task)
 parser.add_argument("--lift_level", type=LiftLevel)
 parser.add_argument("--lift_level_ddp", type=str, default="dec")
+parser.add_argument("--ratio_pos_split", type=float, default=None)
 args = parser.parse_args()
 
 args.lift_level_ddp = LiftLevel(args.lift_level_ddp) if args.lift_level_ddp != "none" else None
 
+
+kwds = {
+    "lift_level_ddp": args.lift_level_ddp,
+}
 
 if args.task == Task.CLM:
     get_materials = get_materials_esp_clm
@@ -40,6 +45,8 @@ elif args.task == Task.MLM:
     get_materials = get_materials_esp_mlm
 elif args.task == Task.DET:
     get_materials = get_materials_esp_det
+    if args.ratio_pos_split is not None:
+        kwds["ratio_pos_split"] = args.ratio_pos_split
 elif args.task == Task.FAM:
     get_materials = get_materials_esp_fam
 elif args.task == Task.BEH:
@@ -48,7 +55,7 @@ else:
     raise RuntimeError()
 
 
-materials = get_materials(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+materials = get_materials(args.lift_level, **kwds)
 print(materials)
 
 sys.exit(0)
