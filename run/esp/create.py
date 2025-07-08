@@ -338,7 +338,12 @@ class Configuration:
 
     @property
     def tim(self) -> str:
-        if self.model_size != ModelSize.CO:
+        # Fuck, I just don't care.
+        if self.model_size == ModelSize.CO:
+            f_model_size = 1.0
+        elif self.model_size == ModelSize.HG:
+            f_model_size = 0.5
+        else:
             raise NotImplementedError()
 
         if self.task in (Task.CLM, Task.MLM):
@@ -357,7 +362,7 @@ class Configuration:
             h /= (65536 / self.max_length)
             h /= self.gpu
 
-            return seconds_to_slurm_time(h * 3600)
+            return seconds_to_slurm_time(h * 3600 * f_model_size)
 
         if self.model_name == ModelName.MAL:
             k = self.max_length // 65536
@@ -415,8 +420,8 @@ class Configuration:
         tr_samples_per_second /= tr_f
         vl_samples_per_second /= vl_f
 
-        s_tr = n_tr / tr_samples_per_second * 1.50
-        s_vl = n_vl / vl_samples_per_second * 1.50
+        s_tr = n_tr / tr_samples_per_second * 1.50 * f_model_size
+        s_vl = n_vl / vl_samples_per_second * 1.50 * f_model_size
 
         return seconds_to_slurm_time(s_tr + s_vl)
 
@@ -515,12 +520,20 @@ class Configuration:
             ModelSize.HG: 16,
             ModelSize.CO: 32,
         }
+        HIDDEN_SIZE = {
+            ModelSize.TN: 64,
+            ModelSize.SM: 96,
+            ModelSize.MD: 128,
+            ModelSize.LG: 192,
+            ModelSize.HG: 256,
+            ModelSize.CO: 384,
+        }
 
         d = {
             "is_decoder": self.model_mode == ModelMode.UN,
             "num_hidden_layers": NUM_BLOCKS[self.model_size],
-            "embedding_size": 384,
-            "hidden_size": 384,
+            "embedding_size": HIDDEN_SIZE[self.model_size],
+            "hidden_size": HIDDEN_SIZE[self.model_size],
             "head_num_hidden_layers": 0,
             "head_hidden_size": 0,
         }
@@ -635,10 +648,18 @@ class Configuration:
 
     @property
     def tr_per_device_batch_size(self) -> int:
+        # Fuck, I just don't care.
+        if self.model_size == ModelSize.CO:
+            f_model_size = 1
+        elif self.model_size == ModelSize.HG:
+            f_model_size = 2
+        else:
+            raise NotImplementedError()
+
         if self.model_name == ModelName.MAL:
             return 64
 
-        f = int(65536 / self.max_length)
+        f = int(65536 / self.max_length) * f_model_size
 
         if self.task in (Task.DET, Task.FAM, Task.BEH):
             if self.model_name == ModelName.MAM and self.lift_level == LiftLevel.ALL:
@@ -653,10 +674,18 @@ class Configuration:
 
     @property
     def vl_per_device_batch_size(self) -> int:
+        # Fuck, I just don't care.
+        if self.model_size == ModelSize.CO:
+            f_model_size = 1
+        elif self.model_size == ModelSize.HG:
+            f_model_size = 2
+        else:
+            raise NotImplementedError()
+
         if self.model_name == ModelName.MAL:
             return 64
 
-        f = int(65536 / self.max_length)
+        f = int(65536 / self.max_length) * f_model_size
 
         if self.task in (Task.DET, Task.FAM, Task.BEH):
             if self.model_name == ModelName.MAM and self.lift_level == LiftLevel.ALL:
@@ -775,19 +804,35 @@ def main():
                 f.unlink()
     outpath().mkdir(parents=True, exist_ok=True)
 
+    # Additional pretraining experiments (12).
     configurations = product(
         [ModelName.MAM],
-        [ModelSize.CO],
-        [ModelMode.BI],
+        [ModelSize.HG],
+        [ModelMode.UN, ModelMode.BI],
         [65536],
         [LiftLevel.RAW],
         [LiftLevel.DEC],
-        TokenizationAlgorithm,
-        (1024, 4096, 16384),
-        [Task.DET],
+        [TokenizationAlgorithm.BPE, TokenizationAlgorithm.UNIGRAM],
+        [1024, 4096, 16384],
+        [Task.CLM, Task.MLM],
         [None],
         [0],
     )
+    # Additional detection experiments (20).
+    # configurations = product(
+    #     [ModelName.MAM],
+    #     [ModelSize.HG],
+    #     [ModelMode.UN, ModelMode.BI],
+    #     [65536],
+    #     [LiftLevel.RAW],
+    #     [LiftLevel.DEC],
+    #     [TokenizationAlgorithm.BPE],
+    #     [16384],
+    #     [Task.DET],
+    #     [Task.CLM, Task.MLM, None],
+    #     [0],
+    # )
+
     configurations = [Configuration(*config) for config in tqdm(configurations)]
     configurations = [config for config in configurations if config.do]
     configurations = sorted(configurations, key=sort_configurations_key)
