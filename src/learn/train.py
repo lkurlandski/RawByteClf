@@ -1328,6 +1328,28 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             "When streaming, the original file-order is used, and the approximate shuffling technique of IterableDataset is not sufficient. "
             "If you want to use streaming for the detection task, you need to set `SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0`."
         )
+    if args.task == Task.DET and args.streaming and os.environ.get("SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS", "1") == "0":
+        warnings.warn(
+            "You've set `SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0`. This will shuffle the archives prior to reading data. "
+            "There will still be clumpiness in the data distribution proporitional to the number of files within each archive. "
+            "By itself, this could be problematic, but there is also IterableDataset approximate shuffling which uses a pool. "
+        )
+
+        # Example of iterated label distribution prior to IterableDataset's pooling technique:
+        # 1 7
+        # 0 6
+        # 1 32
+        # 0 35
+        # 1 108
+        # 0 9
+        # 1 55
+        # 0 12
+        # 1 40
+        # 0 31
+        # 1 23
+        # 0 11
+        # 1 1
+        # 0 47
 
     print(f"args={pformat(args)}")
     print(BR, flush=True)
