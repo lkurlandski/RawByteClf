@@ -177,3 +177,4 @@ data/*
 tmp.py
 scripts/*
 export
+run/esp/sbatch/
