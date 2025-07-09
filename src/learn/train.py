@@ -1505,8 +1505,23 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     # FIXME: remove
     if args.task == Task.DET:
         if os.environ.get("VL_SIZE") is not None:
-            materials.files["vl"] = materials.files["vl"][0:int(os.environ["VL_SIZE"])]
-            materials.labels["vl"] = materials.labels["vl"][0:int(os.environ["VL_SIZE"])]
+            _num = int(os.environ.get("VL_SIZE"))
+            print(f"VL_SIZE: {_num=}")
+            print(f"VL_SIZE: {len(materials.labels['vl'])=}")
+            if len(materials.labels["vl"]) > _num:
+                _idx = np.arange(0, len(materials.labels["vl"]))
+                _idx = np.random.choice(_idx, _num, replace=False)
+                if isinstance(materials.files["vl"], np.ndarray):
+                    materials.files["vl"] = materials.files["vl"][_idx]
+                else:
+                    materials.files["vl"] = [materials.files["vl"][i] for i in _idx]
+                if isinstance(materials.labels["vl"], np.ndarray):
+                    materials.labels["vl"] = materials.labels["vl"][_idx]
+                else:
+                    materials.labels["vl"] = [materials.labels["vl"][i] for i in _idx]
+                del _idx
+            print(f"VL_SIZE: {len(materials.labels['vl'])=}")
+            del _num
 
     print(f"Dataset Multimaterials:\n{list(multimaterials.keys())}")
     print(f"Dataset Materials:\n{materials}")
