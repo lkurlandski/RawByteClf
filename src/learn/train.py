@@ -1502,6 +1502,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         materials = get_materials(args.lift_level, **kwds)
         multimaterials = {args.lift_level: materials}
 
+    # FIXME: remove
+    if args.task == Task.DET:
+        if os.environ.get("VL_SIZE") is not None:
+            materials.files["vl"] = materials.files["vl"][0:int(os.environ["VL_SIZE"])]
+            materials.labels["vl"] = materials.labels["vl"][0:int(os.environ["VL_SIZE"])]
+
     print(f"Dataset Multimaterials:\n{list(multimaterials.keys())}")
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
@@ -1554,10 +1560,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             del multidataset
         else:
             dataset = get_processed_dataset_hf(materials, args.lift_level, args, num_shards, tokenizer)
-        if os.environ.get("TR_SIZE") is not None:
-            dataset["tr"] = dataset["tr"].take(int(os.environ["TR_SIZE"]))
-        if os.environ.get("VL_SIZE") is not None:
-            dataset["vl"] = dataset["vl"].take(int(os.environ["VL_SIZE"]))
         print_dataset_hf(dataset)
         print(BR)
     else:
