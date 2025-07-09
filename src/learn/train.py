@@ -1296,6 +1296,7 @@ def compute_unigram_probabilities(
 ) -> dict[str, float]:
     counts = {i: 0 for i in range(0, len(tokenizer))}
     total = 0
+    num_samples_processed = 0
     num_iterations = None if num_samples is None else num_samples // batch_size + 1
     for data in tqdm(dataset.iter(batch_size), desc="Computing unigram probabilities...", total=num_iterations):
         ids = np.concatenate(data["input_ids"])
@@ -1303,6 +1304,9 @@ def compute_unigram_probabilities(
         for v, c in zip(val, cnt):
             counts[int(v)] += c
         total += int(np.sum(cnt))
+        num_samples_processed += len(data)
+        if num_samples is not None and num_samples_processed >= num_samples:
+            break
 
     # Remove the special tokens from the counts and remove them from the total.
     for i in tokenizer.all_special_ids:
@@ -1572,7 +1576,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.do_compute_unigram_probabilities:
         print("Computing unigram probabilities.")
-        unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer, len(materials.files["tr"]), 4096)
+        unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer, min(len(materials.files["tr"]), 100000), 4096)
         print(f"Unigrams:\n{pformat(unigrams)}")
         save_unigrams(unigrams, args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
         print("Exiting after unigram computation.")
