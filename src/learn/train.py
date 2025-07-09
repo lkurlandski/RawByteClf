@@ -1304,7 +1304,8 @@ def compute_unigram_probabilities(
         for v, c in zip(val, cnt):
             counts[int(v)] += c
         total += int(np.sum(cnt))
-        num_samples_processed += len(data)
+        num_samples_processed += len(data["input_ids"])
+        print(f"{num_samples_processed} / {num_samples}")
         if num_samples is not None and num_samples_processed >= num_samples:
             break
 
