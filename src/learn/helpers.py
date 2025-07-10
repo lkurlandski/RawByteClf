@@ -576,7 +576,7 @@ class OutputHelper:
 
         permitted = []
         if batch_size:
-            permitted.extend(["per_device_train_batch_size", "gradient_accumulation_steps"])
+            permitted.extend(["world_size", "per_device_train_batch_size", "gradient_accumulation_steps"])
         if dtypes:
             permitted.extend(["fp16", "tf32", "bf16"])
 
@@ -610,7 +610,7 @@ class OutputHelper:
             update = False
             k, v = p.split("--")
             old = self.trainer_config[k]
-            if batch_size and k in ("per_device_train_batch_size", "gradient_accumulation_steps"):
+            if batch_size and k in ("world_size", "per_device_train_batch_size", "gradient_accumulation_steps"):
                 new = int(v)
                 self.trainer_config = self.trainer_config | {k: new}
                 update = new != old
