@@ -991,12 +991,14 @@ def get_model(
                     if not config.is_decoder and config.bi_tie_directions:
                         for backbone in [model.raw_backbone, model.dis_backbone, model.dec_backbone]:
                             backbone.tie_forward_and_backward_weights(tie=True, clone=False)
-                    _config = MambaConfig.from_pretrained(next(iter(model_name_or_path.values())))
                 else:
                     model = MambaForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                     if not config.is_decoder and config.bi_tie_directions:
                         model.backbone.tie_forward_and_backward_weights(tie=True, clone=False)
+                if isinstance(model_name_or_path, str):
                     _config = MambaConfig.from_pretrained(model_name_or_path)
+                else:
+                    _config = MambaConfig.from_pretrained(next(iter(model_name_or_path.values())))
                 _head_names = ["head_clf"]
             elif model_name == "malconv":
                 if ensemble:
