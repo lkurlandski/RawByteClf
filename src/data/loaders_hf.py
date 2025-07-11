@@ -32,6 +32,7 @@ from datasets import (
     Value,
     Features,
     Sequence,
+    concatenate_datasets,
 )
 import numpy as np
 import pandas as pd
@@ -456,7 +457,7 @@ def merge_generator_fast(
             yield new
 
 
-def merge_raw_dis_dec_datasets(
+def merge_raw_dis_dec_datasets_slow(
     raw: DatasetDict | IterableDatasetDict,
     dis: DatasetDict | IterableDatasetDict,
     dec: DatasetDict | IterableDatasetDict,
@@ -529,6 +530,44 @@ def merge_raw_dis_dec_datasets(
         dataset[s] = cl.from_generator(gen, features)
 
     return dataset
+
+
+def merge_raw_dis_dec_datasets(
+    raw: DatasetDict | IterableDatasetDict,
+    dis: DatasetDict | IterableDatasetDict,
+    dec: DatasetDict | IterableDatasetDict,
+) -> DatasetDict | IterableDataset:
+
+    assert set(raw.keys()) == set(dis.keys()) == set(dec.keys())
+    splits = tuple(raw.keys())
+
+    dataset = {}
+    for s in splits:
+        assert raw[s].column_names == dis[s].column_names == dec[s].column_names, "mismatched keys"
+        assert list(raw[s]["name"]) == list(dis[s]["name"]) == list(dec[s]["name"]), "mismatched names"
+
+        # names = raw[s]["name"]
+        raw[s] = raw[s].remove_columns("name")
+        dis[s] = dis[s].remove_columns("name")
+        dec[s] = dec[s].remove_columns("name")
+
+        labels = raw[s]["labels"]
+        raw[s] = raw[s].remove_columns("labels")
+        dis[s] = dis[s].remove_columns("labels")
+        dec[s] = dec[s].remove_columns("labels")
+
+        keep_cols = [k for k in raw[s].column_names if k not in {"name"}]
+        def _prefix(ds, pref):
+            return ds.rename_columns({k: f"{pref}_{k}" for k in keep_cols})
+
+        merged = [_prefix(raw[s], "raw"), _prefix(dis[s], "dis"), _prefix(dec[s], "dec")]
+        merged = concatenate_datasets(merged, axis=1,)
+        merged = merged.add_column("labels", labels)
+        # merged = merged.add_column("name", names)
+
+        dataset[s] = merged
+
+    return DatasetDict(dataset)
 
 
 def test():
