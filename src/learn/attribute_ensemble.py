@@ -6,7 +6,7 @@ from __future__ import annotations
 import gc
 from pathlib import Path
 import sys
-from typing import Any, Optional
+from typing import Any, Generator, Iterable, Optional
 import time
 import warnings
 
@@ -76,46 +76,43 @@ def get_attribution(
 
 
 class Attributor:
+    """
+    Performs attributions for the ensemble model. Note that this class uses a batch_size of 1.
+    """
 
     use_tqdm: bool = False
 
     def __init__(
         self,
         model: EnsembleForSequenceClassification,
-        dataset: Dataset,
+        dataset: Dataset | IterableDataset | Iterable[dict[str, list[Tensor]]],
         data_collator: EnsembleDataCollatorWithPadding,
         baseline: int,
         device: str,
-        batch_size: int = 1,
     ) -> None:
         self.model = model
         self.dataset = dataset
         self.data_collator = data_collator
         self.baseline = baseline
         self.device = device
-        self.batch_size = batch_size
         self.layers = [model.raw_backbone.embeddings, model.dis_backbone.embeddings, model.dec_backbone.embeddings]
         self.alg = LayerIntegratedGradients(forward_func, self.layers)
+        self.skipsteps = set()
 
-    def __call__(self) -> Attributor:
+    def __iter__(self) -> Generator[tuple[int, Tensor, Tensor, Tensor, Tensor], None, None]:
         self.model.eval().to(self.device)
 
-        all_attribs_raw: list[Optional[Tensor]] = []
-        all_attribs_dis: list[Optional[Tensor]] = []
-        all_attribs_dec: list[Optional[Tensor]] = []
-        all_labels:      list[Optional[Tensor]] = []
-
-        total = len(self.dataset) // self.batch_size + 1
-        iterable = enumerate(self.dataset.iter(self.batch_size))
-        iterable = tqdm(iterable, total=total, desc="Explaining...") if self.use_tqdm else iterable
-        print(f"Beginning explanation for {len(self.dataset)} samples in {total} batches.")
+        iterable = enumerate(self.dataset.iter(1)) if isinstance(self.dataset, (Dataset, IterableDataset)) else enumerate(self.dataset)
+        iterable = tqdm(iterable, total=len(self.dataset), desc="Explaining...") if self.use_tqdm else iterable
+        print(f"Beginning explanation for {len(self.dataset)} samples.")
 
         t_start = time.time()
         for step, batch in iterable:
+            if step in self.skipsteps:
+                continue
 
             t_step_start      = time.time()
             cuda_oom_occurred = False
-            batch_size        = len(batch["labels"])
 
             l_raw = len(batch["raw_input_ids"][0])
             l_dis = len(batch["dis_input_ids"][0])
@@ -123,33 +120,19 @@ class Attributor:
 
             try:
                 labels, attribs_raw, attribs_dis, attribs_dec = self.run(batch)
+                yield step, labels[0], attribs_raw[0], attribs_dis[0], attribs_dec[0]
             except Exception as err:
                 if not is_exception_cuda_memory_related(err):
                     raise err
-
                 cuda_oom_occurred = True
-
-                labels      = [None] * batch_size
-                attribs_raw = [None] * batch_size
-                attribs_dis = [None] * batch_size
-                attribs_dec = [None] * batch_size
-
-            all_labels.extend([l for l in labels])            # pylint: disable=unnecessary-comprehension
-            all_attribs_raw.extend([a for a in attribs_raw])  # pylint: disable=unnecessary-comprehension
-            all_attribs_dis.extend([a for a in attribs_dis])  # pylint: disable=unnecessary-comprehension
-            all_attribs_dec.extend([a for a in attribs_dec])  # pylint: disable=unnecessary-comprehension
+                yield step, None, None, None, None
 
             del batch
-            del labels
-            del attribs_raw
-            del attribs_dis
-            del attribs_dec
-
             if cuda_oom_occurred:
                 self.model.to("cpu")
             gc.collect()
             clear_cuda_caches(verbose=False)
-            self.model.to(self.device)       
+            self.model.to(self.device)
 
             d = {
                 "step": step,
@@ -163,7 +146,6 @@ class Attributor:
             print(d, flush=True)
 
         print(f"Total time: {round(time.time() - t_start, 2)} seconds", flush=True)
-        return self
 
     def run(self, batch: dict[str, list[Tensor]]) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         batch: list[dict[str, Any]]  = [dict(zip(batch, t)) for t in zip(*batch.values())]
@@ -183,11 +165,56 @@ class Attributor:
         return labels, attribs_raw, attribs_dis, attribs_dec
 
 
-def _get_resume_step(self) -> int:
-    if not self.output.exists():
-        return 0
-    try:
-        highest_path = get_highest_path(self.output, "attribs", ".pt")
-    except FileNotFoundError:
-        return 0
-    return int(highest_path.stem.split("_")[-1]) + 1
+class AttributorRunner:
+    """
+    Wraps the Attributor to handle input and output.
+
+    Args:
+        output (Path): The directory where the results will be saved.
+        attributor (Attributor): The Attributor instance to run.
+        resume (bool): If True, skips over steps that have already been completed.
+        rerun (bool): If True, reruns the attributor on failed steps.
+        clean (bool): If True, cleans the output directory before running.
+    """
+
+    def __init__(self, output: Path, attributor: Attributor, resume: bool = True, rerun: bool = False, clean: bool = False) -> None:
+        self.output = output
+        self.attributor = attributor
+        self.resume = resume
+        self.rerun = rerun
+        self.clean = clean
+
+    def __call__(self) -> AttributorRunner:
+        if not self.output.exists():
+            self.output.mkdir(parents=True, exist_ok=True)
+
+        if self.clean:
+            for f in self.output.iterdir():
+                f.unlink()
+
+        skipsteps = self.get_skipsteps()
+        self.attributor.skipsteps.update(skipsteps)
+
+        for step, labels, attribs_raw, attribs_dis, attribs_dec in iter(self.attributor):
+            d = {"labels": labels, "attribs_raw": attribs_raw, "attribs_dis": attribs_dis, "attribs_dec": attribs_dec}
+            f = self.output / f"step-{step:05d}.pt"
+            torch.save(d, f)
+
+    def get_skipsteps(self) -> set[int]:
+        skipsteps = set()
+        if self.resume:
+            for f in self.output.iterdir():
+                if f.is_file() and f.suffix == ".pt" and f.stem.startswith("step-"):
+                    step = int(f.stem.split("-")[1])
+                    if not self.rerun or torch.load(f)["attribs_raw"] is not None:
+                        skipsteps.add(step)
+        return skipsteps
+
+    def print(self) -> None:
+        print(f"AttributorRunner: {self.__class__.__name__}")
+        print(f"\toutput: {self.output}")
+        print(f"\tattributor: {self.attributor.__class__.__name__}")
+        print(f"\tresume: {self.resume}")
+        print(f"\trun: {self.rerun}")
+        print(f"\tclean: {self.clean}")
+        print(f"\tskipsteps: {self.get_skipsteps()}")
