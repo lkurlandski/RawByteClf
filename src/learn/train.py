@@ -1982,6 +1982,35 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             json.dump(output.metrics, fp, indent=4)
 
 
+    if args.do_attribute:
+
+        from src.architectures.ensemble import EnsembleForSequenceClassification
+        from src.learn.attribute_ensemble import get_model_name_or_path, Attributor, AttributorRunner
+
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+        model_name_or_path = get_model_name_or_path(oh)
+        print("Using model from:", model_name_or_path)
+        model: EnsembleForSequenceClassification = get_model(
+            args.task,
+            model_name_or_path,
+            config,
+            args.lift_level==LiftLevel.ALL,
+            num_labels=materials.num_classes,
+            id2label=materials.id2label,
+            label2id=materials.label2id,
+        )
+        print_model(model)
+        print(BR, flush=True)
+
+        output = Path(model_name_or_path) / "attributionsNDSS"
+        attributor = Attributor(model, dataset["vl"], data_collator, tokenizer.pad_token_id, device)
+        runner = AttributorRunner(output, attributor, resume=True, rerun=True, clean=False)
+        runner.print()
+        print(BR)
+        runner()
+
+
     if args.do_tune:
         training_arguments = replace(
             training_arguments,
