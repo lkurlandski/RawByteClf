@@ -16,6 +16,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 # pylint: enable=wrong-import-position
 
+from src.data.cfg import PACKING_ROOTS
 from src.data.detect_packing_sorel import PackingMap, unpack
 
 
@@ -24,42 +25,62 @@ ENABLE_UNITTEST_LOGGING = os.environ.get("LMLM_ENABLE_UNITTEST_LOGGING", "0") ==
 
 class TestPackingMap(unittest.TestCase):
 
+    root = PACKING_ROOTS["bodmas_pe"]
+    maps = []
+
+    @classmethod
+    def setUpClass(cls):
+        cls.maps = []
+
+    @classmethod
+    def tearDownClass(cls):
+        if ENABLE_UNITTEST_LOGGING:
+            print(f"TestPackingMap: {len(cls.maps)} maps created.")
+        for map_a in cls.maps:
+            for map_b in cls.maps:
+                assert map_a == map_b
+        if ENABLE_UNITTEST_LOGGING:
+            print("All maps are equal.")
+
     def test_packing_map_0(self):
         t = time.time()
-        packing_map = PackingMap(lazy=False, chunked=True, num_workers=16)
+        packing_map = PackingMap(root=self.root, lazy=False, chunked=True, num_workers=16, cache_load=False, cache_save=False)
         if ENABLE_UNITTEST_LOGGING:
             print(f"test_packing_map_0: {len(packing_map)} samples {time.time() - t:.2f} seconds")
         self.assertTrue(len(packing_map) > 0)
+        self.maps.append(packing_map)
 
     def test_packing_map_1(self):
         t = time.time()
-        packing_map = PackingMap(lazy=False, chunked=True, num_workers=None)
+        packing_map = PackingMap(root=self.root, lazy=False, chunked=True, num_workers=None, cache_load=False, cache_save=False)
         if ENABLE_UNITTEST_LOGGING:
             print(f"test_packing_map_0: {len(packing_map)} samples {time.time() - t:.2f} seconds")
         self.assertTrue(len(packing_map) > 0)
+        self.maps.append(packing_map)
 
     def test_packing_map_2(self):
         t = time.time()
-        packing_map = PackingMap(lazy=False, chunked=False, num_workers=None)
+        packing_map = PackingMap(root=self.root, lazy=False, chunked=False, num_workers=None, cache_load=False, cache_save=False)
         if ENABLE_UNITTEST_LOGGING:
             print(f"test_packing_map_0: {len(packing_map)} samples {time.time() - t:.2f} seconds")
         self.assertTrue(len(packing_map) > 0)
+        self.maps.append(packing_map)
 
     def test_packing_map_3(self):
-        print("packing_map_3")
         t = time.time()
-        packing_map = PackingMap(lazy=True, chunked=True, num_workers=16)
+        packing_map = PackingMap(root=self.root, lazy=True, chunked=True, num_workers=16, cache_load=False, cache_save=False)
         if ENABLE_UNITTEST_LOGGING:
             print(f"test_packing_map_0: {len(packing_map)} samples {time.time() - t:.2f} seconds")
         self.assertTrue(len(packing_map) > 0)
+        self.maps.append(packing_map)
 
     def test_packing_map_4(self):
-        print("packing_map_4")
         t = time.time()
-        packing_map = PackingMap(lazy=True, chunked=False, num_workers=None)
+        packing_map = PackingMap(root=self.root, lazy=True, chunked=False, num_workers=None, cache_load=False, cache_save=False)
         if ENABLE_UNITTEST_LOGGING:
             print(f"test_packing_map_0: {len(packing_map)} samples {time.time() - t:.2f} seconds")
         self.assertTrue(len(packing_map) > 0)
+        self.maps.append(packing_map)
 
 
 @unittest.skip("Skipping TestUnpacking.")
