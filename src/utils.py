@@ -11,7 +11,7 @@ import fnmatch
 import gzip
 import inspect
 from io import BytesIO
-from itertools import islice
+from itertools import islice, chain
 import json
 import lzma
 import math
@@ -119,9 +119,9 @@ def print_context(suppress: bool = False):
 
 def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:
     for root, dirs, files in os.walk(top, followlinks=followlinks):  # pylint: disable=unused-variable
-        for file in files:
-            if fnmatch.fnmatch(file, pattern):
-                yield os.path.join(root, file)
+        for name in chain(files, dirs):
+            if fnmatch.fnmatch(name, pattern):
+                yield os.path.join(root, name)
 
 
 def unique_value(iterable):

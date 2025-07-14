@@ -1005,12 +1005,14 @@ def get_model(
                     if not config.is_decoder and config.bi_tie_directions:
                         for backbone in [model.raw_backbone, model.dis_backbone, model.dec_backbone]:
                             backbone.tie_forward_and_backward_weights(tie=True, clone=False)
-                    _config = MambaConfig.from_pretrained(next(iter(model_name_or_path.values())))
                 else:
                     model = MambaForSequenceClassification.from_pretrained(model_name_or_path, config=config)
                     if not config.is_decoder and config.bi_tie_directions:
                         model.backbone.tie_forward_and_backward_weights(tie=True, clone=False)
+                if isinstance(model_name_or_path, str):
                     _config = MambaConfig.from_pretrained(model_name_or_path)
+                else:
+                    _config = MambaConfig.from_pretrained(next(iter(model_name_or_path.values())))
                 _head_names = ["head_clf"]
             elif model_name == "malconv":
                 if ensemble:
@@ -1227,7 +1229,7 @@ def get_processed_dataset_hf(
         dataset = dataset.map(**kwds)
     else:
         # The RAW level contains raw-bytes whereas DIS and DEC contains encoded strings.
-        hf_tokenize = hf_tokenize_bytes if lift_level == LiftLevel.RAW else hf_tokenize_str
+        hf_tokenize = hf_tokenize_bytes if lift_level in (LiftLevel.RAW, LiftLevel.NOP) else hf_tokenize_str
         func = partial(hf_tokenize, tokenizer=tokenizer, max_length=args.max_length)
         desc = "Tokenizing bytes..."
         kwds = get_map_kwds_for_hf_datasets(function=func, dataset=dataset, desc=desc, remove_columns=remove_columns, num_proc=None)
@@ -1288,6 +1290,7 @@ def compute_unigram_probabilities(
 ) -> dict[str, float]:
     counts = {i: 0 for i in range(0, len(tokenizer))}
     total = 0
+    num_samples_processed = 0
     num_iterations = None if num_samples is None else num_samples // batch_size + 1
     for data in tqdm(dataset.iter(batch_size), desc="Computing unigram probabilities...", total=num_iterations):
         ids = np.concatenate(data["input_ids"])
@@ -1295,6 +1298,10 @@ def compute_unigram_probabilities(
         for v, c in zip(val, cnt):
             counts[int(v)] += c
         total += int(np.sum(cnt))
+        num_samples_processed += len(data["input_ids"])
+        print(f"{num_samples_processed} / {num_samples}")
+        if num_samples is not None and num_samples_processed >= num_samples:
+            break
 
     # Remove the special tokens from the counts and remove them from the total.
     for i in tokenizer.all_special_ids:
@@ -1321,6 +1328,28 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             "When streaming, the original file-order is used, and the approximate shuffling technique of IterableDataset is not sufficient. "
             "If you want to use streaming for the detection task, you need to set `SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0`."
         )
+    if args.task == Task.DET and args.streaming and os.environ.get("SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS", "1") == "0":
+        warnings.warn(
+            "You've set `SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0`. This will shuffle the archives prior to reading data. "
+            "There will still be clumpiness in the data distribution proporitional to the number of files within each archive. "
+            "By itself, this could be problematic, but there is also IterableDataset approximate shuffling which uses a pool. "
+        )
+
+        # Example of iterated label distribution prior to IterableDataset's pooling technique:
+        # 1 7
+        # 0 6
+        # 1 32
+        # 0 35
+        # 1 108
+        # 0 9
+        # 1 55
+        # 0 12
+        # 1 40
+        # 0 31
+        # 1 23
+        # 0 11
+        # 1 1
+        # 0 47
 
     print(f"args={pformat(args)}")
     print(BR, flush=True)
@@ -1375,6 +1404,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
             args.pretraining_task, args.pretraining_checkpoint, **pretrain_kwds,
         )
+        # I don't really know what is going on here. I had this working at one point, obviously, but
+        # recently, the path system seems to have gotten messed up. Now I've added this line below to fix it.
+        kwds["model_name_or_path"] = args.model_name_or_path
         # NOTE: we're going to put the finetuned ensembles beneath the RAW models.
         # Should we add symlinks to the output path beneath the DIS and DEC models?
         # This might be useful for documentation, but could prove annoying when trying to navigate the directory.
@@ -1443,6 +1475,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(BR, flush=True)
 
     # Get the raw materials for the dataset, i.e., the files, labels, etc.
+    kwds = {
+        "lift_level_ddp": args.lift_level_ddp,
+    }
     if args.task == Task.CLM:
         get_materials = get_materials_esp_clm
     elif args.task == Task.MLM:
@@ -1458,13 +1493,14 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     multimaterials: dict[LiftLevel, Materials]
     if args.lift_level == LiftLevel.ALL:
         multimaterials = {
-            lift_level: get_materials(lift_level, lift_level_ddp=args.lift_level_ddp)
+            lift_level: get_materials(lift_level, **kwds)
             for lift_level in (LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC)
         }
         materials = multimaterials[LiftLevel.RAW]
     else:
-        materials = get_materials(args.lift_level, lift_level_ddp=args.lift_level_ddp)
+        materials = get_materials(args.lift_level, **kwds)
         multimaterials = {args.lift_level: materials}
+
 
     print(f"Dataset Multimaterials:\n{list(multimaterials.keys())}")
     print(f"Dataset Materials:\n{materials}")
@@ -1517,18 +1553,15 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
             )
             del multidataset
         else:
+            # NOTE: the field "name" is needed for the attribution module.
             dataset = get_processed_dataset_hf(
                 materials,
                 args.lift_level,
                 args,
                 num_shards,
                 tokenizer,
-                remove_columns=("bytes",) if args.do_attribute else ("bytes", "name"),  # NOTE: name is needed for attribution.
+                remove_columns=("bytes",) if args.do_attribute else ("bytes", "name"),
             )
-        if os.environ.get("TR_SIZE") is not None:
-            dataset["tr"] = dataset["tr"].take(int(os.environ["TR_SIZE"]))
-        if os.environ.get("VL_SIZE") is not None:
-            dataset["vl"] = dataset["vl"].take(int(os.environ["VL_SIZE"]))
         print_dataset_hf(dataset)
         print(BR)
     else:
@@ -1548,7 +1581,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.do_compute_unigram_probabilities:
         print("Computing unigram probabilities.")
-        unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer, len(materials.files["tr"]), 4096)
+        unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer, min(len(materials.files["tr"]), 100000), 4096)
         print(f"Unigrams:\n{pformat(unigrams)}")
         save_unigrams(unigrams, args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
         print("Exiting after unigram computation.")

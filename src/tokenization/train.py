@@ -128,7 +128,7 @@ class TokenizationTrainingIterator:
 
     @property
     def bytes_to_str(self) -> Callable:
-        if self.lift_level == LiftLevel.RAW:
+        if self.lift_level in (LiftLevel.RAW, LiftLevel.NOP):
             return bytes_to_str_utf8
         if self.lift_level == LiftLevel.DIS:
             return bytes.decode
@@ -137,7 +137,7 @@ class TokenizationTrainingIterator:
         raise ValueError(f"{self.lift_level=}")
 
     def decompose_document(self, document: bytes) -> list[bytes]:
-        if self.lift_level == LiftLevel.RAW:
+        if self.lift_level in (LiftLevel.RAW, LiftLevel.NOP):
             return [document[i:i+RAW_WORD_SIZE] for i in range(0, len(document), RAW_WORD_SIZE)]
         if self.lift_level == LiftLevel.DIS:
             return document.split(b"\n")
@@ -162,7 +162,7 @@ class TrainTokenizer:
         self.vocab_size = vocab_size
         self.max_token_length = max_token_length
 
-        if self.lift_level == LiftLevel.RAW and self.algorithm == TokenizationAlgorithm.WORDLEVEL:
+        if self.lift_level in (LiftLevel.RAW, LiftLevel.NOP) and self.algorithm == TokenizationAlgorithm.WORDLEVEL:
             raise ValueError("WordLevel tokenization at the raw-byte level does not need training.")
 
     def __call__(self) -> Tokenizer:
@@ -177,7 +177,7 @@ class TrainTokenizer:
         return tokenizer
 
     def get_normalizer(self) -> Optional[Normalizer]:
-        if self.lift_level == LiftLevel.RAW:
+        if self.lift_level in (LiftLevel.RAW, LiftLevel.NOP):
             return get_raw_normalizer(self.algorithm)
         if self.lift_level == LiftLevel.DIS:
             return get_dis_normalizer(self.algorithm)
@@ -186,7 +186,7 @@ class TrainTokenizer:
         raise ValueError(f"{self.lift_level=}")
 
     def get_pretokenizer(self) -> Optional[PreTokenizer]:
-        if self.lift_level == LiftLevel.RAW:
+        if self.lift_level in (LiftLevel.RAW, LiftLevel.NOP):
             return get_raw_pretokenizer(self.algorithm)
         if self.lift_level == LiftLevel.DIS:
             return get_dis_pretokenizer(self.algorithm)
