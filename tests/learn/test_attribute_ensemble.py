@@ -1,19 +1,33 @@
 """
-
+Test.
 """
 
 from pathlib import Path
 import tempfile
+import os
 import unittest
 
 import torch
 from torch import Tensor
+import transformers
 
-from src.utils import print_context
+from src.utils import ignore_warnings_decorator, print_context
 from src.architectures.hrrformer import HRREnsembleForSequenceClassification, HRRConfig
 from src.learn.attribute_ensemble import Attributor, AttributorRunner
 from src.learn.collators import EnsembleDataCollatorWithPadding
 from src.tokenization.api import get_fast_tokenizer
+
+
+ENABLE_UNITTEST_WARNING = os.environ.get("LMLM_ENABLE_UNITTEST_WARNING", "0") == "1"
+ENABLE_UNITTEST_LOGGING = os.environ.get("LMLM_ENABLE_UNITTEST_LOGGING", "0") == "1"
+
+if not ENABLE_UNITTEST_WARNING:
+    transformers.logging.set_verbosity_error()
+
+IGNORE_WARNINGS_FILTER_ACTION = "default" if ENABLE_UNITTEST_WARNING else "ignore"
+
+
+ignore_layer_integrated_gradients = ignore_warnings_decorator(IGNORE_WARNINGS_FILTER_ACTION, category=UserWarning, message=r"^Multiple layers provided*")
 
 
 class TestAttributor(unittest.TestCase):
@@ -48,31 +62,35 @@ class TestAttributor(unittest.TestCase):
             else:
                 assert isinstance(d[k], Tensor), f"Expected {k} to be Tensor, got {type(d[k])}"
 
+    @ignore_layer_integrated_gradients
     def test_attributor(self):
         attributor = Attributor(self.model, self.dataset, self.data_collator, self.raw_tokenizer.pad_token_id, "cpu")
-        for step, labels, raw_input_ids, dis_input_ids, dec_input_ids in attributor:
-            assert isinstance(step, int), f"Expected step to be int, got {type(step)}"
-            assert isinstance(labels, Tensor), f"Expected labels to be Tensor, got {type(labels)}"
-            assert isinstance(raw_input_ids, Tensor), f"Expected raw_input_ids to be Tensor, got {type(raw_input_ids)}"
-            assert isinstance(dis_input_ids, Tensor), f"Expected dis_input_ids to be Tensor, got {type(dis_input_ids)}"
-            assert isinstance(dec_input_ids, Tensor), f"Expected dec_input_ids to be Tensor, got {type(dec_input_ids)}"
-            assert labels.dim() == 0, f"Expected labels to have dim 0, got {labels.dim()}"
-            assert raw_input_ids.dim() == 1, f"Expected raw_input_ids to have dim 1, got {raw_input_ids.dim()}"
-            assert dis_input_ids.dim() == 1, f"Expected dis_input_ids to have dim 1, got {dis_input_ids.dim()}"
-            assert dec_input_ids.dim() == 1, f"Expected dec_input_ids to have dim 1, got {dec_input_ids.dim()}"
+        with print_context(suppress=not ENABLE_UNITTEST_LOGGING):
+            for step, labels, raw_input_ids, dis_input_ids, dec_input_ids in attributor:
+                assert isinstance(step, int), f"Expected step to be int, got {type(step)}"
+                assert isinstance(labels, Tensor), f"Expected labels to be Tensor, got {type(labels)}"
+                assert isinstance(raw_input_ids, Tensor), f"Expected raw_input_ids to be Tensor, got {type(raw_input_ids)}"
+                assert isinstance(dis_input_ids, Tensor), f"Expected dis_input_ids to be Tensor, got {type(dis_input_ids)}"
+                assert isinstance(dec_input_ids, Tensor), f"Expected dec_input_ids to be Tensor, got {type(dec_input_ids)}"
+                assert labels.dim() == 0, f"Expected labels to have dim 0, got {labels.dim()}"
+                assert raw_input_ids.dim() == 1, f"Expected raw_input_ids to have dim 1, got {raw_input_ids.dim()}"
+                assert dis_input_ids.dim() == 1, f"Expected dis_input_ids to have dim 1, got {dis_input_ids.dim()}"
+                assert dec_input_ids.dim() == 1, f"Expected dec_input_ids to have dim 1, got {dec_input_ids.dim()}"
 
+    @ignore_layer_integrated_gradients
     def test_runner_1(self):
         attributor = Attributor(self.model, self.dataset, self.data_collator, self.raw_tokenizer.pad_token_id, "cpu")
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
             runner = AttributorRunner(tmpdir, attributor, resume=False, rerun=False, clean=False)
-            with print_context(True):
+            with print_context(suppress=not ENABLE_UNITTEST_LOGGING):
                 runner()
 
             for f in tmpdir.iterdir():
                 self.check_runner_outfile(f)
 
+    @ignore_layer_integrated_gradients
     def test_runner_2(self):
         attributor = Attributor(self.model, self.dataset, self.data_collator, self.raw_tokenizer.pad_token_id, "cpu")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -86,11 +104,11 @@ class TestAttributor(unittest.TestCase):
             torch.save(test_data_2, test_file_2)
 
             runner = AttributorRunner(tmpdir, attributor, resume=True, rerun=False, clean=False)
-            with print_context(True):
+            with print_context(suppress=not ENABLE_UNITTEST_LOGGING):
                 runner()
 
             for f in runner.output.iterdir():
-                if f == test_file_1 or f == test_file_2:
+                if f in (test_file_1, test_file_2):
                     continue
                 self.check_runner_outfile(f)
 
@@ -99,6 +117,7 @@ class TestAttributor(unittest.TestCase):
             data = torch.load(test_file_2)
             assert data == test_data_2, f"Expected {test_file_2} to contain '{test_data_2}', got `{data}`."
 
+    @ignore_layer_integrated_gradients
     def test_runner_3(self):
         attributor = Attributor(self.model, self.dataset, self.data_collator, self.raw_tokenizer.pad_token_id, "cpu")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -112,11 +131,11 @@ class TestAttributor(unittest.TestCase):
             torch.save(test_data_2, test_file_2)
 
             runner = AttributorRunner(tmpdir, attributor, resume=True, rerun=True, clean=False)
-            with print_context(True):
+            with print_context(suppress=not ENABLE_UNITTEST_LOGGING):
                 runner()
 
             for f in runner.output.iterdir():
-                if f == test_file_1 or f == test_file_2:
+                if f in (test_file_1, test_file_2):
                     continue
                 self.check_runner_outfile(f)
 
