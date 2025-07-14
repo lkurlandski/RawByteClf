@@ -1408,6 +1408,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         args.model_name_or_path = OutputHelper.get_finetuning_model_name_or_path(
             args.pretraining_task, args.pretraining_checkpoint, **pretrain_kwds,
         )
+        # I don't really know what is going on here. I had this working at one point, obviously, but
+        # recently, the path system seems to have gotten messed up. Now I've added this line below to fix it.
+        kwds["model_name_or_path"] = args.model_name_or_path
         # NOTE: we're going to put the finetuned ensembles beneath the RAW models.
         # Should we add symlinks to the output path beneath the DIS and DEC models?
         # This might be useful for documentation, but could prove annoying when trying to navigate the directory.
@@ -1989,7 +1992,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-        model_name_or_path = get_model_name_or_path(oh)
+        model_name_or_path = get_model_name_or_path(oh) if not os.path.exists(args.model_name_or_path) else args.model_name_or_path
         print("Using model from:", model_name_or_path)
         model: EnsembleForSequenceClassification = get_model(
             args.task,
@@ -2004,8 +2007,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         print(BR, flush=True)
 
         output = Path(model_name_or_path) / "attributionsNDSS"
-        attributor = Attributor(model, dataset["vl"], data_collator, tokenizer.pad_token_id, device)
-        runner = AttributorRunner(output, attributor, resume=True, rerun=True, clean=False)
+        output.mkdir(exist_ok=True)
+        attributor = Attributor(model, dataset["vl"].take(1000), data_collator, tokenizer.pad_token_id, device)
+        runner = AttributorRunner(output, attributor, resume=True, rerun=False, clean=False)
         runner.print()
         print(BR)
         runner()

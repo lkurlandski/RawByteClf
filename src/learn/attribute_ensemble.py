@@ -152,9 +152,9 @@ class Attributor:
         inputs: dict[str, list[Any]] = self.data_collator(batch)
 
         labels: Tensor = inputs["labels"].to(self.device)
-        input_ids_raw: Tensor = inputs["raw_input_ids"].to(self.device)
-        input_ids_dis: Tensor = inputs["dis_input_ids"].to(self.device)
-        input_ids_dec: Tensor = inputs["dec_input_ids"].to(self.device)
+        input_ids_raw: Tensor = inputs["raw_input_ids"][:,0:6144].to(self.device)
+        input_ids_dis: Tensor = inputs["dis_input_ids"][:,0:6144].to(self.device)
+        input_ids_dec: Tensor = inputs["dec_input_ids"][:,0:6144].to(self.device)
 
         attribs = get_attribution(self.alg, input_ids_raw, input_ids_dis, input_ids_dec, labels, self.model, self.baseline)
         attribs_raw = attribs[0].detach().to("cpu")
