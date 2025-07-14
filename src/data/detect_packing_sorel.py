@@ -777,6 +777,8 @@ class PackingMap(UserDict):
         lazy: bool = False,
         chunked: bool = False,
         num_workers: Optional[int] = None,
+        cache_load: bool = True,
+        cache_save: bool = True,
     ) -> None:
         if isinstance(num_workers, int) and chunked is False:
             print("`chunked` is False, but multiple workers were requested. Setting `chunked` to True.")
@@ -800,16 +802,18 @@ class PackingMap(UserDict):
         if self.num_workers is not None:
             self.num_workers = min(self.num_workers, len(self.partial_files))
 
-        if self.cache_file.exists() and self.cache_file.stat().st_size > 0:
+        if self.cache_file.exists() and self.cache_file.stat().st_size > 0 and cache_load:
             print(f"Getting the packing map from {self.cache_file=}")
             with open(self.cache_file, "rb") as fp:
                 packing_map = pickle.load(fp)
         else:
-            print(f"Building packing map and saving to {self.cache_file=}")
-            self.cache_file.parent.mkdir(exist_ok=True, parents=True)
+            print(f"Building packing map ({cache_save=}) ...")
             packing_map = self.get_packing_map()
-            with open(self.cache_file, "wb") as fp:
-                pickle.dump(packing_map, fp)
+            if cache_save:
+                print(f"Saving the packing map to {self.cache_file=}")
+                self.cache_file.parent.mkdir(exist_ok=True, parents=True)
+                with open(self.cache_file, "wb") as fp:
+                    pickle.dump(packing_map, fp)
 
         super().__init__(packing_map)
 
