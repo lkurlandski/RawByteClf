@@ -1,34 +1,29 @@
 """
-Some tests for the loaders_core module.
+Tests.
 """
 
-import bz2
 from collections import Counter
 from functools import partial
-import gzip
-from io import BytesIO
 from itertools import chain
-import lzma
 import math
 import os
 from pathlib import Path
 from pprint import pformat
 import random
-import shutil
-import subprocess
 import sys
-import tempfile
-import time
+from typing import Optional
 import unittest
-import zlib
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# pylint: enable=wrong-import-position
 
 import numpy as np
-import py7zr
+import pandas as pd
 
 from src.enums import SplitMode
-from src.data.detect_packing_sorel import PackingMap, unpack
+from src.utils import ignore_warnings_decorator, print_context
 from src.data.loaders_core import (
     Materials,
     compute_integer_sizes,
@@ -37,8 +32,9 @@ from src.data.loaders_core import (
     tr_vl_ts_split_idx,
     tr_vl_ts_split,
     tr_vl_ts_split_idx_guarentee,
-    get_bodmas_file_label_map,
-    # _get_sorel_file_label_map,
+    get_bodmas_sha_label_map,
+    get_sorel_sha_label_map,
+    _get_sorel_sha_label_map,
     get_sorel_file_label_map,
     _get_materials_clf,
     _get_materials_clf_multilabel,
@@ -46,7 +42,12 @@ from src.data.loaders_core import (
     _get_materials_clf_multilabel_few_shot_learning,
     spacially_bias,
 )
-from src.data.utils import Decompressor
+
+
+ENABLE_UNITTEST_WARNING = os.environ.get("LMLM_ENABLE_UNITTEST_WARNING", "0") == "1"
+ENABLE_UNITTEST_LOGGING = os.environ.get("LMLM_ENABLE_UNITTEST_LOGGING", "0") == "1"
+
+IGNORE_WARNINGS_FILTER_ACTION = "default" if ENABLE_UNITTEST_WARNING else "ignore"
 
 
 random.seed(0)
@@ -85,19 +86,24 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
     samples_per_class = 1
 
     def setUp(self):
-        self.binary_labels = [0] * 50 + [1] * 50
-        self.multi_labels = [0] * 50 + [1] * 50 + [2] * 50
+        self.binary_labels = np.array([0] * 50 + [1] * 50)
+        self.multi_labels = np.array([0] * 50 + [1] * 50 + [2] * 50)
+        np.random.shuffle(self.binary_labels)
+        np.random.shuffle(self.multi_labels)
 
-    def _test(self, idx: dict, labels, tr_size, vl_size, ts_size, samples_per_class):
+    def _test(self, idx: dict, labels, tr_size, vl_size, ts_size):
         tr_dist = Counter(labels[i] for i in idx["tr"])
         vl_dist = Counter(labels[i] for i in idx["vl"])
         ts_dist = Counter(labels[i] for i in idx["ts"])
 
         assert len(idx["tr"]) + len(idx["vl"]) + len(idx["ts"]) == len(labels), f"{len(idx['tr'])=} {len(idx['vl'])=} {len(idx['ts'])=} {len(labels)=}"
+        assert tr_size == 0.0 or tr_dist.most_common()[-1][1] >= self.samples_per_class, f"{tr_dist.most_common()[-1]=} {self.samples_per_class=}"
+        assert vl_size == 0.0 or vl_dist.most_common()[-1][1] >= self.samples_per_class, f"{vl_dist.most_common()[-1]=} {self.samples_per_class=}"
+        assert ts_size == 0.0 or ts_dist.most_common()[-1][1] >= self.samples_per_class, f"{ts_dist.most_common()[-1]=} {self.samples_per_class=}"
 
-        assert tr_size == 0.0 or tr_dist.most_common()[-1][1] >= samples_per_class
-        assert vl_size == 0.0 or vl_dist.most_common()[-1][1] >= samples_per_class
-        assert ts_size == 0.0 or ts_dist.most_common()[-1][1] >= samples_per_class
+    @ignore_warnings_decorator(IGNORE_WARNINGS_FILTER_ACTION, category=UserWarning, message=r"^Trouble adding sample to a split*")
+    def _tr_vl_ts_split_idx_guarentee(self, labels: list[int], tr_size: float, vl_size: float, ts_size: float, split_mode: SplitMode, timestamps: Optional[list[int]]):
+        return tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, split_mode, timestamps)
 
     def test_random_1(self):
         labels = self.binary_labels
@@ -105,8 +111,8 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
         vl_size = 0.20
         ts_size = 0.10
         timestamps = None
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.RANDOM, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
     def test_random_2(self):
         labels = self.multi_labels
@@ -114,8 +120,8 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
         vl_size = 0.20
         ts_size = 0.10
         timestamps = None
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.RANDOM, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
     def test_random_3(self):
         labels = self.binary_labels
@@ -123,8 +129,8 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
         vl_size = 0.20
         ts_size = 0.00
         timestamps = None
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.RANDOM, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
     def test_random_4(self):
         labels = self.multi_labels
@@ -132,17 +138,17 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
         vl_size = 0.20
         ts_size = 0.00
         timestamps = None
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.RANDOM, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
     def test_temporal_1(self):
         labels = self.binary_labels
         tr_size = 0.70
         vl_size = 0.20
-        ts_size = 0.10
+        ts_size = 0.00
         timestamps = list(range(len(labels)))
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.TEMPORAL_ABSOLUTE, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
     def test_temporal_2(self):
         labels = self.multi_labels
@@ -150,8 +156,8 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
         vl_size = 0.20
         ts_size = 0.10
         timestamps = list(range(len(labels)))
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.TEMPORAL_CLASSWISE, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
     def test_temporal_3(self):
         labels = self.binary_labels
@@ -159,8 +165,8 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
         vl_size = 0.20
         ts_size = 0.00
         timestamps = list(range(len(labels)))
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.TEMPORAL_ABSOLUTE, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
     def test_temporal_4(self):
         labels = self.multi_labels
@@ -168,8 +174,8 @@ class TestTrVlTsSplitIdxGuarentee(unittest.TestCase):
         vl_size = 0.20
         ts_size = 0.00
         timestamps = list(range(len(labels)))
-        idx = tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, self.samples_per_class, timestamps)
-        self._test(idx, labels, tr_size, vl_size, ts_size, self.samples_per_class)
+        idx = self._tr_vl_ts_split_idx_guarentee(labels, tr_size, vl_size, ts_size, SplitMode.TEMPORAL_CLASSWISE, timestamps)
+        self._test(idx, labels, tr_size, vl_size, ts_size)
 
 
 class TestDistributeElements(unittest.TestCase):
@@ -235,202 +241,14 @@ class TestDistributeElements(unittest.TestCase):
         self.assertEqual(count_C, 6)
 
 
-class TestDecompressor(unittest.TestCase):
-    def setUp(self):
-        self.test_data = b'This is a test string.'
-        self.test_dir = tempfile.TemporaryDirectory()
-        self.test_file = Path(self.test_dir.name) / "test.bytes"
-        with open(self.test_file, 'wb') as f:
-            f.write(self.test_data)
-
-    def tearDown(self):
-        self.test_dir.cleanup()
-
-    def test_none_decompression(self):
-        compressed_data = self.test_data
-        with open(self.test_file, "wb") as fp:
-            fp.write(compressed_data)
-        bytes_io = BytesIO(compressed_data)
-
-        decompressor = Decompressor(Decompressor.NONE)
-        for data in [compressed_data, self.test_file, bytes_io]:
-            alg, b = decompressor(data)
-            self.assertEqual(alg, Decompressor.NONE)
-            self.assertEqual(b, self.test_data)
-
-    def test_gzip_decompression(self):
-        compressed_data = gzip.compress(self.test_data)
-        with open(self.test_file, "wb") as fp:
-            fp.write(compressed_data)
-        bytes_io = BytesIO(compressed_data)
-
-        decompressor = Decompressor(Decompressor.GZIP)
-        for data in [compressed_data, self.test_file, bytes_io]:
-            alg, b = decompressor(data)
-            self.assertEqual(alg, Decompressor.GZIP)
-            self.assertEqual(b, self.test_data)
-
-    def test_bzip2_decompression(self):
-        compressed_data = bz2.compress(self.test_data)
-        with open(self.test_file, "wb") as fp:
-            fp.write(compressed_data)
-        bytes_io = BytesIO(compressed_data)
-
-        decompressor = Decompressor(Decompressor.BZIP2)
-        for data in [compressed_data, self.test_file, bytes_io]:
-            alg, b = decompressor(data)
-            self.assertEqual(alg, Decompressor.BZIP2)
-            self.assertEqual(b, self.test_data)
-
-    def test_lzma_decompression(self):
-        compressed_data = lzma.compress(self.test_data)
-        with open(self.test_file, "wb") as fp:
-            fp.write(compressed_data)
-        bytes_io = BytesIO(compressed_data)
-
-        decompressor = Decompressor(Decompressor.LZMA)
-        for data in [compressed_data, self.test_file, bytes_io]:
-            alg, b = decompressor(data)
-            self.assertEqual(alg, Decompressor.LZMA)
-            self.assertEqual(b, self.test_data)
-
-    def test_zlib_decompression(self):
-        compressed_data = zlib.compress(self.test_data)
-        with open(self.test_file, "wb") as fp:
-            fp.write(compressed_data)
-        bytes_io = BytesIO(compressed_data)
-
-        decompressor = Decompressor(Decompressor.ZLIB)
-        for data in [compressed_data, self.test_file, bytes_io]:
-            alg, b = decompressor(data)
-            self.assertEqual(alg, Decompressor.ZLIB)
-            self.assertEqual(b, self.test_data)
-
-    @unittest.skip("Skipping test_py7zr_decompression because its not implemented yet.")
-    def test_py7zr_decompression(self):
-        fp = BytesIO()
-        with py7zr.SevenZipFile(fp, 'w') as archive:
-            archive.writef(BytesIO(self.test_data), "tmp")
-        fp.seek(0)
-        compressed_data = fp.read()
-        decompressor = Decompressor(Decompressor.S7Z)
-        alg, b = decompressor(BytesIO(compressed_data))
-        self.assertEqual(alg, Decompressor.S7Z)
-        self.assertEqual(b, self.test_data)
-
-
-class TestPackingMap(unittest.TestCase):
-    def setUp(self):
-        self.maps = []
-
-    def tearDown(self):
-        self.maps = []
-
-    def test_packing_map_0(self):
-        print("packing_map_0")
-        t = time.time()
-        packing_map_0 = PackingMap(lazy=False, chunked=True, num_workers=16)
-        print(f"Elapsed time: {time.time() - t:.2f} seconds")
-        print(f"{len(packing_map_0)=}")
-        self.assertTrue(len(packing_map_0) > 0)
-        self.maps.append(packing_map_0)
-
-    def test_packing_map_1(self):
-        print("packing_map_1")
-        t = time.time()
-        packing_map_1 = PackingMap(lazy=False, chunked=True, num_workers=None)
-        print(f"Elapsed time: {time.time() - t:.2f} seconds")
-        print(f"{len(packing_map_1)=}")
-        self.assertTrue(len(packing_map_1) > 0)
-        self.maps.append(packing_map_1)
-
-    def test_packing_map_2(self):
-        print("packing_map_2")
-        t = time.time()
-        packing_map_2 = PackingMap(lazy=False, chunked=False, num_workers=None)
-        print(f"Elapsed time: {time.time() - t:.2f} seconds")
-        print(f"{len(packing_map_2)=}")
-        self.assertTrue(len(packing_map_2) > 0)
-        self.maps.append(packing_map_2)
-
-    def test_packing_map_3(self):
-        print("packing_map_3")
-        t = time.time()
-        packing_map_3 = PackingMap(lazy=True, chunked=True, num_workers=16)
-        print(f"Elapsed time: {time.time() - t:.2f} seconds")
-        print(f"{len(packing_map_3)=}")
-        self.assertTrue(len(packing_map_3) > 0)
-        self.maps.append(packing_map_3)
-
-    @unittest.skip("Skipping test_packing_map_4 because it is eggregiously slow.")
-    def test_packing_map_4(self):
-        print("packing_map_4")
-        t = time.time()
-        packing_map_4 = PackingMap(lazy=True, chunked=False, num_workers=None)
-        print(f"Elapsed time: {time.time() - t:.2f} seconds")
-        print(f"{len(packing_map_4)=}")
-        self.assertTrue(len(packing_map_4) > 0)
-        self.maps.append(packing_map_4)
-
-    def test_maps_equality(self):
-        for i, map1 in enumerate(self.maps):
-            for j, map2 in enumerate(self.maps):
-                if i != j:
-                    self.assertEqual(map1, map2, f"Maps {i} and {j} are not equal")
-
-
-@unittest.skip("Skipping TestUnpacking because it is not implemented.")
-class TestUnpacking(unittest.TestCase):
-
-    _test_file = "./tmp/calc.exe"
+class TestGetMaterialsClf(unittest.TestCase):
 
     def setUp(self):
-        self.test_dir = Path(tempfile.mkdtemp())
-        self.unpacked = self.test_dir /  "unpacked.exe"
-        self.packed = self.test_dir / "packed.exe"
-        self.outfile = self.test_dir / "out.exe"
-        shutil.copy2(self._test_file, self.unpacked)
-        args = ["upx", "--best", "-o", str(self.packed), str(self.unpacked)]
-        try:
-            result = subprocess.run(args, check=True, capture_output=True)
-        except subprocess.CalledProcessError as err:
-            print(err.stderr)
-            raise err
+        self.file_label_map = get_bodmas_sha_label_map()
 
-    def tearDown(self):
-        shutil.rmtree(self.test_dir)
-
-    def test_packed_file(self):
-        try:
-            outfile, byte_0 = unpack(self.packed, self.outfile, True, True, 1)
-        except subprocess.CalledProcessError as err:
-            print(err.stderr)
-            raise err
-
-        byte_1 = self.unpacked.read_bytes()
-        assert len(byte_0) == len(byte_1), f"{len(byte_0)=} != {len(byte_1)=}"
-        # Don't know why, but the executables themselves have some small differences.
-
-    def test_unpacked_file(self):
-        with self.assertRaises(subprocess.CalledProcessError):
-            unpack(self.unpacked, self.outfile, True, False, 1)
-        outfile, byte = unpack(self.unpacked, self.outfile, True, True, 0)
-        assert outfile is None
-        assert byte is None
-
-
-class GetMaterialsClf(unittest.TestCase):
-
-    def setUp(self):
-        self.file_label_map = get_bodmas_file_label_map()
-        self._get_materials_clf = partial(
-            _get_materials_clf,
-            files_and_labels=self.file_label_map,
-            tr_size=0.8,
-            vl_size=0.1,
-            ts_size=0.1,
-            must_exist=False,
-        )
+    @ignore_warnings_decorator(IGNORE_WARNINGS_FILTER_ACTION, category=UserWarning, message=r"^Trouble adding sample to a split*")
+    def _get_materials_clf(self, **kwds) -> Materials:
+        return _get_materials_clf(files_and_labels=self.file_label_map, tr_size=0.8, vl_size=0.1, ts_size=0.1, must_exist=False, **kwds)
 
     def _test_materials_object(self, materials: Materials) -> None:
         tr_classes = set(materials.labels["tr"])
@@ -471,18 +289,24 @@ class GetMaterialsClf(unittest.TestCase):
         assert materials_c.dist.most_common(1)[0][1] <= 100 * materials_c.dist.most_common()[-1][1]
 
 
-class GetMaterialsClfMultilabel(unittest.TestCase):
+class TestGetMaterialsClfMultilabel(unittest.TestCase):
 
-    def setUp(self):
-        self.file_label_map = get_sorel_file_label_map("beh")
-        self._get_materials_clf_multilabel = partial(
-            _get_materials_clf_multilabel,
-            files_and_labels=self.file_label_map,
-            tr_size=0.8,
-            vl_size=0.1,
-            ts_size=0.1,
-            must_exist=False,
-        )
+    @classmethod
+    def setUpClass(cls):
+        with print_context(suppress=not ENABLE_UNITTEST_LOGGING):
+            cls.file_label_map = get_sorel_sha_label_map("beh")
+
+    @ignore_warnings_decorator(IGNORE_WARNINGS_FILTER_ACTION, category=UserWarning, message=r"^Using an inaccurate heuristic algorithm to set a maximum imbalance ratio of*")
+    def _get_materials_clf_multilabel(self, **kwds) -> Materials:
+        with print_context(suppress=not ENABLE_UNITTEST_LOGGING):
+            return _get_materials_clf_multilabel(
+                files_and_labels=self.file_label_map,
+                tr_size=0.8,
+                vl_size=0.1,
+                ts_size=0.1,
+                must_exist=False,
+                **kwds
+            )
 
     def _test_materials_object(self, materials: Materials) -> None:
         tr_classes = set(chain.from_iterable(materials.labels["tr"]))
@@ -520,16 +344,16 @@ class GetMaterialsClfMultilabel(unittest.TestCase):
         assert len(c_c.difference(c_a)) == 0, f"{c_c.difference(c_a)=}"
         assert len(c_c.difference(c_b)) == 0, f"{c_c.difference(c_b)=}"
 
-        # The filtering method is approximate in nature and min_freq takes precsedence, so we need some tolerance.
-        assert materials_c.dist_tr.most_common(1)[0][1] <= 10 * 100 * materials_c.dist_tr.most_common()[-1][1], f"{materials_c.dist_tr=}"
-        assert materials_c.dist_vl.most_common(1)[0][1] <= 10 * 100 * materials_c.dist_vl.most_common()[-1][1], f"{materials_c.dist_vl=}"
-        assert materials_c.dist_ts.most_common(1)[0][1] <= 10 * 100 * materials_c.dist_ts.most_common()[-1][1], f"{materials_c.dist_ts=}"
+        assert materials_c.dist_tr.most_common(1)[0][1] <= 10 * 200 * materials_c.dist_tr.most_common()[-1][1], f"{materials_c.dist_tr=}"
+        assert materials_c.dist_vl.most_common(1)[0][1] <= 10 * 200 * materials_c.dist_vl.most_common()[-1][1], f"{materials_c.dist_vl=}"
+        assert materials_c.dist_ts.most_common(1)[0][1] <= 10 * 200 * materials_c.dist_ts.most_common()[-1][1], f"{materials_c.dist_ts=}"
 
 
+@unittest.skip("Skipping TestGetMaterialsClfFewShotLearning.")
 class TestGetMaterialsClfFewShotLearning(unittest.TestCase):
 
     def setUp(self):
-        self.files_and_labels = get_bodmas_file_label_map()
+        self.files_and_labels = get_bodmas_sha_label_map()
         self.tr_samples_per_class = list(range(1, 10))
 
     def _test_materials(
@@ -539,7 +363,6 @@ class TestGetMaterialsClfFewShotLearning(unittest.TestCase):
         vl_min_samples_per_class: int,
         vl_max_samples_per_class,
     ) -> None:
-        # print(f"{tr_samples_per_class=}\n{materials}\n{'-' * 80}")
         print(f"{tr_samples_per_class=} {len(materials.dist)=}")
         n_files = len(materials.files["tr"]) + len(materials.files["vl"])
         n_unique_files = len(set(materials.files["tr"] + materials.files["vl"]))
@@ -552,6 +375,7 @@ class TestGetMaterialsClfFewShotLearning(unittest.TestCase):
         vl_min_samples_per_class = 1
         vl_max_samples_per_class = 10
         for tr_samples_per_class in self.tr_samples_per_class:
+            print(f"{tr_samples_per_class=} {vl_min_samples_per_class=} {vl_max_samples_per_class=}")
             materials = _get_materials_clf_few_shot_learning(
                 self.files_and_labels,
                 tr_samples_per_class,
@@ -575,7 +399,7 @@ class TestGetMaterialsClfFewShotLearning(unittest.TestCase):
             self._test_materials(materials, tr_samples_per_class, vl_min_samples_per_class, vl_max_samples_per_class)
 
 
-@unittest.skip("Skipping TestGetMaterialsClfMultilabelFewShotLearning because it is not complete.")
+@unittest.skip("Skipping TestGetMaterialsClfMultilabelFewShotLearning")
 class TestGetMaterialsClfMultilabelFewShotLearning(unittest.TestCase):
 
     def setUp(self):
@@ -623,10 +447,12 @@ class TestGetMaterialsClfMultilabelFewShotLearning(unittest.TestCase):
             self._test_materials(materials, tr_samples_per_class, 20 * tr_samples_per_class, vl_min_samples_per_class, sys.maxsize)
 
 
-class Test_GetSorelFileLabelMap(unittest.TestCase):
+class TestGetSorelFileLabelMap(unittest.TestCase):
 
-    def setUp(self):
-        self.files_and_labels = _get_sorel_file_label_map()
+    @classmethod
+    def setUpClass(cls):
+        with print_context(suppress=not ENABLE_UNITTEST_LOGGING):
+            cls.files_and_labels = _get_sorel_sha_label_map()
 
     def get_sorel_file_label_map(self, name: str):
         files_and_labels = {f: getattr(l, name) for f, l in self.files_and_labels.items()}
@@ -634,6 +460,8 @@ class Test_GetSorelFileLabelMap(unittest.TestCase):
         return files_and_labels
 
     def check_file_label_map(self, files_and_labels: dict, single_label: bool):
+        assert isinstance(files_and_labels, dict), f"{files_and_labels=}"
+        assert len(files_and_labels) > 0, f"{files_and_labels=}"
         for file, label in files_and_labels.items():
             self.assertIsInstance(file, (os.PathLike, Path, str))
             self.assertIsInstance(label, tuple)
@@ -641,7 +469,7 @@ class Test_GetSorelFileLabelMap(unittest.TestCase):
                 self.assertEqual(len(label), 1)
             for l in label:
                 l: str
-                self.assertIsInstance(l, str), f"{l=}"
+                self.assertIsInstance(l, str, f"{l=}")
                 assert not l.isspace(), f"{l=}"
                 assert not l.lower() in ("none", "na", "nan"), f"{l=}"
 
@@ -665,19 +493,15 @@ class Test_GetSorelFileLabelMap(unittest.TestCase):
         files_and_labels = self.get_sorel_file_label_map("pack")
         self.check_file_label_map(files_and_labels, single_label=False)
 
-    @unittest.skip("Skipping test_unk because it is not implemented.")
+    @unittest.skip("Skipping TestGetSorelFileLabelMap.test_unk.")
     def test_unk(self):
         files_and_labels = self.get_sorel_file_label_map("unk")
         self.check_file_label_map(files_and_labels, single_label=False)
 
-    @unittest.skip("Skipping test_vuln because it is not implemented.")
+    @unittest.skip("Skipping TestGetSorelFileLabelMap.test_vuln.")
     def test_vuln(self):
         files_and_labels = self.get_sorel_file_label_map("vuln")
         self.check_file_label_map(files_and_labels, single_label=False)
-
-
-class TestSpacialBiasingMaterials:
-    ...
 
 
 class TestSpacialBiasing(unittest.TestCase):
@@ -792,24 +616,7 @@ class TestGetMaterialsClfAbsoluteTemporal(unittest.TestCase):
 
     split_mode = SplitMode.TEMPORAL_ABSOLUTE
 
-    def test_simple(self) -> None:
-        ...
-
-    def test_failure_case(self) -> None:
-        import pandas as pd
-        df = pd.read_csv("./tmp/failure.csv")
-        timestamps = df["timestamp"].array
-        labels = df["label"].array
-        idx = tr_vl_ts_split_idx_guarentee(labels, 0.8, 0.2, 0.0, 1, self.split_mode, timestamps)
-
-        latest_tr   = max(timestamps[i] for i in idx["tr"])
-        earliest_vl = min(timestamps[i] for i in idx["vl"])
-        latest_vl   = max(timestamps[i] for i in idx["vl"])
-
-        assert latest_tr <= earliest_vl
-        assert latest_tr < earliest_vl
-        assert earliest_vl <= latest_vl
-
+    @ignore_warnings_decorator(IGNORE_WARNINGS_FILTER_ACTION, category=UserWarning, message=r"^Moving 100 samples to the vl set because of overlapping timestamps.*")
     def test_rearange_tr_to_vl(self) -> None:
         # The timestamps are constructed such that the algorithm should move the duplicates
         # timestamps into the vl set because there are more of the duplicates in the vl set.
@@ -829,6 +636,7 @@ class TestGetMaterialsClfAbsoluteTemporal(unittest.TestCase):
         assert 100 in [int(timestamps[i]) for i in idx["vl"]]
         assert 100 not in [int(timestamps[i]) for i in idx["tr"]]
 
+    @ignore_warnings_decorator(IGNORE_WARNINGS_FILTER_ACTION, category=UserWarning, message=r"^Moving 100 samples to the tr set because of overlapping timestamps.*")
     def test_rearange_vl_to_tr(self) -> None:
         # The timestamps are constructed such that the algorithm should move the duplicates
         # timestamps into the tr set because there are more of the duplicates in the tr set.

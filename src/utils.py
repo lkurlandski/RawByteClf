@@ -8,6 +8,7 @@ from collections.abc import Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import fnmatch
+from functools import wraps
 import gzip
 import inspect
 from io import BytesIO
@@ -115,6 +116,20 @@ def print_context(suppress: bool = False):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 yield
+
+
+def ignore_warnings_decorator(*filter_args, **filter_kwargs):
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with warnings.catch_warnings():
+                warnings.filterwarnings(*filter_args, **filter_kwargs)
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:

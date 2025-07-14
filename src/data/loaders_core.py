@@ -851,8 +851,7 @@ def tr_vl_ts_split_idx_guarentee(
             raise RuntimeError(
                 f"Creating a temporal split with {tr_size=} {vl_size=} {ts_size=} "
                 "resulted in one of the splits losing all representatives of one or more classes "
-                f"(tr_dist={pformat(tr_dist)} vl_dist={pformat(vl_dist)} "
-                f"tr_dist=\n{pformat(tr_dist)}\nts_dist={pformat(ts_dist)})."
+                f"(tr_dist={pformat(tr_dist)} vl_dist={pformat(vl_dist)} ts_dist={pformat(ts_dist)})."
             )
 
     assert set.intersection(set(tr_idx), set(vl_idx), set(ts_idx)) == set(), "Indices are not mutually exclusive."
@@ -1098,6 +1097,10 @@ def filter_packed_files(
 ################################################################################
 # Load File-label Maps
 ################################################################################
+
+
+def get_bodmas_sha_label_map() -> dict[str, str]:
+    return pd.read_csv(BODMAS_LABELS_FILE).set_index("sha")["family"].to_dict()
 
 
 def get_bodmas_file_label_map() -> dict[os.PathLike, str]:
@@ -1390,6 +1393,9 @@ def _get_materials_clf_multilabel(
     packing_root: Optional[Path | list[Path]] = None,
     must_exist: bool = True,
 ) -> Materials:
+
+    if max_imbalance_ratio is not None:
+        warnings.warn(f"Using an inaccurate heuristic algorithm to set a maximum imbalance ratio of {max_imbalance_ratio}.")
 
     if min_freq is None:
         if vl_size == 0 or ts_size == 0:
