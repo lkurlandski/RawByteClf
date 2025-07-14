@@ -50,8 +50,10 @@ def compute_perplexity(logits: np.ndarray, labels: np.ndarray) -> float:
     )
     """
 
-    assert logits.ndim == 3, "Logits must have shape (B, T, V)."
-    assert labels.ndim == 2, "Labels must have shape (B, T)."
+    if logits.ndim != 3:
+        raise ValueError(f"Logits must have shape (B, T, V). Got shape {tuple(logits.shape)}.")
+    if labels.ndim != 2:
+        raise ValueError(f"Labels must have shape (B, T). Got shape {tuple(labels.shape)}.")
 
     V = logits.shape[2]
 
@@ -323,99 +325,6 @@ class LMComputeMetrics(ComputeMetrics):
         self.special_token_ids = np.array(special_token_ids, dtype=np.int64)
         self.cpu = cpu
 
-    def __call__(self, eval_pred: EvalPrediction, compute_result: bool = True) -> dict[float, str]:
-        if self.cpu:
-            eval_pred = eval_prediction_to_cpu(eval_pred)
-
-        if isinstance(eval_pred.label_ids, Tensor) and isinstance(self.unigrams, np.ndarray):
-            self.unigrams = torch.from_numpy(self.unigrams).to(eval_pred.label_ids.device)
-            self.special_token_ids = torch.from_numpy(self.special_token_ids).to(eval_pred.label_ids.device)
-        elif isinstance(eval_pred.label_ids, np.ndarray) and isinstance(self.unigrams, Tensor):
-            self.unigrams = self.unigrams.numpy(force=True)
-            self.special_token_ids = self.special_token_ids.numpy(force=True)
-
-        # Determine the indices corresponding to special tokens.
-        if isinstance(eval_pred.label_ids, np.ndarray):
-            ignore = np.isin(eval_pred.label_ids, self.special_token_ids)
-        elif isinstance(eval_pred.label_ids, Tensor):
-            ignore = torch.isin(eval_pred.label_ids, self.special_token_ids)
-
-        # Get the relevant data from the EvalPrediction.
-        labels      = eval_pred.label_ids[~ignore]
-        predictions = eval_pred.predictions[~ignore]
-        support = labels.size if isinstance(labels, np.ndarray) else labels.numel()
-
-        # Perplexity
-        if getattr(eval_pred, "losses", None) is None:
-            if self.raise_if_loss_not_present:
-                raise ValueError("Expected losses to be present.")
-            ppl = compute_perplexity(predictions, labels)
-        else:
-            loss = eval_pred.losses.mean()
-            loss = loss.detach().cpu().item() if isinstance(loss, Tensor) else float(loss)
-            ppl = math.exp(loss)
-        report = {"ppl": ppl}
-
-        # Normalized Perplexity
-        if self.unigrams is not None:
-            word_probs = self.unigrams[labels]
-            if self.check:
-                if are_any_nan(word_probs):
-                    raise ValueError(f"Detected NAN in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
-                if are_any_inf(word_probs):
-                    raise ValueError(f"Detected INF in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
-                if bool((word_probs > 1.0).any()):
-                    raise ValueError(f"Detected value > 1.0 in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
-                if bool((word_probs < 0.0).any()):
-                    raise ValueError(f"Detected value < 0.0 in word_probs.\n{self.unigrams.tolist()=}\n{labels.tolist()=}\n{word_probs.tolist()=}")
-
-            if isinstance(word_probs, np.ndarray):
-                word_probs = np.clip(word_probs, a_min=1e-10, a_max=None)
-                word_probs = np.log(word_probs)
-            else:
-                word_probs = torch.clamp(word_probs, min=1e-10)
-                word_probs = torch.log(word_probs)
-
-            scale = word_probs.mean()
-            scale = scale.detach().cpu().item() if isinstance(scale, Tensor) else float(scale)
-            report["nppl"] = report["ppl"] * math.exp(scale)
-
-        # Basic metrics
-        if self.basic_metrics:
-            y_true = labels.numpy(force=True) if isinstance(labels, Tensor) else labels
-            y_pred = predictions.numpy(force=True) if isinstance(predictions, Tensor) else labels
-            report |= {
-                "accuracy": metrics.accuracy_score(y_true, y_pred),
-                "f1-macro": metrics.f1_score(y_true, y_pred, average="macro"),
-            }
-
-        return self.update_and_return(report, support, compute_result)
-
-
-class LMComputeMetrics2(ComputeMetrics):
-    """
-    Compute language modeling metrics.
-    """
-
-    # The value here needs to be "loss" while the name in EvalPrediction is "losses".
-    include_for_metrics = ["loss"]
-
-    def __init__(self,
-        unigrams: Optional[np.ndarray] = None,
-        raise_if_loss_not_present: bool = True,
-        basic_metrics: bool = True,
-        check: bool = True,
-        special_token_ids: tuple[int] = (-100,),
-        cpu: bool = True,
-    ) -> None:
-        super().__init__()
-        self.unigrams = unigrams
-        self.raise_if_loss_not_present = raise_if_loss_not_present
-        self.basic_metrics = basic_metrics
-        self.check = check
-        self.special_token_ids = np.array(special_token_ids, dtype=np.int64)
-        self.cpu = cpu
-
         if self.basic_metrics:
             raise NotImplementedError("Basic metrics are not yet implemented.")
 
@@ -434,7 +343,8 @@ class LMComputeMetrics2(ComputeMetrics):
         if isinstance(eval_pred.label_ids, np.ndarray):
             ignore = np.isin(eval_pred.label_ids, self.special_token_ids)
         elif isinstance(eval_pred.label_ids, Tensor):
-            ignore = torch.isin(eval_pred.label_ids, self.special_token_ids)
+            _special_token_ids = self.special_token_ids if isinstance(self.special_token_ids, Tensor) else torch.tensor(self.special_token_ids)
+            ignore = torch.isin(eval_pred.label_ids, _special_token_ids)
 
         # Get the relevant data from the EvalPrediction.
         labels  = eval_pred.label_ids[~ignore]
@@ -479,19 +389,22 @@ class LMComputeMetrics2(ComputeMetrics):
 
     def compute_result(self) -> dict[str, float]:
         results = super().compute_result()
-        results["ext_loss"] = results.pop("loss")
-        results["ppl"]  = math.exp(results["ext_loss"])
-        results["nppl"] = results["ppl"] * math.exp(results.pop("scale"))
+        if "loss" not in results and self.raise_if_loss_not_present:
+            raise ValueError("Expected loss to be present.")
+        results["ext_loss"] = results.pop("loss", np.nan)
+        results["ppl"] = math.exp(results["ext_loss"])
+        if self.unigrams is not None:
+            results["nppl"] = results["ppl"] * math.exp(results.pop("scale"))
         return results
 
 
-class MLMComputeMetrics(LMComputeMetrics2):
+class MLMComputeMetrics(LMComputeMetrics):
     """
     Compute masked language model metrics.
     """
 
 
-class CLMComputeMetrics(LMComputeMetrics2):
+class CLMComputeMetrics(LMComputeMetrics):
     """
     Compute causal language model metrics.
     """
