@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from typing import Optional
+import warnings
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
@@ -271,15 +272,69 @@ class ToolRunner:
 
 class Labeler:
     """
-    Parses the output of AVClass and ClarAVy (.txt) cache files.
-    Extracts labeling based upon the `filter_args`.
-    Creates a unique cache file based on the contents of the claravy, avclass,
-    and avclass-family cache files as well as the `filter_args` and reuses cache
-    to avoid reparsing the data.
+    Provides a simple interface for using simplified malware labels.
 
-    I'm having some difficulty dealing with import errors when using pickle to
-    serialize a custom object, so we're going to serialize things as dict, not
-    Label, then convert back to Label when loading the cache.
+    This class parses the output of AVClass and ClarAVy (.txt) cache files and
+    extracts labels based upon the a filter to control how accurate a label must be.
+    It also creates a unique cache file based on the contents of the claravy, avclass,
+    and avclass-family cache files as well as the `filter_args`. Subsequent usage
+    reuses the cache to avoid reparsing the data, which is slow.
+
+    There were some difficulties dealing with import errors when using pickle to
+    serialize a custom object, so we serialize things as dict, not Label, then
+    convert back to Label when loading the cache.
+
+    Usage
+    -----
+
+    Suppose we want to consider the five most popular labels that were flagged by
+     at least two AVs. In other words, we set:
+    >>> top_k = 5
+    >>> min_freq = 2
+    >>> rule = (top_k, min_freq)
+
+    We can create a special FilterArgs object representing this desire. If we wanted to,
+     we could control the filtering rules for each label type individually, but for now
+     we will just use the same rule for every type of label:
+    >>> filter_args = FilterArgs(
+    ...     class_=rule,
+    ...     file=rule,
+    ...     fam=rule,
+    ...     beh=rule,
+    ...     unk=rule,
+    ...     pack=rule,
+    ...     vuln=rule,
+    ... )
+
+    Although there is an option to control the labeling for "fam" (family labels),
+    note that this is in fact inert in other parts of the program because AVClass2
+    implements its own family-label-consolidation method.
+
+    To apply to filter rules to the saved plaintext cache files, we can use the Labeler.
+    This parses the text files, applies the filtering, and serializes the results:
+    >>> labeler = Labeler(
+    ...     "claravy_cache.txt",
+    ...     "avclass_cache.txt",
+    ...     "avclass_family_cache.txt",
+    ...     filter_args,
+    ...     use_cache=True,
+    ... )
+
+    The labeler contains all of the information we need. We can a specific type of label,
+    e.g., family, class, or behavioral labels with the `view` method:
+    >>> family_labels = labeler.view("fam")
+    >>> class_labels = labeler.view("class")
+    >>> behavioral_labels = labeler.view("beh")
+
+    `Labeler.view` returns a dictionary where the keys are the SHA256 hashes of the samples
+    and the values are a tuple of string labels produced by the AVClass and ClarAVy tools.
+
+    The family labels are always going to have one element:
+    >>> family_labels["0000000000000000000000000000000000000000000000000000000000000000"]
+    ... ('upatre',)
+    Other types of labels can have between zero and `top_k` elements:
+    >>> class_labels["0000000000000000000000000000000000000000000000000000000000000000"]
+    ... ('trojan', 'downloader', 'generic', 'malware', 'trojandownloader')
     """
 
     def __init__(
@@ -370,12 +425,25 @@ class Labeler:
 
     def parse_avclass_family(self) -> None:
 
+        # TODO: There is a bug here which results in some samples being
+        # unlabeled when they do in fact have a label. Concretely, the first
+        # branch does not set the sha argument, so the sha from the previous
+        # iteration of the for loop is used and its family is set to None.
+        if os.environ.get("USE_UPDATED_AVCLASS_FAMILY_PARSER") != "1":
+            warnings.warn(
+                "Using a variant of parse_avclass_family that has a small bug in it for backwards compatibility. "
+                f"{os.environ.get('USE_UPDATED_AVCLASS_FAMILY_PARSER')=}."
+                "Use USE_UPDATED_AVCLASS_FAMILY_PARSER=1 to use the updated version."
+            )
+
         with open(self.avclass_family_cache, "r") as fp:
             for line in fp:
                 line = re.sub(r'\s+', ' ', line).strip()
                 args = line.split()
                 if len(args) != 2:
                     if args[1:] == ["-", "[]"]:
+                        if os.environ.get("USE_UPDATED_AVCLASS_FAMILY_PARSER") == "1":
+                            sha = args[0]
                         fam = None
                     else:
                         raise ValueError(f"Unexpected line: {line=}")

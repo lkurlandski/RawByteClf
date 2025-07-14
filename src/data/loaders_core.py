@@ -69,6 +69,12 @@ class ArchivedFile:
         self.archive = archive
         self.name = name
 
+    def __repr__(self) -> str:
+        return f"ArchiveFile({self.archive}, {self.name})"
+
+    def __str__(self) -> str:
+        return f"{str(self.archive)} --> {self.name}"
+
     @staticmethod
     def list_from_archives(archives: list[str | Path]) -> list[ArchivedFile]:
         archived_files = []
@@ -160,6 +166,18 @@ class Materials:
             return None
         return self.get_split_dist("ts")
 
+    @property
+    def shas_tr(self) -> Counter:
+        return self.get_split_shas("tr")
+
+    @property
+    def shas_vl(self) -> Counter:
+        return self.get_split_shas("vl")
+
+    @property
+    def shas_ts(self) -> Counter:
+        return self.get_split_shas("ts")
+
     def imbalance(self, split: Optional[SplitNames] = None) -> Optional[float]:
         if self.problem_type is None:
             return None
@@ -181,6 +199,26 @@ class Materials:
         if self.problem_type == "multi_label_classification":
             return Counter([self.id2label[int(i)] for i in chain.from_iterable(self.labels[split])])
         raise RuntimeError(f"Invalid problem type: {self.problem_type=}")
+
+    def get_split_shas(self, split: SplitNames) -> list[str]:
+        files = self.files[split]
+        if len(files) == 0:
+            return []
+
+        shas = [""] * len(files)
+
+        def archived_file_to_sha(af: ArchivedFile) -> str:
+            return os.path.basename(af.name).split(".")[0]
+
+        def str_file_to_sha(f: str) -> str:
+            return os.path.basename(f).split(".")[0]
+
+        to_sha = archived_file_to_sha if isinstance(files[0], ArchivedFile) else str_file_to_sha
+
+        for i, f in enumerate(files):
+            shas[i] = to_sha(f)
+
+        return shas
 
     def __repr__(self):
         if self.dist is not None:
