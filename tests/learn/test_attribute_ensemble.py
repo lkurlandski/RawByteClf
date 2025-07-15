@@ -13,7 +13,13 @@ import transformers
 
 from src.utils import ignore_warnings_decorator, print_context
 from src.architectures.hrrformer import HRREnsembleForSequenceClassification, HRRConfig
-from src.learn.attribute_ensemble import Attributor, AttributorRunner
+try:
+    from src.learn.attribute_ensemble import Attributor, AttributorRunner
+    IS_CAPTUM_AVAILABLE = True
+except (ImportError, ModuleNotFoundError) as _err:
+    if _err.name != "captum":
+        raise _err
+    IS_CAPTUM_AVAILABLE = False
 from src.learn.collators import EnsembleDataCollatorWithPadding
 from src.tokenization.api import get_fast_tokenizer
 
@@ -30,6 +36,7 @@ IGNORE_WARNINGS_FILTER_ACTION = "default" if ENABLE_UNITTEST_WARNING else "ignor
 ignore_layer_integrated_gradients = ignore_warnings_decorator(IGNORE_WARNINGS_FILTER_ACTION, category=UserWarning, message=r"^Multiple layers provided*")
 
 
+@unittest.skipIf(not IS_CAPTUM_AVAILABLE, "Skipping TestAttributor.")
 class TestAttributor(unittest.TestCase):
 
     def setUp(self):

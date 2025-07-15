@@ -20,10 +20,13 @@ if __name__ == "__main__":
 
 # pylint: disable=wrong-import-position
 
-import boto3
-import botocore
-from botocore import UNSIGNED
-from botocore.config import Config as BotocoreConfig
+try:
+    import boto3
+    import botocore
+    from botocore import UNSIGNED
+    from botocore.config import Config as BotocoreConfig
+except (ImportError, ModuleNotFoundError) as _err:
+    print(f"{_err.__class__.__name__}: ray")
 from datasets import Dataset, Features, Value, concatenate_datasets
 
 from src.data.cfg import (
@@ -38,7 +41,7 @@ from src.data.utils import stream_sorel_meta, Decompressor, PerDatasetArgumentPa
 class ErrorStream:
     def __init__(self, file: Path) -> None:
         self.file = Path(file)
-        self.file.write_text("")
+        # self.file.write_text("")
 
     def write(self, message: str):
         with open(self.file, "a") as log_file:
