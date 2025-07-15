@@ -117,7 +117,7 @@ try:
 except (ModuleNotFoundError, ImportError) as _err:
     print(f"{_err.__class__.__name__}: ray")
 
-from src.cfg import BR, System, SYSTEM
+from src.cfg import BR
 from src.enums import (
     CompressionAlgorithm,
     EncryptionAlgorithm,
@@ -1549,7 +1549,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
         if args.lift_level == LiftLevel.ALL:
             # On armitage, we don't have all the files, so we need to sync the data across representations.
-            if SYSTEM == System.ARMITAGE:
+            if os.environ.get("LMLM_SYNC_ENSEMBLE_MATERIALS", "0") == "1":
                 for split in ["tr", "vl"]:
                     intersection = None
                     for m in multimaterials.values():

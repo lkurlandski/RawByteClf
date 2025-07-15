@@ -26,7 +26,6 @@ from botocore import UNSIGNED
 from botocore.config import Config as BotocoreConfig
 from datasets import Dataset, Features, Value, concatenate_datasets
 
-from src.cfg import INPUT_PATH
 from src.data.cfg import (
     MAX_SHARD_SIZE,
     DATASET_TO_FILES,
@@ -319,13 +318,6 @@ def main() -> None:
         dataset.save_to_disk(outpath.as_posix(), max_shard_size=MAX_SHARD_SIZE)
         if not args.keep_cache:
             shutil.rmtree(Path(dataset.cache_files[0]["filename"]).parent)
-
-
-def test():
-    for f in INPUT_PATH.iterdir():
-        d = Dataset.load_from_disk(f)
-        print(f)
-        print(d)
 
 
 if __name__ == "__main__":

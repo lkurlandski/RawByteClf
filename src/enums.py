@@ -25,6 +25,7 @@ class System(Enum):
     WINTERMUTE = "win"
     SPORC      = "rc"
     GCCIS      = "lab"
+    DEFAULT    = "def"
 
 
 class EncryptionAlgorithm(Enum):
