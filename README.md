@@ -4,6 +4,8 @@
 
 To verify the functionality of our codebase, we've included a small demonstration via Docker.
 
+### Setup
+
 To clean up docker artifacts:
 ```
 sudo docker container prune -f
@@ -40,9 +42,24 @@ Start up the docker daemon:
 sudo docker run -d --name demo_state demo:latest tail -f /dev/null
 ```
 
-Prepare input data:
+Prepare binaries:
 ```
-sudo docker run --rm demo:latest bash demo/prepare.sh
+sudo docker exec demo_state bash demo/prepare.sh
+```
+
+Preprocess inputs:
+```
+sudo docker exec demo_state bash demo/preprocess.sh
+```
+
+Generate dataset caches:
+```
+sudo docker exec demo_state bash demo/gencaches.sh
+```
+
+Train tokenizers:
+```
+sudo docker exec demo_state bash demo/tokenize.sh
 ```
 
 Generate experiments:
@@ -58,7 +75,7 @@ ls -l ./workdir/sbatch
 
 Run experiments:
 ```
-sudo docker run --rm demo:latest bash demo/sbatch/[EXPERIMENT].sh
+sudo docker exec demo_state bash demo/sbatch/[EXPERIMENT].sh
 ```
 
 Kill the daemon:
@@ -70,6 +87,10 @@ Remove the output data:
 ```
 sudo rm -rf ./workdir
 ```
+
+### TMP:
+
+sudo docker build -t demo:latest . && sudo docker run -d --name demo_state demo:latest tail -f /dev/null && sudo docker exec demo_state bash demo/gencaches.sh && sudo docker stop demo_state && sudo docker rm demo_state
 
 ## Environment
 
@@ -92,6 +113,14 @@ All environment variables for this system are prefaced with "LMLM_".
 `LMLM_ENABLE_UNITTEST_WARNING`: If "1", then the unittests will not try to suppress warnings. Defaults to "0".
 `LMLM_SYNC_ENSEMBLE_MATERIALS`: If "1", then when loading data for the ensemble, the samples from different input representations will be checked to ensure that each representation contains the same samples. Defaults to "0".
 `LMLM_CAN_PRECOPY_ZIPFILES`: If "1", then when extracted data from zipfiles, zipfiles will be copied into the systems temporary directory prior to being opened. This flag speeds up the reading speed if the zipfiles are on a different file system. Defaults to "0".
+`LMLM_GET_MATERIALS_ESP_FAM_MIN_FREQ`:
+`LMLM_GET_MATERIALS_ESP_FAM_MAX_IMBALANCE_RATIO`:
+`LMLM_GET_MATERIALS_ESP_FAM_TOP_K`:
+`LMLM_GET_MATERIALS_ESP_BEH_MIN_FREQ`:
+`LMLM_GET_MATERIALS_ESP_BEH_MAX_IMBALANCE_RATIO`:
+`LMLM_GET_MATERIALS_ESP_BEH_TOP_K`:
+`LMLM_GET_MATERIALS_ESP_CLM_VL_SIZE`:
+`LMLM_GET_MATERIALS_ESP_MLM_VL_SIZE`:
 
 ## Preprocessing
 
