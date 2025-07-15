@@ -27,11 +27,20 @@ from typing import Any, Callable, Generator, Literal, Optional
 import warnings
 import zlib
 
-from Crypto.Cipher import AES
+try:
+    from Crypto.Cipher import AES
+except (ModuleNotFoundError, ImportError) as _err:
+    print(f"{_err.__class__.__name__}: Crypto")
 import numpy as np
 import psutil
-from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
-import py7zr
+try:
+    from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo
+except (ModuleNotFoundError, ImportError) as _err:
+    print(f"{_err.__class__.__name__}: pynvml")
+try:
+    import py7zr
+except (ModuleNotFoundError, ImportError) as _err:
+    print(f"{_err.__class__.__name__}: py7zr")
 import torch
 from torch import nn, ByteTensor, LongTensor, Tensor
 

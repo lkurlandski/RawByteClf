@@ -43,7 +43,7 @@ import torch
 from torch import ByteTensor
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as atqdm
-import py7zr
+# import py7zr
 
 from src.utils import batched
 from src.data.cfg import SOREL_META_CSV, DATASET_NAMES, DATASET_TO_FILES, SOREL_PATH, TIMESTAMPS_FILES, DIGESTS_FILES
