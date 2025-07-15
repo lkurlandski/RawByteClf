@@ -1,5 +1,0 @@
-{
-	"d_model": 512,
-	"n_layer": 2,
-	"mlp_hidden_size": 512
-}
