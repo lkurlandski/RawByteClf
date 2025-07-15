@@ -9,12 +9,22 @@ ARG USERNAME=appuser
 RUN useradd -ms /bin/bash $USERNAME
 WORKDIR /home/$USERNAME/app
 
+# ---- ADD THIS BLOCK ----
+# Install `tree` (a 120 KB binary) in one layer
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tree \
+    && rm -rf /var/lib/apt/lists/*
+# ------------------------
+
 # 2. Copy python environment and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 3. Copy only what's needed for the demo
 COPY demo/ ./demo/
+COPY src/ ./src/
+COPY tests/ ./tests/
+COPY config/default.json ./config/default.json
 
 # 4. Set environment variables (optional)
 ENV PYTHONUNBUFFERED=1 \
@@ -24,5 +34,5 @@ ENV PYTHONUNBUFFERED=1 \
 USER $USERNAME
 
 # 5. Default command
-ENTRYPOINT ["python", "demo/demo.py"]
-
+ENTRYPOINT []
+CMD ["python", "demo/hello.py"]

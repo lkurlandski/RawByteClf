@@ -178,3 +178,7 @@ tmp.py
 scripts/*
 export
 run/esp/sbatch/
+config/arm.json
+config/config.json
+config/lab.json
+config/rc.json

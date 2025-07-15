@@ -1,5 +1,55 @@
 # RawByteClf
 
+## Demo
+
+To verify the functionality of our codebase, we've included a small demonstration via Docker.
+
+To create the docker image:
+```
+sudo docker build -t demo:latest .
+sudo docker save demo:latest | gzip > demo.tar.gz
+```
+
+To use the docker image:
+```
+gunzip -c demo.tar.gz | sudo docker load
+sudo docker run --rm demo:latest
+```
+
+To run the demos:
+```
+sudo docker run --rm demo:latest bash demo/tests.sh
+```
+
+To clean up docker artifacts:
+```
+sudo docker container prune -f
+sudo docker image prune -f
+docker system prune -a --volumes -f
+```
+
+## Environemnt
+
+To run locally or develop, an environment with the relevant dependencies must be created.
+
+Create conda environment:
+```
+conda env create -f environment.yml
+conda activate LMLM
+pip install -r requirements.txt
+```
+
+## Documentation
+
+### Environment Variables
+
+All environment variables for this system are prefaced with "LMLM_".
+
+`LMLM_ENABLE_UNITTEST_LOGGING`: If "1", then the unittests will not try to suppress log statements and will print output of their own. Defaults to "0".
+`LMLM_ENABLE_UNITTEST_WARNING`: If "1", then the unittests will not try to suppress warnings. Defaults to "0".
+`LMLM_SYNC_ENSEMBLE_MATERIALS`: If "1", then when loading data for the ensemble, the samples from different input representations will be checked to ensure that each representation contains the same samples. Defaults to "0".
+`LMLM_CAN_PRECOPY_ZIPFILES`: If "1", then when extracted data from zipfiles, zipfiles will be copied into the systems temporary directory prior to being opened. This flag speeds up the reading speed if the zipfiles are on a different file system. Defaults to "0".
+
 ## Preprocessing
 
 - Ensure all raw binaries and VirusTotal reports are in the correct directory on disk.
