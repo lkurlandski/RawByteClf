@@ -4,6 +4,13 @@
 
 To verify the functionality of our codebase, we've included a small demonstration via Docker.
 
+To clean up docker artifacts:
+```
+sudo docker container prune -f
+sudo docker image prune -f
+docker system prune -a --volumes -f
+```
+
 To create the docker image:
 ```
 sudo docker build -t demo:latest .
@@ -13,22 +20,58 @@ sudo docker save demo:latest | gzip > demo.tar.gz
 To use the docker image:
 ```
 gunzip -c demo.tar.gz | sudo docker load
-sudo docker run --rm demo:latest
+sudo docker run --rm demo:latest [COMMAND]
 ```
 
-To run the demos:
+Verify that the tests pass:
 ```
 sudo docker run --rm demo:latest bash demo/tests.sh
 ```
 
-To clean up docker artifacts:
+### Reproduction
+
+Create a directory to inspect outputs:
 ```
-sudo docker container prune -f
-sudo docker image prune -f
-docker system prune -a --volumes -f
+mkdir ./workdir
 ```
 
-## Environemnt
+Start up the docker daemon:
+```
+sudo docker run -d --name demo_state demo:latest tail -f /dev/null
+```
+
+Prepare input data:
+```
+sudo docker run --rm demo:latest bash demo/prepare.sh
+```
+
+Generate experiments:
+```
+sudo docker exec demo_state python demo/create.py
+```
+
+View the shell scripts:
+```
+sudo docker cp demo_state:/home/appuser/app/demo/sbatch/ ./workdir/sbatch/
+ls -l ./workdir/sbatch
+```
+
+Run experiments:
+```
+sudo docker run --rm demo:latest bash demo/sbatch/[EXPERIMENT].sh
+```
+
+Kill the daemon:
+```
+sudo docker stop demo_state && sudo docker rm demo_state
+```
+
+Remove the output data:
+```
+sudo rm -rf ./workdir
+```
+
+## Environment
 
 To run locally or develop, an environment with the relevant dependencies must be created.
 

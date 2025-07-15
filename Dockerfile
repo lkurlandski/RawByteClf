@@ -21,10 +21,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 3. Copy only what's needed for the demo
-COPY demo/ ./demo/
-COPY src/ ./src/
-COPY tests/ ./tests/
-COPY config/default.json ./config/default.json
+COPY --chown=appuser:appuser demo/ ./demo/
+COPY --chown=appuser:appuser src/ ./src/
+COPY --chown=appuser:appuser tests/ ./tests/
+COPY --chown=appuser:appuser config/default.json ./config/default.json
 
 # 4. Set environment variables (optional)
 ENV PYTHONUNBUFFERED=1 \
