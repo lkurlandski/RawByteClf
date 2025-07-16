@@ -94,16 +94,16 @@ sudo docker exec demo_state bash demo/sbatch/[EXPERIMENT].sh
 
 For example, pretrained/from-scratch bidirectional hrrformer malware detectors:
 ```
-sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-065536-dec-bpe-16384-nop-mlm-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-065536-dec-bpe-16384-nop-det-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-065536-dec-bpe-16384-mlm-det-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-raw-bpe-16384-nop-mlm-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-raw-bpe-16384-nop-det-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-raw-bpe-16384-mlm-det-dec-0.sh
 ```
 
 For example, pretrained/from-scratch unidirectional mamba malware family classifiers:
 ```
-sudo docker exec demo_state bash demo/sbatch/mam-tn-un-065536-dec-bpe-16384-nop-clm-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/mam-tn-un-065536-dec-bpe-16384-nop-fam-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/mam-tn-un-065536-dec-bpe-16384-clm-fam-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-clm-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-fam-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-clm-fam-dec-0.sh
 ```
 
 For example, raw-byte malconv-gct baseline classifiers:
