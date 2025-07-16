@@ -4,27 +4,45 @@ Repository for the paper "Beyond Raw Bytes: Towards Large Malware Language Model
 
 ## Demo
 
-To verify the functionality of our codebase, we include a small demonstration via Docker. This demo requires Docker (version 28.0.4 works) and Zstandard (version 1.5.5 works).
+To verify the functionality of our codebase, we include a small demonstration via Docker. This demo requires Docker (version 28.0.4 works) and Zstandard (version 1.5.5 works). The shell commands are for a Linux machine running CentOS and will need to be adjusted slightly if using a different OS.
 
 ### Setup
+
+To download the docker image:
+```
+wget -o ./demo.tar.zst.part-aa "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-aa"
+wget -o ./demo.tar.zst.part-ab "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-ab"
+wget -o ./demo.tar.zst.part-ac "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-ac"
+wget -o ./demo.tar.zst.part-ad "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-ad"
+cat demo.tar.zst.part-* > demo.tar.zst
+```
+
+To use the docker image:
+```
+zstd -dc demo.tar.zst | sudo docker load
+sudo docker run --rm demo:latest [COMMAND]
+```
 
 To clean up docker artifacts:
 ```
 sudo docker container prune -f
 sudo docker image prune -f
-docker system prune -a --volumes -f
+sudo docker system prune -a --volumes -f
+```
+
+To change Docker's storage device:
+```
+sudo systemctl stop docker
+sudo rsync -aP /var/lib/docker/ /home/docker-data
+sudo sh -c 'printf "{\n\"data-root\": \"/home/docker-data\"\n}" > /etc/docker/daemon.json'
+sudo systemctl start docker
+sudo docker info | grep "Docker Root Dir"
 ```
 
 To create the docker image:
 ```
 sudo docker build -t demo:latest .
 sudo docker save demo:latest | zstd --ultra -T0 -22 -o demo.tar.zst
-```
-
-To use the docker image:
-```
-zstd -dc demo.tar.zst | docker load
-sudo docker run --rm demo:latest [COMMAND]
 ```
 
 ### Functionality
