@@ -1670,6 +1670,7 @@ def _get_materials_esp_lm(
     verbose: bool = True,
 ) -> Materials:
     # pylint: disable=multiple-statements
+    vl_size = int(os.environ.get("LMLM_GET_MATERIALS_ESP_LM_VL_SIZE", vl_size))  # FIXME: remove
 
     lift_level     = LiftLevel(lift_level)
     lift_level_ddp = LiftLevel(lift_level_ddp)
