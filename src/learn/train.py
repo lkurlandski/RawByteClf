@@ -1602,8 +1602,9 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         unigrams = compute_unigram_probabilities(dataset["tr"], tokenizer, min(len(materials.files["tr"]), 100000), 4096)
         print(f"Unigrams:\n{pformat(unigrams)}")
         save_unigrams(unigrams, args.lift_level, args.tokenization_algorithm, args.bits_in_byte, args.vocab_size)
-        print("Exiting after unigram computation.")
-        sys.exit(0)
+        if os.environ.get("LMLM_EXIT_AFTER_UNIGRAM_COMPUTATION", "0") == "1":
+            print("Exiting after unigram computation.")
+            sys.exit(0)
 
 
     config = get_config(
