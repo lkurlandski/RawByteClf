@@ -24,7 +24,6 @@ if __name__ == "__main__":
 from src.enums import LiftLevel, Task, TokenizationAlgorithm, WeightedLossAlgorithm
 
 
-CUDA = False
 ROOT = Path(os.path.dirname(os.path.realpath(__file__)))
 GB   = 1024 ** 3
 
@@ -280,7 +279,7 @@ class Configuration:
 
     @property
     def gpu(self) -> int:
-        return 1 if CUDA else 0
+        return 0
 
     @property
     def sort_when_making_archives_contiguous(self) -> bool:
@@ -515,13 +514,6 @@ def sort_configurations_key(c: Configuration) -> tuple:
 
 
 def main():
-
-    parser = ArgumentParser()
-    parser.add_argument("--cuda", action="store_true", help="Use CUDA GPUs.")
-    args = parser.parse_args()
-
-    global CUDA
-    CUDA = args.cuda
 
     outpath().mkdir(parents=True, exist_ok=True)
     for f in outpath().glob("*.sh"):
