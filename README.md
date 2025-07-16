@@ -1,5 +1,7 @@
 # RawByteClf
 
+Repository for the paper "Beyond Raw Bytes: Towards Large Malware Language Models".
+
 ## Demo
 
 To verify the functionality of our codebase, we include a small demonstration via Docker.
@@ -91,9 +93,11 @@ sudo docker exec demo_state bash demo/sbatch/mam-tn-un-065536-dec-bpe-16384-nop-
 sudo docker exec demo_state bash demo/sbatch/mam-tn-un-065536-dec-bpe-16384-clm-fam-dec-0.sh
 ```
 
-For example, raw-byte malconv-gct malware behavioral classifiers:
+For example, raw-byte malconv-gct baseline classifiers:
 ```
-# TODO
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-det-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-fam-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-beh-dec-0.sh
 ```
 
 Kill the daemon:
@@ -172,6 +176,18 @@ All environment variables for this system are prefaced with "LMLM_".
 
 ### Usage
 
+
+
+## Citation
+
+```
+@inproceedings{
+  authors={Anomynous et al.},
+  title={Beyond Raw Bytes: Towards Large Malware Language Models},
+  booktitle={The Network and Distributed System Security (NDSS) Symposium},
+  year={2026},
+}
+```
 
 ## TODO
 

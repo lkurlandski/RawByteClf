@@ -25,6 +25,7 @@ COPY --chown=appuser:appuser demo/gencaches.sh ./demo/gencaches.sh
 COPY --chown=appuser:appuser demo/tokenize.sh ./demo/tokenize.sh
 COPY --chown=appuser:appuser demo/create.py ./demo/create.py
 COPY --chown=appuser:appuser cache/empty_shas.txt ./cache/empty_shas.txt
+COPY --chown=appuser:appuser cache/processedShas.txt ./cache/processedShas.txt
 COPY --chown=appuser:appuser src/ ./src/
 COPY --chown=appuser:appuser tests/ ./tests/
 COPY --chown=appuser:appuser config/default.json ./config/default.json

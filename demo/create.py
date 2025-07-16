@@ -6,7 +6,7 @@ from __future__ import annotations
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from enum import Enum
-from itertools import product
+from itertools import product, chain
 import json
 import math
 from pathlib import Path
@@ -243,8 +243,6 @@ class Configuration:
             if self.pretraining_task is not None:
                 return False
             if self.model_mode != ModelMode.BI:
-                return False
-            if self.model_size != ModelSize.CO:
                 return False
 
         return True
@@ -533,6 +531,19 @@ def main():
         [Task.CLM, Task.MLM, None],
         [0],
     )
+    configurations = chain(configurations, product(
+        [ModelName.MAL],
+        [ModelSize.TN],
+        [ModelMode.BI],
+        [2 ** 20],
+        [LiftLevel.NOP],
+        [LiftLevel.DEC],
+        [TokenizationAlgorithm.WORDLEVEL],
+        [256],
+        [Task.DET, Task.FAM, Task.BEH],
+        [None],
+        [0],
+    ))
     configurations = [Configuration(*config) for config in tqdm(configurations)]
     configurations = [config for config in configurations if config.do]
     configurations = sorted(configurations, key=sort_configurations_key)
