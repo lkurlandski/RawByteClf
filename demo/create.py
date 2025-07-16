@@ -24,11 +24,9 @@ if __name__ == "__main__":
 from src.enums import LiftLevel, Task, TokenizationAlgorithm, WeightedLossAlgorithm
 
 
-ARMITAGE = False
-ROOT     = Path(os.path.dirname(os.path.realpath(__file__)))
-
-
-GB = 1024 ** 3
+CUDA = False
+ROOT = Path(os.path.dirname(os.path.realpath(__file__)))
+GB   = 1024 ** 3
 
 
 def outpath() -> Path:
@@ -56,20 +54,6 @@ def bytes_to_slurm_mem(b: int, r: int = 4 * GB) -> str:
     b = int(math.ceil(b / r) * r)
     g = int(b // GB)
     return f"{g}G"
-
-
-def torchrun_str(gpu: int) -> str:
-    return (
-f"""
-OMP_NUM_THREADS=1 \\
-torchrun \\
---no-python \\
---nnodes=1 \\
---nproc_per_node={gpu} \\
---rdzv-backend=c10d \\
---rdzv-endpoint=localhost:0 \\
-""".replace("\n \\", "").strip()
-)
 
 
 def get_body(
@@ -133,13 +117,13 @@ f"""
 
 {"" if sort_when_making_archives_contiguous else "export SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0"}
 
-{"" if gpu <= 1 else torchrun_str(gpu)}
 python -u \\
 src/learn/train.py \\
 --root='./output/esp-exe' \\
 --streaming={bool_to_str(streaming)} \\
 --sync_batch_size={bool_to_str(sync_batch_size)} \\
 --exit_after_map={bool_to_str(exit_after_map)} \\
+{"--do_compute_unigram_probabilities" if task in (Task.CLM, Task.MLM) else ""} \\
 --skip_eval_check={bool_to_str(skip_eval_check)} \\
 --dataset_backend="HF" \\
 --model_name_or_path='{model_name.value}' \\
@@ -209,26 +193,6 @@ class ModelSize(Enum):
 class ModelMode(Enum):
     UN = "un"
     BI = "bi"
-
-
-DATASET_SIZES: dict[Task, tuple[int, int]] = {
-    Task.CLM: (820000, 4096),
-    Task.MLM: (820000, 4096),
-    Task.DET: (29000, 14000),
-    Task.FAM: (64000, 16000),
-    Task.BEH: (28000, 7000),
-}
-
-
-# This is a nice idea, but I've found that this can be very unreliable.
-MODEL_SAMPLES_PER_SECOND: dict[tuple, tuple[float, float]] = {
-
-}
-
-
-COMPRESSION_RATIOS: dict[tuple[TokenizationAlgorithm, int], float] = {
-
-}
 
 
 CHECKPOINTS = {
@@ -333,125 +297,19 @@ class Configuration:
 
     @property
     def tim(self) -> str:
-        if self.model_size != ModelSize.CO:
-            return seconds_to_slurm_time(3600 * 24)
-
-        if self.task in (Task.CLM, Task.MLM):
-
-            if self.lift_level == LiftLevel.RAW:
-                h = 520
-            if self.lift_level == LiftLevel.DIS:
-                h = 208
-            if self.lift_level == LiftLevel.DEC:
-                h = 260
-            if self.lift_level == LiftLevel.ALL:
-                h = 520 + 208 + 260  # TODO: measure
-            if self.lift_level == LiftLevel.NOP:
-                h = 1000  # TODO: measure
-
-            h /= (65536 / self.max_length)
-            h /= self.gpu
-
-            return seconds_to_slurm_time(h * 3600)
-
-        if self.model_name == ModelName.MAL:
-            k = self.max_length // 65536
-            z = 3 if self.lift_level == LiftLevel.ALL else 1
-            if self.task == Task.DET:
-                h = 3
-            if self.task == Task.FAM:
-                h = 6
-            if self.task == Task.BEH:
-                h = 2
-            return seconds_to_slurm_time(3600 * h * z * k)
-
-        if self.task == Task.DET:
-            n_tr = 24614
-            n_vl = 8322
-        if self.task == Task.FAM:
-            n_tr = 49168
-            n_vl = 12631
-        if self.task == Task.BEH:
-            n_tr = 13369
-            n_vl = 3343
-
-        n_tr *= self.num_train_epochs / max(self.gpu, 1)
-        n_vl *= self.num_train_epochs / max(self.gpu, 1)
-
-        if self.lift_level == LiftLevel.RAW:
-            tr_f = 1.0
-            vl_f = 1.0
-        if self.lift_level == LiftLevel.DIS:
-            tr_f = 0.760 / 3.617
-            vl_f = 3.192 / 16.163
-        if self.lift_level == LiftLevel.DEC:
-            tr_f = 0.760 / 2.978
-            vl_f = 3.192 / 13.02
-        if self.lift_level == LiftLevel.ALL:
-            tr_f = 1.0 + 0.760 / 3.617 + 0.760 / 2.978   # TODO: measure
-            vl_f = 1.0 + 3.192 / 16.163 + 3.192 / 13.02  # TODO: measure
-        if self.lift_level == LiftLevel.NOP:
-            tr_f = 2.0  # TODO: measure
-            vl_f = 2.0  # TODO: measure
-
-        if self.model_name == ModelName.HRR and self.model_mode == ModelMode.BI:
-            tr_samples_per_second = 0.766
-            vl_samples_per_second = 3.226
-        if self.model_name == ModelName.HRR and self.model_mode == ModelMode.UN:
-            tr_samples_per_second = 0.760
-            vl_samples_per_second = 3.192
-        if self.model_name == ModelName.MAM and self.model_mode == ModelMode.BI:
-            tr_samples_per_second = 0.766
-            vl_samples_per_second = 3.226
-        if self.model_name == ModelName.MAM and self.model_mode == ModelMode.UN:
-            tr_samples_per_second = 0.760
-            vl_samples_per_second = 3.192
-
-        tr_samples_per_second /= tr_f
-        vl_samples_per_second /= vl_f
-
-        s_tr = n_tr / tr_samples_per_second * 1.50
-        s_vl = n_vl / vl_samples_per_second * 1.50
-
-        return seconds_to_slurm_time(s_tr + s_vl)
+        return seconds_to_slurm_time(3600 * 24)
 
     @property
     def cpu(self) -> int:
-        if self.streaming:
-            return 4 * self.gpu
-        return 2 * self.gpu
+        return 1
 
     @property
     def mem(self) -> int:
-        if self.streaming:
-            return bytes_to_slurm_mem(90 * self.gpu * GB)
-
-        # The memory required for the classification tasks can be estimated.
-        k = (self.tokenization_algorithm, self.vocab_size)
-        c = COMPRESSION_RATIOS.get(k, 1.0)
-        t = c * sum(DATASET_SIZES[self.task]) * self.max_length
-        b = t * 8
-        b = b + (16 * GB)
-        return bytes_to_slurm_mem(b)
+        return bytes_to_slurm_mem(64 * GB)
 
     @property
     def gpu(self) -> int:
-        return 1
-        if self.model_name == ModelName.MAL:
-            return 1
-        if self.task in (Task.CLM, Task.MLM):
-            if self.max_length >= 32768:
-                return 4
-            if self.max_length >= 8192:
-                return 2
-            return 1
-        if self.task == Task.FAM:
-            return 4
-        if self.task == Task.DET:
-            return 2
-        if self.task == Task.BEH:
-            return 1
-        raise RuntimeError()
+        return 1 if CUDA else 0
 
     @property
     def sort_when_making_archives_contiguous(self) -> bool:
@@ -482,27 +340,16 @@ class Configuration:
     @property
     def arch_config(self) -> dict:
 
-        # Unfortunately, tie-ing the forward and backward directions is really
-        # not going to work without substantial refactoring when doing DDP.
-
-        # Baseline MalConv2 from original authors.
         if self.model_name == ModelName.MAL:
             d = {
                 "mode": "gcg",
                 "channels": 256,
                 "stride": 64,
                 "kernel_size": 64,
+                "embedding_size": 8,
             }
-            if self.vocab_size == 256:
-                d["embedding_size"] = 8
-            elif self.vocab_size == 16384:
-                d["embedding_size"] = 384
-            else:
-                raise NotImplementedError(f"{self.vocab_size}")
             return d
 
-        # When using gradient checkpointing, the hidden_size is much more impactful
-        # for causing CUDA OOM errors, hence the increasing depth of these architectures.
         NUM_BLOCKS = {
             ModelSize.TN:  2,
             ModelSize.SM:  4,
@@ -512,17 +359,27 @@ class Configuration:
             ModelSize.CO: 32,
         }
 
+        HIDDEN_SIZES = {
+            ModelSize.TN: 32,
+            ModelSize.SM: 64,
+            ModelSize.MD: 96,
+            ModelSize.LG: 128,
+            ModelSize.HG: 192,
+            ModelSize.CO: 384,
+        }
+
         d = {
             "is_decoder": self.model_mode == ModelMode.UN,
             "num_hidden_layers": NUM_BLOCKS[self.model_size],
-            "embedding_size": 384,
-            "hidden_size": 384,
+            "embedding_size": HIDDEN_SIZES[self.model_size],
+            "hidden_size": HIDDEN_SIZES[self.model_size],
             "head_num_hidden_layers": 0,
             "head_hidden_size": 0,
         }
 
         if self.model_name == ModelName.HRR:
             d |= {
+                "num_attention_heads": 1,
                 "hidden_dropout_prob": 0.1,
                 "position_embedding_type": "rotary",
             }
@@ -539,6 +396,7 @@ class Configuration:
             "num_hidden_layers",
             "embedding_size",
             "hidden_size",
+            "num_attention_heads",
             "hidden_dropout_prob",
             "head_num_hidden_layers",
             "head_hidden_size",
@@ -550,44 +408,42 @@ class Configuration:
     @property
     def num_train_epochs(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
-            return 1
-        return 5
+            return None
+        return 1
 
     @property
     def max_steps(self) -> Optional[int]:
+        if self.task in (Task.CLM, Task.MLM):
+            return 16
         return None
 
     @property
     def save_steps(self) -> Optional[int]:
+        if self.task in (Task.CLM, Task.MLM):
+            return 8
         return None
 
     @property
     def eval_steps(self) -> Optional[int]:
+        if self.task in (Task.CLM, Task.MLM):
+            return 8
         return None
 
     @property
     def saves_per_epoch(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
-            return 32
+            return None
         return 1
 
     @property
     def evals_per_epoch(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
-            return 8
+            return None
         return 1
 
     @property
     def dataloader_num_workers(self) -> int:
-        # One additional process will engage the prefetching.
-        # When streaming, we can rely on tokenizers' parallelization for speed.
-        # Fuck. Now I'm getting the stupid parallel tokenizers warning. Just make it 0. Don't care.
-        if self.gpu == 0:
-            return 0
-        # When using byte-level embeddings, we don't use tokenizers, so we can use multiple loaders.
-        if self.streaming and not self.vocab_size == 256:
-            return 0
-        return self.cpu // self.gpu - 1
+        return 0
 
     @property
     def learning_rate(self) -> float:
@@ -607,72 +463,34 @@ class Configuration:
 
     @property
     def warmup_ratio(self) -> float:
-        if self.task in (Task.CLM, Task.MLM):
-            return 0.05
         return 0.05
 
     @property
     def tr_batch_size(self) -> int:
-        if self.task in (Task.CLM, Task.MLM):
-            return 1024
-        return 64
+        return 4
 
     @property
     def tr_per_device_batch_size(self) -> int:
-        if self.model_name == ModelName.MAL:
-            return 64
-
-        f = int(65536 / self.max_length)
-
-        if self.task in (Task.DET, Task.FAM, Task.BEH):
-            if self.model_name == ModelName.MAM and self.lift_level == LiftLevel.ALL:
-                return 3 * f
-            return 4 * f
-        if self.model_name == ModelName.HRR:
-            return 2 * f
-        if self.model_name == ModelName.MAM:
-            return 1 * f
-
-        raise NotImplementedError(f"{self.model_name=}")
+        return 2
 
     @property
     def vl_per_device_batch_size(self) -> int:
-        if self.model_name == ModelName.MAL:
-            return 64
-
-        f = int(65536 / self.max_length)
-
-        if self.task in (Task.DET, Task.FAM, Task.BEH):
-            if self.model_name == ModelName.MAM and self.lift_level == LiftLevel.ALL:
-                return 12 * f
-            return 16 * f
-        if self.model_name == ModelName.HRR:
-            return 1 * f
-        if self.model_name == ModelName.MAM:
-            return 2 * f
-
-        raise NotImplementedError(f"{self.model_name=}")
+        return 2
 
     @property
     def gradient_accumulation_steps(self) -> int:
-        return self.tr_batch_size // (self.tr_per_device_batch_size * self.gpu)
+        return 2
 
     @property
     def eval_accumulation_steps(self) -> int:
-        return 64 // self.vl_per_device_batch_size
+        return 2
 
     @property
     def tf32(self) -> bool:
-        if self.gpu == 0:
-            return False
-        return True
+        return False
 
     @property
     def fp16(self) -> bool:
-        if self.gpu == 0:
-            return False
-        if self.model_name == ModelName.MAL:
-            return False
         return False
 
     @property
@@ -681,11 +499,7 @@ class Configuration:
 
     @property
     def bf16(self) -> bool:
-        if self.gpu == 0:
-            return False
-        if self.model_name == ModelName.MAL:
-            return False
-        return True
+        return False
 
     @property
     def bf16_full_eval(self) -> bool:
@@ -693,11 +507,7 @@ class Configuration:
 
     @property
     def gradient_checkpointing(self) -> bool:
-        if self.gpu == 0:
-            return False
-        if self.model_name == ModelName.MAL:
-            return False
-        return True
+        return False
 
     @property
     def weighted_loss(self) -> Optional[WeightedLossAlgorithm]:
@@ -743,6 +553,13 @@ def sort_configurations_key(c: Configuration) -> tuple:
 
 def main():
 
+    parser = ArgumentParser()
+    parser.add_argument("--cuda", action="store_true", help="Use CUDA GPUs.")
+    args = parser.parse_args()
+
+    global CUDA
+    CUDA = args.cuda
+
     outpath().mkdir(parents=True, exist_ok=True)
     for f in outpath().glob("*.sh"):
         if f.is_file():
@@ -752,7 +569,7 @@ def main():
         [ModelName.HRR, ModelName.MAM],
         [ModelSize.TN],
         [ModelMode.UN, ModelMode.BI],
-        [65536],
+        [512],
         [LiftLevel.RAW, LiftLevel.DIS, LiftLevel.DEC],
         [LiftLevel.DEC],
         [TokenizationAlgorithm.BPE],
@@ -813,7 +630,7 @@ def main():
         )
         if config.outfile.exists():
             raise FileExistsError(config.outfile)
-        # print(f"{config.job} -> {config.outfile.as_posix()}")
+        print(f"{config.outfile.relative_to(outpath())}")
         config.outfile.write_text(body)
 
 
