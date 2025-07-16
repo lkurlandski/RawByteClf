@@ -4,7 +4,7 @@ Repository for the paper "Beyond Raw Bytes: Towards Large Malware Language Model
 
 ## Demo
 
-To verify the functionality of our codebase, we include a small demonstration via Docker.
+To verify the functionality of our codebase, we include a small demonstration via Docker. This demo requires Docker (version 28.0.4 works) and Zstandard (version 1.5.5 works).
 
 ### Setup
 
@@ -18,18 +18,13 @@ docker system prune -a --volumes -f
 To create the docker image:
 ```
 sudo docker build -t demo:latest .
-sudo docker save demo:latest | gzip > demo.tar.gz
+sudo docker save demo:latest | zstd --ultra -T0 -22 -o demo.tar.zst
 ```
 
 To use the docker image:
 ```
-gunzip -c demo.tar.gz | sudo docker load
+zstd -dc demo.tar.zst | docker load
 sudo docker run --rm demo:latest [COMMAND]
-```
-
-Verify that the tests pass:
-```
-sudo docker run --rm demo:latest bash demo/tests.sh
 ```
 
 ### Functionality
@@ -176,176 +171,15 @@ All environment variables for this system are prefaced with "LMLM_".
 
 ### Usage
 
-
+We are working on documenting how to use the system more thoroughly.
 
 ## Citation
 
 ```
 @inproceedings{
-  authors={Anomynous et al.},
+  authors={Anomynous Author(s)},
   title={Beyond Raw Bytes: Towards Large Malware Language Models},
   booktitle={The Network and Distributed System Security (NDSS) Symposium},
   year={2026},
 }
 ```
-
-## TODO
-
-- Encode datasets during preprocessing.
-- Craft train, test, and validation sets.
-- Save predictions on each epoch (for evaluating accuracy of low-resource classes)
-
-pip install "ray[tune]"==2.6.3
-pip install bayesian-optimization
-pip install hyperopt
-
-pip install ninja
-
-## Useful
-
-Memory analysis:
-	- mprof run python {SCRIPT.py}
-	- mprof plot --output={PLOT.png}
-
-Time analysis
-	- python -m cProfile -o {STATS.pstats} {SCRIPT.py}
-	- gprof2dot --colour-nodes-by-selftime -f pstats {STATS.pstats} | dot -Tpng -o {PLOT.png}
-
-## Environment
-
-environment_0.yml - environment from some time ago...
-environment_1.yml - environment before integrating mamba into codebase
-environment_2.yml - environment after integrating mamba into codebase
-
-Create the environment and install cuda and torch with conda (cuda-nvcc is needed for mamba)
-
-```
-conda create -n RawByteClf python=3.10 pytorch=2.0.1 torchtext=0.15.2 pytorch-cuda=11.8 cuda-nvcc -c pytorch -c nvidia
-```
-
-Install everything else with pip (unless you want to wait 10 years for conda to resolve this). A very specific of ray tune is required for compatibility with transformers.
-
-```
-pip install \
-transformers==4.35 \
-datasets==2.14 \
-tokenizers==0.14 \
-accelerate==0.22 \
-safetensors==0.3.1 \
-boto3==1.28 \
-psutil \
-pandas \
-scipy \
-scikit-learn \
-matplotlib \
-requests \
-evaluate==0.4 \
-memory-profiler \
-ninja==1.11.1.1 \
-"ray[tune]"==2.6.3 \
-bayesian-optimization \
-hyperopt \
-pynvml \
-einops \
-py7zr
-```
-
-Install mamba locally
-
-```
-pip install packaging
-pip install /path/to/mamba/repository
-```
-pip install pycryptodome
-
-
-
-find /path/to/directory -type d -path "*/None/10/*" -regex '.*/[0-9]+/None/10/.*'
-
-
-cythonize -i src/learn/bytes_to_str_utf8.pyx
-
-
-
-Weird BUG
-
-  File "/home/lk3591/anaconda3/envs/RawByteClf2/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 1366, in __del__
-    if hasattr(self, "_indices"):
-  File "/home/lk3591/anaconda3/envs/RawByteClf2/lib/python3.10/site-packages/ray/_private/worker.py", line 1723, in sigterm_handler
-    sys.exit(signum)
-SystemExit: 15
-
-https://github.com/huggingface/datasets/issues/3172 
-
-This may be caused by memory allocation error in the compression libraries? But this can't possibly be the only cause because the error also occured for experiments that don't involve any compression.
-
-https://github.com/python/cpython/blob/main/Modules/zlibmodule.c
-
-Installing datasets==2.18.0, but this gives the error
-
-ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
-tokenizers 0.14.1 requires huggingface_hub<0.18,>=0.16.4, but you have huggingface-hub 0.22.2 which is incompatible.
-
-so we'll se what other problems this might cause...
-
-okay, it seems like uninstalling ray may help.
-
-Also, ensuring that the original file-generator has finished before different processes try and map also helps?
-
-
-
-
-transformers==4.39.3
-accelerate==0.29.2
-
-# Other
-
-diec
-
-spack load --first qt@5.15.12
-QT_QPA_PLATFORM=offscreen ./Detect_It_Easy-3.09-x86_64.AppImage
-
-## Set up Ghidra
-
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Lifter.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Lifter.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Disassembler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Decompiler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/ExtractExecutableRegions.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
-
-
-Errors:
-Throws and ArithmeticException indicating the virtual address is less than 0.
-001212bfef784362c62168e9b6bb24ef8dd2a572dbbdba100d2c7afe768d2ba9
-
-lift.sh doesn't get the time correctly on job 15 of the job array.
-
-
-
-grep -L "analyzeHeadless returned 0" ./logs/lift-6_* | sed -n 's/.*_\([0-9]\+\)\.out/\1/p' | paste -sd,
-
-## Set of for ESP
-
-for d in Sorel Assemblage Windows BODMAS; do for l in dec raw dis; do mkdir -p ./data/$d ; ln -s /media/lk3591/easystore/datasets/$d/processed/$l ./data/$d/ ; done ; done
-ln -s /media/lk3591/easystore/datasets/Sorel/processed/raw ./data/raw
-ln -s /media/lk3591/easystore/datasets/Sorel/processed/dec ./data/dec
-ln -s /media/lk3591/easystore/datasets/Sorel/processed/dis ./data/dis
-
-CHANGING tokenizers lib:
-
-tokenizers < 0.20 has a bug with saving/loading a tokenizer when the tokens contain spaces (fuck).
-
-https://github.com/huggingface/tokenizers/pull/909
-
-Solution is to
-
-pip install tokenizers==0.20.0
-
-Then modify the HF install because it will get broken.
-
-/home/lk3591/miniconda3/envs/RawByteClf/lib/python3.10/site-packages/transformers/dependency_versions_table.py
-"tokenizers": "tokenizers>=0.14,<0.21",
-
-
-
-TODO: debug mamba when using ngpu > 1
