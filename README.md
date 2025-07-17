@@ -4,24 +4,160 @@ Repository for the paper "Beyond Raw Bytes: Towards Large Malware Language Model
 
 ## Demo
 
-To verify the functionality of our codebase, we include a small demonstration via Docker. This demo requires Docker (version 28.0.4 works) and Zstandard (version 1.5.5 works). The shell commands are for a Linux machine running CentOS and will need to be adjusted slightly if using a different OS.
+To verify the functionality of our codebase, we include a small demonstration.
+
+### Prerequisites
+
+This demo requires [Docker](https://docs.docker.com/engine/install/) (tested with 28.0.4) and [Zstandard](https://github.com/facebook/zstd) (tested with 1.5.5). The shell commands are for a Linux machine running CentOS and will need to be adjusted slightly if using a different OS.
 
 ### Setup
 
-To download the docker image:
+To get the docker image, combine the files from our anonymous [Drive](https://drive.google.com/drive/folders/13cZ8Jd0jIkuWevUHbG-ilhs-OmWIfYwH?usp=sharing):
 ```
-wget -o ./demo.tar.zst.part-aa "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-aa"
-wget -o ./demo.tar.zst.part-ab "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-ab"
-wget -o ./demo.tar.zst.part-ac "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-ac"
-wget -o ./demo.tar.zst.part-ad "[ADDR]/RawByteClf/releases/download/v0.0.1/demo.tar.zst.part-ad"
 cat demo.tar.zst.part-* > demo.tar.zst
 ```
 
-To use the docker image:
+Set up the docker image:
 ```
 zstd -dc demo.tar.zst | sudo docker load
-sudo docker run --rm demo:latest [COMMAND]
 ```
+
+Check the docker image:
+```
+sudo docker run --rm demo:latest
+```
+
+### Preparation
+
+Start up the docker daemon:
+```
+sudo docker run -d --name demo_state demo:latest tail -f /dev/null
+```
+
+Generate dataset caches:
+```
+sudo docker exec demo_state bash demo/gencaches.sh
+```
+
+Generate experiments scripts:
+```
+sudo docker exec demo_state python demo/create.py
+```
+
+Create a directory to inspect outputs:
+```
+mkdir ./workdir
+```
+
+### Exploration
+
+Copy preprocessed data archives:
+```
+sudo docker cp demo_state:/home/appuser/app/data/bod/nop/0.zip ./workdir/nop.zip
+sudo docker cp demo_state:/home/appuser/app/data/bod/raw/0.zip ./workdir/raw.zip
+sudo docker cp demo_state:/home/appuser/app/data/bod/dis/0.zip ./workdir/dis.zip
+sudo docker cp demo_state:/home/appuser/app/data/bod/dec/0.zip ./workdir/dec.zip
+```
+
+Extract preprocessed samples:
+```
+unzip -p ./workdir/nop.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.exe > ./workdir/0007.exe
+unzip -p ./workdir/raw.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.exe > ./workdir/0007.bytes
+unzip -p ./workdir/dis.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.asm > ./workdir/0007.asm
+unzip -p ./workdir/dec.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.c > ./workdir/0007.c
+```
+
+Examine preprocessed samples:
+```
+file ./workdir/0007.exe
+file ./workdir/0007.bytes
+file ./workdir/0007.asm
+file ./workdir/0007.c
+```
+
+### Tokenization
+
+Train tokenizers:
+```
+sudo docker exec demo_state bash demo/tokenize.sh
+```
+
+Copy pretrained tokenizers:
+```
+sudo docker cp demo_state:/home/appuser/app/output/tokenizers ./workdir/
+```
+
+Inspect tokenizer vocabularies:
+```
+head -n 1128 ./workdir/tokenizers/raw/bpe/1024/100/tokenizer.json | tail -n 1033
+head -n 1127 ./workdir/tokenizers/dis/bpe/1024/100/tokenizer.json | tail -n 1033
+head -n 1127 ./workdir/tokenizers/dec/bpe/1024/100/tokenizer.json | tail -n 1033
+```
+
+### Redundancy
+
+Assess redundant samples:
+```
+sudo docker exec demo_state python demo/redundancy.py
+```
+
+### Pretraining
+
+Pretrain unidirectional HRRFormer on EXE inputs for causal language modeling:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-un-000512-raw-bpe-16384-nop-clm-dec-0.sh
+```
+
+Pretrain bidirectional HRRFormer on DIS inputs for masked language modeling:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-dis-bpe-16384-nop-mlm-dec-0.sh
+```
+
+Pretrain unidirectional Mamba on DEC inputs for causal language modeling:
+```
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-clm-dec-0.sh
+```
+
+### Classification
+
+Train/finetune unidirectional HRRFormer on EXE inputs for malware detection:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-un-000512-raw-bpe-16384-nop-det-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-un-000512-raw-bpe-16384-clm-det-dec-0.sh
+```
+
+Train/finetune bidirectional HRRFormer on DIS inputs for family classification:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-dis-bpe-16384-nop-fam-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-dis-bpe-16384-mlm-fam-dec-0.sh
+```
+
+Train/finetune unidirectional Mamba on DEC inputs for behavioral tagging:
+```
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-beh-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-clm-beh-dec-0.sh
+```
+
+Train the byte-based MalConvGCT on RAW inputs for all classification tasks:
+```
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-det-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-fam-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-beh-dec-0.sh
+```
+
+### Cleanup
+
+Kill the daemon:
+```
+sudo docker stop demo_state && sudo docker rm demo_state
+```
+
+Remove the output data:
+```
+sudo rm -rf ./workdir
+```
+
+### Appendix
 
 To clean up docker artifacts:
 ```
@@ -42,85 +178,21 @@ sudo docker info | grep "Docker Root Dir"
 To create the docker image:
 ```
 sudo docker build -t demo:latest .
+```
+
+To save the docker image:
+```
 sudo docker save demo:latest | zstd --ultra -T0 -22 -o demo.tar.zst
 ```
 
-### Functionality
-
-Create a directory to inspect outputs:
+To split the docker image:
 ```
-mkdir ./workdir ./workdir/cache ./workdir/materials ./workdir/output
+split -b 1G demo.tar.zst demo.tar.zst.part-
 ```
 
-Examine data generated by the system:
+Examine data in the image:
 ```
 sudo docker cp demo_state:/home/appuser/app/[OUT] ./workdir/[OUT]
-```
-
-Start up the docker daemon:
-```
-sudo docker run -d --name demo_state demo:latest tail -f /dev/null
-```
-
-<!-- Prepare binaries:
-```
-sudo docker exec demo_state bash demo/prepare.sh
-``` -->
-
-<!-- Preprocess inputs:
-```
-sudo docker exec demo_state bash demo/preprocess.sh
-``` -->
-
-Generate dataset caches (`OUT="cache/materials"`):
-```
-sudo docker exec demo_state bash demo/gencaches.sh
-```
-
-Train tokenizers (`OUT="output/tokenizers"`):
-```
-sudo docker exec demo_state bash demo/tokenize.sh
-```
-
-Generate experiments (`OUT="demo/sbatch"`):
-```
-sudo docker exec demo_state python demo/create.py
-```
-
-Run experiments (`OUT="output/esp-exe"`):
-```
-sudo docker exec demo_state bash demo/sbatch/[EXPERIMENT].sh
-```
-
-For example, pretrained/from-scratch bidirectional hrrformer malware detectors:
-```
-sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-raw-bpe-16384-nop-mlm-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-raw-bpe-16384-nop-det-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-raw-bpe-16384-mlm-det-dec-0.sh
-```
-
-For example, pretrained/from-scratch unidirectional mamba malware family classifiers:
-```
-sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-clm-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-fam-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-clm-fam-dec-0.sh
-```
-
-For example, raw-byte malconv-gct baseline classifiers:
-```
-sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-det-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-fam-dec-0.sh
-sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-beh-dec-0.sh
-```
-
-Kill the daemon:
-```
-sudo docker stop demo_state && sudo docker rm demo_state
-```
-
-Remove the output data:
-```
-sudo rm -rf ./workdir
 ```
 
 ## Environment
@@ -155,16 +227,16 @@ All environment variables for this system are prefaced with "LMLM_".
 - `LMLM_ENABLE_UNITTEST_WARNING`
 - `LMLM_SYNC_ENSEMBLE_MATERIALS`
 - `LMLM_CAN_PRECOPY_ZIPFILES`
-- `LMLM_GET_MATERIALS_ESP_FAM_MIN_FREQ`:
-- `LMLM_GET_MATERIALS_ESP_FAM_MAX_IMBALANCE_RATIO`:
-- `LMLM_GET_MATERIALS_ESP_FAM_TOP_K`:
-- `LMLM_GET_MATERIALS_ESP_BEH_MIN_FREQ`:
-- `LMLM_GET_MATERIALS_ESP_BEH_MAX_IMBALANCE_RATIO`:
-- `LMLM_GET_MATERIALS_ESP_BEH_TOP_K`:
-- `LMLM_GET_MATERIALS_ESP_CLM_VL_SIZE`:
-- `LMLM_GET_MATERIALS_ESP_MLM_VL_SIZE`:
-- `LMLM_GET_MATERIALS_ESP_LM_VL_SIZE`:
-- `LMLM_EXIT_AFTER_UNIGRAM_COMPUTATION`:
+- `LMLM_GET_MATERIALS_ESP_FAM_MIN_FREQ`
+- `LMLM_GET_MATERIALS_ESP_FAM_MAX_IMBALANCE_RATIO`
+- `LMLM_GET_MATERIALS_ESP_FAM_TOP_K`
+- `LMLM_GET_MATERIALS_ESP_BEH_MIN_FREQ`
+- `LMLM_GET_MATERIALS_ESP_BEH_MAX_IMBALANCE_RATIO`
+- `LMLM_GET_MATERIALS_ESP_BEH_TOP_K`
+- `LMLM_GET_MATERIALS_ESP_CLM_VL_SIZE`
+- `LMLM_GET_MATERIALS_ESP_MLM_VL_SIZE`
+- `LMLM_GET_MATERIALS_ESP_LM_VL_SIZE`
+- `LMLM_EXIT_AFTER_UNIGRAM_COMPUTATION`
 
 ### System
 
