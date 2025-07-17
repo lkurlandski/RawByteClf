@@ -21,6 +21,7 @@ COPY --chown=appuser:appuser demo/tests.sh ./demo/tests.sh
 COPY --chown=appuser:appuser demo/hello.py ./demo/hello.py
 COPY --chown=appuser:appuser demo/prepare.sh ./demo/prepare.sh
 COPY --chown=appuser:appuser demo/preprocess.sh ./demo/preprocess.sh
+COPY --chown=appuser:appuser demo/redundancy.py ./demo/redundancy.py
 COPY --chown=appuser:appuser demo/gencaches.sh ./demo/gencaches.sh
 COPY --chown=appuser:appuser demo/tokenize.sh ./demo/tokenize.sh
 COPY --chown=appuser:appuser demo/create.py ./demo/create.py
