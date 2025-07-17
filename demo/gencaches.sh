@@ -4,7 +4,7 @@ echo "gencaches.sh: Determining the samples to use for experiments and caching t
 
 mkdir cache/materials
 
-for lift_level in "raw" "dis" "dec"; do
+for lift_level in "raw" "dis" "dec" "nop"; do
     for task in "det" "beh" "fam" "mlm" "clm"; do
         for lift_level_ddp in "dec"; do
             echo "Starting '${lift_level}' '${task}' '${lift_level_ddp}'"
