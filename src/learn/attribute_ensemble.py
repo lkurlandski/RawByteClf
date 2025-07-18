@@ -4,6 +4,7 @@ Code to analyze the ensemble model per major revision request.
 
 from __future__ import annotations
 import gc
+import os
 from pathlib import Path
 import sys
 from typing import Any, Generator, Iterable, Optional
@@ -24,6 +25,9 @@ from src.learn.collators import EnsembleDataCollatorWithPadding
 from src.learn.helpers import OutputHelper
 from src.learn.utils import clear_cuda_caches, should_reduce_batch_size as is_exception_cuda_memory_related
 from src.utils import get_highest_path
+
+
+ENSEMBLE_ATTRIBUTION_CONTEXT = int(os.environ.get("LMLM_ENSEMBLE_ATTRIBUTION_CONTEXT", "6144"))
 
 
 def get_model_name_or_path(oh: OutputHelper) -> str:
@@ -68,7 +72,10 @@ def get_attribution(
     baselines_dis = torch.full_like(dis_input_ids, baseline, dtype=torch.long)
     baselines_dec = torch.full_like(dec_input_ids, baseline, dtype=torch.long)
     baselines = (baselines_raw, baselines_dis, baselines_dec)
-    attribs = alg.attribute(inputs, baselines, labels, (model,), internal_batch_size=raw_input_ids.shape[0])
+    is_multilabel = labels.dim() == 2
+    target = None if is_multilabel else labels
+    forward_args  = (model, labels) if is_multilabel else (model,)
+    attribs = alg.attribute(inputs, baselines, target, forward_args, internal_batch_size=raw_input_ids.shape[0])
     attribs_raw = attribs[0].to(torch.float32).mean(dim=-1)
     attribs_dis = attribs[1].to(torch.float32).mean(dim=-1)
     attribs_dec = attribs[2].to(torch.float32).mean(dim=-1)
@@ -152,9 +159,9 @@ class Attributor:
         inputs: dict[str, list[Any]] = self.data_collator(batch)
 
         labels: Tensor = inputs["labels"].to(self.device)
-        input_ids_raw: Tensor = inputs["raw_input_ids"][:,0:6144].to(self.device)
-        input_ids_dis: Tensor = inputs["dis_input_ids"][:,0:6144].to(self.device)
-        input_ids_dec: Tensor = inputs["dec_input_ids"][:,0:6144].to(self.device)
+        input_ids_raw: Tensor = inputs["raw_input_ids"][:,0:ENSEMBLE_ATTRIBUTION_CONTEXT].to(self.device)
+        input_ids_dis: Tensor = inputs["dis_input_ids"][:,0:ENSEMBLE_ATTRIBUTION_CONTEXT].to(self.device)
+        input_ids_dec: Tensor = inputs["dec_input_ids"][:,0:ENSEMBLE_ATTRIBUTION_CONTEXT].to(self.device)
 
         attribs = get_attribution(self.alg, input_ids_raw, input_ids_dis, input_ids_dec, labels, self.model, self.baseline)
         attribs_raw = attribs[0].detach().to("cpu")
