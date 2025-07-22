@@ -1024,18 +1024,18 @@ def pack(
 def unpack(
     data: str | Path | bytes,
     outfile: Optional[str | Path] = None,
-    return_file: bool = True,
     return_bytes: bool = False,
-    errors: int = 0,
-) -> tuple[Optional[Path], Optional[bytes]]:
-
-    infile = None
-    tmpfile = None
-    inbytes = None
+    errors: Literal["raise", "warn", "ignore"] = "raise",
+) -> Optional[bytes]:
+    infile   = None
+    inbytes  = None
     outbytes = None
 
+    if outfile is not None and os.path.exists(outfile):
+        raise FileExistsError(f"Output file already exists: {outfile}")
+
     if isinstance(data, (str, Path)):
-        infile = data
+        infile = Path(data)
     elif isinstance(data, BytesIO):
         data.seek(0)
         inbytes = data.read()
@@ -1044,41 +1044,32 @@ def unpack(
     else:
         raise TypeError(f"Unacceptable type: {type(data)}")
 
-    if infile is None:
-        tmpfile = Path(tempfile.mkstemp())
-        with open(tmpfile, "wb") as fp:
-            fp.write(inbytes)
+    infile_is_tmp  = infile is None
+    infile_mode = "wb" if infile_is_tmp else "rb"
+    outfile_is_tmp = outfile is None
 
-    if outfile is None:
-        if return_file:
-            outfile = Path(tempfile.mkstemp())
-    else:
-        outfile = Path(outfile)
+    with maybe_temp_file(infile, infile_mode, suffix=".bin") as (infile, infp), maybe_temp_file(outfile, "wb", directory=outfile_is_tmp) as (outfile, outfp):
+        if infile_is_tmp:
+            infp.write(inbytes)
+            os.chmod(infile, 0o755)
+        if outfile_is_tmp:
+            outfile = os.path.join(outfile, "tmpfile.bin")
 
-    args = ["upx", "-d"]
-    if outfile is not None:
-        args.extend(["-o", str(outfile)])
-    args.append(str(infile))
+        args = ["upx", "-f", "-d", "-o", str(outfile), str(infile)]
+        try:
+            subprocess.run(args, check=True, capture_output=True, timeout=60)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
+            if errors == "raise":
+                raise err
+            if errors == "warn":
+                print(f"Warning: {err}")
+            return None
 
-    try:
-        subprocess.run(args, check=True, capture_output=True)
-    except subprocess.CalledProcessError as err:
-        if errors == 0:
-            return None, None
-        raise err
+        if return_bytes:
+            with open(outfile, "rb") as outfp:
+                outbytes = outfp.read()
 
-    if return_bytes and outfile is not None:
-        with open(outfile, "rb") as fp:
-            outbytes = fp.read()
-
-    if not return_file:
-        outfile.unlink()
-        outfile = None
-
-    if tmpfile is not None:
-        tmpfile.unlink()
-
-    return outfile, outbytes
+    return outbytes
 
 
 def unpack_samples(
