@@ -20,13 +20,15 @@ if __name__ == "__main__":
 
 # pylint: disable=wrong-import-position
 
-import boto3
-import botocore
-from botocore import UNSIGNED
-from botocore.config import Config as BotocoreConfig
+try:
+    import boto3
+    import botocore
+    from botocore import UNSIGNED
+    from botocore.config import Config as BotocoreConfig
+except (ImportError, ModuleNotFoundError) as _err:
+    print(f"{_err.__class__.__name__}: ray")
 from datasets import Dataset, Features, Value, concatenate_datasets
 
-from src.cfg import INPUT_PATH
 from src.data.cfg import (
     MAX_SHARD_SIZE,
     DATASET_TO_FILES,
@@ -39,7 +41,7 @@ from src.data.utils import stream_sorel_meta, Decompressor, PerDatasetArgumentPa
 class ErrorStream:
     def __init__(self, file: Path) -> None:
         self.file = Path(file)
-        self.file.write_text("")
+        # self.file.write_text("")
 
     def write(self, message: str):
         with open(self.file, "a") as log_file:
@@ -319,13 +321,6 @@ def main() -> None:
         dataset.save_to_disk(outpath.as_posix(), max_shard_size=MAX_SHARD_SIZE)
         if not args.keep_cache:
             shutil.rmtree(Path(dataset.cache_files[0]["filename"]).parent)
-
-
-def test():
-    for f in INPUT_PATH.iterdir():
-        d = Dataset.load_from_disk(f)
-        print(f)
-        print(d)
 
 
 if __name__ == "__main__":

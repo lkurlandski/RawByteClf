@@ -1,0 +1,9 @@
+{
+    "SYSTEM": "def",
+    "AVCLASS_EXE": "avclass",
+    "CLARAVY_EXE": "claravy",
+    "DATASETS_PATH": "./datasets",
+    "OUTPUT_PATH": "./output",
+    "TMP_DIR": "./tmp",
+    "TOKENIZERS_OUTPUT_PATH": "./output/tokenizers"
+}

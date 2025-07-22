@@ -18,7 +18,10 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 # pylint: enable=wrong-import-position
 
-import py7zr
+try:
+    import py7zr
+except (ModuleNotFoundError, ImportError) as _err:
+    print(f"{_err.__class__.__name__}: py7zr")
 
 from src.data.utils import Decompressor
 

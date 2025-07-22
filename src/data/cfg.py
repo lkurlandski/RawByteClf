@@ -10,16 +10,9 @@ from pathlib import Path
 import sys
 from typing import Literal
 
-from src.cfg import SYSTEM
-from src.enums import DatasetName, LiftLevel, System
+from src.cfg import DATASETS_PATH
+from src.enums import DatasetName, LiftLevel
 
-
-if SYSTEM == System.ARMITAGE:
-    DATASETS_PATH = Path("/home/lk3591/Documents/datasets")
-elif SYSTEM == System.GCCIS:
-    DATASETS_PATH = Path("/media/lk3591/easystore/datasets/")
-elif SYSTEM == System.SPORC:
-    DATASETS_PATH = Path("/shared/rc/admalware")
 
 ASSEMBLAGE_PATH = DATASETS_PATH / "Assemblage"
 BODMAS_PATH = DATASETS_PATH / "BODMAS"

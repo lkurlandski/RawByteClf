@@ -1,170 +1,275 @@
 # RawByteClf
 
-## Preprocessing
+Repository for the paper "Beyond Raw Bytes: Towards Large Malware Language Models".
 
-- Ensure all raw binaries and VirusTotal reports are in the correct directory on disk.
-- Run `prepare` script
-- Run `label` script
-- Run `encode` script
-- Run `split` script
+## Demo
 
-## TODO
+To verify the functionality of our codebase, we include a small demonstration.
 
-- Encode datasets during preprocessing.
-- Craft train, test, and validation sets.
-- Save predictions on each epoch (for evaluating accuracy of low-resource classes)
+### Prerequisites
 
-pip install "ray[tune]"==2.6.3
-pip install bayesian-optimization
-pip install hyperopt
+This demo requires [Docker](https://docs.docker.com/engine/install/) (tested with 28.0.4) and [Zstandard](https://github.com/facebook/zstd) (tested with 1.5.5). The shell commands are for a Linux machine running CentOS and will need to be adjusted slightly if using a different OS.
 
-pip install ninja
+### Setup
 
-## Useful
+To get the docker image, combine the files from our anonymous [Drive](https://drive.google.com/drive/folders/13cZ8Jd0jIkuWevUHbG-ilhs-OmWIfYwH?usp=sharing):
+```
+cat demo.tar.zst.part-* > demo.tar.zst
+```
 
-Memory analysis:
-	- mprof run python {SCRIPT.py}
-	- mprof plot --output={PLOT.png}
+Set up the docker image:
+```
+zstd -dc demo.tar.zst | sudo docker load
+```
 
-Time analysis
-	- python -m cProfile -o {STATS.pstats} {SCRIPT.py}
-	- gprof2dot --colour-nodes-by-selftime -f pstats {STATS.pstats} | dot -Tpng -o {PLOT.png}
+Check the docker image:
+```
+sudo docker run --rm demo:latest
+```
+
+### Preparation
+
+Start up the docker daemon:
+```
+sudo docker run -d --name demo_state demo:latest tail -f /dev/null
+```
+
+Generate dataset caches:
+```
+sudo docker exec demo_state bash demo/gencaches.sh
+```
+
+Generate experiments scripts:
+```
+sudo docker exec demo_state python demo/create.py
+```
+
+Create a directory to inspect outputs:
+```
+mkdir ./workdir
+```
+
+### Exploration
+
+Copy preprocessed data archives:
+```
+sudo docker cp demo_state:/home/appuser/app/data/bod/nop/0.zip ./workdir/nop.zip
+sudo docker cp demo_state:/home/appuser/app/data/bod/raw/0.zip ./workdir/raw.zip
+sudo docker cp demo_state:/home/appuser/app/data/bod/dis/0.zip ./workdir/dis.zip
+sudo docker cp demo_state:/home/appuser/app/data/bod/dec/0.zip ./workdir/dec.zip
+```
+
+Extract preprocessed samples:
+```
+unzip -p ./workdir/nop.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.exe > ./workdir/0007.exe
+unzip -p ./workdir/raw.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.exe > ./workdir/0007.bytes
+unzip -p ./workdir/dis.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.asm > ./workdir/0007.asm
+unzip -p ./workdir/dec.zip 000782e505d3927adcbdc5701f9e3f08c14006a1547f552a03ce1e477e54c82b.c > ./workdir/0007.c
+```
+
+Examine preprocessed samples:
+```
+file ./workdir/0007.exe
+file ./workdir/0007.bytes
+file ./workdir/0007.asm
+file ./workdir/0007.c
+```
+
+### Tokenization
+
+Train tokenizers:
+```
+sudo docker exec demo_state bash demo/tokenize.sh
+```
+
+Copy pretrained tokenizers:
+```
+sudo docker cp demo_state:/home/appuser/app/output/tokenizers ./workdir/
+```
+
+Inspect tokenizer vocabularies:
+```
+head -n 1128 ./workdir/tokenizers/raw/bpe/1024/100/tokenizer.json | tail -n 1033
+head -n 1127 ./workdir/tokenizers/dis/bpe/1024/100/tokenizer.json | tail -n 1033
+head -n 1127 ./workdir/tokenizers/dec/bpe/1024/100/tokenizer.json | tail -n 1033
+```
+
+### Redundancy
+
+Assess redundant samples:
+```
+sudo docker exec demo_state python demo/redundancy.py
+```
+
+### Pretraining
+
+Pretrain unidirectional HRRFormer on EXE inputs for causal language modeling:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-un-000512-raw-bpe-16384-nop-clm-dec-0.sh
+```
+
+Pretrain bidirectional HRRFormer on DIS inputs for masked language modeling:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-dis-bpe-16384-nop-mlm-dec-0.sh
+```
+
+Pretrain unidirectional Mamba on DEC inputs for causal language modeling:
+```
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-clm-dec-0.sh
+```
+
+### Classification
+
+Train/finetune unidirectional HRRFormer on EXE inputs for malware detection:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-un-000512-raw-bpe-16384-nop-det-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-un-000512-raw-bpe-16384-clm-det-dec-0.sh
+```
+
+Train/finetune bidirectional HRRFormer on DIS inputs for family classification:
+```
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-dis-bpe-16384-nop-fam-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/hrr-tn-bi-000512-dis-bpe-16384-mlm-fam-dec-0.sh
+```
+
+Train/finetune unidirectional Mamba on DEC inputs for behavioral tagging:
+```
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-nop-beh-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mam-tn-un-000512-dec-bpe-16384-clm-beh-dec-0.sh
+```
+
+Train the byte-based MalConvGCT on RAW inputs for all classification tasks:
+```
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-det-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-fam-dec-0.sh
+sudo docker exec demo_state bash demo/sbatch/mal-tn-bi-1048576-nop-wdl-00256-nop-beh-dec-0.sh
+```
+
+### Cleanup
+
+Kill the daemon:
+```
+sudo docker stop demo_state && sudo docker rm demo_state
+```
+
+Remove the output data:
+```
+sudo rm -rf ./workdir
+```
+
+### Appendix
+
+To clean up docker artifacts:
+```
+sudo docker container prune -f
+sudo docker image prune -f
+sudo docker system prune -a --volumes -f
+```
+
+To change Docker's storage device:
+```
+sudo systemctl stop docker
+sudo rsync -aP /var/lib/docker/ /home/docker-data
+sudo sh -c 'printf "{\n\"data-root\": \"/home/docker-data\"\n}" > /etc/docker/daemon.json'
+sudo systemctl start docker
+sudo docker info | grep "Docker Root Dir"
+```
+
+To create the docker image:
+```
+sudo docker build -t demo:latest .
+```
+
+To save the docker image:
+```
+sudo docker save demo:latest | zstd --ultra -T0 -22 -o demo.tar.zst
+```
+
+To split the docker image:
+```
+split -b 1G demo.tar.zst demo.tar.zst.part-
+```
+
+Examine data in the image:
+```
+sudo docker cp demo_state:/home/appuser/app/[OUT] ./workdir/[OUT]
+```
 
 ## Environment
 
-environment_0.yml - environment from some time ago...
-environment_1.yml - environment before integrating mamba into codebase
-environment_2.yml - environment after integrating mamba into codebase
+To run locally an environment with the relevant dependencies must be created.
 
-Create the environment and install cuda and torch with conda (cuda-nvcc is needed for mamba)
-
+Create conda environment:
 ```
-conda create -n RawByteClf python=3.10 pytorch=2.0.1 torchtext=0.15.2 pytorch-cuda=11.8 cuda-nvcc -c pytorch -c nvidia
+conda env create -f environment.yml
+conda activate LMLM
 ```
 
-Install everything else with pip (unless you want to wait 10 years for conda to resolve this). A very specific of ray tune is required for compatibility with transformers.
-
+Install core dependencies:
 ```
-pip install \
-transformers==4.35 \
-datasets==2.14 \
-tokenizers==0.14 \
-accelerate==0.22 \
-safetensors==0.3.1 \
-boto3==1.28 \
-psutil \
-pandas \
-scipy \
-scikit-learn \
-matplotlib \
-requests \
-evaluate==0.4 \
-memory-profiler \
-ninja==1.11.1.1 \
-"ray[tune]"==2.6.3 \
-bayesian-optimization \
-hyperopt \
-pynvml \
-einops \
-py7zr
+pip install -r requirements.txt
 ```
 
-Install mamba locally
+Install optional dependencies:
+```
+pip install -r requirementsComplete.txt
+```
+
+## Documentation
+
+The system is a bit complicated at the moment. We are working on simplifying it.
+
+### Environment Variables
+
+All environment variables for this system are prefaced with "LMLM_".
+
+- `LMLM_ENABLE_UNITTEST_LOGGING`
+- `LMLM_ENABLE_UNITTEST_WARNING`
+- `LMLM_SYNC_ENSEMBLE_MATERIALS`
+- `LMLM_CAN_PRECOPY_ZIPFILES`
+- `LMLM_GET_MATERIALS_ESP_FAM_MIN_FREQ`
+- `LMLM_GET_MATERIALS_ESP_FAM_MAX_IMBALANCE_RATIO`
+- `LMLM_GET_MATERIALS_ESP_FAM_TOP_K`
+- `LMLM_GET_MATERIALS_ESP_BEH_MIN_FREQ`
+- `LMLM_GET_MATERIALS_ESP_BEH_MAX_IMBALANCE_RATIO`
+- `LMLM_GET_MATERIALS_ESP_BEH_TOP_K`
+- `LMLM_GET_MATERIALS_ESP_CLM_VL_SIZE`
+- `LMLM_GET_MATERIALS_ESP_MLM_VL_SIZE`
+- `LMLM_GET_MATERIALS_ESP_LM_VL_SIZE`
+- `LMLM_EXIT_AFTER_UNIGRAM_COMPUTATION`
+
+### System
 
 ```
-pip install packaging
-pip install /path/to/mamba/repository
+├── build:            home for Cython kernels.
+├── cache:            serialized data structures for fast retrieval.
+├── config:           fundamental configurations for the project.
+├── data:             processed data in zip-archives (long story).
+├── demo:             materials for the demonstration.
+├── environment:      documentation of software dependencies.
+├── export:           figures and files to transfer from servers.
+├── ghidra_scripts:   custom scripts for disassembly and decompilation.
+├── logs:             logfiles for SLURM batch processing.
+├── notebooks:        jupyter notebooks for data analysis.
+├── output:           saved models and training logs.
+├── run:              scripts for executing batch experiments.
+├── scripts:          quick useful scripts.
+├── src:              source code for project.
+├── tests:            tests for the source code.
+├── tmp:              temporary directory.
 ```
-pip install pycryptodome
 
+### Usage
 
+We are working on documenting how to use the system more thoroughly.
 
-find /path/to/directory -type d -path "*/None/10/*" -regex '.*/[0-9]+/None/10/.*'
+## Citation
 
-
-cythonize -i src/learn/bytes_to_str_utf8.pyx
-
-
-
-Weird BUG
-
-  File "/home/lk3591/anaconda3/envs/RawByteClf2/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 1366, in __del__
-    if hasattr(self, "_indices"):
-  File "/home/lk3591/anaconda3/envs/RawByteClf2/lib/python3.10/site-packages/ray/_private/worker.py", line 1723, in sigterm_handler
-    sys.exit(signum)
-SystemExit: 15
-
-https://github.com/huggingface/datasets/issues/3172 
-
-This may be caused by memory allocation error in the compression libraries? But this can't possibly be the only cause because the error also occured for experiments that don't involve any compression.
-
-https://github.com/python/cpython/blob/main/Modules/zlibmodule.c
-
-Installing datasets==2.18.0, but this gives the error
-
-ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
-tokenizers 0.14.1 requires huggingface_hub<0.18,>=0.16.4, but you have huggingface-hub 0.22.2 which is incompatible.
-
-so we'll se what other problems this might cause...
-
-okay, it seems like uninstalling ray may help.
-
-Also, ensuring that the original file-generator has finished before different processes try and map also helps?
-
-
-
-
-transformers==4.39.3
-accelerate==0.29.2
-
-# Other
-
-diec
-
-spack load --first qt@5.15.12
-QT_QPA_PLATFORM=offscreen ./Detect_It_Easy-3.09-x86_64.AppImage
-
-## Set up Ghidra
-
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Lifter.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Lifter.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Disassembler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Base/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/Decompiler.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
-ln -s /home/lk3591/Documents/code/RawByteClf/ghidra_scripts/ExtractExecutableRegions.java /home/lk3591/lib/ghidra_11.1.2_PUBLIC/Ghidra/Features/Decompiler/ghidra_scripts/
-
-
-Errors:
-Throws and ArithmeticException indicating the virtual address is less than 0.
-001212bfef784362c62168e9b6bb24ef8dd2a572dbbdba100d2c7afe768d2ba9
-
-lift.sh doesn't get the time correctly on job 15 of the job array.
-
-
-
-grep -L "analyzeHeadless returned 0" ./logs/lift-6_* | sed -n 's/.*_\([0-9]\+\)\.out/\1/p' | paste -sd,
-
-## Set of for ESP
-
-for d in Sorel Assemblage Windows BODMAS; do for l in dec raw dis; do mkdir -p ./data/$d ; ln -s /media/lk3591/easystore/datasets/$d/processed/$l ./data/$d/ ; done ; done
-ln -s /media/lk3591/easystore/datasets/Sorel/processed/raw ./data/raw
-ln -s /media/lk3591/easystore/datasets/Sorel/processed/dec ./data/dec
-ln -s /media/lk3591/easystore/datasets/Sorel/processed/dis ./data/dis
-
-CHANGING tokenizers lib:
-
-tokenizers < 0.20 has a bug with saving/loading a tokenizer when the tokens contain spaces (fuck).
-
-https://github.com/huggingface/tokenizers/pull/909
-
-Solution is to
-
-pip install tokenizers==0.20.0
-
-Then modify the HF install because it will get broken.
-
-/home/lk3591/miniconda3/envs/RawByteClf/lib/python3.10/site-packages/transformers/dependency_versions_table.py
-"tokenizers": "tokenizers>=0.14,<0.21",
-
-
-
-TODO: debug mamba when using ngpu > 1
+```
+@inproceedings{
+  authors={Anomynous Author(s)},
+  title={Beyond Raw Bytes: Towards Large Malware Language Models},
+  booktitle={The Network and Distributed System Security (NDSS) Symposium},
+  year={2026},
+}
+```

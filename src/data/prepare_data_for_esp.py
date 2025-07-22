@@ -25,26 +25,17 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
-from src.cfg import SYSTEM
-from src.enums import LiftLevel, System
+from src.cfg import DATASETS_PATH
+from src.enums import LiftLevel
 from src.utils import rglob
 from src.data.utils import get_data_from_archives
 
 
-if SYSTEM == System.GCCIS:
-    ROOT = Path("/media/lk3591/easystore/datasets")
-elif SYSTEM == System.SPORC:
-    ROOT = Path("/shared/rc/admalware/")
-elif SYSTEM == System.ARMITAGE:
-    ROOT = Path("/home/lk3591/Documents/datasets")
-else:
-    raise NotImplementedError()
-
 ROOTS = {
-    "sorel_pe": ROOT / "Sorel",
-    "bodmas_pe": ROOT / "BODMAS",
-    "assemblage_pe": ROOT / "Assemblage",
-    "windows_pe": ROOT / "Windows",
+    "sorel_pe": DATASETS_PATH / "Sorel",
+    "bodmas_pe": DATASETS_PATH / "BODMAS",
+    "assemblage_pe": DATASETS_PATH / "Assemblage",
+    "windows_pe": DATASETS_PATH / "Windows",
 }
 IN = "ghidra"
 OUT = "processed"

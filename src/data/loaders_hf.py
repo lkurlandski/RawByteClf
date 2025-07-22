@@ -38,8 +38,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.cfg import SYSTEM
-from src.enums import System
+from src.cfg import TMP_DIR
 from src.data.loaders_core import (
     Materials,
     ArchivedFile,
@@ -71,8 +70,8 @@ def generator_from_zipfiles(
     print(f"generator_from_zipfiles: {max_length=} {preserve_order=} {use_fast_storage=}.")
 
     # If True, then we are going to copy the archives from one location to another.
-    precopy = SYSTEM == System.SPORC and use_fast_storage
-    tmppath = Path(f"/tmp/lk3591/{os.urandom(16).hex()}")
+    precopy = os.environ.get("LMLM_CAN_PRECOPY_ZIPFILES", "0") == "1" and use_fast_storage
+    tmppath = TMP_DIR / os.urandom(16).hex()
     print(f"generator_from_zipfiles: {precopy=} {tmppath=}")
 
     # Sorted list of unique archives.

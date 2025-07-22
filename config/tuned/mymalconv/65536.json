@@ -1,6 +1,0 @@
-{
-	"channels": 192,
-	"hidden_size": 128,
-	"stride": 512,
-	"window_size": 512
-}

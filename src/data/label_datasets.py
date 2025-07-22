@@ -25,7 +25,7 @@ if __name__ == "__main__":
 from datasets import Dataset, Features, Value
 from tqdm import tqdm
 
-from src.cfg import INPUT_PATH, TMP_DIR
+from src.cfg import TMP_DIR
 from src.utils import batched
 from src.data.cfg import (
     MAX_SHARD_SIZE,
@@ -490,6 +490,8 @@ def label_dataset(
 
 
 def main() -> None:
+    raise NotImplementedError()
+
     parser = PerDatasetArgumentParser()
     parser.add_argument(
         "--extractor",

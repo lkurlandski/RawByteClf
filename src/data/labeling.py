@@ -28,11 +28,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 
-from src.data.cfg import SOREL_CLARAVY_CACHE, SOREL_AVCLASS_CACHE, SOREL_AVCLASS_FAMILY_CACHE
-
-
-AVCLASS_EXE = Path("/home/lk3591/anaconda3/envs/MalwareLabeler/bin/avclass")
-CLARAVY_EXE = Path("/home/lk3591/anaconda3/envs/MalwareLabeler/bin/claravy")
+from src.cfg import AVCLASS_EXE, CLARAVY_EXE
 
 
 NUM_WORKERS = 16
