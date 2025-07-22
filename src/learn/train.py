@@ -1508,6 +1508,16 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         multimaterials = {args.lift_level: materials}
 
     # FIXME: remove
+    if args.do_attribute:
+        print("Removing the train set :)")
+        for lift_level in list(multimaterials.keys()):
+            multimaterials[lift_level].files["tr"] = multimaterials[lift_level].files["tr"][0:1]
+            multimaterials[lift_level].labels["tr"] = multimaterials[lift_level].labels["tr"][0:1]
+            multimaterials[lift_level].files["vl"] = multimaterials[lift_level].files["vl"][0:1000]
+            multimaterials[lift_level].labels["vl"] = multimaterials[lift_level].labels["vl"][0:1000]
+        materials = multimaterials[LiftLevel.RAW]
+
+    # FIXME: remove
     if args.task == Task.DET:
         if os.environ.get("VL_SIZE") is not None:
             _num = int(os.environ.get("VL_SIZE"))
