@@ -970,8 +970,9 @@ def not_packed_list(root: str, outfile: Path) -> None:
             fp.write(f"{s}\n")
 
 
-def pack(
-    data: str | Path | bytes,
+def _pack_or_unpack_with_upx(
+    action: Literal["pack", "unpack"],
+    data: str | Path | bytes | BytesIO,
     outfile: Optional[str | Path] = None,
     return_bytes: bool = False,
     errors: Literal["raise", "warn", "ignore"] = "raise",
@@ -1004,7 +1005,13 @@ def pack(
         if outfile_is_tmp:
             outfile = os.path.join(outfile, "tmpfile.bin")
 
-        args = ["upx", "-f", "-o", str(outfile), str(infile)]
+        if action == "unpack":
+            args = ["upx", "-f", "-d", "-o", str(outfile), str(infile)]
+        elif action == "pack":
+            args = ["upx", "-f",       "-o", str(outfile), str(infile)]
+        else:
+            raise ValueError(f"Invalid action: {action}. Must be 'pack' or 'unpack'.")
+
         try:
             subprocess.run(args, check=True, capture_output=True, timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
@@ -1021,55 +1028,38 @@ def pack(
     return outbytes
 
 
-def unpack(
-    data: str | Path | bytes,
-    outfile: Optional[str | Path] = None,
-    return_bytes: bool = False,
-    errors: Literal["raise", "warn", "ignore"] = "raise",
-) -> Optional[bytes]:
-    infile   = None
-    inbytes  = None
-    outbytes = None
+def pack(data: str | Path | bytes | BytesIO, outfile: Optional[str | Path] = None,
+    return_bytes: bool = False, errors: Literal["raise", "warn", "ignore"] = "raise") -> Optional[bytes]:
+    """
+    Pack a binary using UPX.
 
-    if outfile is not None and os.path.exists(outfile):
-        raise FileExistsError(f"Output file already exists: {outfile}")
+    Args:
+        data (str | Path | bytes): The input binary file, either as a file (Path or str) or as a buffer (bytes or BytesIO).
+        outfile (Optional[str | Path]): The output file path where the output binary will be saved.
+        return_bytes (bool): If True, read and return the bytes from the output binary.
+        errors (Literal["raise", "warn", "ignore"]): How to handle errors.
 
-    if isinstance(data, (str, Path)):
-        infile = Path(data)
-    elif isinstance(data, BytesIO):
-        data.seek(0)
-        inbytes = data.read()
-    elif isinstance(data, bytes):
-        inbytes = data
-    else:
-        raise TypeError(f"Unacceptable type: {type(data)}")
+    Returns:
+        Optional[bytes]: If `return_bytes` is True, returns the output binary as bytes.
+    """
+    return _pack_or_unpack_with_upx("pack", data, outfile, return_bytes, errors)
 
-    infile_is_tmp  = infile is None
-    infile_mode = "wb" if infile_is_tmp else "rb"
-    outfile_is_tmp = outfile is None
 
-    with maybe_temp_file(infile, infile_mode, suffix=".bin") as (infile, infp), maybe_temp_file(outfile, "wb", directory=outfile_is_tmp) as (outfile, outfp):
-        if infile_is_tmp:
-            infp.write(inbytes)
-            os.chmod(infile, 0o755)
-        if outfile_is_tmp:
-            outfile = os.path.join(outfile, "tmpfile.bin")
+def unpack(data: str | Path | bytes | BytesIO, outfile: Optional[str | Path] = None,
+    return_bytes: bool = False, errors: Literal["raise", "warn", "ignore"] = "raise") -> Optional[bytes]:
+    """
+    Unpack a binary using UPX.
 
-        args = ["upx", "-f", "-d", "-o", str(outfile), str(infile)]
-        try:
-            subprocess.run(args, check=True, capture_output=True, timeout=60)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
-            if errors == "raise":
-                raise err
-            if errors == "warn":
-                print(f"Warning: {err}")
-            return None
+    Args:
+        data (str | Path | bytes): The input binary file, either as a file (Path or str) or as a buffer (bytes or BytesIO).
+        outfile (Optional[str | Path]): The output file path where the output binary will be saved.
+        return_bytes (bool): If True, read and return the bytes from the output binary.
+        errors (Literal["raise", "warn", "ignore"]): How to handle errors.
 
-        if return_bytes:
-            with open(outfile, "rb") as outfp:
-                outbytes = outfp.read()
-
-    return outbytes
+    Returns:
+        Optional[bytes]: If `return_bytes` is True, returns the output binary as bytes.
+    """
+    return _pack_or_unpack_with_upx("unpack", data, outfile, return_bytes, errors)
 
 
 def unpack_samples(
