@@ -185,3 +185,4 @@ config/rc.json
 demo/data/
 demo/datasets/
 demo/shas.txt
+demo/demo.tar.zst.part-a*
