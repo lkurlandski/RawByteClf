@@ -138,6 +138,7 @@ if __name__ == "__main__":
 import psutil
 from tqdm import tqdm
 
+from src.utils import maybe_temp_file
 from src.data.cfg import (
     SOREL_PATH,
     DATASET_TO_FILES,
@@ -967,6 +968,57 @@ def not_packed_list(root: str, outfile: Path) -> None:
     with open(outfile, "w") as fp:
         for s in notpacked:
             fp.write(f"{s}\n")
+
+
+def pack(
+    data: str | Path | bytes,
+    outfile: Optional[str | Path] = None,
+    return_bytes: bool = False,
+    errors: Literal["raise", "warn", "ignore"] = "raise",
+) -> Optional[bytes]:
+    infile   = None
+    inbytes  = None
+    outbytes = None
+
+    if outfile is not None and os.path.exists(outfile):
+        raise FileExistsError(f"Output file already exists: {outfile}")
+
+    if isinstance(data, (str, Path)):
+        infile = Path(data)
+    elif isinstance(data, BytesIO):
+        data.seek(0)
+        inbytes = data.read()
+    elif isinstance(data, bytes):
+        inbytes = data
+    else:
+        raise TypeError(f"Unacceptable type: {type(data)}")
+
+    infile_is_tmp  = infile is None
+    infile_mode = "wb" if infile_is_tmp else "rb"
+    outfile_is_tmp = outfile is None
+
+    with maybe_temp_file(infile, infile_mode, suffix=".bin") as (infile, infp), maybe_temp_file(outfile, "wb", directory=outfile_is_tmp) as (outfile, outfp):
+        if infile_is_tmp:
+            infp.write(inbytes)
+            os.chmod(infile, 0o755)
+        if outfile_is_tmp:
+            outfile = os.path.join(outfile, "tmpfile.bin")
+
+        args = ["upx", "-f", "-o", str(outfile), str(infile)]
+        try:
+            subprocess.run(args, check=True, capture_output=True, timeout=60)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
+            if errors == "raise":
+                raise err
+            if errors == "warn":
+                print(f"Warning: {err}")
+            return None
+
+        if return_bytes:
+            with open(outfile, "rb") as outfp:
+                outbytes = outfp.read()
+
+    return outbytes
 
 
 def unpack(

@@ -17,7 +17,7 @@ if __name__ == "__main__":
 # pylint: enable=wrong-import-position
 
 from src.data.cfg import PACKING_ROOTS
-from src.data.detect_packing_sorel import PackingMap, unpack
+from src.data.detect_packing_sorel import PackingMap, pack, unpack
 
 
 ENABLE_UNITTEST_LOGGING = os.environ.get("LMLM_ENABLE_UNITTEST_LOGGING", "0") == "1"
@@ -83,41 +83,69 @@ class TestPackingMap(unittest.TestCase):
         self.maps.append(packing_map)
 
 
-@unittest.skip("Skipping TestUnpacking.")
-class TestUnpacking(unittest.TestCase):
+class TestPack(unittest.TestCase):
 
-    _test_file = "./tmp/calc.exe"
+    @classmethod
+    def setUpClass(clf):
+        clf.tempdir = tempfile.mkdtemp(prefix="TestPack_")
+        clf.tmpcpp = os.path.join(clf.tempdir, "hello.cpp")
+        clf.tmpbin = os.path.join(clf.tempdir, "hello.bin")
 
-    def setUp(self):
-        self.test_dir = Path(tempfile.mkdtemp())
-        self.unpacked = self.test_dir /  "unpacked.exe"
-        self.packed = self.test_dir / "packed.exe"
-        self.outfile = self.test_dir / "out.exe"
-        shutil.copy2(self._test_file, self.unpacked)
-        args = ["upx", "--best", "-o", str(self.packed), str(self.unpacked)]
+        with open(clf.tmpcpp, "w") as fp:
+            fp.write("#include <iostream>\n")
+            fp.write("int main() {\n")
+            fp.write(f"std::cout << \"Hello World!\";")
+            fp.write("return 0;\n")
+            fp.write("}\n")
+
+        args = ["g++", "-o", clf.tmpbin, clf.tmpcpp]
+        subprocess.run(args, check=True)
+        TestPack.check_binary(clf.tmpbin)
+
+    @classmethod
+    def tearDownClass(clf):
+        shutil.rmtree(clf.tempdir, ignore_errors=True)
+
+    @classmethod
+    def check_binary(cls, binfile: str) -> bool:
+        result = subprocess.run([binfile], check=True, capture_output=True)
+        assert result.returncode == 0, f"Binary {binfile} did not run successfully."
+        assert result.stdout.decode().strip() == "Hello World!", f"Binary {binfile} did not produce expected output."
+
+    def _pack(self, data, outfile, return_bytes, errors):
         try:
-            subprocess.run(args, check=True, capture_output=True)
+            return pack(data, outfile, return_bytes, errors)
         except subprocess.CalledProcessError as err:
-            print(err.stderr)
-            raise err
+            print("stdout:", err.stdout.decode() if err.stdout else "None")
+            print("stderr:", err.stderr.decode() if err.stderr else "None")
+            raise
 
-    def tearDown(self):
-        shutil.rmtree(self.test_dir)
+    def test_1(self):
+        b = self._pack(self.tmpbin, None, True, "raise")
+        assert isinstance(b, bytes), type(b)
 
-    def test_packed_file(self):
-        try:
-            _, byte_0 = unpack(self.packed, self.outfile, True, True, 1)
-        except subprocess.CalledProcessError as err:
-            print(err.stderr)
-            raise err
+    def test_2(self):
+        with open(self.tmpbin, "rb") as fp:
+            data = fp.read()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpfile = os.path.join(tmpdir, "tmpfile.bin")
+            b = self._pack(data, tmpfile, True, "raise")
+            self.check_binary(tmpfile)
+        assert isinstance(b, bytes), type(b)
 
-        byte_1 = self.unpacked.read_bytes()
-        assert len(byte_0) == len(byte_1), f"{len(byte_0)=} != {len(byte_1)=}"
-        # Don't know why, but the executables themselves have some small differences.
+    def test_3(self):
+        with open(self.tmpbin, "rb") as fp:
+            data = fp.read()
+        b = self._pack(data, None, True, "raise")
+        assert isinstance(b, bytes), type(b)
 
-    def test_unpacked_file(self):
-        with self.assertRaises(subprocess.CalledProcessError):
-            unpack(self.unpacked, self.outfile, True, False, 1)
-        outfile, byte = unpack(self.unpacked, self.outfile, True, True, 0)
-        assert outfile is None
-        assert byte is None
+    def test_4(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpfile = os.path.join(tmpdir, "tmpfile.bin")
+            b = self._pack(self.tmpbin, tmpfile, True, "raise")
+            self.check_binary(tmpfile)
+        assert isinstance(b, bytes), type(b)
+
+
+class TestUnpack(unittest.TestCase):
+    ...

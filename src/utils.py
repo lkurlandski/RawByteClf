@@ -22,6 +22,7 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Callable, Generator, Literal, Optional
 import warnings
@@ -139,6 +140,23 @@ def ignore_warnings_decorator(*filter_args, **filter_kwargs):
         return wrapper
 
     return decorator
+
+
+@contextlib.contextmanager
+def maybe_temp_file(path: str | os.PathLike | None, mode: str = "w+b", directory: bool = False, **kwds):
+    """
+    Yields (path_obj, file_handle). Cleans up temp file automatically.
+    """
+    if path is None:
+        if directory:
+            with tempfile.TemporaryDirectory(**kwds) as tmpdir:
+                yield Path(tmpdir), None
+        else:
+            with tempfile.NamedTemporaryFile(mode=mode, **kwds) as f:
+                yield Path(f.name), f
+    else:
+        with open(path, mode) as f:
+            yield Path(path), f
 
 
 def rglob(top: str, pattern: str, followlinks: bool = True) -> Generator[str, None, None]:
