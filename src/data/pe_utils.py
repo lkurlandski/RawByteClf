@@ -33,6 +33,16 @@ import numpy as np
 # pylint: disable=c-extension-no-member
 
 
+def is_dotnet(raw: str | Path | bytes) -> bool:
+    pe: lief.PE.Binary = lief.parse(raw)
+    if not isinstance(pe, lief.PE.Binary):
+        raise RuntimeError(f"Expected lief.PE.Binary, got {type(pe)}")
+    dd: lief.PE.DataDirectory = pe.data_directory(lief.PE.DataDirectory.TYPES.CLR_RUNTIME_HEADER)
+    if not isinstance(dd, lief.PE.DataDirectory):
+        raise RuntimeError(f"Expected lief.PE.DataDirectory, got {type(pe)}")
+    return dd.rva != 0 and dd.size != 0
+
+
 def get_machine_and_subsystem(data: str | Path | bytes) -> tuple[lief.PE.Header.MACHINE_TYPES, lief.PE.OptionalHeader.SUBSYSTEM]:
     pe = lief.parse(data)
     if not isinstance(pe, lief.PE.Binary):
