@@ -1015,10 +1015,11 @@ def _pack_or_unpack_with_upx(
         try:
             subprocess.run(args, check=True, capture_output=True, timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
+            if errors in ("raise", "warn"):
+                print("stdout:", err.stdout.decode() if err.stdout else "None")
+                print("stderr:", err.stderr.decode() if err.stderr else "None")
             if errors == "raise":
                 raise err
-            if errors == "warn":
-                print(f"Warning: {err}")
             return None
 
         if return_bytes:
