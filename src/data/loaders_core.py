@@ -1670,7 +1670,7 @@ def _get_materials_esp_lm(
     verbose: bool = True,
 ) -> Materials:
     # pylint: disable=multiple-statements
-    vl_size = int(os.environ.get("LMLM_GET_MATERIALS_ESP_LM_VL_SIZE", vl_size))  # FIXME: remove
+    # vl_size = int(os.environ.get("LMLM_GET_MATERIALS_ESP_LM_VL_SIZE", vl_size))  # FIXME: remove
 
     lift_level     = LiftLevel(lift_level)
     lift_level_ddp = LiftLevel(lift_level_ddp)
@@ -1774,7 +1774,7 @@ def get_materials_esp_clm(
     purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
-    vl_size = int(os.environ.get("LMLM_GET_MATERIALS_ESP_CLM_VL_SIZE", vl_size))  # FIXME: remove
+    # vl_size = int(os.environ.get("LMLM_GET_MATERIALS_ESP_CLM_VL_SIZE", vl_size))  # FIXME: remove
     return _get_materials_esp_lm(
         lift_level,
         tr_size,
@@ -1795,7 +1795,7 @@ def get_materials_esp_mlm(
     purge_empty_samples: bool = False,
     verbose: bool = True,
 ) -> Materials:
-    vl_size = int(os.environ.get("LMLM_GET_MATERIALS_ESP_MLM_VL_SIZE", vl_size))  # FIXME: remove
+    # vl_size = int(os.environ.get("LMLM_GET_MATERIALS_ESP_MLM_VL_SIZE", vl_size))  # FIXME: remove
     return _get_materials_esp_lm(
         lift_level,
         tr_size,
@@ -2227,9 +2227,9 @@ def get_materials_esp_fam(
         include = set(file.read_text().split())
         sha_label_map = {s: l for s, l in sha_label_map.items() if l in include}
 
-    min_freq = int(os.environ.get("LMLM_GET_MATERIALS_ESP_FAM_MIN_FREQ", min_freq))  # FIXME: remove
-    max_imbalance_ratio = int(os.environ.get("LMLM_GET_MATERIALS_ESP_FAM_MAX_IMBALANCE_RATIO", max_imbalance_ratio))  # FIXME: remove
-    top_k = int(os.environ.get("LMLM_GET_MATERIALS_ESP_FAM_TOP_K", top_k))  # FIXME: remove
+    # min_freq = int(os.environ.get("LMLM_GET_MATERIALS_ESP_FAM_MIN_FREQ", min_freq))  # FIXME: remove
+    # max_imbalance_ratio = int(os.environ.get("LMLM_GET_MATERIALS_ESP_FAM_MAX_IMBALANCE_RATIO", max_imbalance_ratio))  # FIXME: remove
+    # top_k = int(os.environ.get("LMLM_GET_MATERIALS_ESP_FAM_TOP_K", top_k))  # FIXME: remove
 
     return _get_materials_esp_clf(
         sha_label_map,
@@ -2267,10 +2267,9 @@ def get_materials_esp_beh(
         include = set(file.read_text().split())
         sha_label_map = {s: l for s, l in sha_label_map.items() if all(i in include for i in l)}
 
-    # FIXME: remove
-    min_freq = int(os.environ.get("LMLM_GET_MATERIALS_ESP_BEH_MIN_FREQ", min_freq))  # FIXME: remove
-    max_imbalance_ratio = int(os.environ.get("LMLM_GET_MATERIALS_ESP_BEH_MAX_IMBALANCE_RATIO", max_imbalance_ratio))  # FIXME: remove
-    top_k = int(os.environ.get("LMLM_GET_MATERIALS_ESP_BEH_TOP_K", top_k))  # FIXME: remove
+    # min_freq = int(os.environ.get("LMLM_GET_MATERIALS_ESP_BEH_MIN_FREQ", min_freq))  # FIXME: remove
+    # max_imbalance_ratio = int(os.environ.get("LMLM_GET_MATERIALS_ESP_BEH_MAX_IMBALANCE_RATIO", max_imbalance_ratio))  # FIXME: remove
+    # top_k = int(os.environ.get("LMLM_GET_MATERIALS_ESP_BEH_TOP_K", top_k))  # FIXME: remove
 
     return _get_materials_esp_clf(
         sha_label_map,
