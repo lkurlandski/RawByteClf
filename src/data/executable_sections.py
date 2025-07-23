@@ -260,6 +260,24 @@ def get_executable_section_bounds(
     return GetExecutableSectionBounds(file, content, toolkit)()
 
 
+def get_executable_section(
+    file: Optional[str] = None,
+    content: Optional[bytes] = None,
+    toolkit: Toolkit | str = Toolkit.LIEF,
+) -> Optional[bytes]:
+    content = Path(file).read_bytes() if content is None else content
+    function = GetExecutableSectionBounds(file, content, toolkit)
+    bounds, _ = function()
+    exe = b""
+    for lower, upper in bounds:
+        if lower < 0 or upper > len(content):
+            continue
+        exe += content[lower:upper]
+    if not exe:
+        return None
+    return exe
+
+
 class Runner:
 
     # Time for 1024 files:
