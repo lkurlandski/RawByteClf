@@ -61,7 +61,6 @@ def main():
         for split, files in materials.files.items():
             allfiles.update(files)
             print(f"{get_materials.__name__}: adding {len(files)} files from the {split} split.")
-        break
 
     allfiles = list(allfiles)
     sorted(allfiles, key=lambda x: x.name)
