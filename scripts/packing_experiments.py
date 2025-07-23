@@ -75,11 +75,8 @@ def main():
     }
     errors = Counter()
 
-    def generator():
-        with print_context(suppress=True):
-            yield from generator_from_zipfiles(allfiles, preserve_order=True, use_fast_storage=False)
-
-    for i, d in enumerate(generator()):
+    generator = generator_from_zipfiles(allfiles, preserve_order=True, use_fast_storage=False)
+    for i, d in enumerate(generator):
         name     = d["name"]
         original = d["bytes"]
 
@@ -118,9 +115,9 @@ def main():
 
         print("Success")
 
-        # print(f"Exit: {original_code} {packed_code} {unpacked_code}")
-        # print(f"Bounds: {original_bounds == packed_bounds} {original_bounds == unpacked_bounds} {packed_bounds == unpacked_bounds}")
-        # print(f"Exe: {original_exe == packed_exe} {original_exe == unpacked_exe} {packed_exe == unpacked_exe}")
+        # print(f"  Original: {original_code} {original_bounds} {len(original_exe)}")
+        # print(f"  Packed:   {packed_code} {packed_bounds} {len(packed_exe)}")
+        # print(f"  Unpacked: {unpacked_code} {unpacked_bounds} {len(unpacked_exe)}")
 
 
     print(f"Results:\n{pformat(results)}")
