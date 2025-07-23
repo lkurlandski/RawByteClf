@@ -205,3 +205,19 @@ class TestUnpack(unittest.TestCase):
             b = self._unpack(self.tmppck, tmpfile, True, "raise")
             check_hello_world_out(tmpfile)
         assert isinstance(b, bytes), type(b)
+
+    def test_5(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            unpack(self.tmpbin, None, True, "raise", return_original_if_not_packed=False)
+        b = unpack(self.tmpbin, None, True, "raise", return_original_if_not_packed=True)
+        assert isinstance(b, bytes), type(b)
+        assert b == Path(self.tmpbin).read_bytes(), "Unpacked bytes do not match original binary."
+
+    def test_6(self):
+        with open(self.tmpbin, "rb") as fp:
+            data = fp.read()
+        with self.assertRaises(subprocess.CalledProcessError):
+            unpack(data, None, True, "raise", return_original_if_not_packed=False)
+        b = unpack(data, None, True, "raise", return_original_if_not_packed=True)
+        assert isinstance(b, bytes), type(b)
+        assert b == Path(self.tmpbin).read_bytes(), "Unpacked bytes do not match original binary."

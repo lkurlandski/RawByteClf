@@ -976,6 +976,7 @@ def _pack_or_unpack_with_upx(
     outfile: Optional[str | Path] = None,
     return_bytes: bool = False,
     errors: Literal["raise", "warn", "ignore"] = "raise",
+    return_original_if_not_packed: bool = False,
 ) -> Optional[bytes]:
     infile   = None
     inbytes  = None
@@ -1015,6 +1016,14 @@ def _pack_or_unpack_with_upx(
         try:
             subprocess.run(args, check=True, capture_output=True, timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as err:
+            # TODO: checking exit codes would be a better way of handling this.
+            if action == "unpack" and return_original_if_not_packed and "NotPackedException" in err.stderr.decode():
+                if return_bytes:
+                    return inbytes if inbytes is not None else Path(infile).read_bytes()
+                if outfile is not None:
+                    Path(outfile).write_bytes(inbytes if inbytes is not None else Path(infile).read_bytes())
+                return None
+
             if errors == "raise":
                 raise err
             if errors == "warn":
@@ -1048,7 +1057,9 @@ def pack(data: str | Path | bytes | BytesIO, outfile: Optional[str | Path] = Non
 
 
 def unpack(data: str | Path | bytes | BytesIO, outfile: Optional[str | Path] = None,
-    return_bytes: bool = False, errors: Literal["raise", "warn", "ignore"] = "raise") -> Optional[bytes]:
+    return_bytes: bool = False, errors: Literal["raise", "warn", "ignore"] = "raise",
+    return_original_if_not_packed: bool = False,
+) -> Optional[bytes]:
     """
     Unpack a binary using UPX.
 
@@ -1061,7 +1072,7 @@ def unpack(data: str | Path | bytes | BytesIO, outfile: Optional[str | Path] = N
     Returns:
         Optional[bytes]: If `return_bytes` is True, returns the output binary as bytes.
     """
-    return _pack_or_unpack_with_upx("unpack", data, outfile, return_bytes, errors)
+    return _pack_or_unpack_with_upx("unpack", data, outfile, return_bytes, errors, return_original_if_not_packed)
 
 
 def unpack_samples(
