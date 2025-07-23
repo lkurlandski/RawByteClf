@@ -13,6 +13,7 @@ NOTE:
 """
 
 from functools import reduce, partial
+import random
 import re
 from typing import Callable, Optional
 
@@ -21,6 +22,8 @@ from torch import LongTensor
 from transformers import PreTrainedTokenizerFast
 
 from src.utils import to_long_tensor, compress, encrypt
+from src.data.detect_packing_sorel import pack, unpack
+from src.data.executable_sections import get_executable_section
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8  # pylint: disable=no-name-in-module
 from src.learn.utils import interpret_bytes_as_integers
 
@@ -124,6 +127,36 @@ def hf_compress_bytes(examples: dict[str, list], compression_type: str, compress
 
 def hf_encrypt_bytes(examples: dict[str, list], encryption_type: str, key: Optional[bytes] = None) -> dict[str, list]:
     return {"bytes": [encrypt(bs, encryption_type, key) for bs in examples["bytes"]]}
+
+
+def hf_pack_bytes(examples: dict[str, list], remove_null: bool = False, probability: float = 1.0) -> dict[str, list]:
+    r = {"bytes": []}
+    for bs in examples["bytes"]:
+        if random.random() < probability:
+            bs = pack(bs, return_bytes=True, errors="ignore")
+        if not remove_null or bs is not None:
+            r["bytes"].append(bs)
+    return r
+
+
+def hf_unpack_bytes(examples: dict[str, list], remove_null: bool = False, probability: float = 1.0) -> dict[str, list]:
+    r = {"bytes": []}
+    for bs in examples["bytes"]:
+        if random.random() < probability:
+            bs = unpack(bs, return_bytes=True, errors="ignore", return_original_if_not_packed=True)
+        if not remove_null or bs is not None:
+            r["bytes"].append(bs)
+    return r
+
+
+def hf_get_exe_bytes(examples: dict[str, list], max_length: Optional[int] = None, remove_null: bool = False) -> dict[str, list]:
+    r = {"bytes": []}
+    for bs in examples["bytes"]:
+        bs = get_executable_section(content=bs)
+        bs = bs[0:max_length] if bs is not None else bs
+        if not remove_null or bs is not None:
+            r["bytes"].append(bs)
+    return r
 
 
 def _hf_tokenize_text(
