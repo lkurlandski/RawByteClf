@@ -1,5 +1,34 @@
 """
 Prepare for the packing experiments.
+
+Results:
+{
+ 'packed': 2370,
+ 'rearmed': 1511,
+ 'skipped': 125,
+ 'total': 2588,
+ 'unpacked': 2347
+}
+
+Errors:
+{
+ '': 2,
+ 'Assertion failed: size > 0 (/home/mfx/code/github/upx/upx4/src/util/membuffer.cpp: alloc: 179)': 17,
+ 'CantPackException: PE: subsystem 1 is not supported': 7,
+ 'CantPackException: bad dllname 0x45c70845': 1,
+ 'CantPackException: bad dllname 0x646cff68': 1,
+ 'CantPackException: bad dllname 0xff4c3324': 1,
+ 'CantPackException: bad dllname 0xffbc48e8': 1,
+ 'CantPackException: bad resoff 0xd2d54': 1,
+ 'CantPackException: mem_size 2; take care': 2,
+ 'CantPackException: section size problem': 8,
+ 'CantPackException: xcheck unexpected nullptr pointer; take care!': 1,
+ 'CantUnpackException: mem_size 2; take care': 2,
+ 'CantUnpackException: span_check_range: pointer out of range; take care!': 2,
+ 'EOFException: premature end of file': 12,
+ 'IOException: empty file -- skipped': 34,
+ 'NotCompressibleException': 24
+}
 """
 
 from collections import Counter
@@ -115,10 +144,10 @@ def main():
 
         print("Success")
 
-        # print(f"  Original: {original_code} {original_bounds} {len(original_exe)}")
-        # print(f"  Packed:   {packed_code} {packed_bounds} {len(packed_exe)}")
-        # print(f"  Unpacked: {unpacked_code} {unpacked_bounds} {len(unpacked_exe)}")
-
+        print(f"  Original: {original_code} {original_bounds} {len(original_exe)}")
+        print(f"  Packed:   {packed_code} {packed_bounds} {len(packed_exe)}")
+        print(f"  Unpacked: {unpacked_code} {unpacked_bounds} {len(unpacked_exe)}")
+        print(f"  Code Eq:  {original_exe == unpacked_exe}")
 
     print(f"Results:\n{pformat(results)}")
     print(f"Errors:\n{pformat(dict(errors))}")
