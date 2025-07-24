@@ -1147,7 +1147,7 @@ def get_map_kwds_for_hf_datasets(
         raise TypeError(f"Invalid dataset type: {type(dataset)}. Must be one of Dataset, DatasetDict, IterableDataset, or IterableDatasetDict.")
 
     either_style_kwds = {
-        "batch_size": None,
+        "batch_size": BATCH_SIZE_ITR if is_iterable else BATCH_SIZE_MAP,
     }
     map_style_kwds = {
         "keep_in_memory": KEEP_IN_MEMORY,
@@ -1165,11 +1165,9 @@ def get_map_kwds_for_hf_datasets(
     if is_iterable:
         for k in map_style_kwds:
             kwds.pop(k)
-        kwds["batch_size"] = BATCH_SIZE_ITR
     else:
         for k in iterable_style_kwds:
             kwds.pop(k)
-        kwds["batch_size"] = BATCH_SIZE_MAP
 
     kwds.update({
         "function": function,
