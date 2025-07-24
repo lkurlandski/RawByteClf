@@ -249,6 +249,9 @@ CACHE_FILE_NAME: Optional[str] = None
 NUM_PROC = None
 KEEP_IN_MEMORY = False
 
+# NOTE: using num_proc in calls to Dataset.map is a good idea, so long as the value is fixed.
+# Even if less than num_proc CPUs are available, datasets will still spawn num_proc workers.
+
 # Variables for hyperparameter tuning.
 N_INITIAL_POINTS = 16
 N_TRIALS = 64
@@ -1221,7 +1224,7 @@ def get_processed_dataset_hf(
     if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "1":
         # These processing functions are best used with multiprocessing.
         batch_size  = 16
-        num_proc    = len(os.sched_getaffinity(0))
+        num_proc    = 16
         remove_none = lambda x: x["bytes"] is not None
 
         print("Splitting the validation set into three: not packed, packed, and unpacked.")
