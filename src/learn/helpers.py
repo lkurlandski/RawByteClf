@@ -135,6 +135,8 @@ class Args:
     compression_algorithm: Optional[CompressionAlgorithm] = field(default=None)
     vocab_size: Optional[int]                             = field(default=256)
     compression_level: int                                = field(default=9)
+    probability_to_pack: float                            = field(default=0.0)
+    probability_to_unpack: float                          = field(default=0.0)
 
     # Training/Stopping
     weighted_loss: Optional[WeightedLossAlgorithm]    = field(default=None)
@@ -301,6 +303,8 @@ class OutputHelper:
         split_mode: Optional[SplitMode],
         weighted_loss: Optional[WeightedLossAlgorithm],
         ratio_pos_split: Optional[float] = None,
+        probability_to_pack: float = 0.0,
+        probability_to_unpack: float = 0.0,
         trainer_config: Optional[dict],
     ) -> None:
 
@@ -320,6 +324,8 @@ class OutputHelper:
             f"lift_level--{lift_level.value}",
             f"lift_level_ddp--{lift_level_ddp.value if lift_level_ddp is not None else None}",
             f"packing_protocol--{packing_protocol.value}",
+            f"probability_to_pack--{probability_to_pack}",
+            f"probability_to_unpack--{probability_to_unpack}",
             f"bits_in_byte--{bits_in_byte.value}",
             f"tokenization_algorithm--{tokenization_algorithm.value}",
             f"vocab_size--{vocab_size}",

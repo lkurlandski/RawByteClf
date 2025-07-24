@@ -200,6 +200,10 @@ from src.learn.preprocessing import (
     tokenize_bytes,
     hf_compress_bytes,
     hf_encrypt_bytes,
+    hf_pack_bytes,
+    hf_unpack_bytes,
+    hf_get_exe_bytes,
+    hf_rearm_bytes,
 )
 from src.learn.printers import print_tokenizer, print_data_collator, print_config, print_model
 from src.learn.utils import (
@@ -1127,13 +1131,28 @@ def get_map_kwds_for_hf_datasets(
     dataset: Dataset | DatasetDict | IterableDataset | IterableDatasetDict,
     **kwds,
 ) -> dict[str, Any]:
+    if isinstance(dataset, Dataset):
+        is_iterable = False
+        is_dict     = False
+    elif isinstance(dataset, DatasetDict):
+        is_iterable = False
+        is_dict     = True
+    elif isinstance(dataset, IterableDataset):
+        is_iterable = True
+        is_dict     = False
+    elif isinstance(dataset, IterableDatasetDict):
+        is_iterable = True
+        is_dict     = True
+    else:
+        raise TypeError(f"Invalid dataset type: {type(dataset)}. Must be one of Dataset, DatasetDict, IterableDataset, or IterableDatasetDict.")
+
     either_style_kwds = {
         "batch_size": None,
     }
     map_style_kwds = {
         "keep_in_memory": KEEP_IN_MEMORY,
         "num_proc": NUM_PROC,
-        "cache_file_names": CACHE_FILE_NAME,
+        f"cache_file_name{'s' if is_dict else ''}": CACHE_FILE_NAME,
         "writer_batch_size": WRITER_BATCH_SIZE,
         "features": None,  # IterableDatasetDict does not take features in its map(), but IterableDataset does.
         "desc": None,
@@ -1143,14 +1162,14 @@ def get_map_kwds_for_hf_datasets(
     }
 
     kwds = either_style_kwds | map_style_kwds | iterable_style_kwds | kwds
-    if isinstance(dataset, (Dataset, DatasetDict)):
-        for k in iterable_style_kwds:
-            kwds.pop(k)
-        kwds["batch_size"] = BATCH_SIZE_MAP
-    if isinstance(dataset, (IterableDataset, IterableDatasetDict)):
+    if is_iterable:
         for k in map_style_kwds:
             kwds.pop(k)
         kwds["batch_size"] = BATCH_SIZE_ITR
+    else:
+        for k in iterable_style_kwds:
+            kwds.pop(k)
+        kwds["batch_size"] = BATCH_SIZE_MAP
 
     kwds.update({
         "function": function,
@@ -1175,28 +1194,8 @@ def get_processed_dataset_hf(
         num_shards,
         max_length=args.data_read_bytes,
     )
-
-    # TODO: remove after verifying that the labels are correct for DET and BEH
-    # from itertools import chain
-    # truth = {}
-    # with open("./tmp/avclass_family_cache.txt") as fp:
-    #     for line in fp:
-    #         parts = line.strip().split()
-    #         sha = parts[0]
-    #         label = " ".join(parts[1:])
-    #         truth[sha] = label
-
-    # for archived_file, label in zip(chain(materials.files["tr"], materials.files["vl"]), chain(materials.labels["tr"], materials.labels["vl"])):
-    #     sha = archived_file.name.split(".")[0]
-    #     label = materials.id2label[label]
-    #     if truth[sha] != label:
-    #         print(f"Error (materials): {sha} {label} != {truth[sha]}")
-
-    # for d in chain(dataset["tr"], dataset["vl"]):
-    #     sha = d["name"]
-    #     label = materials.id2label[d["labels"]]
-    #     if truth[sha] != label:
-    #         print(f"Error (dataset): {sha} {label} != {truth[sha]}")
+    for k, v in dataset.items():
+        print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
 
     if materials.problem_type == "multi_label_classification":
         func = partial(hf_multilabel_encode, num_classes=materials.num_classes)
@@ -1220,6 +1219,66 @@ def get_processed_dataset_hf(
         desc = "Encrypting bytes..."
         kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc)
         dataset = dataset.map(**kwds)
+
+    if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "1":
+        # These processing functions are best used with multiprocessing.
+        batch_size  = 16
+        num_proc    = len(os.sched_getaffinity(0))
+        remove_none = lambda x: x["bytes"] is not None
+
+        print("Splitting the validation set into three: not packed, packed, and unpacked.")
+        size = len(dataset["vl"]) // 3
+        if isinstance(dataset["vl"], Dataset):
+            dataset["vl"] = dataset["vl"].sort("name")
+        else:
+            dataset["vl"] = dataset["vl"].shuffle(seed=0)
+        dataset["vl-not-packed"] = dataset["vl"].take(size)
+        dataset["vl-packed"]     = dataset["vl"].skip(size).take(size)
+        dataset["vl-unpacked"]   = dataset["vl"].skip(size * 2).take(size)
+        dataset.pop("vl")
+        for k, v in dataset.items():
+            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+
+        print("Rearming binaries if necessary.")
+        func = partial(hf_rearm_bytes)
+        desc = "Rearming EXEs..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, batch_size=batch_size, num_proc=num_proc)
+        dataset = dataset.map(**kwds).filter(remove_none)
+        for k, v in dataset.items():
+            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+
+        print("Applying packing to the validation and possibly training set.")
+        func = partial(hf_pack_bytes, probability=1.00)
+        desc = f"Packing EXEs (vl, p={1.00})..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset["vl-unpacked"], desc=desc, batch_size=batch_size, num_proc=num_proc)
+        dataset["vl-packed"]   = dataset["vl-packed"].map(**kwds).filter(remove_none)
+        dataset["vl-unpacked"] = dataset["vl-unpacked"].map(**kwds).filter(remove_none)
+        if args.probability_to_pack > 0.0:
+            func = partial(hf_pack_bytes, probability=args.probability_to_pack)
+            desc = f"Packing EXEs (tr, p={args.probability_to_pack})..."
+            kwds = get_map_kwds_for_hf_datasets(func, dataset["tr"], desc=desc, batch_size=batch_size, num_proc=num_proc)
+            dataset["tr"] = dataset["tr"].map(**kwds).filter(remove_none)
+        for k, v in dataset.items():
+            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+
+        print("Applying unpacking to the validation and possibly training set.")
+        func = partial(hf_unpack_bytes, probability=1.00)
+        desc = f"Unpacking EXEs (vl, p={1.00})..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset["vl-unpacked"], desc=desc, batch_size=batch_size, num_proc=num_proc)
+        dataset["vl-unpacked"] = dataset["vl-unpacked"].map(**kwds).filter(remove_none)
+        if args.probability_to_unpack > 0.0:
+            func = partial(hf_unpack_bytes, probability=args.probability_to_unpack)
+            desc = f"Unpacking EXEs (tr, p={args.probability_to_unpack})..."
+            kwds = get_map_kwds_for_hf_datasets(func, dataset["tr"], desc=desc, batch_size=batch_size, num_proc=num_proc)
+            dataset["tr"] = dataset["tr"].map(**kwds).filter(remove_none)
+        for k, v in dataset.items():
+            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+
+        print("Extracting the .text section.")
+        func = partial(hf_get_exe_bytes, max_length=args.max_length)
+        desc = "Extracting .text from EXEs..."
+        kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, batch_size=batch_size, num_proc=num_proc)
+        dataset = dataset.map(**kwds).filter(remove_none)
 
     # If we're mapping bytes to integers, we can do it in a more efficient way.
     # Otherwise, we need to use the tokenizer.
@@ -1504,39 +1563,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         }
         materials = multimaterials[LiftLevel.RAW]
     else:
-        materials = get_materials(args.lift_level, **kwds)
+        materials = get_materials(args.lift_level if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "0" else LiftLevel.NOP, **kwds)
         multimaterials = {args.lift_level: materials}
-
-    # FIXME: remove
-    if args.do_attribute:
-        print("Removing the train set :)")
-        for lift_level in list(multimaterials.keys()):
-            multimaterials[lift_level].files["tr"] = multimaterials[lift_level].files["tr"][0:1]
-            multimaterials[lift_level].labels["tr"] = multimaterials[lift_level].labels["tr"][0:1]
-            multimaterials[lift_level].files["vl"] = multimaterials[lift_level].files["vl"][0:1000]
-            multimaterials[lift_level].labels["vl"] = multimaterials[lift_level].labels["vl"][0:1000]
-        materials = multimaterials[LiftLevel.RAW]
-
-    # FIXME: remove
-    if args.task == Task.DET:
-        if os.environ.get("VL_SIZE") is not None:
-            _num = int(os.environ.get("VL_SIZE"))
-            print(f"VL_SIZE: {_num=}")
-            print(f"VL_SIZE: {len(materials.labels['vl'])=}")
-            if len(materials.labels["vl"]) > _num:
-                _idx = np.arange(0, len(materials.labels["vl"]))
-                _idx = np.random.choice(_idx, _num, replace=False)
-                if isinstance(materials.files["vl"], np.ndarray):
-                    materials.files["vl"] = materials.files["vl"][_idx]
-                else:
-                    materials.files["vl"] = [materials.files["vl"][i] for i in _idx]
-                if isinstance(materials.labels["vl"], np.ndarray):
-                    materials.labels["vl"] = materials.labels["vl"][_idx]
-                else:
-                    materials.labels["vl"] = [materials.labels["vl"][i] for i in _idx]
-                del _idx
-            print(f"VL_SIZE: {len(materials.labels['vl'])=}")
-            del _num
 
     print(f"Dataset Multimaterials:\n{list(multimaterials.keys())}")
     print(f"Dataset Materials:\n{materials}")
@@ -1779,7 +1807,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 model=model,
                 args=training_arguments,
                 train_dataset=dataset["tr"],
-                eval_dataset=dataset["vl"],
+                eval_dataset=dataset["vl"] if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "0" else None,
                 data_collator=data_collator,
                 tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                 callbacks=callbacks,
@@ -1800,7 +1828,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                     model=model,
                     args=training_arguments,
                     train_dataset=dataset["tr"],
-                    eval_dataset=dataset["vl"],
+                    eval_dataset=dataset["vl"] if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "0" else None,
                     data_collator=data_collator,
                     tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                     callbacks=callbacks,
@@ -1866,7 +1894,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 model=model,
                 args=training_arguments,
                 train_dataset=dataset["tr"],
-                eval_dataset=dataset["vl"],
+                eval_dataset=dataset["vl"] if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "0" else None,
                 data_collator=data_collator,
                 tokenizer=tokenizer if args.dataset_backend == "HF" else None,  # TODO: only pass in the tokenizer if a tokenization algorithm is required (needs to be tested).
                 callbacks=callbacks,
@@ -1900,7 +1928,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
                 model=model,
                 args=training_arguments,
                 train_dataset=dataset["tr"],
-                eval_dataset=dataset["vl"],
+                eval_dataset=dataset["vl"] if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "0" else None,
                 data_collator=data_collator,
                 tokenizer=tokenizer if args.dataset_backend == "HF" else None,
                 callbacks=callbacks,
@@ -1918,40 +1946,6 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if training_arguments.do_eval:
 
-        os.environ["TOKENIZERS_PARALLELISM"] = "true"
-        d = Dataset.from_list(list(tqdm(dataset["vl"], desc="Processing validation set...", total=len(materials.files["vl"]))))
-        os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
-
-        for checkpoint in tqdm(args.eval_checkpoints, desc="Evaluating saved models..."):
-            model = get_model(
-                args.task,
-                checkpoint,
-                config,
-                args.lift_level==LiftLevel.ALL,
-                num_labels=materials.num_classes,
-                id2label=materials.id2label,
-                label2id=materials.label2id,
-            )
-            output: dict = Trainer(
-                model=model,
-                args=training_arguments,
-                train_dataset=dataset["tr"],
-                eval_dataset=dataset["vl"],
-                data_collator=data_collator,
-                tokenizer=tokenizer,
-                callbacks=callbacks,
-                compute_metrics=compute_metrics,
-                compute_loss_func=compute_loss_func,
-            ).evaluate(d)
-            print(output)
-            outfile = Path(checkpoint) / "vl_metrics.json"
-            print(f"Saving metrics to {outfile}...")
-            with open(outfile, "w") as fp:
-                json.dump(output, fp, indent=4)
-
-        sys.exit(0)
-
         # Clean up any residual references to model and optimizer from training.
         if training_arguments.do_train:
             model = model.to("cpu")
@@ -1967,7 +1961,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         # Get a fresh model from disk. Here we pass the config although I've forgotten why.
         model = get_model(
             args.task,
-            oh.best_model_dir,
+            oh.best_model_dir.as_posix(),
             config,
             args.lift_level==LiftLevel.ALL,
             num_labels=materials.num_classes,
@@ -1979,21 +1973,22 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
         # Update the compute_metrics ComputeMetrics's settings (optional)
         # compute_metrics.update({})
-
-        split = "vl" if is_dataset_empty(dataset.get("ts")) else "ts"
-        print(f"Evaluating {split}...")
-        output: PredictionOutput = Trainer(
-            model=model,
-            args=training_arguments,
-            data_collator=data_collator,
-            tokenizer=tokenizer,
-            callbacks=callbacks,
-            compute_metrics=compute_metrics,
-            compute_loss_func=compute_loss_func,
-        ).predict(dataset[split])
-        oh.test_results_dir.mkdir(exist_ok=True, parents=False)
-        with open(oh.test_results_file, "w") as fp:
-            json.dump(output.metrics, fp, indent=4)
+        for split in ["vl-not-packed", "vl-packed", "vl-unpacked"]:
+            print(f"Evaluating {split}...")
+            output: PredictionOutput = Trainer(
+                model=model,
+                args=training_arguments,
+                data_collator=data_collator,
+                tokenizer=tokenizer,
+                callbacks=callbacks,
+                compute_metrics=compute_metrics,
+                compute_loss_func=compute_loss_func,
+            ).predict(dataset[split])
+            oh.test_results_dir.mkdir(exist_ok=True, parents=False)
+            test_results_file = oh.test_results_dir / f"{oh.test_results_file.stem}-{split}{oh.test_results_file.suffix}"
+            print(output.metrics)
+            with open(test_results_file, "w") as fp:
+                json.dump(output.metrics, fp, indent=4)
 
 
     if args.do_attribute:
