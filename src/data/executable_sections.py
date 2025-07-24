@@ -266,7 +266,7 @@ def get_executable_section(
     toolkit: Toolkit | str = Toolkit.LIEF,
 ) -> Optional[bytes]:
     content = Path(file).read_bytes() if content is None else content
-    function = GetExecutableSectionBounds(file, content, toolkit)
+    function = GetExecutableSectionBounds(None, content, toolkit)
     bounds, _ = function()
     exe = b""
     for lower, upper in bounds:
