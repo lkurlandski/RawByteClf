@@ -13,6 +13,7 @@ NOTE:
 """
 
 from functools import reduce, partial
+import hashlib
 import random
 import re
 from typing import Callable, Optional
@@ -24,6 +25,7 @@ from transformers import PreTrainedTokenizerFast
 from src.utils import to_long_tensor, compress, encrypt
 from src.data.detect_packing_sorel import pack, unpack
 from src.data.executable_sections import get_executable_section
+from src.data.pe_utils import rearm_disarmed_binary
 from src.learn.bytes_to_str_utf8 import bytes_to_str_utf8  # pylint: disable=no-name-in-module
 from src.learn.utils import interpret_bytes_as_integers
 
@@ -157,6 +159,23 @@ def hf_get_exe_bytes(examples: dict[str, list], max_length: Optional[int] = None
         if not remove_null or bs is not None:
             r["bytes"].append(bs)
     return r
+
+
+def hf_rearm_bytes(examples: dict[str, list], remove_null: bool = False, keep_original_if_fail: bool = False) -> dict[str, list]:
+    if "name" not in examples:
+        raise ValueError("The 'name' field is required in the examples for rearming binaries.")
+    r = {"bytes": []}
+    for bs, name in zip(examples["bytes"], examples["name"]):
+        sha = name.split(".")[0]
+        if sha != hashlib.sha256(bs).hexdigest():
+            try:
+                bs = rearm_disarmed_binary(bs, sha=sha, check=True, verbose=False)
+            except ValueError as err:
+                print(f"Failed to rearm binary {name}: {err}")
+                if not keep_original_if_fail:
+                    bs = None
+        if not remove_null or bs is not None:
+            r["bytes"].append(bs)
 
 
 def _hf_tokenize_text(
