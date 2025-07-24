@@ -176,6 +176,7 @@ def hf_rearm_bytes(examples: dict[str, list], remove_null: bool = False, keep_or
                     bs = None
         if not remove_null or bs is not None:
             r["bytes"].append(bs)
+    return r
 
 
 def _hf_tokenize_text(
