@@ -143,9 +143,10 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 
 export LMLM_PACK_AND_UNPACK=1
 export LMLM_PACK_AND_UNPACK_NUM_PROC={1 if streaming else 16}
+{'export HF_DATASETS_CACHE="/shared/rc/admalware/.cache/huggingface/datasets/"' if task in (Task.CLM, Task.MLM) else ""}
 
 {"" if gpu <= 1 else torchrun_str(gpu)}
-python -u \\
+python \\
 src/learn/train.py \\
 --root='./output/esp-pck' \\
 --streaming={bool_to_str(streaming)} \\
@@ -314,25 +315,25 @@ class Configuration:
     @property
     def tim(self) -> str:
         if self.task in (Task.CLM, Task.MLM):
-            return seconds_to_slurm_time(3600 * 36 // self.gpu)
+            return seconds_to_slurm_time(3600 * 144 // self.gpu)
         return seconds_to_slurm_time(3600 * 18)
 
     @property
     def cpu(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
-            return 17 * self.gpu
+            return 9 * self.gpu
         if self.streaming:
             return 4 * self.gpu
         return 2 * self.gpu
 
     @property
     def mem(self) -> int:
-        return bytes_to_slurm_mem(64 * self.gpu * GB)
+        return bytes_to_slurm_mem(90 * self.gpu * GB)
 
     @property
     def gpu(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
-            return 2
+            return 4
         return 1
 
     @property
@@ -440,7 +441,7 @@ class Configuration:
     @property
     def num_train_epochs(self) -> int | float:
         if self.task in (Task.CLM, Task.MLM):
-            return 0.5
+            return 1.0
         return 5
 
     @property
@@ -468,7 +469,7 @@ class Configuration:
     @property
     def dataloader_num_workers(self) -> int:
         if self.task in (Task.CLM, Task.MLM):
-            return 16
+            return 8
         # One additional process will engage the prefetching.
         # When streaming, we can rely on tokenizers' parallelization for speed.
         # Fuck. Now I'm getting the stupid parallel tokenizers warning. Just make it 0. Don't care.
