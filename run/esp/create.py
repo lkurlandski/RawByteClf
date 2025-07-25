@@ -271,6 +271,10 @@ class Configuration:
                 return False
             if self.model_size != ModelSize.CO:
                 return False
+
+        if self.probability_to_pack == 0.67 and self.probability_to_unpack != 0.5:
+            return False
+
         return True
 
     @property
@@ -594,13 +598,15 @@ def main():
     configurations = product(
         [ModelName.MAM],
         [ModelSize.HG],
-        [ModelMode.UN, ModelMode.BI],
+        # [ModelMode.UN, ModelMode.BI],
+        [ModelMode.BI],
         [65536],
         [LiftLevel.RAW],
         [LiftLevel.DEC],
         [TokenizationAlgorithm.BPE],
         [16384],
         [Task.DET],
+        # [None, Task.CLM, Task.MLM],
         [None],
         [0.0, 0.67, 1.0],
         [0.0, 0.50, 1.0],
