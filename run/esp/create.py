@@ -60,6 +60,20 @@ def bytes_to_slurm_mem(b: int, r: int = 4 * GB) -> str:
     return f"{g}G"
 
 
+def torchrun_str(gpu: int) -> str:
+    return (
+f"""
+OMP_NUM_THREADS=1 \\
+torchrun \\
+--no-python \\
+--nnodes=1 \\
+--nproc_per_node={gpu} \\
+--rdzv-backend=c10d \\
+--rdzv-endpoint=localhost:0 \\
+""".replace("\n \\", "").strip()
+)
+
+
 def get_body(
     job: str,
     tim: str,
@@ -128,7 +142,9 @@ conda activate {"RawByteClf" if ARMITAGE else "RawByteClf2"}
 {"" if sort_when_making_archives_contiguous else "export SORT_WHEN_MAKING_ARCHIVES_CONTIGUOUS=0"}
 
 export LMLM_PACK_AND_UNPACK=1
+export LMLM_PACK_AND_UNPACK_NUM_PROC={1 if streaming else 16}
 
+{"" if gpu <= 1 else torchrun_str(gpu)}
 python -u \\
 src/learn/train.py \\
 --root='./output/esp-pck' \\
@@ -298,11 +314,13 @@ class Configuration:
     @property
     def tim(self) -> str:
         if self.task in (Task.CLM, Task.MLM):
-            return seconds_to_slurm_time(3600 * 54)
+            return seconds_to_slurm_time(3600 * 36 // self.gpu)
         return seconds_to_slurm_time(3600 * 18)
 
     @property
     def cpu(self) -> int:
+        if self.task in (Task.CLM, Task.MLM):
+            return 17 * self.gpu
         if self.streaming:
             return 4 * self.gpu
         return 2 * self.gpu
@@ -313,6 +331,8 @@ class Configuration:
 
     @property
     def gpu(self) -> int:
+        if self.task in (Task.CLM, Task.MLM):
+            return 2
         return 1
 
     @property
@@ -419,6 +439,8 @@ class Configuration:
 
     @property
     def num_train_epochs(self) -> int | float:
+        if self.task in (Task.CLM, Task.MLM):
+            return 0.5
         return 5
 
     @property
@@ -435,6 +457,8 @@ class Configuration:
 
     @property
     def saves_per_epoch(self) -> int:
+        if self.task in (Task.CLM, Task.MLM):
+            return 16
         return 1
 
     @property
@@ -443,6 +467,8 @@ class Configuration:
 
     @property
     def dataloader_num_workers(self) -> int:
+        if self.task in (Task.CLM, Task.MLM):
+            return 16
         # One additional process will engage the prefetching.
         # When streaming, we can rely on tokenizers' parallelization for speed.
         # Fuck. Now I'm getting the stupid parallel tokenizers warning. Just make it 0. Don't care.
@@ -483,10 +509,14 @@ class Configuration:
 
     @property
     def tr_per_device_batch_size(self) -> int:
+        if self.task in (Task.CLM, Task.MLM):
+            return 2
         return 16
 
     @property
     def vl_per_device_batch_size(self) -> int:
+        if self.task in (Task.CLM, Task.MLM):
+            return 2
         return 16
 
     @property
@@ -605,7 +635,7 @@ def main():
         [LiftLevel.DEC],
         [TokenizationAlgorithm.BPE],
         [16384],
-        [Task.DET],
+        [Task.MLM],
         # [None, Task.CLM, Task.MLM],
         [None],
         [0.0, 0.67, 1.0],

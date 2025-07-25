@@ -1230,7 +1230,7 @@ def get_processed_dataset_hf(
     if os.environ.get("LMLM_PACK_AND_UNPACK", "0") == "1":
         # These processing functions are best used with multiprocessing.
         batch_size  = 16
-        num_proc    = 16
+        num_proc    = int(os.environ.get("LMLM_PACK_AND_UNPACK_NUM_PROC", "16"))
         remove_none = lambda x: x["bytes"] is not None
 
         print("Splitting the validation set into three: not packed, packed, and unpacked.")
@@ -1588,7 +1588,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
 
     if args.dataset_backend == "HF":
-        num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1)
+        num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1) * int(os.environ.get("LMLM_PACK_AND_UNPACK_NUM_PROC", "16"))
         if args.lift_level == LiftLevel.ALL:
             # On armitage, we don't have all the files, so we need to sync the data across representations.
             if os.environ.get("LMLM_SYNC_ENSEMBLE_MATERIALS", "0") == "1":
