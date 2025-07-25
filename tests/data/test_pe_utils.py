@@ -30,6 +30,7 @@ lief.logging.disable()
 
 
 ENABLE_UNITTEST_LOGGING = os.environ.get("LMLM_ENABLE_UNITTEST_LOGGING", "0") == "1"
+ENABLE_UNITTEST_BIGDATA = os.environ.get("LMLM_ENABLE_UNITTEST_BIGDATA", "0") == "1"
 
 
 class TestPatchPEFile(unittest.TestCase):
@@ -221,14 +222,17 @@ class TestPatchPEFile(unittest.TestCase):
         if ENABLE_UNITTEST_LOGGING:
             print(f"Tested: {i * 4}. Failed: {c}")
 
+    @unittest.skipIf(not ENABLE_UNITTEST_BIGDATA, "Skipping TestPatchPEFile.test_original.")
     @unittest.skipIf(not Path("./tmp/original").exists(), "Skipping TestPatchPEFile.test_original.")
     def test_original(self):
         self._test_files(sorted(Path("./tmp/original").iterdir()))
 
-    @unittest.skipIf(not Path("./tmp/packed").exists(), "Skipping TestPatchPEFile.test_original.")
+    @unittest.skipIf(not ENABLE_UNITTEST_BIGDATA, "Skipping TestPatchPEFile.test_packed.")
+    @unittest.skipIf(not Path("./tmp/packed").exists(), "Skipping TestPatchPEFile.test_packed.")
     def test_packed(self):
         self._test_files(sorted(Path("./tmp/packed").iterdir()))
 
-    @unittest.skipIf(not Path("./tmp/unpacked").exists(), "Skipping TestPatchPEFile.test_original.")
+    @unittest.skipIf(not ENABLE_UNITTEST_BIGDATA, "Skipping TestPatchPEFile.test_unpacked.")
+    @unittest.skipIf(not Path("./tmp/unpacked").exists(), "Skipping TestPatchPEFile.test_unpacked.")
     def test_unpacked(self):
         self._test_files(sorted(Path("./tmp/unpacked").iterdir()))
