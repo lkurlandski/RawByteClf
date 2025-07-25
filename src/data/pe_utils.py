@@ -86,6 +86,28 @@ def patch_binary(
     return bytes(data)
 
 
+# The order of these lists are from most to least prolific in PE malware.
+MACHINES = [
+    lief.PE.Header.MACHINE_TYPES.I386,
+    lief.PE.Header.MACHINE_TYPES.AMD64,
+    lief.PE.Header.MACHINE_TYPES.ARM64,
+]
+for v in lief.PE.Header.MACHINE_TYPES.__dict__.values():
+    if type(v).__name__ == "MACHINE_TYPES" and v not in MACHINES:
+        MACHINES.append(v)
+MACHINES = tuple(MACHINES)
+
+SUBSYSTEMS = [
+    lief.PE.OptionalHeader.SUBSYSTEM.WINDOWS_GUI,
+    lief.PE.OptionalHeader.SUBSYSTEM.WINDOWS_CUI,
+    lief.PE.OptionalHeader.SUBSYSTEM.NATIVE,
+]
+for v in lief.PE.OptionalHeader.SUBSYSTEM.__dict__.values():
+    if type(v).__name__ == "SUBSYSTEM" and v not in SUBSYSTEMS:
+        SUBSYSTEMS.append(v)
+SUBSYSTEMS = tuple(SUBSYSTEMS)
+
+
 def rearm_disarmed_binary(src: str | Path | bytes, sha: str, check: bool = True, verbose: bool = False) -> bytes:
     """
     Rearm a Sorel binary by patching its machine and subsystem until the target SHA-256 matches.
@@ -99,24 +121,14 @@ def rearm_disarmed_binary(src: str | Path | bytes, sha: str, check: bool = True,
     else:
         raise TypeError(f"Unsupported type for src: {type(src)}. Expected str, Path, or bytes.")
 
-    machines = []
-    for v in lief.PE.Header.MACHINE_TYPES.__dict__.values():
-        if type(v).__name__ == "MACHINE_TYPES":
-            machines.append(v)
-
-    subsystems = []
-    for v in lief.PE.OptionalHeader.SUBSYSTEM.__dict__.values():
-        if type(v).__name__ == "SUBSYSTEM":
-            subsystems.append(v)
-
     if verbose:
         machine, subsystem = get_machine_and_subsystem(data)
         print(f"Target SHA-256: {sha}")
         print(f"Current Machine: {machine}")
         print(f"Current Subsystem: {subsystem}")
 
-    for machine in machines:
-        for subsystem in subsystems:
+    for machine in MACHINES:
+        for subsystem in SUBSYSTEMS:
             patched = patch_binary(data, machine=machine, subsystem=subsystem)
             s = hashlib.sha256(patched).hexdigest()
             if verbose:
