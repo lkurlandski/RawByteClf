@@ -1191,7 +1191,7 @@ def get_processed_dataset_hf(
 
     def print_per_split_details(dataset: DatasetDict | IterableDatasetDict) -> None:
         for k, v in dataset.items():
-            l = getattr(v, "__len__", "?")
+            l = len(v) if hasattr(v, "__len__") else "?"
             f = ", ".join(map(lambda s: f"'{s}'", sorted(v.features.keys()))) if v.features is not None else "?"
             s = f"Dataset split {k} has {l} examples with fields {f}."
             print(s)
