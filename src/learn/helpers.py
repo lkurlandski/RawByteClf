@@ -25,10 +25,7 @@ from typing import Any, Literal, Optional
 
 # pylint: disable=wrong-import-position
 if __name__ == "__main__":
-    print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-else:
-    print(f"Entered {__file__=}")
 # pylint: enable=wrong-import-position
 
 from src.cfg import OUTPUT_PATH

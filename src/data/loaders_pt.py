@@ -20,9 +20,6 @@ dtype:
 
 """
 
-# pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
-
 from argparse import ArgumentParser
 from abc import ABC
 import asyncio

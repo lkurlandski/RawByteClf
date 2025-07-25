@@ -6,9 +6,6 @@ A huggingface-compatible implementation of MalConv2 and MalConvGCG.
 # FIXME: figure out the issues here. Why must everything be padded to the same length?
 """
 
-# pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
-
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime
@@ -19,8 +16,8 @@ import sys
 from typing import Any, Optional, Literal
 import warnings
 
+# pylint: disable=wrong-import-position
 if __name__ == "__main__":
-    print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 # pylint: enable=wrong-import-position
 

@@ -2,10 +2,6 @@
 Utility functions for training and evaluation.
 """
 
-# pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
-# pylint: enable=wrong-import-position
-
 from collections import Counter
 import functools
 import gc

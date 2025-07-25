@@ -21,6 +21,10 @@ Train and evaluate the models for malware family classification.
     an infeasible amount of memory (hundreds of GBs) for long sequences with a reasonbly-
     sized test dataset.
 """
+# pylint: disable=wrong-import-position
+if __name__ == "__main__":
+    print(f"Entered {__file__=}")
+# pylint: enable=wrong-import-position
 
 from collections import Counter
 from copy import deepcopy
@@ -41,9 +45,7 @@ import sys
 import warnings
 
 # pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
 if __name__ == "__main__":
-    print(f"STARTING @{datetime.now()}\n{'-' * 88}", flush=True)
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 # pylint: enable=wrong-import-position
 

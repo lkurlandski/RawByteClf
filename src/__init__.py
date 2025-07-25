@@ -2,10 +2,6 @@
 Called when the package is imported.
 """
 
-# pylint: disable=wrong-import-position
-print(f"Entered {__file__=}")
-# pylint: enable=wrong-import-position
-
 import random
 
 import numpy as np
