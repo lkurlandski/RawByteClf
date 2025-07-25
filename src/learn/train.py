@@ -1189,14 +1189,20 @@ def get_processed_dataset_hf(
     remove_columns: Optional[tuple[str]] = ("name", "bytes"),
 ) -> DatasetDict | IterableDatasetDict:
 
+    def print_per_split_details(dataset: DatasetDict | IterableDatasetDict) -> None:
+        for k, v in dataset.items():
+            l = getattr(v, "__len__", "?")
+            f = ", ".join(map(lambda s: f"'{s}'", sorted(v.features.keys()))) if v.features is not None else "?"
+            s = f"Dataset split {k} has {l} examples with fields {f}."
+            print(s)
+
     dataset = get_dataset_hf(
         materials,
         args.streaming,
         num_shards,
         max_length=args.data_read_bytes,
     )
-    for k, v in dataset.items():
-        print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+    print_per_split_details(dataset)
 
     if materials.problem_type == "multi_label_classification":
         func = partial(hf_multilabel_encode, num_classes=materials.num_classes)
@@ -1228,7 +1234,7 @@ def get_processed_dataset_hf(
         remove_none = lambda x: x["bytes"] is not None
 
         print("Splitting the validation set into three: not packed, packed, and unpacked.")
-        size = len(dataset["vl"]) // 3
+        size = len(materials.files["vl"]) // 3
         if isinstance(dataset["vl"], Dataset):
             dataset["vl"] = dataset["vl"].sort("name")
         else:
@@ -1237,16 +1243,14 @@ def get_processed_dataset_hf(
         dataset["vl-packed"]     = dataset["vl"].skip(size).take(size)
         dataset["vl-unpacked"]   = dataset["vl"].skip(size * 2).take(size)
         dataset.pop("vl")
-        for k, v in dataset.items():
-            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+        print_per_split_details(dataset)
 
         print("Rearming binaries if necessary.")
         func = partial(hf_rearm_bytes)
         desc = "Rearming EXEs..."
         kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, batch_size=batch_size, num_proc=num_proc)
         dataset = dataset.map(**kwds).filter(remove_none)
-        for k, v in dataset.items():
-            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+        print_per_split_details(dataset)
 
         print("Applying packing to the validation and possibly training set.")
         func = partial(hf_pack_bytes, probability=1.00)
@@ -1259,8 +1263,7 @@ def get_processed_dataset_hf(
             desc = f"Packing EXEs (tr, p={args.probability_to_pack})..."
             kwds = get_map_kwds_for_hf_datasets(func, dataset["tr"], desc=desc, batch_size=batch_size, num_proc=num_proc)
             dataset["tr"] = dataset["tr"].map(**kwds).filter(remove_none)
-        for k, v in dataset.items():
-            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+        print_per_split_details(dataset)
 
         print("Applying unpacking to the validation and possibly training set.")
         func = partial(hf_unpack_bytes, probability=1.00)
@@ -1272,14 +1275,14 @@ def get_processed_dataset_hf(
             desc = f"Unpacking EXEs (tr, p={args.probability_to_unpack})..."
             kwds = get_map_kwds_for_hf_datasets(func, dataset["tr"], desc=desc, batch_size=batch_size, num_proc=num_proc)
             dataset["tr"] = dataset["tr"].map(**kwds).filter(remove_none)
-        for k, v in dataset.items():
-            print(f"Dataset split {k} has {len(v)} examples with fields {', '.join(sorted(v.features.keys()))}.")
+        print_per_split_details(dataset)
 
         print("Extracting the .text section.")
         func = partial(hf_get_exe_bytes, max_length=args.max_length)
         desc = "Extracting .text from EXEs..."
         kwds = get_map_kwds_for_hf_datasets(func, dataset, desc=desc, batch_size=batch_size, num_proc=num_proc)
         dataset = dataset.map(**kwds).filter(remove_none)
+        print_per_split_details(dataset)
 
     # If we're mapping bytes to integers, we can do it in a more efficient way.
     # Otherwise, we need to use the tokenizer.
