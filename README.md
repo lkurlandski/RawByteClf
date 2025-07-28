@@ -199,10 +199,10 @@ sudo docker cp demo_state:/home/appuser/app/[OUT] ./workdir/[OUT]
 
 To run locally an environment with the relevant dependencies must be created.
 
-Create conda environment:
+Create a (conda) environment:
 ```
-conda env create -f environment.yml
-conda activate LMLM
+conda create --name RawByteClf python=3.10 pytorch=2.2.2 pytorch-cuda=12.1 -c pytorch -c nvidia
+conda activate RawByteClf
 ```
 
 Install core dependencies:
@@ -212,7 +212,12 @@ pip install -r requirements.txt
 
 Install optional dependencies:
 ```
-pip install -r requirementsComplete.txt
+pip install -r requirements-opt.txt
+```
+
+Install mamba particulars (pain):
+```
+pip install -r requirements-mamba.txt
 ```
 
 ## Documentation
