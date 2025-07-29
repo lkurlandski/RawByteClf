@@ -1449,6 +1449,8 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
         "split_mode": args.split_mode,
         "weighted_loss": args.weighted_loss,
         "ratio_pos_split": args.ratio_pos_split,
+        "probability_to_pack": args.probability_to_pack,
+        "probability_to_unpack": args.probability_to_unpack,
         "trainer_config": training_arguments.__dict__ | {"world_size": training_arguments.world_size},
     }
     # NOTE: this is quite bad, but args.model_name_or_path might change from a str representing the
@@ -1574,6 +1576,12 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
     print(f"Dataset Materials:\n{materials}")
     print(BR, flush=True)
 
+    if args.task in (Task.CLM, Task.MLM):
+        idx = np.arange(len(materials.files["tr"]))
+        idx = np.random.choice(idx, size=int(os.environ.get("LMLM_PACK_AND_UNPACK_LM_SIZE", "400000")), replace=False)
+        materials.files["tr"] = [materials.files["tr"][i] for i in idx]
+        print(f"Dataset Materials:\n{materials}")
+
     # If we know the length of the dataset, we can compute the number of steps from training epochs.
     # This lets us use epochs for training in streaming mode and eval/save multiple times per epoch.
     kwds = {}
@@ -1589,6 +1597,7 @@ def main(args: Args, training_arguments: TrainingArguments) -> None:
 
     if args.dataset_backend == "HF":
         num_shards = max(training_arguments.world_size, 1) * max(training_arguments.dataloader_num_workers, 1) * int(os.environ.get("LMLM_PACK_AND_UNPACK_NUM_PROC", "16"))
+        num_shards = 32  # FIXME: remove
         if args.lift_level == LiftLevel.ALL:
             # On armitage, we don't have all the files, so we need to sync the data across representations.
             if os.environ.get("LMLM_SYNC_ENSEMBLE_MATERIALS", "0") == "1":
