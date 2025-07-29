@@ -1232,6 +1232,7 @@ def get_processed_dataset_hf(
         batch_size  = 16
         num_proc    = int(os.environ.get("LMLM_PACK_AND_UNPACK_NUM_PROC", "16"))
         remove_none = lambda x: x["bytes"] is not None
+        remove_none_batched = lambda x: [bs is not None for bs in x["bytes"]]
 
         print("Splitting the validation set into three: not packed, packed, and unpacked.")
         size = len(materials.files["vl"]) // 3
@@ -1265,6 +1266,9 @@ def get_processed_dataset_hf(
             dataset["tr"] = dataset["tr"].map(**kwds).filter(remove_none)
         print_per_split_details(dataset)
 
+        print("Filtering for None.")
+        dataset = dataset.filter(remove_none)
+
         print("Applying unpacking to the validation and possibly training set.")
         func = partial(hf_unpack_bytes, probability=1.00)
         desc = f"Unpacking EXEs (vl, p={1.00})..."
@@ -1276,6 +1280,9 @@ def get_processed_dataset_hf(
             kwds = get_map_kwds_for_hf_datasets(func, dataset["tr"], desc=desc, batch_size=batch_size, num_proc=num_proc)
             dataset["tr"] = dataset["tr"].map(**kwds).filter(remove_none)
         print_per_split_details(dataset)
+
+        print("Filtering for None.")
+        dataset = dataset.filter(remove_none)
 
         print("Extracting the .text section.")
         func = partial(hf_get_exe_bytes, max_length=args.max_length)

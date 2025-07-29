@@ -636,10 +636,10 @@ def main():
         [LiftLevel.DEC],
         [TokenizationAlgorithm.BPE],
         [16384],
-        [Task.MLM],
+        [Task.DET],
         # [None, Task.CLM, Task.MLM],
         [None],
-        [0.0, 0.67, 1.0],
+        [0.0, 0.50, 0.67, 1.0],
         [0.0, 0.50, 1.0],
         [0],
     )
