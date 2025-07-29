@@ -201,8 +201,14 @@ To run locally an environment with the relevant dependencies must be created.
 
 Create a (conda) environment:
 ```
-conda create --name RawByteClf python=3.10 pytorch=2.2.2 pytorch-cuda=12.1 -c pytorch -c nvidia
-conda activate RawByteClf
+conda create --name env python=3.10
+conda activate env
+```
+
+Create a (venv) environment:
+```
+python3.10 -m venv env
+source env/bin/activate
 ```
 
 Install core dependencies:
@@ -215,10 +221,24 @@ Install optional dependencies:
 pip install -r requirements-opt.txt
 ```
 
-Install mamba particulars (pain):
+Install mamba particulars (conda):
 ```
+conda install cuda-nvcc -c nvidia
 pip install -r requirements-mamba.txt
 ```
+
+<!---
+Create a (conda) environment:
+```
+conda create --name env \
+  python=3.10
+  pytorch=2.2
+  pytorch-cuda=12.1
+  cudatoolkit
+  cuda-nvcc=12.4
+  -c pytorch -c nvidia
+```
+-->
 
 ## Documentation
 
