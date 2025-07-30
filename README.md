@@ -199,10 +199,16 @@ sudo docker cp demo_state:/home/appuser/app/[OUT] ./workdir/[OUT]
 
 To run locally an environment with the relevant dependencies must be created.
 
-Create conda environment:
+Create a (conda) environment:
 ```
-conda env create -f environment.yml
-conda activate LMLM
+conda create --name env python=3.10
+conda activate env
+```
+
+Create a (venv) environment:
+```
+python3.10 -m venv env
+source env/bin/activate
 ```
 
 Install core dependencies:
@@ -212,8 +218,27 @@ pip install -r requirements.txt
 
 Install optional dependencies:
 ```
-pip install -r requirementsComplete.txt
+pip install -r requirements-opt.txt
 ```
+
+Install mamba particulars (conda):
+```
+conda install cuda-nvcc -c nvidia
+pip install -r requirements-mamba.txt
+```
+
+<!---
+Create a (conda) environment:
+```
+conda create --name env \
+  python=3.10
+  pytorch=2.2
+  pytorch-cuda=12.1
+  cudatoolkit
+  cuda-nvcc=12.4
+  -c pytorch -c nvidia
+```
+-->
 
 ## Documentation
 
