@@ -21,6 +21,7 @@ from src.data.detect_packing_sorel import PackingMap, pack, unpack
 
 
 ENABLE_UNITTEST_LOGGING = os.environ.get("LMLM_ENABLE_UNITTEST_LOGGING", "0") == "1"
+ENABLE_UNITTEST_BIGDATA = os.environ.get("LMLM_ENABLE_UNITTEST_BIGDATA", "0") == "1"
 
 
 class TestPackingMap(unittest.TestCase):
@@ -74,6 +75,7 @@ class TestPackingMap(unittest.TestCase):
         self.assertTrue(len(packing_map) > 0)
         self.maps.append(packing_map)
 
+    @unittest.skipIf(not ENABLE_UNITTEST_BIGDATA, "Skipping TestPackingMap.test_packing_map_4.")
     def test_packing_map_4(self):
         t = time.time()
         packing_map = PackingMap(root=self.root, lazy=True, chunked=False, num_workers=None, cache_load=False, cache_save=False)
