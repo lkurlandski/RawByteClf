@@ -292,7 +292,7 @@ We are working on documenting how to use the system more thoroughly.
 
 ```
 @inproceedings{
-  authors={Anomynous Author(s)},
+  authors={Kurlandski, Luke and Berger, Harel and Pan, Yin and Wright, Matthew},
   title={Beyond Raw Bytes: Towards Large Malware Language Models},
   booktitle={The Network and Distributed System Security (NDSS) Symposium},
   year={2026},
