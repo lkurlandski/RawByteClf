@@ -2,6 +2,8 @@
 
 Repository for the paper "Beyond Raw Bytes: Towards Large Malware Language Models".
 
+This system is quite messy. I had to move on to other things and didn't have time to clean it up. 
+
 ## Demo
 
 To verify the functionality of our codebase, we include a small demonstration.
