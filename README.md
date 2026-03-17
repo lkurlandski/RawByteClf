@@ -290,6 +290,10 @@ All environment variables for this system are prefaced with "LMLM_".
 
 We are working on documenting how to use the system more thoroughly.
 
+### Artifacts
+
+See this [Google Drive](https://drive.google.com/drive/folders/1BV91yePpZNryhdLsiAeIQXKbYE567ayA?usp=drive_link) for other artifacts.
+
 ## Citation
 
 ```
